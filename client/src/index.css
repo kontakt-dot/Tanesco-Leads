@@ -1594,3 +1594,19 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .owners-missing strong{display:block;font-size:13px;color:#fde68a}
 .owners-missing p{margin:3px 0 0;font-size:12px;line-height:1.55;color:#94a3b8}
 .owners-missing a{color:#fde68a;text-decoration:underline}
+
+/* Welche Pipeline: Meta Ads, Kaltakquise oder E-Mail-Kampagne – als Karten, weil es die erste Entscheidung auf der Seite ist. */
+.source-cards{display:flex;flex-wrap:wrap;gap:8px}
+.source-card{display:flex;align-items:flex-start;gap:9px;min-width:190px;padding:9px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);color:#94a3b8;text-align:left;transition:border-color .15s,background .15s}
+.source-card:hover{border-color:rgba(129,120,255,.4)}
+.source-card svg{margin-top:2px;flex-shrink:0}
+.source-card strong{display:block;font-size:13px;font-weight:600;color:#e2e8f0}
+.source-card small{display:block;margin-top:1px;font-size:11px;line-height:1.4;color:#64748b}
+/* Aktive Quelle: kräftiger Rahmen und ein Balken links – das bleibt im hellen wie im dunklen Modus lesbar. */
+.source-card{position:relative;overflow:hidden}
+.source-card.is-active{border-color:rgba(129,120,255,.75);background:rgba(129,120,255,.14);box-shadow:inset 3px 0 0 0 #8178ff}
+.source-card.is-active svg{color:#a79cff}
+.source-card.is-active strong{color:#f1f3f9}
+.source-card.is-active small{color:#c7c2ff}
+.section-tabs{margin-top:4px}
+@media (max-width:640px){.source-card{flex:1 1 100%;min-width:0}.source-card small{display:none}}
