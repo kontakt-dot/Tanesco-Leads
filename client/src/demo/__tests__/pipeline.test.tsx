@@ -974,7 +974,7 @@ describe("Liste direkt im Kampagnen-Editor hochladen, Standard-Versandfenster (C
     // Kampagne mit dem Standardfenster speichern: eingeschaltet, werktags 7:30–17:00
     const starter = await call("leadops.emailCampaignStarter", { kind: "kaltakquise" });
     const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Mailing Oktober", fromName: "Tanesco", fromEmail: "vertrieb@tanesco.digital", replyTo: null, audience: { source: "liste", listName: "Mailing Oktober" }, tree: starter.tree, design: starter.design, sendWindow: { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" }, isTemplate: false, abSplit: 50 });
-    const campaign = await call("leadops.getEmailCampaign", { id: saved.id }); expect(campaign.sendWindow).toEqual({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" });
+    const campaign = await call("leadops.getEmailCampaign", { id: saved.id }); expect(campaign.sendWindow).toMatchObject({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" });
     // ältere Kampagne ohne gespeichertes Fenster: rund um die Uhr (nichts bleibt hängen)
     const legacy = getStore().tables.emailCampaigns.find((row) => row.sendWindow === null)!; expect((await call("leadops.getEmailCampaign", { id: legacy.id })).sendWindow.enabled).toBe(false);
   });
@@ -1002,5 +1002,41 @@ describe("Spalten zuordnen und Platzhalter aus der Liste (Chat-Build)", () => {
     expect(mail.subject).toBe("Für Dachdecker mit 12 Leuten"); expect(mail.text).toContain("als Dachdecker-Betrieb");
     const sms = await call("leadops.sendLeadMessage", { publicId: getStore().tables.leads.find((row) => row.email === "koch@platzhalter-test.example")!.publicId, channel: "email", subject: "{{branche}}", text: "{{anzahl_mitarbeiter}} Mitarbeiter" });
     expect(sms.subject).toBe("Photovoltaik"); expect(sms.text).toBe("5 Mitarbeiter");
+  });
+});
+
+describe("Dublettenschutz, Tags, Listen ansehen und Gesendet (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Derselbe Kontakt wird beim zweiten Hochladen aktualisiert statt doppelt angelegt", async () => {
+    const erste = await call("leadops.importColdList", { listName: "PV Hessen", rows: [{ firstName: "Anna", lastName: "Berg", company: "Berg Solar", email: "anna@berg-solar.de", phone: "06111234", city: "Wiesbaden" }], tagNames: ["PV", "Hessen"] });
+    expect(erste.created).toBe(1);
+    const zweite = await call("leadops.importColdList", { listName: "PV Hessen", rows: [{ firstName: "Anna", lastName: "Berg", company: "Berg Solar GmbH", email: "anna@berg-solar.de", postcode: "65183", city: "Wiesbaden", extra: { branche: "Photovoltaik" } }] });
+    expect(zweite.created).toBe(0);
+    expect(zweite.updated).toBe(1);
+    const inhalt = await call("leadops.coldListContacts", { listName: "PV Hessen" });
+    expect(inhalt.contacts).toHaveLength(1); // kein zweiter Eintrag
+    expect(inhalt.contacts[0].postcode).toBe("65183"); // leeres Feld wurde ergänzt
+    expect(inhalt.contacts[0].company).toBe("Berg Solar"); // Vorhandenes wird nicht überschrieben
+    expect(inhalt.columns).toContain("branche");
+    expect(inhalt.contacts[0].felder.branche).toBe("Photovoltaik");
+  });
+  it("Tags aus dem Upload stehen als Filter in der Pipeline", async () => {
+    await call("leadops.importColdList", { listName: "PV Hessen", rows: [{ lastName: "Berg", email: "anna@berg-solar.de" }], tagNames: ["PV"] });
+    await call("leadops.importColdList", { listName: "Dach Bayern", rows: [{ lastName: "Huber", email: "huber@dach.de" }], tagNames: ["Dach"] });
+    const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    const pv = overview.tags.find((tag: { name: string }) => tag.name === "PV");
+    expect(pv).toBeTruthy();
+    const gefiltert = await call("leadops.pipelineOverview", { source: "kaltakquise", tagId: pv.id });
+    expect(gefiltert.totals.leads).toBe(1);
+  });
+  it("Gesendet zeigt Kampagnen-Mails und Einzel-E-Mails und lässt sich filtern", async () => {
+    const sent = await call("leadops.listSent", {});
+    expect(Array.isArray(sent.items)).toBe(true);
+    expect(sent.counts.alle).toBe(sent.counts.kampagne + sent.counts.antwort + sent.counts.einzel);
+    const nurKampagnen = await call("leadops.listSent", { kind: "kampagne" });
+    expect(nurKampagnen.items.every((item: { kind: string }) => item.kind === "kampagne")).toBe(true);
+    const ohneTreffer = await call("leadops.listSent", { search: "gibtesnicht-xyz" });
+    expect(ohneTreffer.items).toHaveLength(0);
   });
 });

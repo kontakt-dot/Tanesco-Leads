@@ -175,3 +175,40 @@ export async function reply(db: Db, tenantId: number, input: { messageId: number
   return { status: sent.status };
 }
 export { isNull };
+
+/* ---------- Gesendet ---------- */
+export type SentKind = "kampagne" | "antwort" | "einzel";
+/**
+ * Alles, was wir per E-Mail herausgeschickt haben – an einer Stelle:
+ * Kampagnen-Mails aus den Serien (Verlauf der Empfänger), Antworten aus dem Posteingang und Einzel-E-Mails aus einer Karte.
+ * Filter: Suche (Adresse, Betreff), Zeitraum, Kampagne und Art.
+ */
+export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; limit?: number } = {}) {
+  const limit = Math.min(500, Math.max(10, options.limit ?? 200));
+  const campaignRows = await db.select({ id: emailCampaignEvents.id, at: emailCampaignEvents.createdAt, subject: emailCampaignEvents.subject, note: emailCampaignEvents.note, campaignId: emailCampaignEvents.campaignId, campaignName: emailCampaigns.name, email: emailCampaignRecipients.email, name: emailCampaignRecipients.name, leadId: emailCampaignRecipients.leadId })
+    .from(emailCampaignEvents)
+    .innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId))
+    .innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignEvents.campaignId))
+    .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet")))
+    .orderBy(desc(emailCampaignEvents.createdAt)).limit(limit);
+  const singleRows = await db.select({ id: outboundMessages.id, at: outboundMessages.createdAt, subject: outboundMessages.subject, text: outboundMessages.text, to: outboundMessages.toAddress, status: outboundMessages.status, inboxMessageId: outboundMessages.inboxMessageId, leadId: outboundMessages.leadId, senderName: users.name })
+    .from(outboundMessages).leftJoin(users, eq(users.id, outboundMessages.createdByUserId))
+    .where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email")))
+    .orderBy(desc(outboundMessages.createdAt)).limit(limit);
+  const items = [
+    ...campaignRows.map((row) => ({ id: `k${row.id}`, kind: "kampagne" as SentKind, at: row.at, to: row.email, name: row.name ?? null, subject: row.subject ?? row.note ?? "(ohne Betreff)", preview: row.campaignName, campaignId: row.campaignId as number | null, campaignName: row.campaignName as string | null, leadId: row.leadId as number | null, status: "gesendet", sender: null as string | null })),
+    ...singleRows.map((row) => ({ id: `e${row.id}`, kind: (row.inboxMessageId ? "antwort" : "einzel") as SentKind, at: row.at, to: row.to, name: null as string | null, subject: row.subject ?? "(ohne Betreff)", preview: (row.text ?? "").replace(/\s+/g, " ").slice(0, 160), campaignId: null as number | null, campaignName: null as string | null, leadId: row.leadId as number | null, status: row.status as string, sender: row.senderName ?? null })),
+  ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  const search = (options.search ?? "").trim().toLowerCase();
+  const filtered = items.filter((item) => {
+    if (options.kind && item.kind !== options.kind) return false;
+    if (options.campaignId && item.campaignId !== options.campaignId) return false;
+    if (options.from && new Date(item.at) < options.from) return false;
+    if (options.to && new Date(item.at) > options.to) return false;
+    if (search && !`${item.to} ${item.name ?? ""} ${item.subject} ${item.campaignName ?? ""}`.toLowerCase().includes(search)) return false;
+    return true;
+  });
+  const campaigns = Array.from(items.reduce((map, item) => { if (item.campaignId && item.campaignName) { const entry = map.get(item.campaignId) ?? { id: item.campaignId, name: item.campaignName, count: 0 }; entry.count += 1; map.set(item.campaignId, entry); } return map; }, new Map<number, { id: number; name: string; count: number }>()).values()).sort((a, b) => b.count - a.count);
+  const counts = { alle: items.length, kampagne: items.filter((item) => item.kind === "kampagne").length, antwort: items.filter((item) => item.kind === "antwort").length, einzel: items.filter((item) => item.kind === "einzel").length };
+  return { items: filtered.slice(0, limit), counts, campaigns };
+}

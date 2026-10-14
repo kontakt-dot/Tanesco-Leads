@@ -4,10 +4,10 @@
  */
 import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import crypto from "node:crypto";
-import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, tags, type EmailCampaign } from "../drizzle/schema";
-import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, recipientValues, renderNode, starterTree, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendWindow } from "../shared/email-campaigns";
+import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, tags, tenantSettings, type EmailCampaign } from "../drizzle/schema";
+import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, recipientValues, renderNode, starterTree, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
-import { DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
+import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
 import { deliverMail } from "./email-onboarding";
 import { distributeOwners } from "./meta-ads";
@@ -16,27 +16,61 @@ import type { Db } from "./lead-pipeline";
 /* ---------- Kaltakquise-Listen ---------- */
 import { extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
 export { parseColdList };
-export async function importColdList(db: Db, tenantId: number, input: { listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; actorUserId?: number | null }) {
+/** Tag holen oder anlegen (Name wird auf 80 Zeichen gekürzt). */
+async function tagByName(db: Db, tenantId: number, name: string, color: string) {
+  const key = name.slice(0, 80);
+  let row = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, key))).limit(1))[0];
+  if (!row) { await db.insert(tags).values({ tenantId, name: key, color }); row = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, key))).limit(1))[0]; }
+  return row;
+}
+/** Nur setzen, was wirklich dazukommt – vorhandene Angaben am Kontakt werden nie mit leeren Werten überschrieben. */
+const fillIfEmpty = <T>(current: T | null | undefined, next: T | null | undefined) => (current ?? null) || (next ?? null);
+
+export async function importColdList(db: Db, tenantId: number, input: { listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null }) {
   const listName = input.listName.trim(); if (!listName) throw new Error("Bitte einen Listennamen angeben."); if (!input.rows.length) throw new Error("Die Liste enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig).");
-  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id; if (!categoryId) throw new Error("Keine Lead-Kategorie vorhanden.");
-  let tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0];
-  if (!tag) { await db.insert(tags).values({ tenantId, name: `Liste: ${listName}`.slice(0, 80), color: "#f59e0b" }); tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0]; }
-  const existing = await db.select({ phone: leads.phone, email: leads.email }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
-  const phones = new Set(existing.map((row) => (row.phone ?? "").replace(/\D/g, "")).filter(Boolean)); const emails = new Set(existing.map((row) => (row.email ?? "").toLowerCase()).filter(Boolean));
-  let created = 0; let duplicates = 0; const leadIds: number[] = [];
+  // Kategorie ist freiwillig: ohne Angabe die erste aktive nehmen, sonst ohne Kategorie anlegen.
+  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id ?? null;
+  const tag = await tagByName(db, tenantId, `Liste: ${listName}`, "#f59e0b");
+  const extraTags = [] as Array<{ id: number }>;
+  for (const name of input.tagNames ?? []) { const clean = name.trim(); if (!clean) continue; const row = await tagByName(db, tenantId, clean, "#8178ff"); if (row && row.id !== tag.id) extraTags.push(row); }
+  const mode = input.duplicateMode ?? "aktualisieren";
+  const existing = await db.select({ id: leads.id, status: leads.status, phone: leads.phone, email: leads.email, firstName: leads.firstName, lastName: leads.lastName, company: leads.company, postcode: leads.postcode, city: leads.city, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
+  type Known = typeof existing[number];
+  const byPhone = new Map<string, Known>(); const byEmail = new Map<string, Known>();
+  for (const row of existing) { const phone = (row.phone ?? "").replace(/\D/g, ""); const email = (row.email ?? "").toLowerCase(); if (phone) byPhone.set(phone, row); if (email) byEmail.set(email, row); }
+  let created = 0; let duplicates = 0; let updated = 0; const leadIds: number[] = [];
+  /** Tags an einen Kontakt hängen, ohne doppelte Zuordnung. */
+  const assignTags = async (leadId: number) => { for (const item of [tag, ...extraTags]) { const already = (await db.select({ leadId: leadTagAssignments.leadId }).from(leadTagAssignments).where(and(eq(leadTagAssignments.leadId, leadId), eq(leadTagAssignments.tagId, item.id))).limit(1))[0]; if (!already) await db.insert(leadTagAssignments).values({ leadId, tagId: item.id }); } };
   for (const row of input.rows) {
     const phoneKey = (row.phone ?? "").replace(/\D/g, ""); const emailKey = (row.email ?? "").toLowerCase();
-    if ((phoneKey && phones.has(phoneKey)) || (emailKey && emails.has(emailKey))) { duplicates += 1; continue; }
+    const known = (emailKey && byEmail.get(emailKey)) || (phoneKey && byPhone.get(phoneKey)) || null;
+    if (known) {
+      duplicates += 1;
+      if (mode === "ueberspringen") continue;
+      // Denselben Kontakt nicht noch einmal anlegen, sondern ergänzen: leere Felder füllen, Zusatzspalten zusammenführen, Liste und Tags anhängen.
+      const metadata = (known.metadata && typeof known.metadata === "object" && !Array.isArray(known.metadata) ? known.metadata : {}) as Record<string, unknown>;
+      const felder = { ...extraFieldsOf(metadata), ...(row.extra ?? {}) };
+      await db.update(leads).set({
+        firstName: fillIfEmpty(known.firstName, row.firstName), lastName: fillIfEmpty(known.lastName, row.lastName ?? row.company), company: fillIfEmpty(known.company, row.company),
+        phone: fillIfEmpty(known.phone, row.phone), email: fillIfEmpty(known.email, emailKey || null), postcode: fillIfEmpty(known.postcode, row.postcode), city: fillIfEmpty(known.city, row.city),
+        metadata: { ...metadata, salutation: metadata.salutation ?? row.salutation ?? undefined, kaltakquise: { liste: listName }, ...(Object.keys(felder).length ? { felder } : {}) },
+      }).where(eq(leads.id, known.id));
+      await assignTags(known.id);
+      await db.insert(leadStatusEvents).values({ tenantId, leadId: known.id, previousStatus: known.status, nextStatus: known.status, actorUserId: input.actorUserId ?? null, note: `Aus Liste „${listName}“ aktualisiert (kein zweiter Eintrag angelegt)` });
+      updated += 1; continue;
+    }
     const publicId = `KALT-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
     const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}`, adPlatform: "kaltakquise", company: row.company ?? null, listName });
-    const leadId = Number(inserted[0]?.insertId) || 0; leadIds.push(leadId); created += 1; if (phoneKey) phones.add(phoneKey); if (emailKey) emails.add(emailKey);
-    await db.insert(leadTagAssignments).values({ leadId, tagId: tag.id });
+    const leadId = Number(inserted[0]?.insertId) || 0; leadIds.push(leadId); created += 1;
+    const self = { id: leadId, status: "neu", phone: row.phone ?? null, email: emailKey || null, firstName: row.firstName ?? null, lastName: row.lastName ?? null, company: row.company ?? null, postcode: row.postcode ?? null, city: row.city ?? null, metadata: null } as Known;
+    if (phoneKey) byPhone.set(phoneKey, self); if (emailKey) byEmail.set(emailKey, self);
+    await assignTags(leadId);
     await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: null, nextStatus: "neu", actorUserId: null, note: `Kaltakquise-Liste „${listName}“ hochgeladen` });
     await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: null, note: `Aus Kaltakquise-Liste „${listName}“` });
   }
   if (input.ownerUserIds?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
   else for (const leadId of leadIds) await autoAssign(db, tenantId, leadId); // Verteilregeln, wenn eingeschaltet
-  return { created, duplicates, tagId: tag.id, listName, leadIds };
+  return { created, duplicates, updated, tagId: tag.id, listName, leadIds };
 }
 export async function listColdLists(db: Db, tenantId: number) {
   const rows = await db.select({ listName: leads.listName, stage: leads.pipelineStage, phone: leads.phone, email: leads.email, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.adPlatform, "kaltakquise")));
@@ -73,13 +107,35 @@ export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
   return { ...row, tree: tree(row), design: design(row), audience: (row.audience ?? { source: "alle" }) as Audience, sendWindow: sendWindowOf(row), recipients: recipients.map((item) => ({ id: item.id, email: item.email, name: item.name, company: item.company, status: item.status, nodeId: item.nodeId, nextActionAt: item.nextActionAt, sentCount: item.sentCount, openedAt: item.openedAt, clickedAt: item.clickedAt, repliedAt: item.repliedAt, variant: (item.variant ?? null) as "A" | "B" | null, clickedUrls: (Array.isArray(item.clickedUrls) ? item.clickedUrls : []) as string[], bouncedAt: item.bouncedAt, lastError: item.lastError })), events: events.map((event) => ({ id: event.id, recipientId: event.recipientId, kind: event.kind, subject: event.subject, note: event.note, createdAt: event.createdAt })), stats: summarizeCampaign(recipients.map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) };
 }
 const sendWindowOf = (campaign: Pick<EmailCampaign, "sendWindow">): SendWindow => resolveSendWindow(campaign.sendWindow as Partial<SendWindow> | null);
+/** Abweichende Zeiten je Wochentag prüfen: nur „0“–„6“ mit gültigen Uhrzeiten, sonst nichts. */
+function normalizeSendDays(input: unknown): Record<string, SendDay> | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const time = (value: unknown) => (/^\d{2}:\d{2}$/.test(String(value ?? "")) ? String(value) : null);
+  const out: Record<string, SendDay> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!/^[0-6]$/.test(key) || !value || typeof value !== "object") continue;
+    const from = time((value as Record<string, unknown>).from); const to = time((value as Record<string, unknown>).to);
+    if (from && to && from < to) out[key] = { from, to };
+  }
+  return Object.keys(out).length ? out : null;
+}
 export function normalizeSendWindow(input: unknown): SendWindow {
   const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {}; const time = (value: unknown, fallback: string) => (/^\d{2}:\d{2}$/.test(String(value ?? "")) ? String(value) : fallback);
-  return { enabled: Boolean(raw.enabled), weekdays: Array.isArray(raw.weekdays) ? (raw.weekdays as unknown[]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : DEFAULT_SEND_WINDOW.weekdays, from: time(raw.from, DEFAULT_SEND_WINDOW.from), to: time(raw.to, DEFAULT_SEND_WINDOW.to), timezone: String(raw.timezone ?? DEFAULT_SEND_WINDOW.timezone).slice(0, 60) || DEFAULT_SEND_WINDOW.timezone };
+  return { enabled: Boolean(raw.enabled), weekdays: Array.isArray(raw.weekdays) ? (raw.weekdays as unknown[]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : DEFAULT_SEND_WINDOW.weekdays, from: time(raw.from, DEFAULT_SEND_WINDOW.from), to: time(raw.to, DEFAULT_SEND_WINDOW.to), timezone: String(raw.timezone ?? DEFAULT_SEND_WINDOW.timezone).slice(0, 60) || DEFAULT_SEND_WINDOW.timezone, days: normalizeSendDays(raw.days) };
+}
+/**
+ * Fußzeile des Mandanten (Einstellungen → Branding): Anschrift, Webseite und Terminlink.
+ * Gilt als Vorgabe für neue Kampagnen; was in der Kampagne selbst steht, hat Vorrang.
+ */
+async function tenantDesign(db: Db, tenantId: number): Promise<Partial<EmailDesign>> {
+  const row = (await db.select({ footer: tenantSettings.companyFooter, website: tenantSettings.websiteUrl, appointment: tenantSettings.appointmentUrl }).from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).limit(1))[0];
+  if (!row) return {};
+  const text = companyFooterText({ footer: row.footer, website: row.website, appointment: row.appointment });
+  return { footerText: `${text}\nDu erhältst diese E-Mail, weil du dich für unser Angebot interessiert hast. {{abmelden}}` };
 }
 export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
-  const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.audience, tree: input.tree, design: { ...DEFAULT_DESIGN, ...input.design }, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}) };
+  const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.audience, tree: input.tree, design: { ...DEFAULT_DESIGN, ...(await tenantDesign(db, tenantId)), ...input.design }, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}) };
   if (input.id) { await db.update(emailCampaigns).set(values).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))); return { id: input.id }; }
   const inserted = await db.insert(emailCampaigns).values(values); return { id: Number(inserted[0]?.insertId) || 0 };
 }
@@ -164,4 +220,19 @@ export async function uploadMailImage(input: { fileName: string; mimeType: strin
   const buffer = Buffer.from(input.base64.replace(/^data:[^;]+;base64,/, ""), "base64"); if (!buffer.length) throw new Error("Leere Datei."); if (buffer.length > 5 * 1024 * 1024) throw new Error("Bild ist größer als 5 MB.");
   const dir = path.resolve(process.cwd(), "uploads", "mail"); await fs.mkdir(dir, { recursive: true }); const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`; await fs.writeFile(path.join(dir, name), buffer);
   const base = (process.env.APP_URL ?? "").replace(/\/+$/, ""); return { url: `${base}/uploads/mail/${name}`, path: `/uploads/mail/${name}`, size: buffer.length };
+}
+
+/**
+ * Inhalt einer hochgeladenen Liste: die Kontakte mit Stammdaten, Stufe, Vertriebler und den Zusatzspalten
+ * (den Platzhaltern aus der Datei). Für die Ansicht „Liste ansehen“ in der Pipeline und im Kampagnen-Editor.
+ */
+export async function coldListContacts(db: Db, tenantId: number, input: { listName: string; limit?: number; search?: string | null }) {
+  const limit = Math.min(500, Math.max(10, input.limit ?? 100));
+  const rows = await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company, phone: leads.phone, email: leads.email, postcode: leads.postcode, city: leads.city, stage: leads.pipelineStage, metadata: leads.metadata, createdAt: leads.createdAt })
+    .from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.listName, input.listName))).orderBy(asc(leads.id)).limit(limit + 1);
+  const search = (input.search ?? "").trim().toLowerCase();
+  const mapped = rows.map((row) => ({ ...row, metadata: undefined, felder: extraFieldsOf(row.metadata) }));
+  const filtered = search ? mapped.filter((row) => `${row.firstName ?? ""} ${row.lastName ?? ""} ${row.company ?? ""} ${row.email ?? ""} ${row.phone ?? ""} ${row.city ?? ""}`.toLowerCase().includes(search)) : mapped;
+  const columns = Array.from(new Set(filtered.flatMap((row) => Object.keys(row.felder))));
+  return { contacts: filtered.slice(0, limit), columns, more: rows.length > limit };
 }

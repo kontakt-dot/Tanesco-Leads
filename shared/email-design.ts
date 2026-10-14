@@ -9,9 +9,38 @@ export type EmailBlock =
   | { id: string; type: "bullets"; items: string[] }
   | { id: string; type: "signature"; name: string; role?: string; phone?: string };
 export type EmailDesign = { primaryColor: string; textColor: string; background: string; cardBackground: string; font: string; logoUrl?: string | null; logoHeight?: number; footerText?: string; unsubscribeText?: string; buttonRadius?: number };
+/**
+ * Anbieterzeile für alle ausgehenden Nachrichten – Fußzeile im E-Mail-Builder, Signaturen, Willkommens- und
+ * Systemmails. An einer Stelle gepflegt, damit eine Änderung überall gilt.
+ */
+export const COMPANY_FOOTER = "Tanesco Digital GbR · Schultheißweg 44 · 55252 Wiesbaden";
+/** Webseite und Terminbuchung – stehen in jeder Fußzeile und werden automatisch verlinkt. Unter Einstellungen → Branding änderbar. */
+export const COMPANY_WEBSITE = "https://tanescodigital.de";
+export const COMPANY_APPOINTMENT_URL = "";
+/**
+ * Adressen in der Fußzeile anklickbar machen: „https://…“ ebenso wie „tanescodigital.de“.
+ * Läuft auf bereits maskiertem HTML, erzeugt also nur die Links und nichts anderes.
+ */
+export function linkifyFooter(html: string) {
+  return html.replace(/(https?:\/\/[^\s<>"]+|(?:^|[\s>·])((?:[a-z0-9-]+\.)+(?:de|com|net|org|eu|at|ch|io))(?=$|[\s<·,]))/gi, (match, _all, bare) => {
+    const lead = bare && !match.startsWith(bare) ? match.slice(0, match.indexOf(bare)) : "";
+    const target = (bare ?? match).trim(); if (!target) return match;
+    const href = /^https?:\/\//i.test(target) ? target : `https://${target}`;
+    const label = target.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+    return `${lead}<a href="${href}" style="color:inherit;text-decoration:underline">${label}</a>`;
+  });
+}
+/** Fußzeile aus Anschrift, Webseite und (falls hinterlegt) Terminlink zusammensetzen. */
+export const companyFooterText = (options: { footer?: string | null; website?: string | null; appointment?: string | null } = {}) => {
+  const address = (options.footer ?? COMPANY_FOOTER).trim();
+  const website = (options.website ?? COMPANY_WEBSITE).trim();
+  const appointment = (options.appointment ?? COMPANY_APPOINTMENT_URL).trim();
+  const line = [website, appointment].filter(Boolean).join(" · ");
+  return [address, line].filter(Boolean).join("\n");
+};
 /** Platzhalter für das Tanesco-Logo – wird beim Versand durch die öffentliche Adresse ersetzt (APP_URL + Pfad), in der Vorschau durch die eingebettete Datei. */
 export const TANESCO_LOGO_PATH = "/brand/tanesco-logo-mail.png";
-export const DEFAULT_DESIGN: EmailDesign = { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, Helvetica, Arial, sans-serif", logoUrl: TANESCO_LOGO_PATH, logoHeight: 40, footerText: "Tanesco Digital GmbH · Musterstraße 1 · 60311 Frankfurt am Main\nDu erhältst diese E-Mail, weil du dich für unser Angebot interessiert hast. {{abmelden}}", unsubscribeText: "Hier abmelden", buttonRadius: 10 };
+export const DEFAULT_DESIGN: EmailDesign = { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, Helvetica, Arial, sans-serif", logoUrl: TANESCO_LOGO_PATH, logoHeight: 40, footerText: `${companyFooterText()}\nDu erhältst diese E-Mail, weil du dich für unser Angebot interessiert hast. {{abmelden}}`, unsubscribeText: "Hier abmelden", buttonRadius: 10 };
 const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 /** Platzhalter: {{vorname}}, {{nachname}}, {{anrede}}, {{firma}}, {{stadt}}, {{abmelden}} … */
 export function fillPlaceholders(text: string, values: Record<string, string | null | undefined>) { return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => values[key] ?? values[key.toLowerCase()] ?? ""); }
@@ -33,7 +62,7 @@ export function renderEmailHtml(blocks: EmailBlock[], design: EmailDesign, value
     }
   }).join("");
   const logo = logoSrc ? `<div style="padding:0 0 18px;text-align:left"><img src="${escapeHtml(logoSrc)}" alt="Tanesco" height="${d.logoHeight ?? 40}" style="height:${d.logoHeight ?? 40}px;width:auto;display:block"></div>` : "";
-  const footer = d.footerText ? `<p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#6a7282;text-align:center">${escapeHtml(fillPlaceholders(d.footerText, { ...values, abmelden: "\u0000ABMELDEN\u0000" })).replace(/\n/g, "<br>").replace(/\u0000ABMELDEN\u0000/g, unsubscribeLink)}</p>` : "";
+  const footer = d.footerText ? `<p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#6a7282;text-align:center">${linkifyFooter(escapeHtml(fillPlaceholders(d.footerText, { ...values, abmelden: "\u0000ABMELDEN\u0000" })).replace(/\n/g, "<br>")).replace(/\u0000ABMELDEN\u0000/g, unsubscribeLink)}</p>` : "";
   const previewCss = options.preview ? `<style>a{pointer-events:none}</style>` : "";
   const pixel = options.trackingPixelUrl ? `<img src="${escapeHtml(options.trackingPixelUrl)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">` : "";
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title></title>${previewCss}</head><body style="margin:0;padding:0;background:${d.background};font-family:${d.font}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${d.background}"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%"><tr><td style="background:${d.cardBackground};border-radius:16px;padding:32px 30px;box-shadow:0 8px 30px rgba(0,0,0,.06)">${logo}${parts}</td></tr><tr><td>${footer}</td></tr></table>${pixel}</td></tr></table></body></html>`;

@@ -777,6 +777,25 @@ html:not(.dark) .insight-card svg { color: #4b5568 !important; }
 html:not(.dark) .insight-card.is-good svg { color: #4e846c !important; }
 html:not(.dark) .insight-card.is-warn svg { color: #8b7e4b !important; }
 html:not(.dark) .cat-strong { color: color-mix(in srgb,var(--cat) 48%,#0f172a) !important; }
+html:not(.dark) .send-window-days { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .send-window-day strong { color: #0f172a !important; }
+html:not(.dark) .inbox-sent-filters .inbox-search { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .inbox-sent-row { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .inbox-sent-main strong { color: #0f172a !important; }
+html:not(.dark) .inbox-sent-main small { color: #4b5568 !important; }
+html:not(.dark) .inbox-sent-meta time { color: #4b5568 !important; }
+html:not(.dark) .inbox-tag.is-kampagne { background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .inbox-tag.is-antwort { color: #5b8572 !important; }
+html:not(.dark) .inbox-tag.is-einzel { color: #0f172a !important; }
+html:not(.dark) .list-preview { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .list-preview-head strong { color: #0f172a !important; }
+html:not(.dark) .list-preview-head small { color: #4b5568 !important; }
+html:not(.dark) .list-preview-search { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .list-preview-scroll { border: 1px solid #e8ecf1 !important; }
+html:not(.dark) .list-preview-table th { background: #ffffff !important; color: #4b5568 !important; }
+html:not(.dark) .list-preview-table td { border-top: 1px solid #e8ecf1 !important; color: #0f172a !important; }
+html:not(.dark) .list-preview-note { color: #4b5568 !important; }
+html:not(.dark) .list-preview-note code { background: #f8fafb !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }

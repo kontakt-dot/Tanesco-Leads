@@ -8,13 +8,14 @@ import { parseColdList, STANDARD_PLACEHOLDERS, type ColumnTarget } from "../../.
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { DEFAULT_SEND_WINDOW, hasAbTest, newNodeId, SUPPRESSION_LABELS, SUPPRESSION_LISTS, TIMEZONES, validateTree, WEEKDAY_SHORT, type EmailNode, type EmailTree, type SendWindow, type SuppressionReason } from "../../../shared/email-campaigns";
+import { DEFAULT_SEND_WINDOW, hasAbTest, newNodeId, SUPPRESSION_LABELS, SUPPRESSION_LISTS, TIMEZONES, validateTree, WEEKDAY_SHORT, type EmailNode, type EmailTree, type SendDay, type SendWindow, type SuppressionReason } from "../../../shared/email-campaigns";
 import { DEFAULT_DESIGN, newBlockId, renderEmailHtml, starterBlocks, TANESCO_LOGO_PATH, type EmailBlock, type EmailDesign } from "../../../shared/email-design";
 const PLACEHOLDER_IMAGE = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#bc001d"/><stop offset="1" stop-color="#fb2c36"/></linearGradient></defs><rect width="1200" height="500" fill="url(#g)" rx="24"/><text x="600" y="270" font-family="Arial, Helvetica, sans-serif" font-size="44" fill="#ffffff" text-anchor="middle">Bild hier hochladen</text></svg>');
 import { PIPELINE_STAGES } from "../../../shared/sales-pipeline";
 import { Ban, Check, ChevronsUp, Clock3, Copy, Flag, GitBranch, GripVertical, Mail, MousePointerClick, Play, Plus, Send, Trash2, Eye, Upload, Reply, ShieldAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import InboxPanel from "@/components/InboxPanel";
+import ListPreview from "@/components/ListPreview";
 import { AiTemplatesPanel, EmailAiPanel, SeriesAiPanel } from "@/components/EmailAiPanel";
 import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -28,7 +29,33 @@ const statusLabel: Record<string, string> = { entwurf: "Entwurf", aktiv: "Aktiv"
 const recipientLabel: Record<string, string> = { wartet: "Wartet", laeuft: "Läuft", fertig: "Fertig", fehler: "Fehler", abgemeldet: "Abgemeldet", bounce: "Unzustellbar", beschwerde: "Beschwerde" };
 const eventLabel: Record<string, string> = { gesendet: "Gesendet", geoeffnet: "Geöffnet", geklickt: "Geklickt", gewartet: "Wartet", verzweigt: "Verzweigt", beendet: "Beendet", abgemeldet: "Abgemeldet", bounce: "Unzustellbar", beschwerde: "Beschwerde", fehler: "Fehler" };
 type StarterKind = "kaltakquise" | "angebot" | "aufwecken";
-const windowLabel = (window: SendWindow) => window.enabled ? `${window.weekdays.map((day) => WEEKDAY_SHORT[day]).join("/")} ${window.from}–${window.to}` : null;
+const windowLabel = (window: SendWindow) => { if (!window.enabled) return null; const days = window.weekdays.map((day) => WEEKDAY_SHORT[day]).join("/"); const abweichend = window.weekdays.filter((day) => window.days?.[String(day)]).map((day) => `${WEEKDAY_SHORT[day]} bis ${window.days![String(day)].to}`); return `${days} ${window.from}–${window.to}${abweichend.length ? ` (${abweichend.join(", ")})` : ""}`; };
+
+/**
+ * Abweichende Zeiten je Wochentag – z. B. freitags nur bis 13 Uhr.
+ * Ohne Eintrag gilt für einen Tag das allgemeine Von/Bis darüber; „zurücksetzen“ entfernt die Ausnahme wieder.
+ */
+function SendWindowDays({ window: value, onChange }: { window: SendWindow; onChange: (next: SendWindow) => void }) {
+  const active = [1, 2, 3, 4, 5, 6, 0].filter((day) => value.weekdays.includes(day));
+  if (!active.length) return null;
+  const setDay = (day: number, patch: Partial<SendDay> | null) => {
+    const days = { ...(value.days ?? {}) };
+    if (patch === null) delete days[String(day)];
+    else days[String(day)] = { from: patch.from ?? days[String(day)]?.from ?? value.from, to: patch.to ?? days[String(day)]?.to ?? value.to };
+    onChange({ ...value, days: Object.keys(days).length ? days : null });
+  };
+  return <div className="send-window-days">
+    <span className="eyebrow">ABWEICHENDE ZEITEN JE TAG</span>
+    <p className="mt-1 text-xs text-slate-500">Zum Beispiel freitags nur bis 13 Uhr. Tage ohne eigene Zeit senden von {value.from} bis {value.to}.</p>
+    <div className="mt-2 grid gap-2">{active.map((day) => { const own = value.days?.[String(day)] ?? null; return <div className="send-window-day" key={day}>
+      <strong>{WEEKDAY_SHORT[day]}</strong>
+      <Input type="time" aria-label={`${WEEKDAY_SHORT[day]} von`} value={own?.from ?? value.from} onChange={(event) => setDay(day, { from: event.target.value })} />
+      <span className="text-xs text-slate-500">bis</span>
+      <Input type="time" aria-label={`${WEEKDAY_SHORT[day]} bis`} value={own?.to ?? value.to} onChange={(event) => setDay(day, { to: event.target.value })} />
+      {own ? <button type="button" className="text-xs text-violet-200 hover:underline" onClick={() => setDay(day, null)}>zurücksetzen</button> : <span className="text-xs text-slate-600">wie allgemein</span>}
+    </div>; })}</div>
+  </div>;
+}
 
 export default function EmailCampaignsWorkspace() {
   const list = trpc.leadops.listEmailCampaigns.useQuery(undefined, { retry: false });
@@ -105,7 +132,7 @@ function CampaignEditor({ id, starter: starterKind, aiFirst = false, onClose }: 
   const starter = trpc.leadops.emailCampaignStarter.useQuery({ kind: starterKind }, { enabled: id === null, retry: false });
   const lists = trpc.leadops.listColdLists.useQuery(undefined, { retry: false }); const tags = trpc.leadops.listTags.useQuery(undefined, { retry: false }); const stageDefs = trpc.leadops.pipelineStages.useQuery(undefined, { retry: false });
   const [form, setForm] = useState<{ name: string; fromName: string; fromEmail: string; replyTo: string; audience: Audience; tree: EmailTree; design: EmailDesign; sendWindow: SendWindow; isTemplate: boolean; abSplit: number } | null>(null);
-  const [editingNode, setEditingNode] = useState<string | null>(null); const utils = trpc.useUtils();
+  const [editingNode, setEditingNode] = useState<string | null>(null); const [showList, setShowList] = useState(false); const utils = trpc.useUtils();
   // Builder öffnet immer oben (sonst bleibt die Seite dort stehen, wo im Ablauf geklickt wurde); zurück im Ablauf springt die Ansicht zur bearbeiteten E-Mail-Karte.
   const openBuilder = (nodeId: string) => { setEditingNode(nodeId); window.scrollTo({ top: 0, left: 0 }); };
   const closeBuilder = () => { const nodeId = editingNode; setEditingNode(null); window.setTimeout(() => { const card = nodeId ? document.getElementById(`tree-node-${nodeId}`) : null; if (card) card.scrollIntoView({ block: "center" }); else window.scrollTo({ top: 0, left: 0 }); }, 0); };
@@ -127,11 +154,12 @@ function CampaignEditor({ id, starter: starterKind, aiFirst = false, onClose }: 
         <section className="surface-panel operations-panel p-5"><span className="eyebrow">ZIELGRUPPE</span><p className="mt-1 text-xs text-slate-500">Wer die Serie bekommt – nur Kontakte mit E-Mail-Adresse.</p><div className="mt-3 dashboard-segments">{([["alle", "Alle"], ["liste", "Liste"], ["stufe", "Pipeline-Stufe"], ["tag", "Tag"]] as const).map(([key, label]) => <button key={key} type="button" className={form.audience.source === key ? "active" : ""} onClick={() => update({ audience: { source: key } })}>{label}</button>)}</div>
           {form.audience.source === "liste" && <select className="mt-3 h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100" value={form.audience.listName ?? ""} onChange={(event) => update({ audience: { source: "liste", listName: event.target.value || null } })}><option value="">Liste wählen</option>{(lists.data ?? []).map((list) => <option key={list.listName} value={list.listName}>{list.listName} ({list.withEmail} mit E-Mail)</option>)}</select>}
           {form.audience.source === "liste" && <ListUploadBox onImported={(listName) => { utils.leadops.listColdLists.invalidate(); utils.leadops.previewEmailAudience.invalidate(); update({ audience: { source: "liste", listName } }); }} />}
+          {form.audience.source === "liste" && form.audience.listName && <div className="mt-3"><button type="button" className="text-xs text-violet-200 hover:underline" onClick={() => setShowList((value) => !value)}>{showList ? "Liste ausblenden" : "Liste ansehen – wer bekommt die E-Mails?"}</button>{showList && <ListPreview listName={form.audience.listName} onClose={() => setShowList(false)} />}</div>}
           {form.audience.source === "stufe" && <select className="mt-3 h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100" value={form.audience.stage ?? ""} onChange={(event) => update({ audience: { source: "stufe", stage: event.target.value || null } })}><option value="">Stufe wählen</option>{(stageDefs.data ?? PIPELINE_STAGES).map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select>}
           {form.audience.source === "tag" && <select className="mt-3 h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100" value={form.audience.tagId ?? ""} onChange={(event) => update({ audience: { source: "tag", tagId: event.target.value ? Number(event.target.value) : null } })}><option value="">Tag wählen</option>{(tags.data ?? []).map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select>}
           <p className="mt-3 text-xs text-slate-300"><strong className="text-slate-100">{audienceDetails.data?.count ?? 0} Empfänger</strong>{audienceDetails.data?.sample.length ? ` · z. B. ${audienceDetails.data.sample.map((row) => row.name || row.email).join(", ")}` : ""} <span className="text-slate-500">· Sperrliste wird abgezogen</span></p></section>
         <section className="surface-panel operations-panel p-5"><div className="flex flex-wrap items-center justify-between gap-2"><span className="eyebrow">VERSANDFENSTER</span><label className="lead-action-check text-xs"><input type="checkbox" checked={form.sendWindow.enabled} onChange={(event) => update({ sendWindow: { ...form.sendWindow, enabled: event.target.checked } })} /> nur zu bestimmten Zeiten senden</label></div><p className="mt-1 text-xs text-slate-500">Standard: werktags zu Arbeitszeiten, 7:30–17:00 Uhr. Fällige E-Mails außerhalb warten bis zum nächsten Fenster.{form.sendWindow.enabled && (form.sendWindow.from !== DEFAULT_SEND_WINDOW.from || form.sendWindow.to !== DEFAULT_SEND_WINDOW.to || form.sendWindow.weekdays.join() !== DEFAULT_SEND_WINDOW.weekdays.join() || form.sendWindow.timezone !== DEFAULT_SEND_WINDOW.timezone) ? <> <button type="button" className="text-violet-200 hover:underline" onClick={() => update({ sendWindow: { ...DEFAULT_SEND_WINDOW } })}>Auf Standard zurücksetzen</button></> : null}</p>
-          {form.sendWindow.enabled && <div className="mt-3 grid gap-3"><div className="dashboard-segments">{[1, 2, 3, 4, 5, 6, 0].map((day) => <button key={day} type="button" className={form.sendWindow.weekdays.includes(day) ? "active" : ""} onClick={() => update({ sendWindow: { ...form.sendWindow, weekdays: form.sendWindow.weekdays.includes(day) ? form.sendWindow.weekdays.filter((item) => item !== day) : [...form.sendWindow.weekdays, day].sort() } })}>{WEEKDAY_SHORT[day]}</button>)}</div><div className="grid gap-2 md:grid-cols-3"><label className="lead-action-field">Von<Input type="time" value={form.sendWindow.from} onChange={(event) => update({ sendWindow: { ...form.sendWindow, from: event.target.value } })} /></label><label className="lead-action-field">Bis<Input type="time" value={form.sendWindow.to} onChange={(event) => update({ sendWindow: { ...form.sendWindow, to: event.target.value } })} /></label><label className="lead-action-field">Zeitzone<select className="lead-action-select" value={form.sendWindow.timezone} onChange={(event) => update({ sendWindow: { ...form.sendWindow, timezone: event.target.value } })}>{TIMEZONES.map((zone) => <option key={zone} value={zone}>{zone}</option>)}</select></label></div></div>}</section>
+          {form.sendWindow.enabled && <div className="mt-3 grid gap-3"><div className="dashboard-segments">{[1, 2, 3, 4, 5, 6, 0].map((day) => <button key={day} type="button" className={form.sendWindow.weekdays.includes(day) ? "active" : ""} onClick={() => update({ sendWindow: { ...form.sendWindow, weekdays: form.sendWindow.weekdays.includes(day) ? form.sendWindow.weekdays.filter((item) => item !== day) : [...form.sendWindow.weekdays, day].sort() } })}>{WEEKDAY_SHORT[day]}</button>)}</div><div className="grid gap-2 md:grid-cols-3"><label className="lead-action-field">Von<Input type="time" value={form.sendWindow.from} onChange={(event) => update({ sendWindow: { ...form.sendWindow, from: event.target.value } })} /></label><label className="lead-action-field">Bis<Input type="time" value={form.sendWindow.to} onChange={(event) => update({ sendWindow: { ...form.sendWindow, to: event.target.value } })} /></label><label className="lead-action-field">Zeitzone<select className="lead-action-select" value={form.sendWindow.timezone} onChange={(event) => update({ sendWindow: { ...form.sendWindow, timezone: event.target.value } })}>{TIMEZONES.map((zone) => <option key={zone} value={zone}>{zone}</option>)}</select></label></div><SendWindowDays window={form.sendWindow} onChange={(sendWindow) => update({ sendWindow })} /></div>}</section>
         <section className="surface-panel operations-panel p-5"><span className="eyebrow">A/B-TEST & VORLAGE</span><p className="mt-1 text-xs text-slate-500">Ein zweiter Betreff („Betreff B“ im Ablauf) macht aus der Kampagne einen A/B-Test: Empfänger werden aufgeteilt, die Öffnungsraten je Variante stehen in der Auswertung.</p>
           {hasAbTest(form.tree) ? <label className="lead-action-field mt-3">Anteil Variante B: {form.abSplit} %<input type="range" min={10} max={90} step={5} value={form.abSplit} onChange={(event) => update({ abSplit: Number(event.target.value) })} /></label> : <p className="mt-3 text-xs text-slate-500">Noch kein A/B-Test – im Ablauf bei einer E-Mail „Betreff B“ ausfüllen.</p>}
           <label className="lead-action-check mt-3"><input type="checkbox" checked={form.isTemplate} onChange={(event) => update({ isTemplate: event.target.checked })} /> Als Vorlage speichern (erscheint unter „Vorlagen“, wird nicht gestartet)</label></section>

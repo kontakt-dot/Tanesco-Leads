@@ -10,12 +10,24 @@ export type AbVariant = "A" | "B";
 export type RecipientStatus = "wartet" | "laeuft" | "fertig" | "fehler" | "abgemeldet" | "bounce" | "beschwerde";
 export type RecipientState = { nodeId: string | null; nextActionAt: Date | null; status: RecipientStatus; sentCount: number; openedAt: Date | null; clickedAt: Date | null; repliedAt: Date | null; lastSentAt: Date | null; variant?: AbVariant | null; clickedUrls?: string[] | null };
 export type StepEvent = { kind: "gesendet" | "gewartet" | "verzweigt" | "beendet" | "fehler"; nodeId: string; subject?: string; note: string };
-/** Versandfenster: nur an diesen Wochentagen (0 = Sonntag) zwischen von/bis (Ortszeit der Zeitzone) senden. */
-export type SendWindow = { enabled: boolean; weekdays: number[]; from: string; to: string; timezone: string };
-/** Standard für neue Kampagnen: werktags zu Arbeitszeiten 7:30–17:00 Uhr (Berlin). Fällige E-Mails außerhalb warten bis zum nächsten Fenster. */
-export const DEFAULT_SEND_WINDOW: SendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+/**
+ * Versandfenster: nur an diesen Wochentagen (0 = Sonntag) zwischen von/bis (Ortszeit der Zeitzone) senden.
+ * `days` sind Ausnahmen je Wochentag – z. B. freitags nur bis 13 Uhr. Was dort nicht steht, nutzt von/bis.
+ */
+export type SendDay = { from: string; to: string };
+export type SendWindow = { enabled: boolean; weekdays: number[]; from: string; to: string; timezone: string; days?: Record<string, SendDay> | null };
+/** Standard für neue Kampagnen: werktags 7:30–17:00 Uhr, freitags nur bis 13:00 Uhr (Berlin). Fällige E-Mails außerhalb warten bis zum nächsten Fenster. */
+export const DEFAULT_SEND_WINDOW: SendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } } };
 /** Gespeichertes Fenster einer Kampagne auflösen: fehlende Felder mit dem Standard füllen; ohne gespeichertes Fenster (ältere Kampagnen) bleibt der Versand rund um die Uhr. */
-export const resolveSendWindow = (stored: Partial<SendWindow> | null | undefined): SendWindow => stored ? { ...DEFAULT_SEND_WINDOW, ...stored } : { ...DEFAULT_SEND_WINDOW, enabled: false };
+export const resolveSendWindow = (stored: Partial<SendWindow> | null | undefined): SendWindow => stored ? { ...DEFAULT_SEND_WINDOW, ...stored, days: stored.days === undefined ? DEFAULT_SEND_WINDOW.days : stored.days } : { ...DEFAULT_SEND_WINDOW, enabled: false };
+/** Zeiten für einen Wochentag: Ausnahme aus `days`, sonst das allgemeine von/bis. `null`, wenn an dem Tag gar nicht gesendet wird. */
+export function windowForDay(window: SendWindow, weekday: number): SendDay | null {
+  const days = window.weekdays.length ? window.weekdays : [0, 1, 2, 3, 4, 5, 6];
+  if (!days.includes(weekday)) return null;
+  const exception = window.days?.[String(weekday)];
+  const from = exception?.from || window.from; const to = exception?.to || window.to;
+  return from && to && from < to ? { from, to } : null;
+}
 export const TIMEZONES = ["Europe/Berlin", "Europe/Vienna", "Europe/Zurich", "Europe/London", "Europe/Madrid", "Europe/Istanbul", "America/New_York", "America/Los_Angeles", "Asia/Dubai"];
 export const WEEKDAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 export const newNodeId = () => `n${Math.random().toString(36).slice(2, 8)}`;
@@ -65,12 +77,12 @@ const toMinutes = (time: string) => { const [hours, minutes] = time.split(":").m
 /** Darf jetzt gesendet werden? Sonst: nächster Zeitpunkt innerhalb des Fensters. */
 export function nextSendSlot(now: Date, window: SendWindow | null | undefined): Date | null {
   if (!window || !window.enabled) return null;
-  const days = window.weekdays.length ? window.weekdays : [0, 1, 2, 3, 4, 5, 6]; const from = toMinutes(window.from); const to = toMinutes(window.to);
-  const current = zonedParts(now, window.timezone);
-  if (days.includes(current.weekday) && current.minutes >= from && current.minutes < to) return null;
+  /** Liegt dieser Zeitpunkt im Fenster seines Wochentags? Jeder Tag kann eigene Zeiten haben (z. B. Freitag bis 13 Uhr). */
+  const inside = (date: Date) => { const parts = zonedParts(date, window.timezone); const day = windowForDay(window, parts.weekday); return day ? parts.minutes >= toMinutes(day.from) && parts.minutes < toMinutes(day.to) : false; };
+  if (inside(now)) return null;
   for (let step = 0; step < 8 * 24 * 4; step += 1) { // in Viertelstunden bis zu 8 Tage vorausschauen
-    const candidate = new Date(now.getTime() + step * 15 * 60_000); const parts = zonedParts(candidate, window.timezone);
-    if (days.includes(parts.weekday) && parts.minutes >= from && parts.minutes < to) return candidate;
+    const candidate = new Date(now.getTime() + step * 15 * 60_000);
+    if (inside(candidate)) return candidate;
   }
   return null;
 }

@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 
-type Filter = "alle" | "antworten" | "unbekannt" | "ungelesen" | "pruefen" | "archiv" | "gesperrt";
+type Filter = "alle" | "antworten" | "unbekannt" | "ungelesen" | "pruefen" | "gesendet" | "archiv" | "gesperrt";
 /** Sortierung der Liste: nach Zeit oder nach KI-Einordnung (dann gruppiert von Interesse bis Beschwerde – oder umgekehrt). */
 type InboxSort = "neu" | "alt" | "interesse" | "beschwerde";
 const SORT_KEY = "tanesco.inbox-sort";
@@ -23,6 +23,7 @@ const FOLDERS: Array<{ key: Filter; label: string; hint: string }> = [
   { key: "antworten", label: "Antworten", hint: "Antworten auf E-Mail-Kampagnen" },
   { key: "unbekannt", label: "Nicht zugeordnet", hint: "Absender, die noch keinem Lead in der Pipeline zugeordnet sind – mit „Als Lead in Pipeline“ zuordnen" },
   { key: "pruefen", label: "Prüfen", hint: "Die KI ist sich nicht sicher: möglicherweise eine Beschwerde oder ein Abmeldewunsch – bitte kurz ansehen" },
+  { key: "gesendet", label: "Gesendet", hint: "Alles, was wir verschickt haben: Kampagnen-Mails, Antworten aus dem Posteingang und Einzel-E-Mails" },
   { key: "archiv", label: "Archiv", hint: "Archivierte Nachrichten" },
   { key: "gesperrt", label: "Gesperrt", hint: "Nachrichten gesperrter Absender – die Adressen stehen auf der Sperrliste" },
 ];
@@ -74,7 +75,7 @@ export default function InboxPanel() {
   const range = useMemo(() => periodRange(period, now, { from: customFrom || null, to: customTo || null }), [period, customFrom, customTo, now]);
   const [aiFilter, setAiFilter] = useState<InboxAiFilter | null>(null);
   const [sort, setSortState] = useState<InboxSort>(loadSort); const setSort = (next: InboxSort) => { setSortState(next); try { window.localStorage.setItem(SORT_KEY, next); } catch { /* ignorieren */ } };
-  const inbox = trpc.leadops.listInbox.useQuery({ filter, campaignId, from: range.from, to: range.to, aiKind: aiFilter }, { retry: false });
+  const inbox = trpc.leadops.listInbox.useQuery({ filter: filter === "gesendet" ? "alle" : filter, campaignId, from: range.from, to: range.to, aiKind: aiFilter }, { retry: false, enabled: filter !== "gesendet" });
   const owners = trpc.leadops.pipelineOwners.useQuery(undefined, { retry: false }); const categories = trpc.leadops.listCategories.useQuery(undefined, { retry: false }); const stageDefs = trpc.leadops.pipelineStages.useQuery(undefined, { retry: false }); const stagesList = stageDefs.data ?? PIPELINE_STAGES;
   const utils = trpc.useUtils(); const refresh = () => { utils.leadops.listInbox.invalidate(); utils.leadops.pipelineOverview.invalidate(); utils.leadops.listEmailCampaigns.invalidate(); utils.leadops.listEmailSuppressions.invalidate(); };
   const block = trpc.leadops.blockInboxSender.useMutation({ onSuccess: (result) => { toast.success(`${result.email} gesperrt – steht auf der Sperrliste${result.stopped ? `, ${result.stopped} laufende Serie${result.stopped === 1 ? "" : "n"} gestoppt` : ""}. ${result.messages} Nachricht${result.messages === 1 ? "" : "en"} liegen unter „Gesperrt“.`, { duration: 6000 }); setSelectedId(null); refresh(); }, onError: (error) => toast.error(error.message) });
@@ -108,9 +109,12 @@ export default function InboxPanel() {
   const selectClass = "mt-1 h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100";
   const pipelineLink = (platform: string | null) => `/?page=Vertriebspipeline&quelle=${platform === "kaltakquise" ? "kaltakquise" : platform === "email" ? "email" : "ads"}`;
 
+  const folderNav = <nav className="inbox-folders" aria-label="Ordner">{FOLDERS.map((folder) => <button key={folder.key} type="button" className={filter === folder.key ? "active" : ""} title={folder.hint} aria-pressed={filter === folder.key} onClick={() => { setFilter(folder.key); setSelectedId(null); }}>{folder.label}{counts && folder.key !== "archiv" && folder.key !== "gesendet" && (counts as Record<string, number>)[folder.key] > 0 ? <span className="inbox-count">{(counts as Record<string, number>)[folder.key]}</span> : null}</button>)}</nav>;
+  if (filter === "gesendet") return <div className="inbox-shell"><div className="inbox-toolbar">{folderNav}</div><SentMessages /></div>;
+
   return <div className={`inbox-shell ${selected ? "has-selection" : ""}`}>
     <div className="inbox-toolbar">
-      <nav className="inbox-folders" aria-label="Ordner">{FOLDERS.map((folder) => <button key={folder.key} type="button" className={filter === folder.key ? "active" : ""} title={folder.hint} aria-pressed={filter === folder.key} onClick={() => { setFilter(folder.key); setSelectedId(null); }}>{folder.label}{counts && folder.key !== "archiv" && counts[folder.key] > 0 ? <span className="inbox-count">{counts[folder.key]}</span> : null}</button>)}</nav>
+      {folderNav}
       <div className="inbox-toolbar-tools">
         <label className="inbox-sort" title="Reihenfolge der Liste"><ArrowDownUp className="h-4 w-4" aria-hidden="true" /><select aria-label="Sortierung" value={sort} onChange={(event) => setSort(event.target.value as InboxSort)}><option value="neu">Neueste zuerst</option><option value="alt">Älteste zuerst</option><option value="interesse">Einordnung: Interesse zuerst</option><option value="beschwerde">Einordnung: Beschwerde zuerst</option></select></label>
         <label className="inbox-ai-filter" title="Nur Nachrichten mit einer bestimmten KI-Einordnung zeigen"><Sparkles className="h-4 w-4" aria-hidden="true" /><select aria-label="KI-Einordnung" value={aiFilter ?? ""} onChange={(event) => { setAiFilter((event.target.value || null) as InboxAiFilter | null); setSelectedId(null); }}><option value="">KI: alle Antworten</option>{INBOX_AI_FILTERS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
@@ -185,3 +189,40 @@ export default function InboxPanel() {
   </div>;
 }
 export const InboxIcon = Mail;
+
+/**
+ * Ordner „Gesendet“: alles, was wir per E-Mail herausgeschickt haben – Kampagnen-Mails aus den Serien,
+ * Antworten aus dem Posteingang und Einzel-E-Mails aus einer Karte. Filter: Art, Kampagne, Zeitraum, Suche.
+ */
+function SentMessages() {
+  const [kind, setKind] = useState<"alle" | "kampagne" | "antwort" | "einzel">("alle");
+  const [campaignId, setCampaignId] = useState<number | null>(null);
+  const [period, setPeriod] = useState<"alle" | "heute" | "7tage" | "30tage">("alle");
+  const [search, setSearch] = useState("");
+  const range = (() => { const now = new Date(); const start = (days: number) => new Date(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - days * 86_400_000); return period === "heute" ? { from: start(0) } : period === "7tage" ? { from: start(6) } : period === "30tage" ? { from: start(29) } : {}; })();
+  const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, campaignId, search: search.trim() || null, from: range.from ?? null }, { retry: false });
+  const items = sent.data?.items ?? [];
+  const label: Record<string, string> = { kampagne: "Kampagne", antwort: "Antwort", einzel: "Einzel-E-Mail" };
+  return <div className="inbox-sent">
+    <div className="inbox-sent-filters">
+      <div className="dashboard-segments">{([["alle", `Alle${sent.data ? ` (${sent.data.counts.alle})` : ""}`], ["kampagne", `Kampagnen${sent.data ? ` (${sent.data.counts.kampagne})` : ""}`], ["antwort", `Antworten${sent.data ? ` (${sent.data.counts.antwort})` : ""}`], ["einzel", `Einzeln${sent.data ? ` (${sent.data.counts.einzel})` : ""}`]] as const).map(([key, text]) => <button key={key} type="button" className={kind === key ? "active" : ""} onClick={() => setKind(key)}>{text}</button>)}</div>
+      <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kampagnen</option>{(sent.data?.campaigns ?? []).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}</select>
+      <select className="lead-action-select" aria-label="Zeitraum" value={period} onChange={(event) => setPeriod(event.target.value as typeof period)}><option value="alle">Gesamter Zeitraum</option><option value="heute">Heute</option><option value="7tage">Letzte 7 Tage</option><option value="30tage">Letzte 30 Tage</option></select>
+      <input className="inbox-search" placeholder="Suchen: Adresse, Betreff, Kampagne" value={search} onChange={(event) => setSearch(event.target.value)} />
+    </div>
+    {sent.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
+      : !items.length ? <p className="py-10 text-center text-sm text-slate-500">Noch nichts gesendet{search || campaignId || kind !== "alle" || period !== "alle" ? " – oder keine Treffer für diese Filter" : ""}.</p>
+      : <ul className="inbox-sent-list">{items.map((item) => <li key={item.id} className="inbox-sent-row">
+          <div className="inbox-sent-main">
+            <strong>{item.subject}</strong>
+            <small>an {item.name ? `${item.name} · ` : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{item.sender ? ` · von ${item.sender}` : ""}</small>
+            {item.kind !== "kampagne" && item.preview ? <p className="inbox-sent-preview">{item.preview}</p> : null}
+          </div>
+          <div className="inbox-sent-meta">
+            <i className={`inbox-tag is-${item.kind}`}>{label[item.kind] ?? item.kind}</i>
+            {item.status !== "gesendet" ? <i className="inbox-tag is-blocked">{item.status}</i> : null}
+            <time>{new Date(item.at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time>
+          </div>
+        </li>)}</ul>}
+  </div>;
+}

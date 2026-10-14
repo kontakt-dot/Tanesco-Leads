@@ -8,7 +8,7 @@
 import { extraFieldsOf } from "../shared/cold-list";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import crypto from "node:crypto";
-import { adInsights, leadCategories, leadStatusEvents, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
+import { adInsights, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
 import { entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, PIPELINE_STAGES, summarizeCampaigns, wonStage, type PipelineStage, type StageDef } from "../shared/sales-pipeline";
 import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
@@ -145,14 +145,22 @@ export async function syncInsights(db: Db, tenantId: number, options: { days?: n
 }
 
 /* ---------- Pipeline ---------- */
-export type PipelineOverviewOptions = { from?: Date; until?: Date; campaignId?: string | null; source?: "ads" | "kaltakquise" | "email" | "alle"; ownerUserId?: number | "ohne" | null; limitPerStage?: number };
+export type PipelineOverviewOptions = { from?: Date; until?: Date; campaignId?: string | null; source?: "ads" | "kaltakquise" | "email" | "alle"; ownerUserId?: number | "ohne" | null; tagId?: number | null; limitPerStage?: number };
 export async function pipelineOverview(db: Db, tenantId: number, options: PipelineOverviewOptions = {}) {
   const conditions = [eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")]; if (options.from) conditions.push(gte(leads.createdAt, options.from)); if (options.until) conditions.push(lte(leads.createdAt, options.until));
   const rows = await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, createdAt: leads.createdAt, pipelineStage: leads.pipelineStage, pipelineUpdatedAt: leads.pipelineUpdatedAt, adCampaignId: leads.adCampaignId, adCampaignName: leads.adCampaignName, adsetName: leads.adsetName, adName: leads.adName, adFormName: leads.adFormName, adPlatform: leads.adPlatform, categoryId: leads.categoryId, categoryName: leadCategories.name, categoryColor: leadCategories.color, categoryEmoji: leadCategories.emoji, categoryShortcode: leadCategories.shortcode, city: leads.city, postcode: leads.postcode, phone: leads.phone, email: leads.email, status: leads.status, ownerUserId: leads.ownerUserId, ownerName: users.name, company: leads.company, followUpAt: leads.followUpAt, appointmentAt: leads.appointmentAt, dealValue: leads.dealValue, metadata: leads.metadata }).from(leads).leftJoin(leadCategories, eq(leadCategories.id, leads.categoryId)).leftJoin(users, eq(users.id, leads.ownerUserId)).where(and(...conditions)).orderBy(desc(leads.createdAt));
   const source = options.source ?? "alle";
   const pipelineLeads = rows.filter((row) => row.adCampaignId || row.adPlatform || row.pipelineStage).filter((row) => source === "alle" ? true : source === "kaltakquise" ? row.adPlatform === "kaltakquise" : source === "email" ? row.adPlatform === "email" : row.adPlatform !== "kaltakquise" && row.adPlatform !== "email").map((row) => ({ ...row, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || row.publicId }));
   const byCampaign = options.campaignId ? pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === options.campaignId) : pipelineLeads;
-  const scoped = options.ownerUserId === "ohne" ? byCampaign.filter((lead) => !lead.ownerUserId) : options.ownerUserId ? byCampaign.filter((lead) => lead.ownerUserId === options.ownerUserId) : byCampaign;
+  const scopedByOwner = options.ownerUserId === "ohne" ? byCampaign.filter((lead) => !lead.ownerUserId) : options.ownerUserId ? byCampaign.filter((lead) => lead.ownerUserId === options.ownerUserId) : byCampaign;
+  // Tags der Karten: Chips zum Filtern (z. B. „PV“, „Hessen“) – die Liste zeigt alle Tags im aktuellen Ausschnitt mit Anzahl.
+  const tagRows = await db.select({ leadId: leadTagAssignments.leadId, id: tags.id, name: tags.name, color: tags.color }).from(leadTagAssignments).innerJoin(tags, eq(tags.id, leadTagAssignments.tagId)).where(eq(tags.tenantId, tenantId));
+  const tagsByLead = new Map<number, Array<{ id: number; name: string; color: string | null }>>();
+  for (const row of tagRows) { const list = tagsByLead.get(row.leadId) ?? []; list.push({ id: row.id, name: row.name, color: row.color }); tagsByLead.set(row.leadId, list); }
+  const tagCounts = new Map<number, { id: number; name: string; color: string | null; count: number }>();
+  for (const lead of scopedByOwner) for (const tag of tagsByLead.get(lead.id) ?? []) { const entry = tagCounts.get(tag.id) ?? { ...tag, count: 0 }; entry.count += 1; tagCounts.set(tag.id, entry); }
+  const tagList = Array.from(tagCounts.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "de"));
+  const scoped = options.tagId ? scopedByOwner.filter((lead) => (tagsByLead.get(lead.id) ?? []).some((tag) => tag.id === options.tagId)) : scopedByOwner;
   const insightConditions = [eq(adInsights.tenantId, tenantId)]; if (options.from) insightConditions.push(gte(adInsights.day, options.from.toISOString().slice(0, 10))); if (options.until) insightConditions.push(lte(adInsights.day, options.until.toISOString().slice(0, 10)));
   const insights = await db.select().from(adInsights).where(and(...insightConditions));
   const stagesDef = await pipelineStages(db, tenantId);
@@ -164,7 +172,7 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const totals = { leads: scoped.length, customers: scoped.filter((lead) => lead.pipelineStage === wonStage(stagesDef)).length, spend: (options.campaignId ? campaigns.filter((c) => c.campaignId === options.campaignId) : campaigns).reduce((sum, c) => sum + c.spend, 0) };
   const value = pipelineValueSummary(scoped.map((lead) => ({ pipelineStage: isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef), dealValue: lead.dealValue, ownerUserId: lead.ownerUserId, ownerName: lead.ownerName })), stagesDef);
   const staleCount = Array.from(extras.values()).filter((extra) => extra.stale).length; const dueToday = scoped.filter((lead) => lead.followUpAt && lead.followUpAt < new Date(new Date().setHours(24, 0, 0, 0))).length;
-  return { campaigns, stages, stageDefs: stagesDef, funnel: funnel(scoped, stagesDef), totals: { ...totals, costPerLead: totals.leads ? totals.spend / totals.leads : null, costPerCustomer: totals.customers ? totals.spend / totals.customers : null }, value, staleCount, staleDays: settings.staleDays, dueToday };
+  return { campaigns, stages, stageDefs: stagesDef, tags: tagList, funnel: funnel(scoped, stagesDef), totals: { ...totals, costPerLead: totals.leads ? totals.spend / totals.leads : null, costPerCustomer: totals.customers ? totals.spend / totals.customers : null }, value, staleCount, staleDays: settings.staleDays, dueToday };
 }
 export async function moveStage(db: Db, tenantId: number, input: { publicId: string; stage: PipelineStage; note?: string | null; actorUserId: number | null }) {
   const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, input.publicId))).limit(1))[0]; if (!lead) throw new Error("Lead nicht gefunden.");

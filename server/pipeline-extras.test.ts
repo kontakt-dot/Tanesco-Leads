@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildIcs, dueBucket, fillMessage, followUpDue, groupByDue, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, weekDays } from "../shared/pipeline-extras";
-import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, type EmailNode, type RecipientState } from "../shared/email-campaigns";
+import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
+import { companyFooterText, linkifyFooter } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
 import { PIPELINE_STAGES } from "../shared/sales-pipeline";
 
@@ -85,11 +86,13 @@ describe("E-Mail-Kampagnen: A/B-Test, Versandfenster, Link-Bedingung, Sperrliste
     const stats = summarizeCampaign([{ status: "fertig", sentCount: 1, openedAt: now, clickedAt: null, repliedAt: null, variant: "A" }, { status: "fertig", sentCount: 1, openedAt: null, clickedAt: null, repliedAt: null, variant: "B" }, { status: "bounce", sentCount: 1, openedAt: null, clickedAt: null, repliedAt: null, variant: "B" }]);
     expect(stats.abTest).toMatchObject({ winner: "A" }); expect(stats.abTest?.a.openRate).toBe(100); expect(stats.bounced).toBe(1); expect(stats.bounceRate).toBe(33);
   });
-  it("Standard-Versandfenster: werktags 7:30–17:00 Uhr Berlin, eingeschaltet; ältere Kampagnen ohne Fenster senden rund um die Uhr", () => {
-    expect(DEFAULT_SEND_WINDOW).toEqual({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" });
+  it("Standard-Versandfenster: werktags 7:30–17:00 Uhr Berlin, freitags nur bis 13:00; ältere Kampagnen ohne Fenster senden rund um die Uhr", () => {
+    expect(DEFAULT_SEND_WINDOW).toEqual({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } } });
     expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 5, 0)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-13T05:30:00.000Z"); // Dienstag 7:00 Berlin → 7:30
     expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 15, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-14T05:30:00.000Z"); // Dienstag 17:30 Berlin → Mittwoch 7:30
     expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 15, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-19T05:30:00.000Z"); // Freitag 17:30 → Montag 7:30
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 11, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-19T05:30:00.000Z"); // Freitag 13:30 Berlin → nach 13 Uhr zu, also Montag 7:30
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 9, 0)), DEFAULT_SEND_WINDOW)).toBeNull(); // Freitag 11:00 Berlin → noch im Fenster
     expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 8, 0)), DEFAULT_SEND_WINDOW)).toBeNull(); // Dienstag 10:00 Berlin → sofort
     expect(resolveSendWindow(null)).toMatchObject({ enabled: false, from: "07:30", to: "17:00" });
     expect(resolveSendWindow({ enabled: true, from: "09:00" })).toMatchObject({ enabled: true, from: "09:00", to: "17:00", weekdays: [1, 2, 3, 4, 5] });
@@ -118,5 +121,29 @@ describe("E-Mail-Kampagnen: A/B-Test, Versandfenster, Link-Bedingung, Sperrliste
   it("liefert eine Nachfass-Serie, die bei Antwort endet", () => {
     const tree = followUpTree({ first: starterBlocks("angebot"), second: starterBlocks("nachfassen") });
     expect(validateTree(tree)).toEqual([]); expect(tree.nodes.filter((node) => node.type === "send").length).toBe(2); expect(tree.nodes.find((node) => node.type === "condition")).toMatchObject({ check: "replied" });
+  });
+});
+
+describe("Versandfenster je Wochentag und Fußzeile", () => {
+  it("Freitag endet um 13 Uhr, die übrigen Werktage um 17 Uhr", () => {
+    const window = resolveSendWindow({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } } });
+    expect(windowForDay(window, 2)).toEqual({ from: "07:30", to: "17:00" }); // Dienstag: allgemein
+    expect(windowForDay(window, 5)).toEqual({ from: "07:30", to: "13:00" }); // Freitag: Ausnahme
+    expect(windowForDay(window, 6)).toBeNull(); // Samstag: gar nicht
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 9, 0)), window)).toBeNull(); // Freitag 11:00 Berlin → senden
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 11, 30)), window)?.toISOString()).toBe("2026-10-19T05:30:00.000Z"); // Freitag 13:30 → Montag
+  });
+  it("Eigene Zeiten lassen sich pro Tag entfernen – dann gilt wieder das allgemeine Fenster", () => {
+    const window = resolveSendWindow({ enabled: true, weekdays: [1, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin", days: null });
+    expect(windowForDay(window, 5)).toEqual({ from: "08:00", to: "18:00" });
+  });
+  it("Fußzeile: Anschrift, Webseite und Terminlink werden anklickbar", () => {
+    const text = companyFooterText({ website: "tanescodigital.de", appointment: "https://cal.com/tanesco" });
+    expect(text).toContain("Tanesco Digital GbR");
+    expect(text).toContain("tanescodigital.de · https://cal.com/tanesco");
+    const html = linkifyFooter("Tanesco Digital GbR · Schultheißweg 44 · 55252 Wiesbaden<br>tanescodigital.de · https://cal.com/tanesco");
+    expect(html).toContain('<a href="https://tanescodigital.de"');
+    expect(html).toContain('<a href="https://cal.com/tanesco"');
+    expect(html).toContain("Schultheißweg 44"); // Anschrift bleibt Text
   });
 });

@@ -456,6 +456,13 @@
       "when": 1791899269908,
       "tag": "0064_email_thread",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "5",
+      "when": 1791985669908,
+      "tag": "0065_upload_rules_footer",
+      "breakpoints": true
     }
   ]
 }
