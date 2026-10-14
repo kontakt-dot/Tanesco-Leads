@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildIcs, dueBucket, fillMessage, followUpDue, groupByDue, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, weekDays } from "../shared/pipeline-extras";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
-import { companyFooterText, linkifyFooter } from "../shared/email-design";
+import { companyFooterText, DEFAULT_DESIGN, linkifyFooter, renderEmailHtml } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
 import { PIPELINE_STAGES } from "../shared/sales-pipeline";
 
@@ -156,5 +156,31 @@ describe("Versandfenster je Wochentag und Fußzeile", () => {
     expect(linkifyFooter("Preise ab 5 [EUR] pro Lead")).toBe("Preise ab 5 [EUR] pro Lead"); // eckige Klammern ohne Adresse bleiben stehen
     expect(linkifyFooter("[Termin vereinbaren](https://)")).toBe("Termin vereinbaren"); // Adresse noch nicht eingetragen → nur Text, kein toter Link
     expect(linkifyFooter("[Rückruf](tel:+4969000000)")).toContain('href="tel:+4969000000"');
+  });
+});
+
+describe("Persönlicher Versand (weniger Werbung-Ordner)", () => {
+  const blocks = [
+    { type: "heading", text: "Kurze Frage" },
+    { type: "text", text: "Guten Tag {{nachname}}," },
+    { type: "button", text: "Testleads anfordern", url: "https://tanescodigital.de/test", align: "center" },
+  ] as never[];
+  const optionen = { trackingPixelUrl: "https://app.test/api/mail/o/abc.gif", wrapLink: (url: string) => `https://app.test/api/mail/c/abc?u=${encodeURIComponent(url)}`, unsubscribeUrl: "https://app.test/api/mail/u/abc", logoBase: "https://app.test" };
+
+  it("Normal: Logo, farbiger Knopf, Zählpixel und umgeschriebene Links", () => {
+    const html = renderEmailHtml(blocks, { ...DEFAULT_DESIGN }, { nachname: "Berg" }, optionen);
+    expect(html).toContain("tanesco-logo-mail.png");
+    expect(html).toContain("/api/mail/o/abc.gif"); // Zählpixel
+    expect(html).toContain("/api/mail/c/abc"); // Link läuft über uns
+    expect(html).toContain("border-radius"); // Knopf als Fläche
+  });
+  it("Persönlich: kein Logo, kein Pixel, Links direkt, Knopf als Textlink", () => {
+    const html = renderEmailHtml(blocks, { ...DEFAULT_DESIGN, plain: true }, { nachname: "Berg" }, optionen);
+    expect(html).not.toContain("tanesco-logo-mail.png");
+    expect(html).not.toContain("/api/mail/o/abc.gif");
+    expect(html).toContain("Testleads anfordern");
+    expect(html).not.toContain("box-shadow"); // kein Kasten
+    expect(html).toContain("/api/mail/u/abc"); // Abmelde-Link bleibt
+    expect(html).toContain("Guten Tag Berg,"); // Platzhalter werden weiter gefüllt
   });
 });

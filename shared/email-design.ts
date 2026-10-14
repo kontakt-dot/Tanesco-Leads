@@ -8,7 +8,11 @@ export type EmailBlock =
   | { id: string; type: "spacer"; height?: number }
   | { id: string; type: "bullets"; items: string[] }
   | { id: string; type: "signature"; name: string; role?: string; phone?: string };
-export type EmailDesign = { primaryColor: string; textColor: string; background: string; cardBackground: string; font: string; logoUrl?: string | null; logoHeight?: number; footerText?: string; unsubscribeText?: string; buttonRadius?: number };
+/**
+ * `plain` = persönlicher Versand: ohne Logo, ohne Kasten, ohne farbigen Knopf und ohne Messung.
+ * Solche E-Mails sehen aus wie von Hand geschrieben und landen bei Gmail viel seltener im Reiter „Werbung“.
+ */
+export type EmailDesign = { primaryColor: string; textColor: string; background: string; cardBackground: string; font: string; logoUrl?: string | null; logoHeight?: number; footerText?: string; unsubscribeText?: string; buttonRadius?: number; plain?: boolean };
 /**
  * Anbieterzeile für alle ausgehenden Nachrichten – Fußzeile im E-Mail-Builder, Signaturen, Willkommens- und
  * Systemmails. An einer Stelle gepflegt, damit eine Änderung überall gilt.
@@ -61,21 +65,24 @@ export function renderEmailHtml(blocks: EmailBlock[], design: EmailDesign, value
   const unsubscribeLink = options.unsubscribeUrl ? `<a href="${escapeHtml(options.unsubscribeUrl)}" style="color:#6a7282;text-decoration:underline">${escapeHtml(d.unsubscribeText || "Hier abmelden")}</a>` : `<span style="text-decoration:underline">${escapeHtml(d.unsubscribeText || "Hier abmelden")}</span>`;
   const parts = blocks.map((block) => {
     switch (block.type) {
-      case "heading": return `<h1 style="margin:0 0 14px;font-size:24px;line-height:1.3;font-weight:800;color:${d.textColor};text-align:${block.align ?? "left"}">${fill(block.text)}</h1>`;
+      case "heading": return d.plain ? `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;font-weight:600;color:${d.textColor}">${fill(block.text)}</p>` : `<h1 style="margin:0 0 14px;font-size:24px;line-height:1.3;font-weight:800;color:${d.textColor};text-align:${block.align ?? "left"}">${fill(block.text)}</h1>`;
       case "text": return `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:${d.textColor};text-align:${block.align ?? "left"}">${fill(block.text)}</p>`;
       case "image": return `<div style="margin:0 0 16px;text-align:center">${block.link ? `<a href="${escapeHtml(link(block.link))}">` : ""}<img src="${escapeHtml(block.url)}" alt="${escapeHtml(block.alt ?? "")}" width="${block.width ?? 560}" style="max-width:100%;height:auto;border-radius:10px;display:inline-block">${block.link ? "</a>" : ""}</div>`;
-      case "button": return `<div style="margin:6px 0 18px;text-align:${block.align ?? "center"}"><a href="${escapeHtml(link(fillPlaceholders(block.url, values)))}" style="display:inline-block;padding:13px 26px;border-radius:${d.buttonRadius ?? 10}px;background:${d.primaryColor};color:#ffffff;font-weight:700;font-size:15px;text-decoration:none">${fill(block.text)}</a></div>`;
+      case "button": return d.plain
+        ? `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:${d.textColor}"><a href="${escapeHtml(link(fillPlaceholders(block.url, values)))}" style="color:${d.textColor};text-decoration:underline">${fill(block.text)}</a></p>`
+        : `<div style="margin:6px 0 18px;text-align:${block.align ?? "center"}"><a href="${escapeHtml(link(fillPlaceholders(block.url, values)))}" style="display:inline-block;padding:13px 26px;border-radius:${d.buttonRadius ?? 10}px;background:${d.primaryColor};color:#ffffff;font-weight:700;font-size:15px;text-decoration:none">${fill(block.text)}</a></div>`;
       case "divider": return `<hr style="border:0;border-top:1px solid #e5e7eb;margin:16px 0">`;
       case "spacer": return `<div style="height:${block.height ?? 16}px"></div>`;
       case "bullets": return `<ul style="margin:0 0 14px;padding-left:20px;color:${d.textColor};font-size:15px;line-height:1.6">${block.items.map((item) => `<li>${fill(item)}</li>`).join("")}</ul>`;
-      case "signature": return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px 0 0"><tr><td style="border-left:3px solid ${d.primaryColor};padding-left:12px"><strong style="color:${d.textColor};font-size:15px">${fill(block.name)}</strong>${block.role ? `<br><span style="color:#6a7282;font-size:13px">${fill(block.role)}</span>` : ""}${block.phone ? `<br><span style="color:#6a7282;font-size:13px">${escapeHtml(block.phone)}</span>` : ""}</td></tr></table>`;
+      case "signature": return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px 0 0"><tr><td style="${d.plain ? "" : `border-left:3px solid ${d.primaryColor};padding-left:12px`}"><strong style="color:${d.textColor};font-size:15px">${fill(block.name)}</strong>${block.role ? `<br><span style="color:#6a7282;font-size:13px">${fill(block.role)}</span>` : ""}${block.phone ? `<br><span style="color:#6a7282;font-size:13px">${escapeHtml(block.phone)}</span>` : ""}</td></tr></table>`;
       default: return "";
     }
   }).join("");
-  const logo = logoSrc ? `<div style="padding:0 0 18px;text-align:left"><img src="${escapeHtml(logoSrc)}" alt="Tanesco" height="${d.logoHeight ?? 40}" style="height:${d.logoHeight ?? 40}px;width:auto;display:block"></div>` : "";
-  const footer = d.footerText ? `<p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#6a7282;text-align:center">${linkifyFooter(escapeHtml(fillPlaceholders(d.footerText, { ...values, abmelden: "\u0000ABMELDEN\u0000" })).replace(/\n/g, "<br>")).replace(/\u0000ABMELDEN\u0000/g, unsubscribeLink)}</p>` : "";
+  const logo = logoSrc && !d.plain ? `<div style="padding:0 0 18px;text-align:left"><img src="${escapeHtml(logoSrc)}" alt="Tanesco" height="${d.logoHeight ?? 40}" style="height:${d.logoHeight ?? 40}px;width:auto;display:block"></div>` : "";
+  const footer = d.footerText ? `<p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#6a7282;text-align:${d.plain ? "left" : "center"}">${linkifyFooter(escapeHtml(fillPlaceholders(d.footerText, { ...values, abmelden: "\u0000ABMELDEN\u0000" })).replace(/\n/g, "<br>")).replace(/\u0000ABMELDEN\u0000/g, unsubscribeLink)}</p>` : "";
   const previewCss = options.preview ? `<style>a{pointer-events:none}</style>` : "";
-  const pixel = options.trackingPixelUrl ? `<img src="${escapeHtml(options.trackingPixelUrl)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">` : "";
+  const pixel = options.trackingPixelUrl && !d.plain ? `<img src="${escapeHtml(options.trackingPixelUrl)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">` : "";
+  if (d.plain) return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title></title>${previewCss}</head><body style="margin:0;padding:0;background:#ffffff;font-family:${d.font};font-size:15px;line-height:1.6;color:${d.textColor}"><div style="max-width:600px;margin:0 auto;padding:18px 16px">${parts}${footer}</div></body></html>`;
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title></title>${previewCss}</head><body style="margin:0;padding:0;background:${d.background};font-family:${d.font}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${d.background}"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%"><tr><td style="background:${d.cardBackground};border-radius:16px;padding:32px 30px;box-shadow:0 8px 30px rgba(0,0,0,.06)">${logo}${parts}</td></tr><tr><td>${footer}</td></tr></table>${pixel}</td></tr></table></body></html>`;
 }
 export function renderEmailText(blocks: EmailBlock[], values: Record<string, string | null | undefined> = {}) {
