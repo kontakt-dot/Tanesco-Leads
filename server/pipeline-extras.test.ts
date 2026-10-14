@@ -146,4 +146,15 @@ describe("Versandfenster je Wochentag und Fußzeile", () => {
     expect(html).toContain('<a href="https://cal.com/tanesco"');
     expect(html).toContain("Schultheißweg 44"); // Anschrift bleibt Text
   });
+  it("Fußzeile: Links mit eigenem Text, E-Mail- und Telefonlinks", () => {
+    const mitText = linkifyFooter("[Termin vereinbaren](https://cal.com/tanesco) · [Schreib uns](mailto:kontakt@tanescodigital.de)");
+    expect(mitText).toContain('<a href="https://cal.com/tanesco"');
+    expect(mitText).toContain(">Termin vereinbaren</a>");
+    expect(mitText).toContain('<a href="mailto:kontakt@tanescodigital.de"');
+    expect(mitText).not.toContain("[Termin"); // Klammern verschwinden
+    expect(linkifyFooter("[Webseite](tanescodigital.de)")).toContain('href="https://tanescodigital.de"'); // ohne https:// davor
+    expect(linkifyFooter("Preise ab 5 [EUR] pro Lead")).toBe("Preise ab 5 [EUR] pro Lead"); // eckige Klammern ohne Adresse bleiben stehen
+    expect(linkifyFooter("[Termin vereinbaren](https://)")).toBe("Termin vereinbaren"); // Adresse noch nicht eingetragen → nur Text, kein toter Link
+    expect(linkifyFooter("[Rückruf](tel:+4969000000)")).toContain('href="tel:+4969000000"');
+  });
 });

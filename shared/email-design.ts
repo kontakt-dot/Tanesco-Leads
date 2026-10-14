@@ -18,11 +18,22 @@ export const COMPANY_FOOTER = "Tanesco Digital GbR · Schultheißweg 44 · 55252
 export const COMPANY_WEBSITE = "https://tanescodigital.de";
 export const COMPANY_APPOINTMENT_URL = "";
 /**
- * Adressen in der Fußzeile anklickbar machen: „https://…“ ebenso wie „tanescodigital.de“.
+ * Links in der Fußzeile. Zwei Schreibweisen:
+ *  • eigener Text: [Termin vereinbaren](https://cal.com/tanesco) – der Text steht da, dahinter liegt die Adresse
+ *  • blanke Adresse: „https://…“ oder „tanescodigital.de“ wird von selbst anklickbar
  * Läuft auf bereits maskiertem HTML, erzeugt also nur die Links und nichts anderes.
  */
 export function linkifyFooter(html: string) {
-  return html.replace(/(https?:\/\/[^\s<>"]+|(?:^|[\s>·])((?:[a-z0-9-]+\.)+(?:de|com|net|org|eu|at|ch|io))(?=$|[\s<·,]))/gi, (match, _all, bare) => {
+  // Zuerst die Schreibweise mit eigenem Text, damit die Adresse darin nicht noch einmal verlinkt wird.
+  const withLabels = html.replace(/\[([^\]\n]{1,80})\]\(\s*((?:https?:\/\/|mailto:|tel:)?[^\s)]{3,300})\s*\)/g, (_match, label: string, url: string) => {
+    const clean = url.replace(/&amp;/g, "&").trim();
+    const href = /^(https?:\/\/|mailto:|tel:)/i.test(clean) ? clean : `https://${clean}`;
+    // Noch keine Adresse eingetragen (z. B. „https://“ aus dem Einfügen-Knopf): nur den Text zeigen, keinen toten Link bauen.
+    const rest = href.replace(/^(https?:\/\/|mailto:|tel:)/i, "").trim();
+    if (!rest || (/^https?:/i.test(href) && !rest.includes("."))) return label;
+    return `<a href="${href.replace(/"/g, "&quot;")}" style="color:inherit;text-decoration:underline">${label}</a>`;
+  });
+  return withLabels.replace(/(https?:\/\/[^\s<>"]+|(?:^|[\s>·])((?:[a-z0-9-]+\.)+(?:de|com|net|org|eu|at|ch|io))(?=$|[\s<·,]))/gi, (match, _all, bare) => {
     const lead = bare && !match.startsWith(bare) ? match.slice(0, match.indexOf(bare)) : "";
     const target = (bare ?? match).trim(); if (!target) return match;
     const href = /^https?:\/\//i.test(target) ? target : `https://${target}`;

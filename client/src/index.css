@@ -1457,3 +1457,9 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .list-preview-table td{padding:7px 10px;border-top:1px solid rgba(255,255,255,.05);color:#cbd5e1;white-space:nowrap}
 .list-preview-note{margin:8px 0 0;font-size:11px;color:#94a3b8}
 .list-preview-note code{margin-right:6px;padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.07)}
+
+.footer-link-help{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:#94a3b8}
+.footer-link-help button{padding:3px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#cbd5e1;font-size:11px}
+.footer-link-help button:hover{border-color:rgba(129,120,255,.5);color:#e2e8f0}
+.footer-link-note{margin:6px 0 0;font-size:11px;line-height:1.5;color:#64748b}
+.footer-link-note code{padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.07);color:#cbd5e1}
