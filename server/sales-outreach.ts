@@ -4,7 +4,7 @@
  */
 import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import crypto from "node:crypto";
-import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, type EmailCampaign } from "../drizzle/schema";
+import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, recipientValues, renderNode, starterTree, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
@@ -288,4 +288,71 @@ export async function deleteColdList(db: Db, tenantId: number, input: { listName
   const tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0];
   if (tag) { const used = (await db.select({ leadId: leadTagAssignments.leadId }).from(leadTagAssignments).where(eq(leadTagAssignments.tagId, tag.id)).limit(1))[0]; if (!used) await db.delete(tags).where(eq(tags.id, tag.id)); }
   return { deleted: remove.length, keptCustomers: keep.length, listName };
+}
+
+/* ---------- Kontakte der E-Mail-Akquise ---------- */
+export type EmailLeadActivity = "gesendet" | "geoeffnet" | "geklickt" | "geantwortet" | "abgemeldet" | "bounce" | "ohne";
+/**
+ * Eigene Lead-Übersicht für die E-Mail-Akquise: je Kontakt eine Zeile mit Herkunft (Liste), Anlage-Datum,
+ * Stufe und Vertriebler, den Kampagnen, in denen er steckt, und dem, was zuletzt passiert ist
+ * (gesendet, geöffnet, geklickt, geantwortet, abgemeldet, Bounce). Mit Suche und Filtern wie auf der Leads-Seite.
+ */
+export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivity | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number } = {}) {
+  const limit = Math.min(1000, Math.max(10, options.limit ?? 200));
+  const rows = await db.select({
+    id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company,
+    email: leads.email, phone: leads.phone, city: leads.city, listName: leads.listName, stage: leads.pipelineStage,
+    createdAt: leads.createdAt, ownerUserId: leads.ownerUserId, ownerName: users.name, metadata: leads.metadata,
+  }).from(leads).leftJoin(users, eq(users.id, leads.ownerUserId)).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
+
+  const recipients = await db.select({
+    leadId: emailCampaignRecipients.leadId, email: emailCampaignRecipients.email, campaignId: emailCampaignRecipients.campaignId, campaignName: emailCampaigns.name,
+    status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, lastSentAt: emailCampaignRecipients.lastSentAt,
+    openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, bouncedAt: emailCampaignRecipients.bouncedAt,
+  }).from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(eq(emailCampaignRecipients.tenantId, tenantId));
+
+  const byLead = new Map<string, typeof recipients>();
+  for (const row of recipients) { const key = row.leadId ? `id:${row.leadId}` : `mail:${row.email.toLowerCase()}`; const list = byLead.get(key) ?? []; list.push(row); byLead.set(key, list); }
+
+  /** Was ist zuletzt passiert? Die stärkste Reaktion gewinnt: geantwortet vor geklickt vor geöffnet vor gesendet. */
+  const activityOf = (entries: typeof recipients): { activity: EmailLeadActivity; at: Date | null } => {
+    if (!entries.length) return { activity: "ohne", at: null };
+    if (entries.some((item) => item.status === "bounce")) return { activity: "bounce", at: entries.find((item) => item.bouncedAt)?.bouncedAt ?? null };
+    if (entries.some((item) => item.status === "abgemeldet")) return { activity: "abgemeldet", at: null };
+    const pick = (key: "repliedAt" | "clickedAt" | "openedAt" | "lastSentAt") => entries.map((item) => item[key]).filter(Boolean).sort((a, b) => new Date(b as Date).getTime() - new Date(a as Date).getTime())[0] ?? null;
+    const replied = pick("repliedAt"); if (replied) return { activity: "geantwortet", at: replied as Date };
+    const clicked = pick("clickedAt"); if (clicked) return { activity: "geklickt", at: clicked as Date };
+    const opened = pick("openedAt"); if (opened) return { activity: "geoeffnet", at: opened as Date };
+    const sent = pick("lastSentAt"); if (sent) return { activity: "gesendet", at: sent as Date };
+    return { activity: "ohne", at: null };
+  };
+
+  // Nur Kontakte mit E-Mail-Adresse – ohne die gibt es in der E-Mail-Akquise nichts zu sehen.
+  const items = rows.filter((lead) => Boolean(lead.email)).map((lead) => {
+    const entries = byLead.get(`id:${lead.id}`) ?? (lead.email ? byLead.get(`mail:${lead.email.toLowerCase()}`) ?? [] : []);
+    const { activity, at } = activityOf(entries);
+    const campaigns = Array.from(new Map(entries.map((item) => [item.campaignId, { id: item.campaignId, name: item.campaignName }])).values());
+    const { metadata, ...rest } = lead;
+    return { ...rest, felder: extraFieldsOf(metadata), campaigns, activity, activityAt: at, mails: entries.reduce((sum, item) => sum + (item.sentCount ?? 0), 0) };
+  });
+
+  const search = (options.search ?? "").trim().toLowerCase();
+  const filtered = items.filter((item) => {
+    if (options.listName && item.listName !== options.listName) return false;
+    if (options.campaignId && !item.campaigns.some((campaign) => campaign.id === options.campaignId)) return false;
+    if (options.activity && item.activity !== options.activity) return false;
+    if (options.stage && item.stage !== options.stage) return false;
+    if (options.ownerUserId === "ohne" && item.ownerUserId) return false;
+    if (typeof options.ownerUserId === "number" && item.ownerUserId !== options.ownerUserId) return false;
+    if (search && !`${item.firstName ?? ""} ${item.lastName ?? ""} ${item.company ?? ""} ${item.email ?? ""} ${item.phone ?? ""} ${item.city ?? ""} ${item.listName ?? ""}`.toLowerCase().includes(search)) return false;
+    return true;
+  });
+  const counts = { alle: items.length } as Record<string, number>;
+  for (const key of ["gesendet", "geoeffnet", "geklickt", "geantwortet", "abgemeldet", "bounce", "ohne"] as EmailLeadActivity[]) counts[key] = items.filter((item) => item.activity === key).length;
+  const lists = Array.from(new Set(items.map((item) => item.listName).filter((name): name is string => Boolean(name)))).sort((a, b) => a.localeCompare(b, "de"));
+  const campaigns = Array.from(new Map(items.flatMap((item) => item.campaigns).map((campaign) => [campaign.id, campaign] as const)).values()).sort((a, b) => a.name.localeCompare(b.name, "de"));
+  // Oben steht, was gerade zählt: zuerst die mit Reaktion (stärkste zuerst), danach der Rest nach Anlage-Datum.
+  const rang: Record<EmailLeadActivity, number> = { geantwortet: 6, geklickt: 5, geoeffnet: 4, gesendet: 3, bounce: 2, abgemeldet: 1, ohne: 0 };
+  const sortiert = filtered.sort((a, b) => rang[b.activity] - rang[a.activity] || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime());
+  return { items: sortiert.slice(0, limit), total: filtered.length, counts, lists, campaigns };
 }

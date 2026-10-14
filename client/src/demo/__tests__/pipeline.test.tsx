@@ -1080,3 +1080,29 @@ describe("Listen löschen (Chat-Build)", () => {
     await expect(call("leadops.deleteColdList", { listName: "Gibt es nicht" })).rejects.toThrow();
   });
 });
+
+describe("Kontakte der E-Mail-Akquise (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Zeigt je Kontakt Herkunft, Kampagne und die letzte Reaktion", async () => {
+    const daten = await call("leadops.emailLeads", {});
+    expect(daten.items.length).toBeGreaterThan(0);
+    expect(daten.counts.alle).toBe(daten.items.length <= 200 ? daten.total : daten.counts.alle);
+    const mitKampagne = daten.items.find((item: { campaigns: unknown[] }) => item.campaigns.length > 0);
+    expect(mitKampagne).toBeTruthy();
+    expect(["gesendet", "geoeffnet", "geklickt", "geantwortet", "abgemeldet", "bounce", "ohne"]).toContain(mitKampagne.activity);
+    expect(daten.lists.length).toBeGreaterThan(0);
+    expect(daten.campaigns.length).toBeGreaterThan(0);
+  });
+  it("Filter nach Kampagne, Liste und Reaktion grenzen ein", async () => {
+    const alle = await call("leadops.emailLeads", {});
+    const kampagne = alle.campaigns[0];
+    const nurKampagne = await call("leadops.emailLeads", { campaignId: kampagne.id });
+    expect(nurKampagne.items.every((item: { campaigns: Array<{ id: number }> }) => item.campaigns.some((c) => c.id === kampagne.id))).toBe(true);
+    const liste = alle.lists[0];
+    const nurListe = await call("leadops.emailLeads", { listName: liste });
+    expect(nurListe.items.every((item: { listName: string }) => item.listName === liste)).toBe(true);
+    const ohneTreffer = await call("leadops.emailLeads", { search: "gibtesnicht-xyz" });
+    expect(ohneTreffer.items).toHaveLength(0);
+  });
+});

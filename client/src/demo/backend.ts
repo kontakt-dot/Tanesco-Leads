@@ -933,6 +933,50 @@ const procedures: Record<string, Handler> = {
   "leadops.markEmailBounced": (input) => { const recipient = input.recipientId ? T().emailCampaignRecipients.find((row) => row.id === input.recipientId) : input.email ? T().emailCampaignRecipients.filter((row) => row.email === String(input.email).toLowerCase()).sort(byDesc("createdAt"))[0] : undefined; const email = recipient?.email ?? (input.email ? String(input.email).toLowerCase() : null); if (!email) fail("Empfänger nicht gefunden."); const campaignName = recipient ? T().emailCampaigns.find((row) => row.id === recipient.campaignId)?.name ?? null : null; const result = demoAddSuppression({ email, reason: input.kind, note: input.note ?? (input.kind === "bounce" ? "Unzustellbar gemeldet" : "Spam-Beschwerde gemeldet"), source: campaignName ? `Kampagne „${campaignName}“` : "Mail-Anbieter (Webhook)" }); if (recipient) { update(store, "emailCampaignRecipients", (row) => row.id === recipient.id, { status: input.kind, nextActionAt: null, bouncedAt: new Date(), lastError: input.note ?? null }); insert(store, "emailCampaignEvents", { tenantId: tenant().id, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: input.kind, subject: null, note: input.kind === "bounce" ? "Unzustellbar – Adresse gesperrt" : "Beschwerde – Adresse gesperrt", createdAt: new Date() }); } return { email, stopped: result.stopped + (recipient ? 1 : 0) }; },
   "leadops.emailSendNodes": () => [...T().emailCampaigns].sort((a, b) => Number(Boolean(b.isTemplate)) - Number(Boolean(a.isTemplate)) || byDesc("updatedAt")(a, b)).flatMap((row) => ((row.tree?.nodes ?? []) as Array<{ id: string; type: string; label?: string; subject: string }>).filter((node) => node.type === "send").map((node) => ({ campaignId: row.id, campaignName: row.name, isTemplate: Boolean(row.isTemplate), nodeId: node.id, label: node.label ?? node.subject, subject: node.subject }))),
   "leadops.deleteEmailCampaign": (input) => { remove(store, "emailCampaignEvents", (row) => row.campaignId === input.id); remove(store, "emailCampaignRecipients", (row) => row.campaignId === input.id); remove(store, "emailCampaigns", (row) => row.id === input.id); return { success: true }; },
+  "leadops.emailLeads": (input) => {
+    // Spiegel von emailLeads: je Kontakt Herkunft, Kampagnen und die letzte Reaktion.
+    type Empfaenger = { leadId?: number | null; email?: string | null; campaignId: number; campaignName: string; status?: string; sentCount?: number; lastSentAt?: Date | null; openedAt?: Date | null; clickedAt?: Date | null; repliedAt?: Date | null; bouncedAt?: Date | null };
+    const recipients: Empfaenger[] = T().emailCampaignRecipients.map((row) => ({ ...(row as unknown as Empfaenger), campaignName: String(T().emailCampaigns.find((item) => item.id === (row as unknown as Empfaenger).campaignId)?.name ?? "") }));
+    const byLead = new Map<string, Empfaenger[]>();
+    for (const row of recipients) { const key = row.leadId ? `id:${row.leadId}` : `mail:${String(row.email ?? "").toLowerCase()}`; const list = byLead.get(key) ?? []; list.push(row); byLead.set(key, list); }
+    const activityOf = (entries: Empfaenger[]) => {
+      if (!entries.length) return { activity: "ohne" as const, at: null as Date | null };
+      if (entries.some((item) => item.status === "bounce")) return { activity: "bounce" as const, at: entries.find((item) => item.bouncedAt)?.bouncedAt ?? null };
+      if (entries.some((item) => item.status === "abgemeldet")) return { activity: "abgemeldet" as const, at: null };
+      const pick = (key: "repliedAt" | "clickedAt" | "openedAt" | "lastSentAt") => entries.map((item) => item[key]).filter(Boolean).sort((a, b) => new Date(b as Date).getTime() - new Date(a as Date).getTime())[0] ?? null;
+      const replied = pick("repliedAt"); if (replied) return { activity: "geantwortet" as const, at: replied as Date };
+      const clicked = pick("clickedAt"); if (clicked) return { activity: "geklickt" as const, at: clicked as Date };
+      const opened = pick("openedAt"); if (opened) return { activity: "geoeffnet" as const, at: opened as Date };
+      const sent = pick("lastSentAt"); if (sent) return { activity: "gesendet" as const, at: sent as Date };
+      return { activity: "ohne" as const, at: null };
+    };
+    const items = T().leads.filter((lead) => lead.kind === "vertrieb" && Boolean(lead.email)).map((lead) => {
+      const entries = byLead.get(`id:${lead.id}`) ?? (lead.email ? byLead.get(`mail:${String(lead.email).toLowerCase()}`) ?? [] : []);
+      const { activity, at } = activityOf(entries);
+      const campaigns = Array.from(new Map(entries.map((item) => [item.campaignId, { id: item.campaignId, name: item.campaignName }] as const)).values());
+      return { id: lead.id, publicId: lead.publicId, firstName: lead.firstName, lastName: lead.lastName, company: lead.company, email: lead.email, phone: lead.phone, city: lead.city, listName: lead.listName, stage: lead.pipelineStage, createdAt: lead.createdAt, ownerUserId: lead.ownerUserId ?? null, ownerName: T().users.find((user) => user.id === lead.ownerUserId)?.name ?? null, felder: extraFieldsOf(lead.metadata), campaigns, activity, activityAt: at, mails: entries.reduce((sum, item) => sum + Number(item.sentCount ?? 0), 0) };
+    });
+    const search = String(input?.search ?? "").trim().toLowerCase();
+    const filtered = items.filter((item) => {
+      if (input?.listName && item.listName !== input.listName) return false;
+      if (input?.campaignId && !item.campaigns.some((campaign) => campaign.id === input.campaignId)) return false;
+      if (input?.activity && item.activity !== input.activity) return false;
+      if (input?.stage && item.stage !== input.stage) return false;
+      if (input?.ownerUserId === "ohne" && item.ownerUserId) return false;
+      if (typeof input?.ownerUserId === "number" && item.ownerUserId !== input.ownerUserId) return false;
+      if (search && !`${item.firstName ?? ""} ${item.lastName ?? ""} ${item.company ?? ""} ${item.email ?? ""} ${item.phone ?? ""} ${item.city ?? ""} ${item.listName ?? ""}`.toLowerCase().includes(search)) return false;
+      return true;
+    });
+    const rang: Record<string, number> = { geantwortet: 6, geklickt: 5, geoeffnet: 4, gesendet: 3, bounce: 2, abgemeldet: 1, ohne: 0 };
+    const counts: Record<string, number> = { alle: items.length };
+    for (const key of ["gesendet", "geoeffnet", "geklickt", "geantwortet", "abgemeldet", "bounce", "ohne"]) counts[key] = items.filter((item) => item.activity === key).length;
+    return {
+      items: filtered.sort((a, b) => (rang[b.activity] ?? 0) - (rang[a.activity] ?? 0) || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime()).slice(0, 200),
+      total: filtered.length, counts,
+      lists: Array.from(new Set(items.map((item) => item.listName).filter(Boolean))).sort(),
+      campaigns: Array.from(new Map(items.flatMap((item) => item.campaigns).map((campaign) => [campaign.id, campaign] as const)).values()).sort((a, b) => String(a.name).localeCompare(String(b.name), "de")),
+    };
+  },
   "leadops.previewEmailAudience": (input) => { const rows = demoAudience(input); return { count: rows.length, sample: rows.slice(0, 5).map((row) => ({ name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim(), email: row.email, company: row.company ?? null })) }; },
   "leadops.startEmailCampaign": async (input) => { const campaign = T().emailCampaigns.find((row) => row.id === input.id) ?? fail("Kampagne nicht gefunden."); if (campaign.isTemplate) fail("Das ist eine Vorlage – bitte zuerst „Aus Vorlage anlegen“ und dann die Kampagne starten."); const issues = validateTree(campaign.tree ?? { start: null, nodes: [] }); if (issues.length) fail(issues.join(" ")); const rows = demoAudience(campaign.audience ?? { source: "alle" }); if (!rows.length) fail("Die Zielgruppe enthält keine Kontakte mit E-Mail-Adresse."); const existing = new Set(T().emailCampaignRecipients.filter((row) => row.campaignId === campaign.id).map((row) => row.email)); const abTest = hasAbTest(campaign.tree ?? { start: null, nodes: [] }); let index = existing.size; let added = 0; for (const row of rows) { if (existing.has(row.email)) continue; if (!row.adPlatform) { update(store, "leads", (item) => item.id === row.id, { adPlatform: "email", adCampaignId: `email-${campaign.id}`, adCampaignName: campaign.name, pipelineStage: row.pipelineStage ?? "neu", pipelineUpdatedAt: new Date() }); insert(store, "pipelineEvents", { tenantId: tenant().id, leadId: row.id, fromStage: null, toStage: row.pipelineStage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen`, createdAt: new Date() }); } insert(store, "emailCampaignRecipients", { tenantId: tenant().id, campaignId: campaign.id, leadId: row.id, email: row.email, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: randomId(16), nodeId: (campaign.tree as { start: string | null }).start, nextActionAt: new Date(), status: "wartet", sentCount: 0, lastSentAt: null, openedAt: null, clickedAt: null, repliedAt: null, variant: abTest ? abVariantFor(index, campaign.abSplit ?? 50) : null, clickedUrls: [], bouncedAt: null, lastError: null, createdAt: new Date() }); index += 1; added += 1; } update(store, "emailCampaigns", (row) => row.id === campaign.id, { status: "aktiv", startedAt: campaign.startedAt ?? new Date(), updatedAt: new Date() }); const processed = await demoProcessEmailCampaigns(campaign.id); return { added, processed }; },
   "leadops.setEmailCampaignStatus": (input) => { update(store, "emailCampaigns", (row) => row.id === input.id, { status: input.status, updatedAt: new Date() }); return { success: true }; },

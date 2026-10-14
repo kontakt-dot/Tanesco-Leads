@@ -1494,3 +1494,20 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 
 .tree-move{height:26px;max-width:150px;margin-right:6px;padding:0 6px;border-radius:7px;border:1px solid rgba(255,255,255,.1);background:rgba(10,12,20,.6);color:#94a3b8;font-size:11px}
 .tree-move:hover{border-color:rgba(129,120,255,.5);color:#e2e8f0}
+
+.email-leads-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:14px}
+.email-leads-search{flex:1;min-width:220px;height:36px;padding:0 10px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:rgba(10,12,20,.6);color:#e2e8f0;font-size:13px}
+.email-leads-reset{padding:0 10px;height:36px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#cbd5e1;font-size:12px}
+.email-leads-scroll{margin-top:10px;max-height:560px;overflow:auto;border-radius:12px;border:1px solid rgba(255,255,255,.07)}
+.email-leads-table{width:100%;border-collapse:collapse;font-size:12px}
+.email-leads-table th{position:sticky;top:0;z-index:1;padding:9px 10px;text-align:left;background:#11131c;color:#94a3b8;font-weight:600;white-space:nowrap}
+.email-leads-table td{padding:8px 10px;border-top:1px solid rgba(255,255,255,.05);color:#cbd5e1;white-space:nowrap}
+.email-leads-table tr:hover td{background:rgba(255,255,255,.02)}
+.email-leads-name{background:none;border:0;padding:0;color:#c7c2ff;font-size:12px;text-decoration:underline;cursor:pointer}
+.email-leads-state{display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;background:rgba(148,163,184,.16);color:#cbd5e1}
+.email-leads-state.is-geantwortet{background:rgba(16,185,129,.18);color:#a7f3d0}
+.email-leads-state.is-geklickt{background:rgba(56,189,248,.18);color:#bae6fd}
+.email-leads-state.is-geoeffnet{background:rgba(129,120,255,.18);color:#c7c2ff}
+.email-leads-state.is-abgemeldet{background:rgba(245,158,11,.18);color:#fde68a}
+.email-leads-state.is-bounce{background:rgba(248,113,113,.18);color:#fecaca}
+.email-leads-table td small{color:#64748b}
