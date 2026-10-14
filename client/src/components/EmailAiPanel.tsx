@@ -27,7 +27,17 @@ function BriefFields({ state, onChange, compact = false }: { state: BriefState; 
     <label className="lead-action-check"><input type="checkbox" checked={state.abTest} onChange={(event) => onChange({ ...state, abTest: event.target.checked })} /> zweiten Betreff für den A/B-Test mitliefern</label>
   </>;
 }
-const sourceNote = (source: "ki" | "vorlage", note?: string | null) => source === "ki" ? `Von der KI geschrieben${note ? ` (${note})` : ""} – im Builder anpassen.` : `Regelbasierter Entwurf (ohne KI-Schlüssel${note ? `: ${note}` : ""}) – Texte im Builder anpassen.`;
+const sourceNote = (source: "ki" | "vorlage", note?: string | null) => source === "ki" ? `Von der KI geschrieben${note ? ` (${note})` : ""} – im Builder anpassen.` : `Achtung: Standard-Vorlage – deine Beschreibung wurde nicht verwendet${note ? ` (${note})` : ""}. Dafür fehlt der KI-Schlüssel (ANTHROPIC_API_KEY beim Hosting).`;
+
+/**
+ * Warnung, solange kein KI-Schlüssel hinterlegt ist: Ohne Schlüssel baut der Server nur eine Standard-Vorlage
+ * aus Ziel, Ton und Länge – der eigene Beschreibungstext fällt weg. Das muss man vor dem Klick sehen, nicht danach.
+ */
+function AiMissingKeyNote() {
+  const status = trpc.leadops.aiStatus.useQuery(undefined, { retry: false, staleTime: 5 * 60 * 1000 });
+  if (status.data?.enabled !== false) return null;
+  return <p className="ai-missing-key">Kein KI-Schlüssel hinterlegt: Der Builder baut nur eine Standard-Vorlage aus Ziel, Ton und Länge – <strong>deine Beschreibung wird nicht verwendet</strong>. Damit die KI wirklich schreibt, muss beim Hosting die Variable <code>ANTHROPIC_API_KEY</code> gesetzt sein.</p>;
+}
 
 /** Eine E-Mail bauen (im Builder einer Send-Karte). */
 export function EmailAiPanel({ category, onDraft }: { category?: string | null; onDraft: (draft: EmailDraft) => void }) {
@@ -36,6 +46,7 @@ export function EmailAiPanel({ category, onDraft }: { category?: string | null; 
   const build = (next: BriefState) => draft.mutate({ brief: next.brief, goal: next.goal, tone: next.tone, length: next.length, audience: next.audience || null, category: category ?? null, ctaUrl: next.ctaUrl || null, abTest: next.abTest });
   return <div className="ai-panel">
     <p className="text-xs text-slate-500">Nimm einen Vorschlag – oder beschreibe die E-Mail selbst. Der Builder schreibt Betreff, Vorschautext und Bausteine; Platzhalter wie {PLACEHOLDERS_HINT} werden beim Versand gefüllt.</p>
+    <AiMissingKeyNote />
     <Proposals picked={picked} onPick={(proposal) => { setState(fromProposal(state, proposal)); setPicked(proposal.key); }} />
     {picked && <p className="ai-picked-note">Vorschlag übernommen – Beschreibung, Ziel und Ton kannst du jetzt noch anpassen. Gebaut wird erst, wenn du auf „E-Mail bauen“ klickst.</p>}
     <BriefFields state={state} onChange={(next) => { setState(next); if (picked && next.brief !== state.brief) setPicked(null); }} />
@@ -50,6 +61,7 @@ export function SeriesAiPanel({ category, onSeries }: { category?: string | null
   const build = (next: BriefState, options: { count: number; waitDays: number; stopWhen: "replied" | "clicked" | "opened" | "never" }) => draft.mutate({ brief: next.brief, goal: next.goal, tone: next.tone, length: next.length, audience: next.audience || null, category: category ?? null, ctaUrl: next.ctaUrl || null, abTest: next.abTest, ...options });
   return <div className="ai-panel">
     <p className="text-xs text-slate-500">Nimm einen Vorschlag – oder beschreibe, worum es geht. Daraus entsteht die ganze Serie: Ansprache, Nachfassen, letzte Nachricht, mit Wartezeiten und Ende, sobald der Empfänger reagiert.</p>
+    <AiMissingKeyNote />
     <Proposals series picked={picked} onPick={(proposal) => { setState(fromProposal(state, proposal)); setCount(proposal.count ?? 2); setWaitDays(proposal.waitDays ?? 3); setStopWhen(proposal.stopWhen ?? "replied"); setPicked(proposal.key); }} />
     {picked && <p className="ai-picked-note">Vorschlag übernommen – Beschreibung, Anzahl und Abstand kannst du jetzt noch anpassen. Gebaut wird erst, wenn du auf „Serie bauen“ klickst.</p>}
     <BriefFields state={state} onChange={(next) => { setState(next); if (picked && next.brief !== state.brief) setPicked(null); }} compact />

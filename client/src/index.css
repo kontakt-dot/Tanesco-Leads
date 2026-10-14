@@ -1198,6 +1198,8 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .ai-proposal:hover{border-color:rgba(141,133,255,.6);background:rgba(125,113,255,.12)}
 .ai-proposal.is-picked{border-color:#8278ff;background:rgba(125,113,255,.16);box-shadow:0 0 0 2px rgba(130,120,255,.25)}
 .ai-picked-note{margin:0;padding:8px 12px;border-radius:10px;background:rgba(125,113,255,.12);color:#d6d1ff;font-size:12px;line-height:1.5}
+.ai-missing-key{margin:0;padding:10px 12px;border-radius:10px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.1);color:#fde68a;font-size:12px;line-height:1.55}
+.ai-missing-key code{padding:1px 5px;border-radius:5px;background:rgba(0,0,0,.28);font-size:11px}
 .ai-proposal strong{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#fff}
 .ai-proposal small{font-size:11px;line-height:1.35;color:#a5a1d7}
 .ai-proposal.is-check{border-style:dashed}

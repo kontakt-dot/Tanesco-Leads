@@ -675,6 +675,8 @@ html:not(.dark) .ai-proposal { border: 1px solid #e8ecf1 !important; background:
 html:not(.dark) .ai-proposal:hover { border-color: #d9dfe7 !important; background: #f3f6f8 !important; }
 html:not(.dark) .ai-proposal.is-picked { border-color: #111318 !important; background: #f3f6f8 !important; box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .ai-picked-note { background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .ai-missing-key { color: #8b7e4b !important; }
+html:not(.dark) .ai-missing-key code { background: #f3f6f8 !important; }
 html:not(.dark) .ai-proposal strong { color: #0f172a !important; }
 html:not(.dark) .ai-proposal small { color: #4b5568 !important; }
 html:not(.dark) .ai-proposal.is-active { border-color: #d9dfe7 !important; background: #f3f6f8 !important; }
