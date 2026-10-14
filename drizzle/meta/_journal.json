@@ -463,6 +463,13 @@
       "when": 1791985669908,
       "tag": "0065_upload_rules_footer",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "5",
+      "when": 1792072069908,
+      "tag": "0066_leads_in_pipeline",
+      "breakpoints": true
     }
   ]
 }

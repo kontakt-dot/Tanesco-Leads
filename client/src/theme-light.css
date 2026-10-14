@@ -826,6 +826,39 @@ html:not(.dark) .email-leads-state.is-geklickt { color: #0f172a !important; }
 html:not(.dark) .email-leads-state.is-geoeffnet { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .email-leads-state.is-abgemeldet { color: #8b7e4b !important; }
 html:not(.dark) .email-leads-state.is-bounce { color: #0f172a !important; }
+html:not(.dark) .email-tabs { border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .email-tab { color: #8a94a6 !important; }
+html:not(.dark) .email-tab:hover { color: #0f172a !important; }
+html:not(.dark) .email-tab.is-active { color: #0f172a !important; }
+html:not(.dark) .email-tab.is-active svg { color: #111318 !important; }
+html:not(.dark) .email-tab.is-active::after { background: linear-gradient(135deg, #2a2e3a, #111318) !important; }
+html:not(.dark) .email-tab-count { background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .email-tab-count.is-unread { background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .email-tab.is-active .email-tab-count { background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .preview-contact { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .preview-contact select { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .mail-tabs { border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .mail-tabs button { color: #8a94a6 !important; }
+html:not(.dark) .mail-tabs button:hover { color: #0f172a !important; background: #f8fafb !important; }
+html:not(.dark) .mail-tabs button.active { color: #4b5568 !important; border-bottom-color: #111318 !important; background: linear-gradient(135deg, rgba(var(--acc1), .14), rgba(var(--acc2), .10)) !important; }
+html:not(.dark) .mail-tabs button i { background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .mail-tabs button.active i { background: #111318 !important; color: #0f172a !important; }
+html:not(.dark) .email-leads-actions { border: 1px solid #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .email-leads-actions strong { color: #4b5568 !important; }
+html:not(.dark) .email-leads-push { background: #111318 !important; color: #0f172a !important; }
+html:not(.dark) .email-leads-table tr.is-picked td { background: #f8fafb !important; }
+html:not(.dark) .preview-hint { color: #0f172a !important; }
+html:not(.dark) .preview-hint strong { color: #0f172a !important; }
+html:not(.dark) .mail-nav-item { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .mail-nav-item:hover { border-color: #d9dfe7 !important; color: #0f172a !important; }
+html:not(.dark) .mail-nav-item strong { color: #0f172a !important; }
+html:not(.dark) .mail-nav-item.active { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .mail-nav-item.active strong { color: #0f172a !important; }
+html:not(.dark) .mail-nav-item.active small { color: #4b5568 !important; }
+html:not(.dark) .mail-nav-count { background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .owners-missing strong { color: #8b7e4b !important; }
+html:not(.dark) .owners-missing p { color: #4b5568 !important; }
+html:not(.dark) .owners-missing a { color: #8b7e4b !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }

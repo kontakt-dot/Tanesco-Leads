@@ -1106,3 +1106,25 @@ describe("Kontakte der E-Mail-Akquise (Chat-Build)", () => {
     expect(ohneTreffer.items).toHaveLength(0);
   });
 });
+
+describe("Kampagnen-Upload bleibt vorerst außerhalb der Pipeline (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Upload ohne Pipeline-Übergabe taucht nicht im Board auf, danach auf Knopfdruck schon", async () => {
+    const vorher = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    const ergebnis = await call("leadops.importColdList", { listName: "Nur E-Mail", toPipeline: false, rows: [{ firstName: "Nina", lastName: "Roth", email: "nina@roth-solar.de" }] });
+    expect(ergebnis.created).toBe(1);
+    const dazwischen = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    expect(dazwischen.totals.leads).toBe(vorher.totals.leads); // nichts Neues auf dem Board
+    const kontakte = await call("leadops.emailLeads", { listName: "Nur E-Mail" });
+    expect(kontakte.items).toHaveLength(1);
+    expect(kontakte.items[0].inPipeline).toBe(false);
+    const owners = await call("leadops.pipelineOwners");
+    const uebernommen = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte.items[0].id], ownerUserIds: owners.map((owner: { userId: number }) => owner.userId) });
+    expect(uebernommen.moved).toBe(1);
+    const nachher = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    expect(nachher.totals.leads).toBe(vorher.totals.leads + 1);
+    const nochmal = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte.items[0].id] });
+    expect(nochmal.moved).toBe(0); // zweimal übernehmen ändert nichts
+  });
+});

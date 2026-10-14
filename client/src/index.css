@@ -1511,3 +1511,86 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .email-leads-state.is-abgemeldet{background:rgba(245,158,11,.18);color:#fde68a}
 .email-leads-state.is-bounce{background:rgba(248,113,113,.18);color:#fecaca}
 .email-leads-table td small{color:#64748b}
+
+/* Reiter der E-Mail-Kampagnen: Navigation, nicht Filter – darum eine durchgehende Leiste mit Unterstrich
+   statt runder Chips. Auf schmalen Geräten scrollt sie seitlich, ohne umzubrechen. */
+.email-tabs{display:flex;gap:2px;margin:0 0 14px;padding:0 2px;border-bottom:1px solid rgba(255,255,255,.08);overflow-x:auto;scrollbar-width:none}
+.email-tabs::-webkit-scrollbar{display:none}
+.email-tab{position:relative;display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;padding:10px 14px 11px;border:0;background:none;color:#8b93a7;font-size:13px;font-weight:500;letter-spacing:.01em;white-space:nowrap;cursor:pointer;transition:color .15s ease}
+.email-tab svg{opacity:.7;transition:opacity .15s ease}
+.email-tab:hover{color:#d6d9e3}
+.email-tab:hover svg{opacity:1}
+.email-tab::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:2px;background:transparent;transition:background .15s ease}
+.email-tab.is-active{color:#f1f3f9}
+.email-tab.is-active svg{opacity:1;color:#a79cff}
+.email-tab.is-active::after{background:linear-gradient(90deg,#8178ff,#b9a4ff)}
+.email-tab:focus-visible{outline:2px solid rgba(129,120,255,.7);outline-offset:-2px;border-radius:8px}
+.email-tab-count{display:inline-grid;place-items:center;min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.09);color:#cbd5e1;font-size:11px;font-style:normal;font-weight:600;line-height:1}
+.email-tab-count.is-unread{background:rgba(129,120,255,.3);color:#ddd9ff}
+.email-tab.is-active .email-tab-count{background:rgba(129,120,255,.26);color:#ddd9ff}
+@media (max-width:640px){.email-tab{padding:9px 11px 10px;font-size:12px}.email-tab span{display:inline}}
+
+/* Werkzeugzeile des Posteingangs: Ordner oben, darunter die Filter in einer Zeile – „Aktualisieren“ rechts außen,
+   damit die Aktion dort steht, wo der Blick endet, statt eine eigene Zeile zu belegen. */
+.inbox-toolbar{display:block}
+.inbox-toolbar .inbox-folders{width:100%;margin-bottom:10px}
+.inbox-toolbar-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.inbox-toolbar-tools .inbox-sync{margin-left:auto}
+@media (max-width:760px){.inbox-toolbar-tools .inbox-sync{margin-left:0}}
+
+/* Die vier Filter schmaler halten, damit sie mit „Aktualisieren“ in eine Zeile passen. */
+.inbox-toolbar-tools > label{flex:0 1 auto;min-width:0;max-width:210px}
+.inbox-toolbar-tools select{max-width:100%}
+.inbox-toolbar-tools .inbox-campaign-filter{flex:0 1 auto;max-width:230px}
+
+/* Ordner und „Aktualisieren“ teilen sich eine Zeile: die Aktion steht rechts außen neben den Ordnern. */
+.inbox-folder-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.inbox-folder-row .inbox-folders{flex:1;margin-bottom:0;min-width:0;overflow-x:auto;scrollbar-width:none}
+.inbox-folder-row .inbox-folders::-webkit-scrollbar{display:none}
+.inbox-folder-row .inbox-sync{flex:0 0 auto;margin-left:0}
+@media (max-width:760px){.inbox-folder-row{flex-wrap:wrap}}
+
+.preview-contact{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px;padding:8px 10px;border-radius:10px;border:1px solid rgba(129,120,255,.25);background:rgba(129,120,255,.07);font-size:11px;color:#94a3b8}
+.preview-contact select{height:30px;max-width:260px;padding:0 8px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:rgba(10,12,20,.6);color:#e2e8f0;font-size:12px}
+.preview-contact small{flex-basis:100%;color:#64748b}
+
+/* Hauptnavigation der E-Mail-Kampagnen: klar über den Filterleisten darunter, damit die Ebenen auseinandergehen. */
+.mail-tabs{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.mail-tabs button{display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 14px;border:0;border-bottom:2px solid transparent;background:transparent;color:#8e93a8;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;transition:color .16s ease,border-color .16s ease,background-color .16s ease}
+.mail-tabs button svg{opacity:.7;transition:opacity .16s ease}
+.mail-tabs button:hover{color:#e2e8f0;background:rgba(255,255,255,.03)}
+.mail-tabs button:hover svg{opacity:1}
+.mail-tabs button.active{color:#c7c2ff;border-bottom-color:#8178ff;background:linear-gradient(180deg,rgba(129,120,255,.1),transparent)}
+.mail-tabs button.active svg{opacity:1}
+.mail-tabs button i{min-width:19px;height:19px;padding:0 6px;display:inline-grid;place-items:center;border-radius:999px;background:rgba(129,120,255,.22);color:#c7c2ff;font-size:11px;font-style:normal;font-weight:700}
+.mail-tabs button.active i{background:#8178ff;color:#fff}
+@media (max-width:640px){.mail-tabs{gap:0;overflow-x:auto;flex-wrap:nowrap}.mail-tabs button{padding:0 10px;font-size:12px}.mail-tabs button span{display:inline}}
+
+.email-leads-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
+.email-leads-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid rgba(129,120,255,.35);background:rgba(129,120,255,.1)}
+.email-leads-actions strong{font-size:12px;color:#c7c2ff}
+.email-leads-push{height:32px;padding:0 12px;border-radius:8px;border:0;background:#8178ff;color:#fff;font-size:12px;font-weight:600}
+.email-leads-push:disabled{opacity:.6}
+.email-leads-check{width:34px;text-align:center}
+.email-leads-table tr.is-picked td{background:rgba(129,120,255,.1)}
+
+.preview-hint{margin:0 0 6px;padding:8px 12px;border-radius:10px;border:1px solid rgba(56,189,248,.28);background:rgba(56,189,248,.08);color:#bae6fd;font-size:12px;line-height:1.55}
+.preview-hint strong{color:#e0f2fe}
+
+/* Bereichs-Navigation der E-Mail-Kampagnen: Symbol, Name, kurze Erklärung. */
+.mail-nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:14px}
+.mail-nav-item{display:flex;align-items:flex-start;gap:9px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);color:#94a3b8;text-align:left;transition:border-color .15s,background .15s,color .15s}
+.mail-nav-item:hover{border-color:rgba(129,120,255,.4);color:#cbd5e1}
+.mail-nav-item svg{margin-top:2px;flex-shrink:0}
+.mail-nav-item strong{display:flex;align-items:center;gap:6px;font-size:13px;color:#e2e8f0;font-weight:600}
+.mail-nav-item small{display:block;margin-top:2px;font-size:11px;line-height:1.4;color:#64748b}
+.mail-nav-item.active{border-color:rgba(129,120,255,.6);background:rgba(129,120,255,.12);color:#e2e8f0}
+.mail-nav-item.active strong{color:#fff}
+.mail-nav-item.active small{color:#c7c2ff}
+.mail-nav-count{display:inline-grid;place-items:center;min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:rgba(129,120,255,.3);color:#e9e7ff;font-size:11px;font-style:normal;font-weight:700}
+@media (max-width:640px){.mail-nav{grid-template-columns:1fr 1fr}.mail-nav-item small{display:none}}
+
+.owners-missing{margin-top:14px;padding:11px 13px;border-radius:11px;border:1px solid rgba(245,158,11,.32);background:rgba(245,158,11,.09)}
+.owners-missing strong{display:block;font-size:13px;color:#fde68a}
+.owners-missing p{margin:3px 0 0;font-size:12px;line-height:1.55;color:#94a3b8}
+.owners-missing a{color:#fde68a;text-decoration:underline}

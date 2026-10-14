@@ -26,7 +26,7 @@ async function tagByName(db: Db, tenantId: number, name: string, color: string) 
 /** Nur setzen, was wirklich dazukommt – vorhandene Angaben am Kontakt werden nie mit leeren Werten überschrieben. */
 const fillIfEmpty = <T>(current: T | null | undefined, next: T | null | undefined) => (current ?? null) || (next ?? null);
 
-export async function importColdList(db: Db, tenantId: number, input: { listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null }) {
+export async function importColdList(db: Db, tenantId: number, input: { listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null; toPipeline?: boolean }) {
   const listName = input.listName.trim(); if (!listName) throw new Error("Bitte einen Listennamen angeben."); if (!input.rows.length) throw new Error("Die Liste enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig).");
   // Kategorie ist freiwillig: ohne Angabe die erste aktive nehmen, sonst ohne Kategorie anlegen.
   const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id ?? null;
@@ -34,6 +34,8 @@ export async function importColdList(db: Db, tenantId: number, input: { listName
   const extraTags = [] as Array<{ id: number }>;
   for (const name of input.tagNames ?? []) { const clean = name.trim(); if (!clean) continue; const row = await tagByName(db, tenantId, clean, "#8178ff"); if (row && row.id !== tag.id) extraTags.push(row); }
   const mode = input.duplicateMode ?? "aktualisieren";
+  // Aus dem Kampagnen-Editor hochgeladene Listen bleiben zunächst außerhalb der Pipeline – sie werden dort erst auf Knopfdruck übernommen.
+  const toPipeline = input.toPipeline ?? true;
   const existing = await db.select({ id: leads.id, status: leads.status, phone: leads.phone, email: leads.email, firstName: leads.firstName, lastName: leads.lastName, company: leads.company, postcode: leads.postcode, city: leads.city, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
   type Known = typeof existing[number];
   const byPhone = new Map<string, Known>(); const byEmail = new Map<string, Known>();
@@ -60,17 +62,19 @@ export async function importColdList(db: Db, tenantId: number, input: { listName
       updated += 1; continue;
     }
     const publicId = `KALT-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
-    const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}`, adPlatform: "kaltakquise", company: row.company ?? null, listName });
+    const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}`, adPlatform: "kaltakquise", company: row.company ?? null, listName, inPipeline: toPipeline });
     const leadId = Number(inserted[0]?.insertId) || 0; leadIds.push(leadId); created += 1;
     const self = { id: leadId, status: "neu", phone: row.phone ?? null, email: emailKey || null, firstName: row.firstName ?? null, lastName: row.lastName ?? null, company: row.company ?? null, postcode: row.postcode ?? null, city: row.city ?? null, metadata: null } as Known;
     if (phoneKey) byPhone.set(phoneKey, self); if (emailKey) byEmail.set(emailKey, self);
     await assignTags(leadId);
     await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: null, nextStatus: "neu", actorUserId: null, note: `Kaltakquise-Liste „${listName}“ hochgeladen` });
-    await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: null, note: `Aus Kaltakquise-Liste „${listName}“` });
+    if (toPipeline) await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: null, note: `Aus Kaltakquise-Liste „${listName}“` });
   }
-  if (input.ownerUserIds?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
-  else for (const leadId of leadIds) await autoAssign(db, tenantId, leadId); // Verteilregeln, wenn eingeschaltet
-  return { created, duplicates, updated, tagId: tag.id, listName, leadIds };
+  if (toPipeline) {
+    if (input.ownerUserIds?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
+    else for (const leadId of leadIds) await autoAssign(db, tenantId, leadId); // Verteilregeln, wenn eingeschaltet
+  }
+  return { created, duplicates, updated, tagId: tag.id, listName, leadIds, toPipeline };
 }
 export async function listColdLists(db: Db, tenantId: number) {
   const rows = await db.select({ listName: leads.listName, stage: leads.pipelineStage, phone: leads.phone, email: leads.email, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.adPlatform, "kaltakquise")));
@@ -162,7 +166,18 @@ async function audienceLeads(db: Db, tenantId: number, audience: Audience) {
   const blocked = await suppressedSet(db, tenantId);
   return rows.filter((row) => row.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email) && !blocked.has(row.email.toLowerCase()));
 }
-export async function previewAudience(db: Db, tenantId: number, audience: Audience) { const rows = await audienceLeads(db, tenantId, audience); return { count: rows.length, sample: rows.slice(0, 5).map((row) => ({ name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim(), email: row.email, company: row.company })) }; }
+/**
+ * Zielgruppe prüfen: Anzahl und die ersten Empfänger – jeweils mit allen Platzhalter-Werten,
+ * damit sich die E-Mail im Builder mit echten Daten ansehen lässt, bevor sie rausgeht.
+ */
+export async function previewAudience(db: Db, tenantId: number, audience: Audience) {
+  const rows = await audienceLeads(db, tenantId, audience);
+  const sample = rows.slice(0, 5).map((row) => ({
+    name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim(), email: row.email, company: row.company,
+    values: recipientValues({ firstName: row.firstName, lastName: row.lastName, company: row.company, city: row.city, salutation: (row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? (row.metadata as { salutation?: string }).salutation : null) ?? null, email: row.email, fields: extraFieldsOf(row.metadata) }, null),
+  }));
+  return { count: rows.length, sample };
+}
 /** Kampagne starten: Empfänger aus der Zielgruppe anlegen (ohne Doppelte) und sofort den ersten Schritt ausführen. */
 export async function startEmailCampaign(db: Db, tenantId: number, id: number, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
@@ -301,7 +316,7 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
   const limit = Math.min(1000, Math.max(10, options.limit ?? 200));
   const rows = await db.select({
     id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company,
-    email: leads.email, phone: leads.phone, city: leads.city, listName: leads.listName, stage: leads.pipelineStage,
+    email: leads.email, phone: leads.phone, city: leads.city, listName: leads.listName, stage: leads.pipelineStage, inPipeline: leads.inPipeline,
     createdAt: leads.createdAt, ownerUserId: leads.ownerUserId, ownerName: users.name, metadata: leads.metadata,
   }).from(leads).leftJoin(users, eq(users.id, leads.ownerUserId)).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
 
@@ -355,4 +370,22 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
   const rang: Record<EmailLeadActivity, number> = { geantwortet: 6, geklickt: 5, geoeffnet: 4, gesendet: 3, bounce: 2, abgemeldet: 1, ohne: 0 };
   const sortiert = filtered.sort((a, b) => rang[b.activity] - rang[a.activity] || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime());
   return { items: sortiert.slice(0, limit), total: filtered.length, counts, lists, campaigns };
+}
+
+/**
+ * Kontakte aus der E-Mail-Akquise in die Vertriebspipeline übernehmen – von Hand, nicht automatisch.
+ * Sie erscheinen dort in der Eingangsstufe; die Zuteilung an Vertriebler läuft wie beim Listen-Upload
+ * (reihum auf mehrere, alles an einen, oder gar nicht und später von Hand).
+ */
+export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { leadIds: number[]; ownerUserIds?: number[] | null; actorUserId?: number | null }) {
+  const ids = Array.from(new Set(input.leadIds)).slice(0, 2000);
+  if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
+  const rows = await db.select({ id: leads.id, inPipeline: leads.inPipeline, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
+  const offen = rows.filter((row) => !row.inPipeline).map((row) => row.id);
+  if (!offen.length) return { moved: 0, already: rows.length };
+  await db.update(leads).set({ inPipeline: true, pipelineStage: "neu", pipelineUpdatedAt: new Date() }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, offen)));
+  for (const leadId of offen) await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: input.actorUserId ?? null, note: "Aus der E-Mail-Akquise in die Pipeline übernommen" });
+  if (input.ownerUserIds?.length) await distributeOwners(db, tenantId, { leadIds: offen, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
+  else for (const leadId of offen) await autoAssign(db, tenantId, leadId);
+  return { moved: offen.length, already: rows.length - offen.length };
 }
