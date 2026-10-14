@@ -4,7 +4,7 @@
  */
 import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import crypto from "node:crypto";
-import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, tags, tenantSettings, type EmailCampaign } from "../drizzle/schema";
+import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, type EmailCampaign } from "../drizzle/schema";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, recipientValues, renderNode, starterTree, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
@@ -255,4 +255,37 @@ export async function applyFooterToCampaigns(db: Db, tenantId: number, options: 
     updated += 1;
   }
   return { updated, footerText: patch.footerText };
+}
+
+/**
+ * Eine hochgeladene Liste löschen – mit allen Kontakten, die daraus entstanden sind.
+ * Kunden bleiben standardmäßig erhalten (`keepCustomers`), damit kein Abschluss verloren geht;
+ * sie verlieren nur die Zuordnung zur Liste. Alles, was an den gelöschten Kontakten hängt
+ * (Aufgaben, Notizen, Nachrichten, Empfänger in Serien, Wählliste), wird mitgelöscht.
+ */
+export async function deleteColdList(db: Db, tenantId: number, input: { listName: string; keepCustomers?: boolean }) {
+  const listName = input.listName.trim(); if (!listName) throw new Error("Bitte eine Liste angeben.");
+  const keepCustomers = input.keepCustomers ?? true;
+  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.listName, listName)));
+  if (!rows.length) throw new Error(`Zur Liste „${listName}“ gibt es keine Kontakte mehr.`);
+  const keep = keepCustomers ? rows.filter((row) => row.stage === "kunde").map((row) => row.id) : [];
+  const remove = rows.filter((row) => !keep.includes(row.id)).map((row) => row.id);
+  if (remove.length) {
+    await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, remove)));
+    await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, remove)));
+    await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, remove)));
+    await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, remove)));
+    await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, remove)));
+    await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), inArray(dialerQueueItems.leadId, remove)));
+    await db.delete(leadStatusEvents).where(and(eq(leadStatusEvents.tenantId, tenantId), inArray(leadStatusEvents.leadId, remove)));
+    await db.delete(leadTagAssignments).where(inArray(leadTagAssignments.leadId, remove));
+    await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, remove)));
+    await db.update(dialerCalls).set({ leadId: null }).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.leadId, remove)));
+    await db.delete(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, remove)));
+  }
+  if (keep.length) await db.update(leads).set({ listName: null }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, keep)));
+  // Das Tag „Liste: …“ nur entfernen, wenn es niemand mehr trägt.
+  const tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0];
+  if (tag) { const used = (await db.select({ leadId: leadTagAssignments.leadId }).from(leadTagAssignments).where(eq(leadTagAssignments.tagId, tag.id)).limit(1))[0]; if (!used) await db.delete(tags).where(eq(tags.id, tag.id)); }
+  return { deleted: remove.length, keptCustomers: keep.length, listName };
 }

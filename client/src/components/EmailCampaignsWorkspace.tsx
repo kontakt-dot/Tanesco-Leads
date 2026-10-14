@@ -106,6 +106,37 @@ function CampaignDetailView({ id, onBack, onEdit }: { id: number; onBack: () => 
   </>;
 }
 
+/**
+ * Zielgruppe „Liste“: alle hochgeladenen Listen zur Auswahl – mit Anzahl der Kontakte und wie viele davon
+ * eine E-Mail-Adresse haben (nur die bekommen die Serie). Dazu „Ansehen“ (Kontakte und Platzhalter) und „Löschen“.
+ */
+function ListPicker({ selected, onSelect }: { selected: string | null; onSelect: (listName: string | null) => void }) {
+  const utils = trpc.useUtils();
+  const lists = trpc.leadops.listColdLists.useQuery(undefined, { retry: false });
+  const [open, setOpen] = useState<string | null>(null);
+  const remove = trpc.leadops.deleteColdList.useMutation({ onSuccess: (result) => {
+    toast.success(`Liste „${result.listName}“ gelöscht: ${result.deleted} Kontakte entfernt${result.keptCustomers ? `, ${result.keptCustomers} Kunden behalten` : ""}.`);
+    if (selected === result.listName) onSelect(null);
+    setOpen(null); utils.leadops.listColdLists.invalidate(); utils.leadops.previewEmailAudience.invalidate(); utils.leadops.pipelineOverview.invalidate();
+  }, onError: (error) => toast.error(error.message) });
+  const rows = lists.data ?? [];
+  if (!rows.length) return <p className="mt-3 text-xs text-slate-500">Noch keine Liste hochgeladen – lade unten eine Excel- oder CSV-Datei hoch.</p>;
+  return <div className="list-picker">
+    <span className="eyebrow">LISTE WÄHLEN</span>
+    <div className="list-picker-rows">{rows.map((list) => <div key={list.listName} className={`list-picker-row ${selected === list.listName ? "is-active" : ""}`}>
+      <button type="button" className="list-picker-main" onClick={() => onSelect(list.listName)}>
+        <strong>{list.listName}</strong>
+        <small>{list.contacts} Kontakte · {list.withEmail} mit E-Mail{list.customers ? ` · ${list.customers} Kunden` : ""}</small>
+      </button>
+      <div className="list-picker-tools">
+        <button type="button" onClick={() => setOpen(open === list.listName ? null : list.listName)}>{open === list.listName ? "Schließen" : "Ansehen"}</button>
+        <button type="button" className="is-danger" disabled={remove.isPending} onClick={async () => { if (await confirmAction(`Liste „${list.listName}“ mit ${list.contacts} Kontakten löschen? Kunden bleiben erhalten. Das lässt sich nicht rückgängig machen.`)) remove.mutate({ listName: list.listName }); }}>Löschen</button>
+      </div>
+      {open === list.listName && <div className="list-picker-preview"><ListPreview listName={list.listName} onClose={() => setOpen(null)} /></div>}
+    </div>)}</div>
+  </div>;
+}
+
 /** Liste direkt hier hochladen (Excel/CSV mit Vorname, Nachname, Firma, Telefon, E-Mail, PLZ, Ort): die Kontakte landen in der Kaltakquise-Pipeline unter „Neu“ und die neue Liste wird gleich als Zielgruppe gewählt. */
 function ListUploadBox({ onImported }: { onImported: (listName: string) => void }) {
   const [listName, setListName] = useState(""); const [csv, setCsv] = useState(""); const [dragging, setDragging] = useState(false); const [mapping, setMapping] = useState<ColumnTarget[] | null>(null);
@@ -152,7 +183,7 @@ function CampaignEditor({ id, starter: starterKind, aiFirst = false, onClose }: 
       <div className="grid gap-4">
         <section className="surface-panel operations-panel p-5"><span className="eyebrow">GRUNDDATEN</span><div className="mt-3 grid gap-3"><Input placeholder="Name der Kampagne *" value={form.name} onChange={(event) => update({ name: event.target.value })} /><div className="grid gap-3 md:grid-cols-2"><Input placeholder="Absendername" value={form.fromName} onChange={(event) => update({ fromName: event.target.value })} /><Input placeholder="Absender-E-Mail" value={form.fromEmail} onChange={(event) => update({ fromEmail: event.target.value })} /></div><Input placeholder="Antworten an (optional)" value={form.replyTo} onChange={(event) => update({ replyTo: event.target.value })} /></div></section>
         <section className="surface-panel operations-panel p-5"><span className="eyebrow">ZIELGRUPPE</span><p className="mt-1 text-xs text-slate-500">Wer die Serie bekommt – nur Kontakte mit E-Mail-Adresse.</p><div className="mt-3 dashboard-segments">{([["alle", "Alle"], ["liste", "Liste"], ["stufe", "Pipeline-Stufe"], ["tag", "Tag"]] as const).map(([key, label]) => <button key={key} type="button" className={form.audience.source === key ? "active" : ""} onClick={() => update({ audience: { source: key } })}>{label}</button>)}</div>
-          {form.audience.source === "liste" && <select className="mt-3 h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100" value={form.audience.listName ?? ""} onChange={(event) => update({ audience: { source: "liste", listName: event.target.value || null } })}><option value="">Liste wählen</option>{(lists.data ?? []).map((list) => <option key={list.listName} value={list.listName}>{list.listName} ({list.withEmail} mit E-Mail)</option>)}</select>}
+          {form.audience.source === "liste" && <ListPicker selected={form.audience.listName ?? null} onSelect={(listName) => update({ audience: { source: "liste", listName } })} />}
           {form.audience.source === "liste" && <ListUploadBox onImported={(listName) => { utils.leadops.listColdLists.invalidate(); utils.leadops.previewEmailAudience.invalidate(); update({ audience: { source: "liste", listName } }); }} />}
           {form.audience.source === "liste" && form.audience.listName && <div className="mt-3"><button type="button" className="text-xs text-violet-200 hover:underline" onClick={() => setShowList((value) => !value)}>{showList ? "Liste ausblenden" : "Liste ansehen – wer bekommt die E-Mails?"}</button>{showList && <ListPreview listName={form.audience.listName} onClose={() => setShowList(false)} />}</div>}
           {form.audience.source === "stufe" && <select className="mt-3 h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100" value={form.audience.stage ?? ""} onChange={(event) => update({ audience: { source: "stufe", stage: event.target.value || null } })}><option value="">Stufe wählen</option>{(stageDefs.data ?? PIPELINE_STAGES).map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select>}

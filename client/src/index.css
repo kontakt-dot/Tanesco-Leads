@@ -1471,3 +1471,23 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 
 .tree-copy{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#94a3b8;margin-right:4px}
 .tree-copy:hover{border-color:rgba(129,120,255,.5);color:#c7c2ff}
+
+.list-picker{margin-top:12px}
+.list-picker-rows{display:grid;gap:6px;margin-top:6px}
+.list-picker-row{border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);padding:8px 10px}
+.list-picker-row.is-active{border-color:rgba(129,120,255,.55);background:rgba(129,120,255,.1)}
+.list-picker-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.list-picker-main{flex:1;min-width:180px;text-align:left;background:none;border:0;padding:0;cursor:pointer}
+.list-picker-main strong{display:block;font-size:13px;color:#e2e8f0}
+.list-picker-main small{display:block;margin-top:2px;font-size:11px;color:#94a3b8}
+.list-picker-tools{display:flex;gap:6px}
+.list-picker-tools button{padding:4px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#cbd5e1;font-size:11px}
+.list-picker-tools button:hover{border-color:rgba(129,120,255,.5);color:#e2e8f0}
+.list-picker-tools button.is-danger:hover{border-color:rgba(248,113,113,.6);color:#fca5a5}
+.list-picker-preview{flex-basis:100%}
+
+/* Die Kontakttabelle darf ihre Spalte nicht sprengen – sie scrollt in sich. */
+.list-preview{max-width:100%;min-width:0;overflow:hidden}
+.list-preview-scroll{max-width:100%;overflow-x:auto}
+.list-picker,.list-picker-row,.list-picker-preview{min-width:0;max-width:100%}
+.list-picker-preview{overflow:hidden}

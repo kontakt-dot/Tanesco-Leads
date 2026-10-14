@@ -1057,3 +1057,26 @@ describe("Kopieren im Builder und Fußzeile nachträglich übernehmen (Chat-Buil
     expect(nochmal.updated).toBe(0); // nichts doppelt schreiben
   });
 });
+
+describe("Listen löschen (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Liste löschen entfernt ihre Kontakte, Kunden bleiben erhalten", async () => {
+    await call("leadops.importColdList", { listName: "Testliste", rows: [
+      { firstName: "Anna", lastName: "Berg", email: "anna@test-a.de" },
+      { firstName: "Bernd", lastName: "Call", email: "bernd@test-b.de" },
+    ] });
+    const vorher = await call("leadops.coldListContacts", { listName: "Testliste" });
+    expect(vorher.contacts).toHaveLength(2);
+    // Einen davon zum Kunden machen – der muss die Löschung überleben
+    await call("leadops.movePipelineStage", { publicId: vorher.contacts[0].publicId, stage: "kunde" });
+    const ergebnis = await call("leadops.deleteColdList", { listName: "Testliste" });
+    expect(ergebnis.deleted).toBe(1);
+    expect(ergebnis.keptCustomers).toBe(1);
+    const listen = await call("leadops.listColdLists");
+    expect(listen.some((list: { listName: string }) => list.listName === "Testliste")).toBe(false);
+  });
+  it("Eine Liste, die es nicht gibt, meldet einen Fehler", async () => {
+    await expect(call("leadops.deleteColdList", { listName: "Gibt es nicht" })).rejects.toThrow();
+  });
+});
