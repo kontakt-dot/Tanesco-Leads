@@ -1040,3 +1040,20 @@ describe("Dublettenschutz, Tags, Listen ansehen und Gesendet (Chat-Build)", () =
     expect(ohneTreffer.items).toHaveLength(0);
   });
 });
+
+describe("Kopieren im Builder und Fußzeile nachträglich übernehmen (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Fußzeile aus den Einstellungen landet in bestehenden Kampagnen", async () => {
+    await call("leadops.updateTenantSettings", { companyFooter: "Tanesco Digital GbR · Schultheißweg 44 · 55252 Wiesbaden", websiteUrl: "tanescodigital.de", appointmentUrl: "https://cal.com/tanesco" });
+    const ergebnis = await call("leadops.applyFooterToCampaigns", {});
+    expect(ergebnis.updated).toBeGreaterThan(0);
+    expect(ergebnis.footerText).toContain("tanescodigital.de");
+    expect(ergebnis.footerText).toContain("cal.com/tanesco");
+    const liste = await call("leadops.listEmailCampaigns");
+    const campaign = await call("leadops.getEmailCampaign", { id: liste[0].id });
+    expect(campaign.design.footerText).toContain("cal.com/tanesco");
+    const nochmal = await call("leadops.applyFooterToCampaigns", {});
+    expect(nochmal.updated).toBe(0); // nichts doppelt schreiben
+  });
+});

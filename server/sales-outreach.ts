@@ -237,3 +237,22 @@ export async function coldListContacts(db: Db, tenantId: number, input: { listNa
   const columns = Array.from(new Set(filtered.flatMap((row) => Object.keys(row.felder))));
   return { contacts: filtered.slice(0, limit), columns, more: rows.length > limit };
 }
+
+/**
+ * Die Fußzeile aus den Einstellungen (Anschrift, Webseite, Terminlink) auf bestehende Kampagnen übertragen.
+ * Neue Kampagnen bekommen sie ohnehin; das hier ist für die, die es schon gibt. Der Rest des Designs bleibt unverändert.
+ */
+export async function applyFooterToCampaigns(db: Db, tenantId: number, options: { includeTemplates?: boolean } = {}) {
+  const patch = await tenantDesign(db, tenantId);
+  if (!patch.footerText) return { updated: 0, footerText: null as string | null };
+  const rows = await db.select({ id: emailCampaigns.id, design: emailCampaigns.design, isTemplate: emailCampaigns.isTemplate }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+  let updated = 0;
+  for (const row of rows) {
+    if (row.isTemplate && options.includeTemplates === false) continue;
+    const design = { ...DEFAULT_DESIGN, ...((row.design ?? {}) as Partial<EmailDesign>) };
+    if (design.footerText === patch.footerText) continue;
+    await db.update(emailCampaigns).set({ design: { ...design, footerText: patch.footerText } }).where(eq(emailCampaigns.id, row.id));
+    updated += 1;
+  }
+  return { updated, footerText: patch.footerText };
+}
