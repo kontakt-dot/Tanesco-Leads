@@ -1491,3 +1491,6 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .list-preview-scroll{max-width:100%;overflow-x:auto}
 .list-picker,.list-picker-row,.list-picker-preview{min-width:0;max-width:100%}
 .list-picker-preview{overflow:hidden}
+
+.tree-move{height:26px;max-width:150px;margin-right:6px;padding:0 6px;border-radius:7px;border:1px solid rgba(255,255,255,.1);background:rgba(10,12,20,.6);color:#94a3b8;font-size:11px}
+.tree-move:hover{border-color:rgba(129,120,255,.5);color:#e2e8f0}

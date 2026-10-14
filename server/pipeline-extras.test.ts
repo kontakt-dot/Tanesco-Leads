@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildIcs, dueBucket, fillMessage, followUpDue, groupByDue, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, weekDays } from "../shared/pipeline-extras";
-import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
+import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, moveNodeInTree, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
 import { companyFooterText, DEFAULT_DESIGN, linkifyFooter, renderEmailHtml } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
 import { PIPELINE_STAGES } from "../shared/sales-pipeline";
@@ -182,5 +182,46 @@ describe("Persönlicher Versand (weniger Werbung-Ordner)", () => {
     expect(html).not.toContain("box-shadow"); // kein Kasten
     expect(html).toContain("/api/mail/u/abc"); // Abmelde-Link bleibt
     expect(html).toContain("Guten Tag Berg,"); // Platzhalter werden weiter gefüllt
+  });
+});
+
+describe("Schritte im Ablauf verschieben", () => {
+  const baum = (): EmailTree => ({
+    start: "a",
+    nodes: [
+      { id: "a", type: "send", label: "1. E-Mail", subject: "Erste", blocks: [{ id: "t1", type: "text", text: "Hallo" }], next: "w" },
+      { id: "w", type: "wait", hours: 48, next: "c" },
+      { id: "c", type: "condition", check: "opened", yes: "b", no: "n" },
+      { id: "b", type: "send", label: "Dann-Mail", subject: "Dann", blocks: [{ id: "t2", type: "text", text: "Dann" }], next: null },
+      { id: "n", type: "send", label: "Sonst-Mail", subject: "Sonst", blocks: [{ id: "t3", type: "text", text: "Sonst" }], next: null },
+    ],
+  });
+
+  it("E-Mail hinter einen anderen Schritt hängen – der Rest bleibt verbunden", () => {
+    const next = moveNodeInTree(baum(), "a", "w", "next");
+    expect(next.start).toBe("w"); // der Nachfolger rückt an den Anfang
+    expect(next.nodes.find((node) => node.id === "w")).toMatchObject({ next: "a" });
+    expect(next.nodes.find((node) => node.id === "a")).toMatchObject({ next: "c" });
+    expect(validateTree(next)).toHaveLength(0);
+  });
+  it("E-Mail in den Sonst-Zweig verschieben", () => {
+    const next = moveNodeInTree(baum(), "a", "c", "no");
+    expect(next.start).toBe("w"); // a war Start, jetzt folgt w
+    expect(next.nodes.find((node) => node.id === "c")).toMatchObject({ no: "a", yes: "b" });
+    expect(next.nodes.find((node) => node.id === "a")).toMatchObject({ next: "n" }); // hängt vor der bisherigen Sonst-Mail
+    expect(validateTree(next)).toHaveLength(0);
+  });
+  it("Aus einem Zweig zurück an den Anfang", () => {
+    const next = moveNodeInTree(baum(), "b", null, "next");
+    expect(next.start).toBe("b");
+    expect(next.nodes.find((node) => node.id === "b")).toMatchObject({ next: "a" });
+    expect(next.nodes.find((node) => node.id === "c")).toMatchObject({ yes: null });
+    expect(validateTree(next)).toHaveLength(0);
+  });
+  it("Auf sich selbst oder eine Verzweigung verschieben ändert nichts", () => {
+    const tree = baum();
+    expect(moveNodeInTree(tree, "a", "a", "next")).toBe(tree);
+    expect(moveNodeInTree(tree, "c", "a", "next")).toBe(tree); // Verzweigungen lassen sich nicht verschieben
+    expect(moveNodeInTree(tree, "gibtsnicht", null, "next")).toBe(tree);
   });
 });

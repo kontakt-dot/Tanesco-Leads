@@ -144,3 +144,30 @@ export function summarizeCampaign(recipients: Array<Pick<RecipientState, "status
   const a = variant("A"); const b = variant("B");
   return { total, sent, opened, clicked, replied, done, failed, bounced, unsubscribed, openRate: sent ? Math.round((opened / sent) * 100) : 0, clickRate: sent ? Math.round((clicked / sent) * 100) : 0, bounceRate: sent ? Math.round((bounced / sent) * 100) : 0, abTest: a.sent || b.sent ? { a, b, winner: a.sent && b.sent ? (a.openRate === b.openRate ? null : a.openRate > b.openRate ? "A" : "B") : null } : null };
 }
+
+/**
+ * Einen Schritt im Ablauf an eine andere Stelle hängen (E-Mail oder Wartezeit).
+ * Zuerst wird er aus der Kette gelöst – der Vorgänger zeigt dann auf seinen Nachfolger –, danach an der
+ * neuen Stelle eingesetzt: hinter einen Schritt (`branch: "next"`), in den Dann-/Sonst-Zweig einer
+ * Verzweigung (`"yes"`/`"no"`) oder ganz an den Anfang (`parentId: null`).
+ * Eine Schleife kann dabei nicht entstehen, weil der Schritt beim Einsetzen nicht mehr in der Kette hängt.
+ */
+export function moveNodeInTree(tree: EmailTree, id: string, parentId: string | null, branch: "next" | "yes" | "no"): EmailTree {
+  const target = tree.nodes.find((node) => node.id === id);
+  if (!target || (target.type !== "send" && target.type !== "wait") || parentId === id) return tree;
+  const successor = target.next;
+  let nodes: EmailNode[] = tree.nodes.map((node) => {
+    if (node.id === id) return node;
+    if (node.type === "condition") return { ...node, yes: node.yes === id ? successor : node.yes, no: node.no === id ? successor : node.no };
+    if (node.type === "end") return node;
+    return { ...node, next: node.next === id ? successor : node.next };
+  });
+  let start = tree.start === id ? successor : tree.start;
+  const parent = parentId ? nodes.find((node) => node.id === parentId) ?? null : null;
+  if (parentId && !parent) return tree;
+  const oldTarget = parent ? (parent.type === "condition" ? (branch === "yes" ? parent.yes : parent.no) : parent.type === "end" ? null : parent.next) : start;
+  nodes = nodes.map((node) => node.id === id ? ({ ...node, next: oldTarget } as EmailNode) : node);
+  if (!parent) start = id;
+  else nodes = nodes.map((node) => node.id === parent.id ? (node.type === "condition" ? { ...node, [branch === "yes" ? "yes" : "no"]: id } : node.type === "end" ? node : { ...node, next: id }) : node);
+  return { start, nodes };
+}

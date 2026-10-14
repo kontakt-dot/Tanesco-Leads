@@ -811,6 +811,8 @@ html:not(.dark) .list-picker-main small { color: #4b5568 !important; }
 html:not(.dark) .list-picker-tools button { border: 1px solid #e8ecf1 !important; color: #0f172a !important; }
 html:not(.dark) .list-picker-tools button:hover { border-color: #d9dfe7 !important; color: #0f172a !important; }
 html:not(.dark) .list-picker-tools button.is-danger:hover { color: #8a5a5a !important; }
+html:not(.dark) .tree-move { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .tree-move:hover { border-color: #d9dfe7 !important; color: #0f172a !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
