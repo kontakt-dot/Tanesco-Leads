@@ -18,6 +18,6 @@ RUN pnpm install --frozen-lockfile --prod
 COPY --from=build /app/dist ./dist
 COPY drizzle ./drizzle
 RUN mkdir -p /app/uploads
-VOLUME ["/app/uploads"]
+# Kein VOLUME-Befehl: Railway lehnt Dockerfiles mit VOLUME ab – dauerhafte Ablage dort über Settings → Volumes (Mount-Pfad /app/uploads).
 EXPOSE 3000
 CMD ["sh", "-c", "node dist/migrate.js && node dist/index.js"]
