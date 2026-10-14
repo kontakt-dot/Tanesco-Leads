@@ -1,0 +1,10 @@
+/* Aktion bei Treffer: Karten statt starrem Dropdown – jede Option sichtbar und anklickbar */
+.action-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.action-picker button { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 10px 12px; border: 1px solid rgba(180, 175, 255, .16); border-radius: 12px; background: rgba(25, 22, 47, .55); color: #f1effe; cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease; }
+.action-picker button:hover { border-color: rgba(141, 133, 255, .45); background: rgba(38, 33, 68, .7); }
+.action-picker button.active { border-color: rgba(141, 133, 255, .7); background: linear-gradient(135deg, rgba(125, 113, 255, .24), rgba(125, 113, 255, .08)); box-shadow: inset 0 0 0 1px rgba(141, 133, 255, .35); }
+.action-picker button svg { width: 18px; height: 18px; flex: 0 0 18px; margin-top: 1px; color: #c9c5f5; }
+.action-picker button.active svg { color: #fff; }
+.action-picker button strong { display: block; font-size: 12px; font-weight: 700; line-height: 1.25; }
+.action-picker button small { display: block; margin-top: 2px; font-size: 11px; line-height: 1.35; color: #a5a1d7; }
+@media (max-width: 760px) { .action-picker { grid-template-columns: 1fr; } }

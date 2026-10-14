@@ -1,0 +1,1712 @@
+/**
+ * Ende-zu-Ende-Prüfung der Server-Logik (server/routers.ts + server/publicApi.ts + server/lead-pipeline.ts)
+ * gegen eine echte MySQL-8-Datenbank (Schema per drizzle-kit migrate).
+ *
+ * Ablauf: Benutzer → Lead-Kategorien → Bestellung/Lieferkette → Leads (manuell, CSV, REST-API)
+ *         → Automatisierung (löst jetzt automatisch aus) → Auslieferung inkl. API-Übergabe an den Käufer.
+ * Ausgehende HTTPS-Aufrufe werden über einen fetch-Stub aufgezeichnet (kein echter Partner nötig).
+ *
+ * Start:  DATABASE_URL=mysql://flux:flux@127.0.0.1:3308/fluxora_e2e JWT_SECRET=e2e-test-secret \
+ *         pnpm exec drizzle-kit migrate && pnpm exec vitest run server/e2e-flow.verify.test.ts
+ */
+import express from "express";
+import { createHash } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/mysql2";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks } from "../drizzle/schema";
+import { evaluateOrderEligibility } from "./lead-pipeline";
+import { authenticateRequest, verifyPassword } from "./_core/auth";
+import { intervalWindowOpen, runScheduledDeliveries } from "./delivery-scheduler";
+import { buildProviderPayload } from "./lead-integration-export";
+
+vi.mock("./_core/llm", () => ({
+  invokeLLM: vi.fn(async (params: { messages: Array<{ role: string; content: unknown }> }) => {
+    const text = String(params.messages.find((message) => message.role === "user")?.content ?? "").toLowerCase();
+    const good = /gerne|einverstanden|eigentümer/.test(text); const bad = /nicht angerufen|löschen/.test(text);
+    const score = bad ? 1 : good ? 9 : 5;
+    const evaluation = { criteria: ["bedarf", "entscheider", "zeitrahmen", "budget", "kontaktdaten", "einwilligung"].map((key) => ({ key, score, evidence: `Beleg ${key}` })), summary: bad ? "Kunde lehnt Kontakt ab." : good ? "Klarer Bedarf, Weitergabe erlaubt." : "Offene Punkte.", redFlags: bad ? ["Kunde möchte nicht kontaktiert werden"] : [], nextStep: good ? "Übergeben" : "Rückruf", verdict: bad ? "nicht_verkaufbar" : good ? "verkaufbar" : "nachfassen" };
+    return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(evaluation) }, finish_reason: "stop" }] };
+  }),
+}));
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "test-openai-key";
+process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://flux:flux@127.0.0.1:3308/fluxora_e2e";
+process.env.JWT_SECRET = process.env.JWT_SECRET ?? "e2e-test-secret";
+
+const { appRouter } = await import("./routers");
+const { registerPublicApiRoutes } = await import("./publicApi");
+
+type Caller = ReturnType<typeof appRouter.createCaller>;
+const db = drizzle(process.env.DATABASE_URL);
+const outbound: Array<{ url: string; method: string; headers: Record<string, string>; body: any }> = [];
+const realFetch = globalThis.fetch;
+
+let owner: Caller; let invitee: Caller; let ownerUserId: number; let inviteeUserId: number;
+let server: ReturnType<express.Express["listen"]>; let apiBase = "";
+const S: Record<string, any> = {};
+
+const leadRow = async (publicId: string) => (await db.select().from(leads).where(eq(leads.publicId, publicId)))[0];
+const postLead = (token: string, body: Record<string, unknown>) => fetch(`${apiBase}/api/v1/leads`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+
+beforeAll(async () => {
+  const run = Date.now().toString(36);
+  await db.insert(users).values({ openId: `owner-${run}`, name: "Tanesco Digital", email: `owner-${run}@example.de`, role: "admin", lastSignedIn: new Date() });
+  ownerUserId = (await db.select({ id: users.id }).from(users).where(eq(users.openId, `owner-${run}`)))[0].id;
+  await db.insert(users).values({ openId: `partner-${run}`, name: "Partner Solar GmbH", email: `partner-${run}@example.de`, role: "user", lastSignedIn: new Date() });
+  inviteeUserId = (await db.select({ id: users.id }).from(users).where(eq(users.openId, `partner-${run}`)))[0].id;
+  owner = appRouter.createCaller({ user: { id: ownerUserId } } as never);
+  invitee = appRouter.createCaller({ user: { id: inviteeUserId } } as never);
+
+  const app = express(); app.use(express.json({ limit: "5mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8"); } })); registerPublicApiRoutes(app);
+  server = app.listen(0, "127.0.0.1"); await new Promise((resolve) => server.once("listening", resolve));
+  apiBase = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith(apiBase)) return realFetch(input, init);
+    const headers: Record<string, string> = {}; new Headers(init?.headers).forEach((value, key) => { headers[key] = value; });
+    let parsedBody: unknown = null; try { parsedBody = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : init?.body ? { formData: true } : null; } catch { parsedBody = String(init?.body); }
+    outbound.push({ url, method: init?.method ?? "GET", headers, body: parsedBody });
+    if (url.endsWith("/login")) return new Response(JSON.stringify({ auth_token: "tok-12345" }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("aroundhome-d2d")) return new Response(JSON.stringify({ data: [{ uuid: "d2d-1", status: "qualified", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-2", status: "open", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-3", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar", sub_id: "D2D-TEST2", created_at: new Date(Date.now() - 24 * 3_600_000).toISOString() }, { uuid: "d2d-4", status: "qualified", sub_id: "D2D-FREMD", created_at: new Date().toISOString() }] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("aroundhome-export")) return new Response(JSON.stringify({ data: [{ uuid: S.aroundhomeRef ?? "none", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar" }, { uuid: "ah-unbekannt", status: "cancelled", cancellation_reason: "Dublette" }, { uuid: "ah-ok", status: "confirmed" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("recordings/")) return new Response(new Uint8Array([73, 68, 51, 3, 0, 0]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    if (url.includes("api.openai.com/v1/audio/transcriptions")) return new Response(S.transcriptForStub ?? "Agent: Hallo. Kunde: Ja gerne, ich bin Eigentümer und einverstanden.", { status: 200, headers: { "content-type": "text/plain" } });
+    if (url.includes("hlrlookup.com")) return new Response(JSON.stringify(url.includes("msisdn=491700000000") ? { status: "valid", network: "Telekom" } : { status: "invalid" }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.startsWith("https://nominatim.openstreetmap.org/")) return new Response(JSON.stringify([{ lat: "50.1109", lon: "8.6821", display_name: "Frankfurt am Main, Hessen, Deutschland" }]), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.startsWith("https://overpass-api.de/")) return new Response(JSON.stringify({ elements: [{ type: "node", id: 101, lat: 50.12, lon: 8.69, tags: { name: "Hansen Bedachungen GmbH", craft: "roofer", website: "https://hansen-test.de", phone: "+49 69 5550101", "addr:street": "Hauptstraße", "addr:housenumber": "5", "addr:postcode": "60311", "addr:city": "Frankfurt" } }, { type: "way", id: 202, center: { lat: 50.13, lon: 8.7 }, tags: { name: "Koch Dach e.K.", "addr:city": "Offenbach" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.startsWith("https://hansen-test.de")) return new Response(url.includes("impressum") ? "<p>Hansen Bedachungen GmbH<br>Geschäftsführer: Peter Hansen<br>E-Mail: info@hansen-test.de<br>HRB 12345 Amtsgericht Frankfurt · Umsatz 2025: ca. 3,2 Mio. €</p>" : "<html><body><p>Seit 1998 Dachdecker-Meisterbetrieb mit 24 Mitarbeitern. Wir sind tätig in Frankfurt und 50 km Umkreis. Photovoltaik und Dach.</p><a href=\"/impressum\">Impressum</a></body></html>", { status: 200, headers: { "content-type": "text/html" } });
+    if (url.startsWith("https://graph.facebook.com/")) {
+      const json = (payload: unknown) => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+      const path = new URL(url).pathname.replace(/^\/v\d+\.\d+\//, "");
+      if (path === "oauth/access_token") return json({ access_token: url.includes("fb_exchange_token") ? "EAAG-long-lived-token-1234567890" : "EAAG-short-token-1234567890", expires_in: 5_184_000 });
+      if (path === "me/accounts") return json({ data: [{ id: "1029384756", name: "Tanesco Energie", access_token: "EAAG-page-token-from-oauth-123456" }, { id: "2039485766", name: "Zweite Seite", access_token: "EAAG-page-token-2" }] });
+      if (path === "me/adaccounts") return json({ data: [{ id: "act_55512345", name: "Tanesco Ads", account_id: "55512345" }] });
+      if (/^1029384756$/.test(path)) return json({ id: "1029384756", name: "Tanesco Energie" });
+      if (path.endsWith("/subscribed_apps")) return json({ success: true });
+      if (path.endsWith("/leadgen_forms")) return json({ data: [{ id: "form-pv", name: "Photovoltaik – Beratung", status: "ACTIVE", leads_count: 3 }] });
+      if (/^act_55512345$/.test(path)) return json({ id: "act_55512345", name: "Tanesco Ads" });
+      if (path.endsWith("/insights")) return json({ data: [{ date_start: new Date().toISOString().slice(0, 10), campaign_id: "cmp-1", campaign_name: "PV Süd", adset_id: "as-1", adset_name: "Eigenheim", ad_id: "ad-1", ad_name: "Video", spend: "120.50", impressions: "8000", clicks: "160", actions: [{ action_type: "lead", value: "2" }] }] });
+      if (/^form-pv$/.test(path)) return json({ name: "Photovoltaik – Beratung" });
+      if (/^lg-77[78]$/.test(path)) return json({ id: path, created_time: new Date().toISOString(), field_data: [{ name: "email", values: ["meta.lead@beispiel.de"] }, { name: "phone_number", values: ["+49 160 7777777"] }, { name: "full_name", values: ["Mia Meta"] }, { name: "zip_code", values: ["80331"] }, { name: "city", values: ["München"] }, { name: "hausbesitzer", values: ["Ja"] }], ad_id: "ad-1", ad_name: "Video", adset_id: "as-1", adset_name: "Eigenheim", campaign_id: "cmp-1", campaign_name: "PV Süd", form_id: "form-pv", platform: "instagram" });
+      return json({ ok: true });
+    }
+    if (url.includes("secured") && headers["x-auth-token"] !== "tok-12345") return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    if (url.includes("duplicate")) return new Response(JSON.stringify({ code: 5, message: "Kunde existiert bereits" }), { status: 400, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(url.includes("crm") ? { uuid: `ah-${outbound.length}`, ok: true } : { ok: true }), { status: url.includes("reject") ? 422 : 200, headers: { "content-type": "application/json", "x-request-id": `req-${outbound.length}` } });
+  });
+});
+
+afterAll(async () => { vi.unstubAllGlobals(); await new Promise((resolve) => server.close(resolve)); });
+
+describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)", () => {
+  it("0. Anmeldung ohne Manus: erstes Konto, Login, Einladung, Passwort ändern und zurücksetzen", async () => {
+    const run = Date.now().toString(36);
+    const cookies: Record<string, string> = {};
+    const webCaller = (userId?: number) => appRouter.createCaller({ user: userId ? { id: userId } : null, req: { headers: { cookie: Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join("; ") }, protocol: "http", hostname: "localhost" }, res: { cookie: (name: string, value: string) => { cookies[name] = value; }, clearCookie: (name: string) => { delete cookies[name]; } } } as never);
+    const status = await webCaller().auth.registrationStatus();
+    // In dieser Testdatenbank existieren bereits Benutzer (beforeAll) → Registrierung nur per Einladung
+    expect(status.open).toBe(false);
+    await expect(webCaller().auth.register({ name: "Fremd", email: `fremd-${run}@example.de`, password: "geheim-12345" })).rejects.toThrow("nur mit einer Einladung");
+    await expect(webCaller().auth.login({ email: `owner-${run}@example.de`, password: "falsch" })).rejects.toThrow("nicht korrekt");
+
+    // Einladung durch den Inhaber → Konto mit Einladungslink anlegen → Sitzungscookie → Einladung annehmen
+    await owner.leadops.dashboard();
+    const invitation = await owner.leadops.inviteUser({ email: `neu-${run}@example.de`, role: "vertrieb", partnerType: "intern" });
+    await expect(webCaller().auth.register({ name: "Neu", email: `neu-${run}@example.de`, password: "kurz1" })).rejects.toThrow("mindestens 10 Zeichen");
+    const registered = await webCaller().auth.register({ name: "Neu Mitglied", email: `NEU-${run}@example.de`, password: "sicher-2026-xyz", inviteToken: invitation.token });
+    expect(registered.email).toBe(`neu-${run}@example.de`);
+    expect(cookies.app_session_id).toBeTruthy();
+    const sessionUser = await authenticateRequest({ headers: { cookie: `app_session_id=${cookies.app_session_id}` } } as never);
+    expect(sessionUser.id).toBe(registered.id); expect(sessionUser.role).toBe("user");
+    expect(await verifyPassword("sicher-2026-xyz", sessionUser.passwordHash)).toBe(true);
+    const member = appRouter.createCaller({ user: { id: registered.id } } as never);
+    await member.leadops.acceptInvitation({ token: invitation.token });
+    expect((await member.leadops.tenantContext())?.tenant.id).toBe((await owner.leadops.dashboard()).tenant.id);
+
+    // Login setzt eine neue Sitzung, Passwort ändern, Administrator setzt ein Einmal-Passwort
+    delete cookies.app_session_id;
+    await webCaller().auth.login({ email: `neu-${run}@example.de`, password: "sicher-2026-xyz" });
+    expect(cookies.app_session_id).toBeTruthy();
+    await webCaller(registered.id).auth.changePassword({ currentPassword: "sicher-2026-xyz", newPassword: "noch-sicherer-2026" });
+    await expect(webCaller().auth.login({ email: `neu-${run}@example.de`, password: "sicher-2026-xyz" })).rejects.toThrow("nicht korrekt");
+    const membership = (await db.select().from(memberships).where(and(eq(memberships.userId, registered.id), eq(memberships.status, "aktiv"))))[0];
+    const reset = await owner.leadops.resetMemberPassword({ membershipId: membership.id });
+    expect(reset.temporaryPassword).toHaveLength(12);
+    await webCaller().auth.login({ email: `neu-${run}@example.de`, password: reset.temporaryPassword });
+    await expect(member.leadops.resetMemberPassword({ membershipId: membership.id })).rejects.toThrow("vorbehalten");
+    expect((await webCaller(registered.id).auth.me())?.passwordHash).toBeUndefined(); // Hash verlässt den Server nie
+  });
+
+  it("1. Benutzer: Inhaber-Mandant, Einladung eines Partners als Käufer, Profile für Käufer und Lieferant", async () => {
+    const dashboard = await owner.leadops.dashboard();
+    expect(dashboard.tenant.id).toBeGreaterThan(0); S.tenantId = dashboard.tenant.id;
+
+    const invitation = await owner.leadops.inviteUser({ email: "partner@example.de", role: "manager", partnerType: "käufer" });
+    expect(invitation.token).toHaveLength(32);
+    await invitee.leadops.acceptInvitation({ token: invitation.token });
+    S.membership = (await db.select().from(memberships).where(and(eq(memberships.tenantId, S.tenantId), eq(memberships.userId, inviteeUserId))))[0];
+    expect(S.membership).toMatchObject({ role: "manager", partnerType: "käufer", status: "aktiv" });
+    expect((await invitee.leadops.tenantContext())?.tenant.id).toBe(S.tenantId);
+
+    await owner.leadops.createOrganizationProfile({ partnerType: "käufer", name: "Partner Solar GmbH", email: "einkauf@partner.example" });
+    await owner.leadops.createOrganizationProfile({ partnerType: "lieferant", name: "Partner Solar GmbH", email: "leads@partner.example" });
+    const profiles = await owner.leadops.listOrganizationProfiles();
+    expect(profiles.filter((p) => p.name === "Partner Solar GmbH").map((p) => p.partnerType).sort()).toEqual(["käufer", "lieferant"]);
+    S.supplierId = (await owner.leadops.listSuppliers()).find((s) => s.name === "Partner Solar GmbH")!.id; // Lieferantenprofil → Lieferant
+    expect(S.supplierId).toBeGreaterThan(0);
+  });
+
+  it("2. Lead-Kategorien: PV-Vorlage und eigene Kategorie mit Feldern", async () => {
+    await owner.leadops.createPvCategoryTemplate();
+    await owner.leadops.createCategory({ shortcode: "WP-DEMO", name: "Wärmepumpe Endkunde", defaultLeadPrice: "45.00" });
+    const categories = await owner.leadops.listCategories();
+    S.pv = categories.find((c) => c.shortcode.toUpperCase().includes("PV")); S.wp = categories.find((c) => c.shortcode === "WP-DEMO");
+    expect(S.pv).toBeTruthy(); expect(S.wp).toBeTruthy();
+    expect(S.wp!.emoji).toBe("♨️"); // Emoji aus dem Namen vorgeschlagen
+    await owner.leadops.updateCategory({ id: S.wp!.id, emoji: "🔥" }); expect((await owner.leadops.listCategories()).find((c) => c.id === S.wp!.id)?.emoji).toBe("🔥");
+    await owner.leadops.updateCategory({ id: S.wp!.id, emoji: "♨️" });
+    await owner.leadops.addCategoryField({ categoryId: S.wp.id, label: "Heizungsart", fieldKey: "heizungsart", fieldType: "auswahl", options: ["Gas", "Öl", "Strom"], required: true });
+    await owner.leadops.addCategoryField({ categoryId: S.wp.id, label: "Wohnfläche (m²)", fieldKey: "wohnflaeche", fieldType: "zahl", required: false });
+    expect((await owner.leadops.listCategoryFields({ categoryId: S.wp.id })).map((f) => f.fieldKey)).toEqual(["heizungsart", "wohnflaeche"]);
+    expect((await owner.leadops.listCategoryFields({ categoryId: S.pv.id })).length).toBeGreaterThan(5);
+  });
+
+  it("3. Bestellung des Käufers mit operativer Konfiguration, Käufer-Integration und Lieferkette", async () => {
+    const order = await owner.leadops.createOrder({ name: "WP-Leads Q4", buyerName: "Partner Solar GmbH", categoryId: S.wp.id, quantity: 50, unitPrice: 48, supplierId: S.supplierId, status: "aktiv" });
+    S.orderId = order.orderId; S.orderNumber = order.orderNumber; expect(order.orderNumber).toMatch(/^ORD-/);
+    await owner.leadops.saveOrderWorkspace({ orderId: S.orderId, name: "WP-Leads Q4", buyerName: "Partner Solar GmbH", buyerUserId: inviteeUserId, categoryId: S.wp.id, categoryIds: [S.wp.id], quantity: 50, unitPrice: 48, supplierId: S.supplierId, supplierMode: "ein", supplierIds: [S.supplierId], deliveryInterval: "täglich", compensateClaims: true, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
+    const saved = await owner.leadops.getOrderWorkspace({ orderId: S.orderId });
+    expect(saved.config.buyerUserId).toBe(inviteeUserId);
+    expect(saved.config.supplierRestrictions).toMatchObject({ mode: "ein", allowedSupplierIds: [S.supplierId], blockUnknownSuppliers: true });
+
+    // API-Integration des Käufers und Verknüpfung mit seiner Mitgliedschaft (Bestellung → Käufer → Integration)
+    const integration = await owner.leadops.createPartnerIntegration({ provider: "custom_api", name: "Partner Solar CRM", callbackUrl: "https://crm.partner-solar.example/api/leads", config: { authMethod: "api_key", direction: "ausgehend" } });
+    S.integrationId = integration.integrationId!;
+    await owner.leadops.setPartnerIntegrationCredential({ id: S.integrationId, secret: "sk-partner-123" });
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, status: "aktiv" });
+    await owner.leadops.updateMembership({ id: S.membership.id, integrationId: S.integrationId });
+
+    await owner.leadops.createDeliveryChain({ orderId: S.orderId, categoryId: S.wp.id, name: "WP → Partner Solar", priority: 1, sellTarget: 1, distributionMode: "lieferketten_round_robin" });
+    const chain = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "WP → Partner Solar")!; S.chainId = chain.id;
+    expect(chain.status).toBe("inaktiv"); // neue Ketten starten inaktiv
+    await owner.leadops.addDeliveryStop({ chainId: S.chainId, buyerName: "Partner Solar GmbH", position: 1, unitPrice: 48 });
+    await owner.leadops.updateDeliveryChain({ id: S.chainId, status: "aktiv" });
+    const withStops = (await owner.leadops.listDeliveryChains()).find((c) => c.id === S.chainId)!;
+    expect(withStops.stops).toHaveLength(1); expect(withStops.status).toBe("aktiv");
+  });
+
+  it("4. Leads anlegen: manuell, per CSV-Batch und über die öffentliche REST-API (Lieferant wird aufgelöst)", async () => {
+    const manual = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Max", lastName: "Mustermann", email: "max@example.de", phone: "+49 69 1234567", postcode: "60311", city: "Frankfurt", supplierId: S.supplierId, supplierName: "Partner Solar GmbH", cost: 20, metadata: { heizungsart: "Gas", wohnflaeche: 140 } });
+    S.leadA = manual.publicId; expect(S.leadA).toHaveLength(8);
+    expect(manual.automation).toEqual({ executed: 0, duplicated: 0, delivered: 0 }); // noch keine Regeln
+
+    const batch = await owner.leadops.startLeadImportBatch({ categoryId: S.wp.id, fileName: "leads.csv", totalRows: 2, errorDetails: [{ rowNumber: 2, reason: "E-Mail ungültig", values: { email: "kaputt" } }] });
+    const csvLead = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Erika", lastName: "Musterfrau", email: "erika@example.de", postcode: "10115", city: "Berlin", supplierId: S.supplierId, metadata: { heizungsart: "Öl" } });
+    await owner.leadops.finishLeadImportBatch({ batchId: batch.batchId, leadPublicIds: [csvLead.publicId], importedRows: 1, errorRows: 1 });
+    S.leadB = csvLead.publicId;
+    expect((await owner.leadops.listLeadImportBatches())[0]).toMatchObject({ fileName: "leads.csv", importedRows: 1, errorRows: 1 });
+
+    const token = await owner.leadops.createApiToken({ name: "Partner Solar API", scopes: ["leads:write"] }); S.token = token.token;
+    expect(token.token).toMatch(/^fx_/);
+    expect((await postLead("falsch", { categoryId: S.wp.id, firstName: "X" })).status).toBe(401);
+    const created = await postLead(S.token, { categoryId: S.wp.id, firstName: "Api", lastName: "Kunde", email: "api@example.de", phone: "+49 30 555", postcode: "20095", city: "Hamburg", supplierName: "partner solar gmbh", metadata: { heizungsart: "Strom", wohnflaeche: 95 } });
+    expect(created.status).toBe(201);
+    const payload = await created.json();
+    expect(payload).toMatchObject({ status: "neu", supplierId: S.supplierId, automation: { executed: 0 } }); expect(payload.id).toMatch(/^API-/); S.leadC = payload.id;
+    const tokenRow = (await db.select().from(apiTokens).where(eq(apiTokens.tokenHash, createHash("sha256").update(S.token).digest("hex"))))[0];
+    expect(tokenRow.lastUsedAt).toBeTruthy();
+
+    const page = await owner.leadops.listLeadsPaged({ page: 1, pageSize: 50 });
+    expect(page.rows.map((r) => r.publicId)).toEqual(expect.arrayContaining([S.leadA, S.leadB, S.leadC]));
+    expect(page.rows.find((r) => r.publicId === S.leadC)!.supplierId).toBe(S.supplierId); // Lieferant per Name aufgelöst
+  });
+
+  it("5. Automatisierung löst bei Lead-Anlage automatisch aus: Bestellung zuordnen → Echtzeit-Auslieferung → API-Übergabe", async () => {
+    await owner.leadops.createAutomationRule({ name: "WP-Leads Gas/Öl an Partner Solar", triggerType: "lead_erstellt", sourceCategoryId: S.wp.id, targetCategoryId: S.wp.id, conditionMode: "mindestens_eine", conditions: [{ field: "heizungsart", operator: "gleich", value: "Gas" }, { field: "heizungsart", operator: "gleich", value: "Öl" }], actionType: "lead_bestellung_zuordnen", actionConfig: { orderId: S.orderId }, status: "aktiv" });
+    await owner.leadops.createAutomationRule({ name: "WP-Leads an Partner-CRM exportieren", triggerType: "lead_erstellt", sourceCategoryId: S.wp.id, targetCategoryId: S.wp.id, conditions: [], actionType: "integration_ausfuehren", actionConfig: { integrationId: S.integrationId }, status: "aktiv" });
+
+    // 5a manuell angelegter Lead (Gas) → beide Regeln, Auslieferung an den Käufer inkl. API-Übergabe – ohne manuellen Aufruf
+    const before = outbound.length;
+    const leadD = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Doris", lastName: "Direkt", email: "doris@example.de", postcode: "80331", city: "München", supplierId: S.supplierId, cost: 25, metadata: { heizungsart: "Gas", wohnflaeche: 120 } });
+    S.leadD = leadD.publicId;
+    expect(leadD.automation).toEqual({ executed: 2, duplicated: 0, delivered: 1 });
+    const rowD = await leadRow(S.leadD);
+    expect(rowD.status).toBe("zugewiesen");
+    expect(rowD.metadata).toMatchObject({ assignedOrderId: S.orderId, assignedOrderNumber: S.orderNumber });
+    const deliveriesD = await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, rowD.id));
+    expect(deliveriesD).toHaveLength(1);
+    expect(deliveriesD[0]).toMatchObject({ orderId: S.orderId, chainId: S.chainId, buyerName: "Partner Solar GmbH", result: "angenommen" });
+    const calls = outbound.slice(before);
+    expect(calls).toHaveLength(2); // 1× Auslieferung an die Käufer-Integration, 1× Export-Regel
+    for (const call of calls) { expect(call.url).toBe("https://crm.partner-solar.example/api/leads"); expect(call.headers["x-api-key"]).toBe("sk-partner-123"); expect(call.body.lead.publicId).toBe(S.leadD); }
+    expect(calls[0].headers["x-fluxora-lead-reference"]).toBe(`${S.orderNumber}/${S.leadD}`);
+    expect(calls[0].body.lead.fields).toMatchObject({ heizungsart: "Gas", deliveredOrderNumber: S.orderNumber, deliveredUnitPrice: "48.00" });
+    const logs = (await owner.leadops.listAutomationExecutionLogs()).filter((l) => l.sourceLeadId === rowD.id).map((l) => `${l.result}: ${l.summary}`).sort();
+    expect(logs).toEqual([`ausgeführt: Bestellung ${S.orderNumber} zugeordnet; ausgeliefert an Partner Solar GmbH (API Partner Solar CRM: HTTP 200)`, "ausgeführt: Integration Partner Solar CRM: geliefert (HTTP 200)"]);
+    expect((await db.select().from(orders).where(eq(orders.id, S.orderId)))[0].deliveredCount).toBe(1);
+
+    // 5b Lead über die REST-API (Strom) → nur Export-Regel, keine Auslieferung
+    const apiResponse = await postLead(S.token, { categoryId: S.wp.id, firstName: "Emil", lastName: "Extern", postcode: "50667", city: "Köln", supplierName: "Partner Solar GmbH", metadata: { heizungsart: "Strom" } });
+    const apiPayload = await apiResponse.json(); S.leadE = apiPayload.id;
+    expect(apiPayload.automation).toEqual({ executed: 1, duplicated: 0, delivered: 0 });
+    expect((await leadRow(S.leadE)).status).toBe("neu");
+    expect(outbound[outbound.length - 1].body.lead.publicId).toBe(S.leadE);
+
+    // 5c manueller Regellauf für einen älteren Lead bleibt möglich
+    const resultA = await owner.leadops.runLeadAutomation({ publicId: S.leadA, triggerType: "lead_erstellt" });
+    expect(resultA).toEqual({ duplicated: 0, executed: 2, delivered: 1 });
+    expect((await leadRow(S.leadA)).status).toBe("zugewiesen");
+
+    // 5d Statuswechsel löst "status_geändert"-Regeln aus
+    await owner.leadops.createAutomationRule({ name: "Reklamierte Leads prüfen", triggerType: "status_geändert", sourceCategoryId: S.wp.id, targetCategoryId: S.wp.id, conditions: [{ field: "status", operator: "gleich", value: "reklamiert" }], actionType: "lead_tags_setzen", actionConfig: {}, status: "aktiv" });
+    const statusChange = await owner.leadops.updateLeadStatus({ publicId: S.leadE, status: "reklamiert" });
+    expect(statusChange.automation).toEqual({ executed: 0, duplicated: 0, delivered: 0 }); // Regel läuft, aber ohne Tag-ID → übersprungen
+    const logsE = (await owner.leadops.listAutomationExecutionLogs()).filter((l) => l.ruleName === "Reklamierte Leads prüfen");
+    expect(logsE.map((l) => `${l.result}: ${l.summary}`)).toEqual(["übersprungen: Lead-Tag wurde nicht gefunden."]);
+  });
+
+  it("6. Manuelle Auslieferung beachtet Bestellung und Lieferantensperre; Export mit Zugangsdaten und Ablehnung", async () => {
+    const before = outbound.length;
+    const delivery = await owner.leadops.deliverLead({ publicId: S.leadB });
+    expect(delivery).toMatchObject({ chainId: S.chainId, orderId: S.orderId, buyerName: "Partner Solar GmbH", unitPrice: "48.00", result: "angenommen", export: { integrationName: "Partner Solar CRM", eventType: "geliefert", responseStatus: 200 } });
+    expect(outbound[before].headers["x-api-key"]).toBe("sk-partner-123");
+    expect((await leadRow(S.leadB)).status).toBe("zugewiesen");
+
+    // Lead ohne freigegebenen Lieferanten: Bestellung lehnt ab, Grund wird genannt
+    const noSupplier = await (await postLead(S.token, { categoryId: S.wp.id, firstName: "Fremd", lastName: "Lieferung", postcode: "01067", city: "Dresden", metadata: { heizungsart: "Strom" } })).json();
+    await expect(owner.leadops.deliverLead({ publicId: noSupplier.id })).rejects.toThrow("Lieferant für diese Bestellung nicht freigegeben");
+
+    // Manueller Export über die Integrationsseite (mit Referenz) und Testlead
+    const exported = await owner.leadops.exportLeadToPartnerIntegration({ integrationId: S.integrationId, publicId: S.leadA, externalReference: `${S.orderNumber}/${S.leadA}` });
+    expect(exported).toMatchObject({ eventType: "geliefert", responseStatus: 200 });
+    const call = outbound[outbound.length - 1];
+    expect(call.headers["x-fluxora-lead-reference"]).toBe(`${S.orderNumber}/${S.leadA}`);
+    expect(call.body.lead).toMatchObject({ publicId: S.leadA, firstName: "Max", postcode: "60311", fields: { heizungsart: "Gas", assignedOrderId: S.orderId } });
+    const test = await owner.leadops.sendIntegrationTestLead({ integrationId: S.integrationId, categoryId: S.wp.id });
+    expect(test.eventType).toBe("geliefert"); expect(test.publicId).toMatch(/^TEST-/);
+
+    // Ablehnung des Partners → "abgelehnt", Ereignis protokolliert
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/reject" });
+    const rejected = await owner.leadops.exportLeadToPartnerIntegration({ integrationId: S.integrationId, publicId: S.leadC });
+    expect(rejected).toMatchObject({ eventType: "abgelehnt", responseStatus: 422 });
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/leads" });
+    const events = await db.select().from(integrationEvents).where(eq(integrationEvents.integrationId, S.integrationId));
+    expect(events.filter((e) => e.eventType === "geliefert").length).toBeGreaterThanOrEqual(6);
+    expect(events.filter((e) => e.eventType === "abgelehnt").length).toBe(1);
+
+    // Audit-Trail des automatisch gelieferten Leads
+    const rowD = await leadRow(S.leadD);
+    const notes = (await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, rowD.id))).map((e) => e.note);
+    expect(notes.length).toBe(4); expect(notes[0]).toBe("Lead manuell oder per Dateiimport angelegt."); expect(notes[1]).toBe(`Automatisierung: Bestellung zugeordnet (${S.orderNumber})`); expect(notes[2]).toContain("Auslieferung an Partner Solar GmbH"); expect(notes[3]).toContain("API-Übergabe an Partner Solar CRM: geliefert (HTTP 200)");
+    expect(JSON.stringify(await owner.leadops.getLeadAuditLog({ publicId: S.leadD }))).toContain("Partner Solar CRM");
+    expect((await owner.leadops.dashboard()).kpis.delivered).toBeGreaterThanOrEqual(1);
+  });
+
+  it("7. Frühere Befunde sind behoben", async () => {
+    // (c) Provider-Mapping der Vorlagen wird angewendet (GoHighLevel: flache Kontaktstruktur, Location-ID, Header)
+    await owner.leadops.installStandardIntegrationTemplates();
+    const ghl = (await owner.leadops.listPartnerIntegrations()).find((i) => i.provider === "gohighlevel")!;
+    await owner.leadops.setPartnerIntegrationCredential({ id: ghl.id, secret: "ghl-bearer-token" });
+    await owner.leadops.updatePartnerIntegration({ id: ghl.id, publisherId: "loc_4711", status: "aktiv" });
+    await owner.leadops.exportLeadToPartnerIntegration({ integrationId: ghl.id, publicId: S.leadA });
+    const call = outbound[outbound.length - 1];
+    expect(call.url).toBe("https://services.leadconnectorhq.com/contacts/");
+    expect(call.headers.authorization).toBe("Bearer ghl-bearer-token");
+    expect(call.headers.version).toBe("2021-07-28");
+    expect(call.body).toMatchObject({ firstName: "Max", lastName: "Mustermann", email: "max@example.de", postalCode: "60311", locationId: "loc_4711", source: "Tanesco Leads" });
+    expect(call.body.customFields).toEqual(expect.arrayContaining([{ key: "heizungsart", field_value: "Gas" }, { key: "wohnflaeche", field_value: "140" }]));
+    expect(call.body.lead).toBeUndefined();
+
+    // (d) Auslieferung folgt der Bestellzuordnung, auch wenn eine fremde Kette den niedrigeren Round-Robin-Zähler hat
+    await owner.leadops.createDeliveryChain({ categoryId: S.wp.id, name: "Zweite Kette ohne Bestellung", priority: 1, sellTarget: 1, distributionMode: "lieferketten_round_robin" });
+    const other = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "Zweite Kette ohne Bestellung")!;
+    await owner.leadops.addDeliveryStop({ chainId: other.id, buyerName: "Anderer Käufer", position: 1, unitPrice: 30 });
+    await owner.leadops.updateDeliveryChain({ id: other.id, status: "aktiv" });
+    const assigned = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Zuge", lastName: "Ordnet", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } }); // Strom → keine Bestellregel
+    await owner.leadops.assignLeadsToOrder({ publicIds: [assigned.publicId], orderId: S.orderId });
+    const free = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Frei", lastName: "Verteilt", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    expect((await owner.leadops.deliverLead({ publicId: assigned.publicId })).chainId).toBe(S.chainId); // Bestellkette trotz höherem Zähler
+    expect((await owner.leadops.deliverLead({ publicId: free.publicId })).chainId).toBe(other.id); // ohne Zuordnung: Round-Robin
+
+    // (e) Rechteprüfung: Käufer (manager) darf keine Mandanteneinstellungen ändern, viewer darf nichts löschen
+    await expect(invitee.leadops.updateTenantSettings({ leadDeactivationHours: 1 })).rejects.toThrow("steht Käufer-Zugängen nicht zur Verfügung");
+    await invitee.leadops.updateNavigationPreferences({ hiddenPages: [] }); // Selbstverwaltung bleibt erlaubt
+    const viewerInvite = await owner.leadops.inviteUser({ email: "viewer@example.de", role: "viewer", partnerType: "lieferant" });
+    await db.insert(users).values({ openId: `viewer-${Date.now()}`, name: "Nur Lesen", email: "viewer@example.de", role: "user", lastSignedIn: new Date() });
+    const viewerId = (await db.select({ id: users.id }).from(users).where(eq(users.name, "Nur Lesen")))[0].id;
+    const viewer = appRouter.createCaller({ user: { id: viewerId } } as never);
+    await viewer.leadops.acceptInvitation({ token: viewerInvite.token });
+    expect((await viewer.leadops.listLeadsPaged({ page: 1, pageSize: 10 })).total).toBe(0); // Lieferanten-Partner ohne zugeordnetes Lieferantenprofil sieht keine Leads
+    await expect(viewer.leadops.deleteLeads({ publicIds: [S.leadC], reason: "nicht erlaubt" })).rejects.toThrow("darf diese Aktion nicht ausführen");
+    await expect(viewer.leadops.importLead({ categoryId: S.wp.id, firstName: "Nein" })).rejects.toThrow("darf diese Aktion nicht ausführen");
+    S.viewerId = viewerId; S.viewerMembershipId = (await db.select().from(memberships).where(and(eq(memberships.tenantId, S.tenantId), eq(memberships.userId, viewerId))))[0].id;
+    expect(await leadRow(S.leadC)).toBeTruthy();
+    expect((await db.select().from(automationExecutionLogs).where(eq(automationExecutionLogs.tenantId, S.tenantId))).length).toBeGreaterThan(5);
+  });
+
+  it("9. Doppelauslieferung, Ablehnung mit Ausweichkette, automatische Reklamation (PrePing), leere Felder", async () => {
+    // (a) Schutz vor Doppelauslieferung – ausdrückliche Wiederholung bleibt möglich
+    await expect(owner.leadops.deliverLead({ publicId: S.leadB })).rejects.toThrow("bereits an Partner Solar GmbH ausgeliefert");
+    const repeated = await owner.leadops.deliverLead({ publicId: S.leadB, allowRepeat: true });
+    expect(repeated.buyerName).toBe("Anderer Käufer"); expect(repeated.result).toBe("angeboten"); // Dublettenschutz: nicht erneut an Partner Solar, sondern an die nächste Kette
+    await expect(owner.leadops.deliverLead({ publicId: S.leadB, allowRepeat: true, orderId: S.orderId })).rejects.toThrow("Dublettenschutz");
+
+    // (b) Käufer lehnt ab → Lieferung „abgelehnt“, Bestellzähler unverändert, Lead bleibt offen
+    const beforeCount = (await db.select().from(orders).where(eq(orders.id, S.orderId)))[0].deliveredCount;
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/reject" });
+    const rejectedLead = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Rita", lastName: "Reject", email: "rita@example.de", postcode: "70173", city: "Stuttgart", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    await owner.leadops.assignLeadsToOrder({ publicIds: [rejectedLead.publicId], orderId: S.orderId });
+    const rejected = await owner.leadops.deliverLead({ publicId: rejectedLead.publicId });
+    expect(rejected.result).toBe("abgelehnt"); expect(rejected.attempts).toHaveLength(1); expect(rejected.attempts[0].reason).toContain("HTTP 422"); expect(rejected.claimId).toBeUndefined();
+    const rejectedRow = await leadRow(rejectedLead.publicId);
+    expect(rejectedRow.status).toBe("neu");
+    expect((await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, rejectedRow.id))).map((d) => d.result)).toEqual(["abgelehnt"]);
+    expect((await db.select().from(orders).where(eq(orders.id, S.orderId)))[0].deliveredCount).toBe(beforeCount);
+
+    // (c) PrePing: qualifizierte Ablehnung erzeugt automatisch eine Reklamation
+    await owner.leadops.updateTenantSettings({ incomingPrePing: true });
+    const prePing = await owner.leadops.deliverLead({ publicId: rejectedLead.publicId });
+    expect(prePing.result).toBe("abgelehnt"); expect(prePing.claimId).toBeGreaterThan(0);
+    expect((await db.select().from(claims).where(eq(claims.id, prePing.claimId!)))[0]).toMatchObject({ leadId: rejectedRow.id, reason: "Partnerablehnung", status: "offen" });
+    expect((await leadRow(rejectedLead.publicId)).status).toBe("reklamiert");
+    await owner.leadops.updateTenantSettings({ incomingPrePing: false });
+
+    // (d) Ohne feste Zuordnung wird nach der Ablehnung auf die nächste Kette ausgewichen (zweite Kette, Priorität 2 → „angeboten“)
+    const otherChain = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "Zweite Kette ohne Bestellung")!;
+    await owner.leadops.updateDeliveryChain({ id: otherChain.id, priority: 2 });
+    const fallbackLead = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Fanny", lastName: "Fallback", email: "fanny@example.de", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    const fallback = await owner.leadops.deliverLead({ publicId: fallbackLead.publicId });
+    expect(fallback.attempts.map((a) => `${a.chainName}: ${a.outcome}`)).toEqual(["WP → Partner Solar: abgelehnt", "Zweite Kette ohne Bestellung: angeboten"]);
+    expect(fallback.buyerName).toBe("Anderer Käufer"); expect(fallback.result).toBe("angeboten");
+    expect((await leadRow(fallbackLead.publicId)).status).toBe("zugewiesen");
+    await owner.leadops.updateDeliveryChain({ id: otherChain.id, priority: 1 });
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/leads" });
+
+    // (e) Dublettenschutz pro Käufer: gleicher Kontakt wird nicht erneut an denselben Käufer geliefert
+    const twin = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Max", lastName: "Zwilling", email: "max@example.de", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    await expect(owner.leadops.deliverLead({ publicId: twin.publicId, orderId: S.orderId })).rejects.toThrow("Dublettenschutz");
+    await owner.leadops.updateTenantSettings({ outgoingDuplicateProtection: false });
+    expect((await owner.leadops.deliverLead({ publicId: twin.publicId, orderId: S.orderId })).result).toBe("angenommen");
+    await owner.leadops.updateTenantSettings({ outgoingDuplicateProtection: true });
+
+    // (f) „Leere API-Felder auslassen“
+    await owner.leadops.updateTenantSettings({ skipEmptyApiFields: true });
+    await owner.leadops.exportLeadToPartnerIntegration({ integrationId: S.integrationId, publicId: twin.publicId });
+    const sparse = outbound[outbound.length - 1].body;
+    expect(sparse.lead).not.toHaveProperty("phone"); expect(sparse.lead).not.toHaveProperty("postcode"); expect(sparse.lead.email).toBe("max@example.de");
+    await owner.leadops.updateTenantSettings({ skipEmptyApiFields: false });
+  });
+
+  it("10. Zeitplaner: tägliches Lieferintervall, Wiederholung nach Ablehnung, Aufgabe nach 3 Versuchen", async () => {
+    const monday = new Date("2026-09-21T09:00:00+02:00"); const tuesday = new Date("2026-09-22T09:00:00+02:00");
+    expect(intervalWindowOpen("täglich", undefined, monday)).toBe(true);
+    expect(intervalWindowOpen("täglich", monday, new Date("2026-09-21T17:00:00+02:00"))).toBe(false);
+    expect(intervalWindowOpen("wöchentlich", monday, tuesday)).toBe(false);
+    expect(intervalWindowOpen("wöchentlich", monday, new Date("2026-09-28T09:00:00+02:00"))).toBe(true);
+    expect(intervalWindowOpen("monatlich", monday, new Date("2026-10-01T09:00:00+02:00"))).toBe(true);
+
+    // Bestellung mit täglichem Intervall (keine Echtzeit), Käufer ohne Integration
+    const daily = await owner.leadops.createOrder({ name: "WP täglich", buyerName: "Tages-Käufer", categoryId: S.wp.id, quantity: 10, unitPrice: 40, status: "aktiv" });
+    await owner.leadops.saveOrderWorkspace({ orderId: daily.orderId, name: "WP täglich", buyerName: "Tages-Käufer", buyerUserId: null, categoryId: S.wp.id, categoryIds: [S.wp.id], quantity: 10, unitPrice: 40, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "täglich", compensateClaims: false, priority: 1, realtimeDelivery: false, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
+    await owner.leadops.createDeliveryChain({ orderId: daily.orderId, categoryId: S.wp.id, name: "Tageskette", priority: 1, sellTarget: 1, distributionMode: "lieferketten_round_robin" });
+    const dailyChain = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "Tageskette")!;
+    await owner.leadops.addDeliveryStop({ chainId: dailyChain.id, buyerName: "Tages-Käufer", position: 1, unitPrice: 40 });
+    await owner.leadops.updateDeliveryChain({ id: dailyChain.id, status: "aktiv" });
+    const first = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Tag", lastName: "Eins", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    const second = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Tag", lastName: "Zwei", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    await owner.leadops.assignLeadsToOrder({ publicIds: [first.publicId, second.publicId], orderId: daily.orderId });
+    expect((await leadRow(first.publicId)).status).toBe("neu"); // keine Echtzeit → wartet auf den Zeitplaner
+
+    const run1 = (await runScheduledDeliveries(db as never, { tenantId: S.tenantId, now: monday }))[0];
+    expect(run1.delivered).toBe(2); // erstes Fenster des Tages: beide zugeordneten Leads
+    const third = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Tag", lastName: "Drei", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    await owner.leadops.assignLeadsToOrder({ publicIds: [third.publicId], orderId: daily.orderId });
+    const run2 = (await runScheduledDeliveries(db as never, { tenantId: S.tenantId, now: new Date("2026-09-21T17:00:00+02:00") }))[0];
+    expect(run2.delivered).toBe(0); expect(run2.skipped).toBeGreaterThanOrEqual(1); // Tagesfenster bereits genutzt
+    const run3 = (await runScheduledDeliveries(db as never, { tenantId: S.tenantId, now: tuesday }))[0];
+    expect(run3.delivered).toBe(1);
+    expect((await owner.leadops.runScheduledDeliveries()).tenantId).toBe(S.tenantId); // manueller Lauf per tRPC (Administrator)
+    await expect(invitee.leadops.runScheduledDeliveries()).rejects.toThrow(/nicht zur Verfügung|vorbehalten/);
+
+    // Wiederholung nach Ablehnung: Echtzeit-Bestellung, Käufer lehnt dauerhaft ab → nach 3 Versuchen aufgegeben
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/reject" });
+    const stubborn = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Stur", lastName: "Ablehnung", email: "stur@example.de", supplierId: S.supplierId, metadata: { heizungsart: "Gas" } }); // Gas → Regel ordnet Bestellung zu und versucht Echtzeit
+    expect(stubborn.automation.delivered).toBe(0);
+    expect((await leadRow(stubborn.publicId)).status).toBe("neu");
+    const t0 = new Date(); // relativ zur echten Zeit des ersten Versuchs
+    const retryEarly = (await runScheduledDeliveries(db as never, { tenantId: S.tenantId, now: new Date() }))[0];
+    expect(retryEarly.rejected, JSON.stringify(retryEarly.details)).toBe(0); // Wiederholung frühestens nach 30 Minuten
+    const retry1 = (await runScheduledDeliveries(db as never, { tenantId: S.tenantId, now: new Date(t0.getTime() + 24 * 3_600_000) }))[0];
+    expect(retry1.rejected).toBe(1);
+    const retry2 = (await runScheduledDeliveries(db as never, { tenantId: S.tenantId, now: new Date(t0.getTime() + 48 * 3_600_000) }))[0];
+    expect(retry2.rejected).toBe(1);
+    const stubbornRow = await leadRow(stubborn.publicId);
+    expect((await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, stubbornRow.id))).filter((d) => d.result === "abgelehnt")).toHaveLength(3);
+    const giveUp = (await runScheduledDeliveries(db as never, { tenantId: S.tenantId, now: new Date(t0.getTime() + 72 * 3_600_000) }))[0];
+    expect(giveUp.abandoned).toBe(1);
+    expect((await leadRow(stubborn.publicId)).status).toBe("hängend");
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/leads" });
+  });
+
+  it("11. Datensicht für Partner: Käufer sehen nur ihre gelieferten Leads, Lieferanten nur eigene; UI-Restriktionen", async () => {
+    // Käufer (invitee, Bestellung S.orderId)
+    const buyerView = await invitee.leadops.listLeadsPaged({ page: 1, pageSize: 100 });
+    const buyerIds = buyerView.rows.map((r) => r.publicId);
+    expect(buyerIds).toEqual(expect.arrayContaining([S.leadA, S.leadB, S.leadD]));
+    expect(buyerIds).not.toContain(S.leadC); expect(buyerIds).not.toContain(S.leadE);
+    expect(buyerView.total).toBe(buyerIds.length);
+    expect((await invitee.leadops.dashboard()).leads.every((l) => buyerIds.includes(l.publicId))).toBe(true);
+    expect(await invitee.leadops.getLeadAuditLog({ publicId: S.leadC })).toEqual([]); // fremder Lead ist unsichtbar
+    expect((await invitee.leadops.exportLeadsCsv({}))).not.toContain(S.leadC);
+    expect((await invitee.leadops.listClaims({})).every((c) => buyerIds.includes(c.leadPublicId!))).toBe(true);
+    await expect(invitee.leadops.importLead({ categoryId: S.wp.id, firstName: "Nein" })).rejects.toThrow("steht Käufer-Zugängen nicht zur Verfügung");
+    const claim = await invitee.leadops.createClaim({ leadId: (await leadRow(S.leadD)).id, reason: "Nicht erreichbar" });
+    expect(claim.claimId).toBeGreaterThan(0);
+    await expect(invitee.leadops.createClaim({ leadId: (await leadRow(S.leadC)).id, reason: "Fremder Lead" })).rejects.toThrow("nicht gefunden");
+
+    // UI-Restriktionen: nur Reklamationen und Support
+    const memberSettings = { membershipId: S.membership.id, emailNotifications: true, paymentMode: "standard" as const, deliveryPaused: false, claimRefundMode: "standard" as const, prepaidBalance: 0, individualLeadCommission: null, disabledCategoryIds: [] };
+    await owner.leadops.updateMemberOperationalSettings({ ...memberSettings, uiRestricted: true });
+    await expect(invitee.leadops.exportLeadsCsv({})).rejects.toThrow("eingeschränkt");
+    expect((await invitee.leadops.createTicket({ subject: "Frage zur Lieferung", requesterName: "Partner Solar GmbH" })).ticketNumber).toMatch(/^SUP-/);
+    await owner.leadops.updateMemberOperationalSettings({ ...memberSettings, uiRestricted: false });
+
+    // Käufer-Einstellung „Auslieferung pausiert“ blockiert die Bestellung des Käufers
+    await owner.leadops.updateMemberOperationalSettings({ ...memberSettings, uiRestricted: false, deliveryPaused: true });
+    const paused = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Pause", lastName: "Test", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    await expect(owner.leadops.deliverLead({ publicId: paused.publicId, orderId: S.orderId })).rejects.toThrow("Auslieferung für diesen Käufer pausiert");
+    await owner.leadops.updateMemberOperationalSettings({ ...memberSettings, uiRestricted: false, deliveryPaused: false });
+
+    // Lieferant (viewer aus Test 7 → jetzt mit Lieferantenprofil per E-Mail verknüpft, Rolle manager)
+    await owner.leadops.createOrganizationProfile({ partnerType: "lieferant", name: "Nur Lesen Lieferant", email: "viewer@example.de" });
+    const supplier = (await owner.leadops.listSuppliers()).find((s) => s.name === "Nur Lesen Lieferant")!;
+    await owner.leadops.updateMembership({ id: S.viewerMembershipId, role: "manager" });
+    const supplierUser = appRouter.createCaller({ user: { id: S.viewerId } } as never);
+    const own = await supplierUser.leadops.importLead({ categoryId: S.wp.id, firstName: "Eigener", lastName: "Lead", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } }); // fremde supplierId wird durch das eigene Profil ersetzt
+    expect((await leadRow(own.publicId)).supplierId).toBe(supplier.id);
+    const supplierView = await supplierUser.leadops.listLeadsPaged({ page: 1, pageSize: 100 });
+    expect(supplierView.rows.map((r) => r.publicId)).toEqual([own.publicId]);
+    await expect(supplierUser.leadops.deliverLead({ publicId: own.publicId })).rejects.toThrow("steht Lieferanten-Zugängen nicht zur Verfügung");
+  });
+
+  it("12. Benutzerbereich: Konto anlegen, Reiter-Einstellungen, Lieferant mit Token/Mappings, PrePing, Guthaben, Impersonation", async () => {
+    const created = await owner.leadops.createMember({ firstName: "Karla", lastName: "Kunde", company: "Kunde GmbH", phone: "+49 40 1", email: "karla@kunde.example", password: "sicher-2026-xyz", kind: "benutzer", status: "aktiv", billingStreet: "Musterstraße 12", billingPostalCode: "20095", billingCity: "Hamburg", billingCountry: "DE" });
+    expect(created.membershipId).toBeGreaterThan(0);
+    const detail = await owner.leadops.getMemberDetail({ membershipId: created.membershipId });
+    expect(detail.user).toMatchObject({ email: "karla@kunde.example", firstName: "Karla", company: "Kunde GmbH", billingCity: "Hamburg" });
+    expect((detail.user as { passwordHash?: string }).passwordHash).toBeUndefined();
+    expect(detail.membership).toMatchObject({ role: "manager", partnerType: "käufer", status: "aktiv" });
+    expect(detail.settings).toMatchObject({ reclamationPeriodHours: 24, notifyLeads: true, duplicateProtection: true, inboundPrePing: true });
+
+    // Reiter speichern
+    await owner.leadops.updateMemberProfile({ membershipId: created.membershipId, salutation: "Frau", phone: "+49 40 2", inboundPrePing: false });
+    await owner.leadops.updateMemberClaimSettings({ membershipId: created.membershipId, reclamationPeriodHours: 48, autoAcceptApiClaims: true, blockedClaimCategoryIds: [S.wp.id], excludedClaimReasonIds: [] });
+    await owner.leadops.updateMemberBillingSettings({ membershipId: created.membershipId, paymentMode: "auf_rechnung", billingInterval: "14_tage", paymentTermsDays: 30, taxRatePercent: null });
+    await owner.leadops.updateMemberNotificationSettings({ membershipId: created.membershipId, notifyLeads: true, notifyLeadsEmail: "leads@kunde.example", notifyInvoices: false, notifyInvoicesEmail: null, notifySystem: true, notifySystemEmail: null });
+    await owner.leadops.updateMemberVisibility({ membershipId: created.membershipId, visibleAreas: ["Bestellungen", "Reklamationen"], visibleCategoryIds: [S.wp.id] });
+    await owner.leadops.updateMemberWebhook({ membershipId: created.membershipId, webhookUrl: "https://hooks.kunde.example/leads" });
+    const webhookTest = await owner.leadops.sendMemberWebhookTest({ membershipId: created.membershipId, categoryId: S.wp.id });
+    expect(webhookTest).toMatchObject({ ok: true, status: 200 });
+    expect(outbound[outbound.length - 1].body).toMatchObject({ test: true, lead: { firstName: "Test" } });
+    const balance = await owner.leadops.adjustMemberBalance({ membershipId: created.membershipId, kind: "aufladung", amount: 250, description: "Überweisung 22.09.2026" });
+    expect(balance.prepaidBalance).toBe("250.00");
+    await owner.leadops.adjustMemberBalance({ membershipId: created.membershipId, kind: "abbuchung", amount: 50 });
+    const saved = await owner.leadops.getMemberDetail({ membershipId: created.membershipId });
+    expect(saved.user.salutation).toBe("Frau");
+    expect(saved.settings).toMatchObject({ reclamationPeriodHours: 48, autoAcceptApiClaims: true, blockedClaimCategoryIds: [S.wp.id], paymentMode: "auf_rechnung", billingInterval: "14_tage", paymentTermsDays: 30, notifyLeadsEmail: "leads@kunde.example", notifyInvoices: false, visibleAreas: ["Bestellungen", "Reklamationen"], webhookUrl: "https://hooks.kunde.example/leads", prepaidBalance: "200.00", inboundPrePing: false });
+    expect(saved.transactions.map((row) => `${row.kind} ${row.amount}`)).toEqual(["abbuchung 50.00", "aufladung 250.00"]);
+
+    // Lieferant: freischalten, Token, Kategorie-/Feld-/Wert-Mapping, Import über den persönlichen Token
+    const supplier = await owner.leadops.updateSupplierSettings({ membershipId: created.membershipId, supplierActive: true, commissionOnEverySale: false, commissionRates: { [String(S.wp.id)]: { type: "fix", value: 5 } } });
+    expect(supplier.supplierId).toBeGreaterThan(0);
+    const issued = await owner.leadops.issueSupplierToken({ membershipId: created.membershipId });
+    expect(issued.token).toMatch(/^fx_/);
+    expect((await owner.leadops.revealSupplierToken({ membershipId: created.membershipId })).token).toBe(issued.token);
+    await owner.leadops.saveSupplierInboundMappings({ membershipId: created.membershipId, kind: "kategorie", rows: [{ kind: "kategorie", sourceValue: "PV-WP", targetValue: String(S.wp.id) }] });
+    await owner.leadops.saveSupplierInboundMappings({ membershipId: created.membershipId, kind: "feld", rows: [{ kind: "feld", sourceValue: "Heizung", targetValue: "heizungsart" }] });
+    await owner.leadops.saveSupplierInboundMappings({ membershipId: created.membershipId, kind: "wert", categoryId: S.wp.id, rows: [{ kind: "wert", categoryId: S.wp.id, fieldKey: "heizungsart", sourceValue: "gas heating", targetValue: "Gas", strict: true }] });
+    const imported = await postLead(issued.token, { lead_type_id: "pv-wp", first_name: "Token", last_name: "Import", email: "token@kunde.example", zip_code: "20095", city: "Hamburg", country_code: "DE", custom_data: { Heizung: "gas heating", wohnflaeche: 100 } });
+    expect(imported.status).toBe(201);
+    const importedBody = await imported.json();
+    expect(importedBody.supplierId).toBe(supplier.supplierId);
+    const importedRow = await leadRow(importedBody.id);
+    expect(importedRow.metadata).toMatchObject({ heizungsart: "Gas", wohnflaeche: 100 }); // Feldname und Wert übersetzt
+    expect(importedRow.supplierId).toBe(supplier.supplierId); expect(importedRow.postcode).toBe("20095");
+    expect((await postLead(issued.token, { lead_type_id: "unbekannt", first_name: "X" })).status).toBe(422); // „Lead type not found“
+    const strict = await (await postLead(issued.token, { lead_type_id: "PV-WP", first_name: "Strikt", custom_data: { Heizung: "Kohle" } })).json();
+    expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, (await leadRow(strict.id)).id)))[0].note).toContain("Verworfen beim Import: heizungsart (invalid_value)");
+
+    // PrePing: Dublette per persönlichem Token → 409, wenn Mandant und Lieferant PrePing aktiv haben
+    await owner.leadops.updateTenantSettings({ incomingPrePing: true });
+    expect((await postLead(issued.token, { lead_type_id: "PV-WP", first_name: "Token", email: "token@kunde.example" })).status).toBe(201); // Lieferant hat PrePing aus
+    await owner.leadops.updateMemberProfile({ membershipId: created.membershipId, inboundPrePing: true });
+    const duplicate = await postLead(issued.token, { lead_type_id: "PV-WP", first_name: "Token", email: "token@kunde.example" });
+    expect(duplicate.status).toBe(409); expect((await duplicate.json()).error).toBe("duplicated lead");
+    await owner.leadops.updateTenantSettings({ incomingPrePing: false });
+    await owner.leadops.issueSupplierToken({ membershipId: created.membershipId });
+    expect((await postLead(issued.token, { lead_type_id: "PV-WP", first_name: "Alt" })).status).toBe(401); // rotierter Token ist ungültig
+
+    // Provisionen und Aktivität
+    const rangeNow = new Date();
+    const commissions = await owner.leadops.listSupplierCommissions({ membershipId: created.membershipId, from: new Date(rangeNow.getTime() - 3_600_000).toISOString(), to: new Date(rangeNow.getTime() + 3_600_000).toISOString() });
+    expect(commissions.rows.length).toBe(0); // noch kein Verkauf der Token-Leads
+    const activity = await owner.leadops.listMemberActivity({ membershipId: created.membershipId });
+    expect(activity.some((event) => event.kind === "guthaben")).toBe(true); expect(activity.some((event) => event.kind === "lead")).toBe(true);
+    await owner.leadops.setMemberPassword({ membershipId: created.membershipId, password: "neu-2026-abcdef" });
+    const cookies: Record<string, string> = {};
+    const web = appRouter.createCaller({ user: null, req: { headers: {}, protocol: "http", hostname: "localhost" }, res: { cookie: (name: string, value: string) => { cookies[name] = value; }, clearCookie: () => undefined } } as never);
+    await web.auth.login({ email: "karla@kunde.example", password: "neu-2026-abcdef" });
+    expect(cookies.app_session_id).toBeTruthy();
+
+    // Als Benutzer einloggen (Impersonation) und Rechteprüfung
+    const adminWeb = appRouter.createCaller({ user: { id: ownerUserId }, req: { headers: {}, protocol: "http", hostname: "localhost" }, res: { cookie: (name: string, value: string) => { cookies[name] = value; }, clearCookie: () => undefined } } as never);
+    const impersonated = await adminWeb.auth.impersonate({ membershipId: created.membershipId });
+    expect(impersonated.name).toBe("Karla Kunde");
+    const asKarla = appRouter.createCaller({ user: null, req: { headers: { cookie: `app_session_id=${cookies.app_session_id}` }, protocol: "http", hostname: "localhost" }, res: { cookie: (name: string, value: string) => { cookies[name] = value; }, clearCookie: () => undefined } } as never);
+    const me = await asKarla.auth.me();
+    expect(me).toBeNull(); // Kontext wird vom Server aus dem Cookie aufgebaut – hier prüfen wir die Claims direkt
+    const { verifySession } = await import("./_core/auth");
+    const claims = await verifySession(cookies.app_session_id);
+    expect(claims?.actorOpenId).toBeTruthy();
+    await expect(invitee.leadops.getMemberDetail({ membershipId: created.membershipId })).rejects.toThrow("vorbehalten");
+  });
+
+  it("13. Integration: ausgehende API-Calls mit Vorlage, Anmeldung per Token, Response-Mapping, Rückgabe-Webhook und Reklamations-API", async () => {
+    const { membership } = (await db.select({ membership: memberships }).from(memberships).where(and(eq(memberships.tenantId, S.tenantId), eq(memberships.userId, inviteeUserId))))[0];
+    const membershipId = membership.id; // Käufer-Mitgliedschaft (Bestellung S.orderId)
+    const before = await owner.leadops.getMemberIntegration({ membershipId });
+    expect(before.endpoints).toHaveLength(0); expect(before.placeholders).toContain("first_name");
+
+    // Endpoint mit Vorlage, Header, Werte-Mapping und Anmeldung per Token
+    const endpoint = await owner.leadops.saveDeliveryEndpoint({ membershipId, categoryId: S.wp.id, enabled: true, method: "POST", url: "https://partner-crm.example/secured/leads", sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [{ name: "X-Api-Version", value: "2" }], authEnabled: true, auth: { loginUrl: "https://partner-crm.example/login", credentials: [{ name: "user", value: "tanesco" }, { name: "pass", value: "geheim" }], tokenPath: "auth_token", headerName: "X-AUTH-TOKEN", prefix: "", ttlMinutes: 60 }, bodyTemplate: '{ "inquiry": { "contact": { "first_name": "{{first_name}}", "last_name": "{{last_name}}", "email": "{{email}}", "zip_code": "{{postal_code}}" }, "questions": { "heizung": "{{custom_data.heizungsart}}" }, "language_code": "de" } }', omitAutoFields: false, rotate: false, valueMappings: [{ field: "heizungsart", ourValue: "Gas", customerCode: "222" }] });
+    expect(endpoint.id).toBeGreaterThan(0);
+    const saved = (await owner.leadops.getMemberIntegration({ membershipId })).endpoints[0];
+    expect(saved.auth?.credentials.map((pair) => pair.value)).toEqual(["••••••••", "••••••••"]); // Zugangsdaten werden maskiert ausgeliefert
+    const test = await owner.leadops.testDeliveryEndpoint({ membershipId, id: endpoint.id });
+    expect(test).toMatchObject({ ok: true, status: 200 });
+    expect(JSON.parse(test.requestBody)).toMatchObject({ lead_id: expect.stringMatching(/^TEST-/), inquiry: { contact: { first_name: "Test" }, questions: { heizung: "222" } } }); // Beispielwert „Gas“ → Kunden-Code
+
+    // Echte Auslieferung: Lead (Gas) → Regel ordnet Bestellung zu → Endpoint statt Partnerintegration; Anmeldung, Header, Mapping, Partner-Referenz
+    const start = outbound.length;
+    const lead = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Endpoint", lastName: "Kunde", email: "endpoint@example.de", postcode: "60486", city: "Frankfurt", supplierId: S.supplierId, metadata: { heizungsart: "Gas", wohnflaeche: 130 } });
+    expect(lead.automation.delivered).toBe(1);
+    const calls = outbound.slice(start);
+    const login = outbound.find((call) => call.url.endsWith("/login")); const delivery = calls.find((call) => call.url.includes("secured/leads")); // Anmeldung erfolgte beim Test-Versand, Token ist zwischengespeichert
+    expect(login?.body).toEqual({ user: "tanesco", pass: "geheim" });
+    expect(delivery?.headers["x-auth-token"]).toBe("tok-12345"); expect(delivery?.headers["x-api-version"]).toBe("2");
+    expect(delivery?.body).toMatchObject({ lead_id: lead.publicId, inquiry: { contact: { first_name: "Endpoint", zip_code: "60486" }, questions: { heizung: "222" } } });
+    const row = await leadRow(lead.publicId);
+    expect(row.status).toBe("zugewiesen"); expect(row.metadata).toMatchObject({ partnerReference: expect.stringMatching(/^ah-/) });
+    expect((await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, row.id)))[0].result).toBe("angenommen");
+    expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, row.id))).some((event) => event.note?.startsWith("API-Übergabe an API-Call"))).toBe(true);
+
+    // Response-Mapping: Partner antwortet mit code 5 → Reklamation „Dublette“, Weitergabe an die nächste Kette
+    await owner.leadops.applyAroundhomePreset({ membershipId });
+    const mapped = await owner.leadops.getMemberIntegration({ membershipId });
+    expect(mapped.responseMappingEnabled).toBe(true); expect(mapped.rules).toHaveLength(5); expect(mapped.reasons.map((reason) => reason.name)).toEqual(expect.arrayContaining(["Falsche Telefonnummer", "Kontaktdaten fehlen", "Kein Partner", "Dublette", "Sperrliste"]));
+    await owner.leadops.saveDeliveryEndpoint({ membershipId, id: endpoint.id, categoryId: S.wp.id, enabled: true, method: "POST", url: "https://partner-crm.example/duplicate/leads", sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] });
+    const other = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "Zweite Kette ohne Bestellung")!;
+    await owner.leadops.updateDeliveryChain({ id: other.id, priority: 2 });
+    const dup = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Doppelt", lastName: "Kunde", email: "doppelt@example.de", postcode: "60487", supplierId: S.supplierId, metadata: { heizungsart: "Öl" } });
+    const dupRow = await leadRow(dup.publicId);
+    const dupDeliveries = await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, dupRow.id));
+    expect(dupDeliveries.map((item) => item.result)).toEqual(["reklamiert", "angeboten"]); // Käufer lehnt ab (Mapping → Reklamation, weitergeben) → Ausweichkette
+    const dupClaim = (await db.select().from(claims).where(eq(claims.leadId, dupRow.id)))[0];
+    expect(dupClaim).toMatchObject({ reason: "Dublette", status: "genehmigt", refundAmount: "48.00" });
+    await owner.leadops.updateDeliveryChain({ id: other.id, priority: 1 });
+
+    // Quell-Filter: Endpoint nur für Leads eines anderen Lieferanten → kein Endpoint passt → Partnerintegration (Fallback) übernimmt
+    await owner.leadops.saveDeliveryEndpoint({ membershipId, id: endpoint.id, categoryId: S.wp.id, enabled: true, method: "POST", url: "https://partner-crm.example/secured/leads", sourceFilterMode: "nur", sourceSupplierIds: [999999], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] });
+    const fallbackStart = outbound.length;
+    await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Filter", lastName: "Kunde", supplierId: S.supplierId, metadata: { heizungsart: "Gas" } });
+    expect(outbound.slice(fallbackStart).some((call) => call.url === "https://crm.partner-solar.example/api/leads")).toBe(true);
+    expect(outbound.slice(fallbackStart).some((call) => call.url.includes("secured/leads"))).toBe(false);
+    await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id });
+
+    // Rückgabe-Webhook des Lieferanten (Karla ist Lieferant, Test 12): erschöpfter Lead → Benachrichtigung mit returned=true
+    const karla = (await db.select({ id: memberships.id, userId: memberships.userId }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).where(and(eq(memberships.tenantId, S.tenantId), eq(users.email, "karla@kunde.example"))))[0];
+    const karlaSupplier = (await db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.userId, karla.userId)))[0];
+    await owner.leadops.saveSupplierReturnWebhook({ membershipId: karla.id, categoryId: S.wp.id, enabled: true, method: "POST", url: "https://lieferant.example/rueckgabe", headers: [], bodyTemplate: '{ "lead": "{{lead_id}}", "grund": "{{reclaim_reason}}", "name": "{{first_name}} {{last_name}}" }', omitAutoFields: true });
+    expect((await owner.leadops.testSupplierReturnWebhook({ membershipId: karla.id, categoryId: S.wp.id })).ok).toBe(true);
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/reject" });
+    await owner.leadops.saveOrderWorkspace({ orderId: S.orderId, name: "WP-Leads Q4", buyerName: "Partner Solar GmbH", buyerUserId: inviteeUserId, categoryId: S.wp.id, categoryIds: [S.wp.id], quantity: 50, unitPrice: 48, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "täglich", compensateClaims: true, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } }); // Lieferantensperre lösen, damit Karlas Lead an die Bestellung darf
+    const returned = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Zurück", lastName: "Geber", supplierId: karlaSupplier.id, metadata: { heizungsart: "Strom" } });
+    await owner.leadops.assignLeadsToOrder({ publicIds: [returned.publicId], orderId: S.orderId });
+    const failed = await owner.leadops.deliverLead({ publicId: returned.publicId });
+    expect(failed.result).toBe("abgelehnt");
+    const hookCall = outbound.filter((call) => call.url === "https://lieferant.example/rueckgabe").pop();
+    expect(hookCall?.body).toMatchObject({ lead: returned.publicId, name: "Zurück Geber", returned: true });
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/leads" });
+
+    // Reklamations-API: persönlicher Token des Käufers, Grund-Key, lead_number, Fenster, Auto-Annahme mit Weiterreichen
+    const buyerToken = await owner.leadops.issueSupplierToken({ membershipId });
+    const reclaimed = await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${buyerToken.token}` }, body: JSON.stringify({ reason: "duplikat", lead_number: row.id, comment: "Kunde bereits bekannt" }) });
+    expect(reclaimed.status).toBe(200);
+    const reclaimBody = await reclaimed.json();
+    expect(reclaimBody).toMatchObject({ reinjected: false, refund_cents: 0, status: "open" }); // Standard: offen, Prüfung durch den Mandanten
+    expect((await db.select().from(claims).where(eq(claims.id, reclaimBody.reclamation_id)))[0]).toMatchObject({ leadId: row.id, reason: "Dublette", status: "offen" });
+    expect((await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${buyerToken.token}` }, body: JSON.stringify({ reason: "duplikat", lead_number: row.id }) })).status).toBe(409);
+    expect((await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${buyerToken.token}` }, body: JSON.stringify({ reason: "gibt_es_nicht", lead_number: row.id }) })).status).toBe(422);
+    expect((await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${S.token}` }, body: JSON.stringify({ reason: "duplikat", lead_number: row.id }) })).status).toBe(403); // mandantenweiter Token wird abgelehnt
+    expect((await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${buyerToken.token}` }, body: JSON.stringify({ reason: "duplikat", lead_id: S.leadC }) })).status).toBe(404); // nicht an diesen Käufer geliefert
+    await owner.leadops.updateMemberClaimSettings({ membershipId, reclamationPeriodHours: 48, autoAcceptApiClaims: true, blockedClaimCategoryIds: [], excludedClaimReasonIds: [] });
+    const autoLead = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Auto", lastName: "Annahme", email: "auto@example.de", supplierId: S.supplierId, metadata: { heizungsart: "Gas" } });
+    const autoRow = await leadRow(autoLead.publicId);
+    const auto = await (await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${buyerToken.token}` }, body: JSON.stringify({ reason: "duplikat", partner_lead_id: (autoRow.metadata as { partnerReference?: string }).partnerReference }) })).json();
+    expect(auto).toMatchObject({ status: "approved", refund_cents: 4800, reinjected: true }); // per Partner-Referenz gefunden, genehmigt, an die Ausweichkette weitergereicht
+    expect((await leadRow(autoLead.publicId)).status).toBe("zugewiesen");
+    expect((await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, autoRow.id))).map((item) => item.buyerName)).toEqual(["Partner Solar GmbH", "Anderer Käufer"]);
+  });
+
+  it("14. Einstellungen → Integrationen: Aroundhome-Abgleich mit Storno-Reklamation, WattFox-Tracking-URL, Telefonnummern-Prüfung, „Weitergeben“", async () => {
+    // Reklamationsgrund-Schalter „Weitergeben“
+    const reasons = await owner.leadops.listReclamationReasons();
+    const dublette = reasons.find((reason) => reason.name === "Dublette")!;
+    await owner.leadops.updateReclamationReason({ id: dublette.id, forwardToNextStop: false });
+    expect((await owner.leadops.listReclamationReasons()).find((reason) => reason.id === dublette.id)!.forwardToNextStop).toBe(false);
+    await owner.leadops.updateReclamationReason({ id: dublette.id, forwardToNextStop: true });
+
+    // Aroundhome-Konto + Stornogrund-Zuordnung
+    const account = await owner.leadops.saveAroundhomeAccount({ label: "Aroundhome PV", publisherId: "pub-4711", accessToken: "ah-token-secret", exportUrl: "https://partner.example/aroundhome-export", reclaimOnCancel: true, reclaimReasonId: null, enabled: true });
+    const kontakt = reasons.find((reason) => reason.name === "Kontaktdaten fehlen")!;
+    await owner.leadops.saveCancelRules({ provider: "aroundhome", rules: [{ matchOp: "enthaelt", matchValue: "nicht erreichbar", reasonId: kontakt.id }] });
+    const listed = await owner.leadops.listPartnerAccounts();
+    expect(listed.aroundhome[0]).toMatchObject({ label: "Aroundhome PV", publisherId: "pub-4711", accessToken: "••••••••cret", exportUrl: "https://partner.example/aroundhome-export" });
+    expect(listed.cancelRules).toEqual([expect.objectContaining({ provider: "aroundhome", matchValue: "nicht erreichbar", reasonId: kontakt.id })]);
+    // ein an Partner Solar gelieferter Lead mit Partner-Referenz → im Export storniert → Reklamation mit zugeordnetem Grund
+    const delivered = (await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), sql`JSON_EXTRACT(${leads.metadata}, '$.partnerReference') IS NOT NULL`))).find((lead) => lead.status === "zugewiesen")!;
+    S.aroundhomeRef = (delivered.metadata as { partnerReference: string }).partnerReference;
+    const sync = await owner.leadops.syncAroundhomeAccount({ id: account.id });
+    expect(sync).toMatchObject({ rows: 3, matched: 1, cancelled: 1, claimsCreated: 1 });
+    expect(outbound[outbound.length - 1].headers.authorization).toBe("Bearer ah-token-secret");
+    const cancelClaim = (await db.select().from(claims).where(eq(claims.leadId, delivered.id)).orderBy(desc(claims.id)))[0];
+    expect(cancelClaim).toMatchObject({ reason: "Kontaktdaten fehlen", status: "offen", details: expect.stringContaining("Kunde nicht erreichbar") });
+    expect((await owner.leadops.syncAroundhomeAccount({ id: account.id })).claimsCreated).toBe(0); // kein Doppel
+    expect((await owner.leadops.listPartnerAccounts()).aroundhome[0].lastSyncSummary).toContain("3 Vorgänge gelesen");
+
+    // WattFox-Tracking-URL: Storno per GET → Reklamation über Code-Zuordnung; Info-Status → nur Verlaufseintrag
+    const wattfox = await owner.leadops.createWattfoxAccount({ label: "WattFox WP", reclaimOnCancel: true, reclaimReasonId: null });
+    await owner.leadops.saveCancelRules({ provider: "wattfox", rules: [{ matchOp: "gleich", matchValue: "dup", reasonId: dublette.id }] });
+    const trackingUrl = (await owner.leadops.listPartnerAccounts()).wattfox.find((row) => row.id === wattfox.id)!.trackingUrl.replace(/^https?:\/\/[^/]+/, apiBase);
+    const fresh = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Watt", lastName: "Fox", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    expect((await fetch(`${trackingUrl}?lead_id=${fresh.publicId}&status=accepted`)).status).toBe(200);
+    const cancelled = await (await fetch(trackingUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lead_id: fresh.publicId, status: "cancelled", code: "dup" }) })).json();
+    expect(cancelled).toMatchObject({ ok: true, cancelled: true, lead_id: fresh.publicId }); expect(cancelled.reclamation_id).toBeGreaterThan(0);
+    expect((await db.select().from(claims).where(eq(claims.id, cancelled.reclamation_id)))[0]).toMatchObject({ reason: "Dublette", status: "offen" });
+    expect((await fetch(`${trackingUrl}?lead_id=GIBTSNICHT&status=cancelled`)).status).toBe(404);
+    expect((await fetch(`${apiBase}/api/partner/wattfox/falscher-token?lead_id=${fresh.publicId}`)).status).toBe(404);
+
+    // Telefonnummern-Prüfung: Zugangsdaten, Verbindungstest, ungültige Nummer beim API-Import → fehlerhaft
+    await owner.leadops.saveHlrLookup({ apiKey: "hlr-key", apiSecret: "hlr-pass", enabled: true });
+    const hlrTest = await owner.leadops.testHlrLookup();
+    expect(hlrTest.ok).toBe(true); expect(hlrTest.summary).toContain("Telekom");
+    expect((await owner.leadops.listPartnerAccounts()).hlrlookup).toMatchObject({ enabled: true, apiKey: "••••••••-key", apiSecret: "••••••••" });
+    const badPhone = await (await postLead(S.token, { categoryId: S.wp.id, firstName: "Falsche", lastName: "Nummer", phone: "+49 170 9999999", metadata: { heizungsart: "Strom" } })).json();
+    const badRow = await leadRow(badPhone.id);
+    expect(badRow.status).toBe("fehlerhaft"); expect(badRow.metadata).toMatchObject({ phoneCheck: { valid: false } });
+    const goodPhone = await (await postLead(S.token, { categoryId: S.wp.id, firstName: "Gute", lastName: "Nummer", phone: "+49 170 0000000", metadata: { heizungsart: "Strom" } })).json();
+    expect((await leadRow(goodPhone.id)).metadata).toMatchObject({ phoneCheck: { valid: true, network: "Telekom" } });
+    await owner.leadops.saveHlrLookup({ apiKey: "••••••••-key", apiSecret: "••••••••", enabled: false });
+    expect((await owner.leadops.listPartnerAccounts()).hlrlookup.enabled).toBe(false);
+    await expect(invitee.leadops.listPartnerAccounts()).rejects.toThrow("vorbehalten");
+  });
+
+  it("15. Gesprächsbewertung: Dialer-Webhook, Einwilligung, Transkription, KI-Bewertung, automatische Freigabe/Ablehnung, manuelle Prüfung", async () => {
+    const settings = await owner.leadops.getCallQaSettings();
+    expect(settings.enabled).toBe(false); expect(settings.criteria).toHaveLength(6); expect(settings.webhookUrl).toContain("/api/partner/dialer/");
+    const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase);
+    expect((await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "x" }) })).status).toBe(403); // noch deaktiviert
+    await expect(owner.leadops.saveCallQaSettings({ ...settings, enabled: true, instructions: "", autoApproveThreshold: 50, autoRejectThreshold: 60, recordingAuthHeader: "" })).rejects.toThrow("Ablehnungs-Schwelle");
+    await owner.leadops.saveCallQaSettings({ ...settings, enabled: true, instructions: "Mieter gelten nicht als verkaufbar.", recordingAuthHeader: "X-Recording-Key: geheim-77", transcriptionProvider: "auto" });
+    expect((await owner.leadops.getCallQaSettings()).recordingAuthHeader).toBe("••••••••");
+
+    // (a) Gespräch mit Einwilligung → Aufzeichnung geladen (mit Schlüssel), transkribiert, bewertet, Lead freigegeben und über die Regeln ausgeliefert
+    const lead = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Anke", lastName: "Anruf", phone: "+49 40 777001", email: "anke@example.de", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    await owner.leadops.updateLeadStatus({ publicId: lead.publicId, status: "hängend" }); // wartet auf die Gesprächsbewertung
+    await owner.leadops.createAutomationRule({ name: "Freigegebene Gespräche verkaufen", triggerType: "status_geändert", sourceCategoryId: S.wp.id, targetCategoryId: S.wp.id, conditions: [{ field: "status", operator: "gleich", value: "genehmigt" }], actionType: "lead_bestellung_zuordnen", actionConfig: { orderId: S.orderId }, status: "aktiv" });
+    S.transcriptForStub = "Agent: Guten Tag Frau Anruf, es geht um Ihre Wärmepumpen-Anfrage. Kundin: Ja gerne, ich bin Eigentümerin und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kundin: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kundin: Ja, telefonisch bin ich gut erreichbar."; // Kampagnenfragen (Standard): Interesse, Termin, Kontaktaufnahme → freigegeben
+    const before = outbound.length;
+    const webhook = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "od-1001", lead_id: lead.publicId, phone: "+49 40 777001", agent: "Müller", campaign: "WP Herbst", started_at: "2026-09-23T10:15:00Z", duration: 312, recording_url: "https://dialer.example/recordings/1001.mp3", consent: true }) });
+    expect(webhook.status).toBe(200);
+    const result = await webhook.json();
+    expect(result).toMatchObject({ ok: true, evaluated: true, score: 90, verdict: "verkaufbar", decision: "freigegeben", lead_id: lead.publicId });
+    const recordingCall = outbound.slice(before).find((call) => call.url.includes("recordings/1001.mp3"));
+    expect(recordingCall?.headers["x-recording-key"]).toBe("geheim-77");
+    expect(outbound.slice(before).some((call) => call.url.includes("api.openai.com/v1/audio/transcriptions") && call.headers.authorization === "Bearer test-openai-key")).toBe(true);
+    const row = await leadRow(lead.publicId);
+    expect(row.status).toBe("zugewiesen"); // freigegeben → Regel → Bestellung → Echtzeit-Auslieferung
+    expect(row.metadata).toMatchObject({ callScore: 90, callVerdict: "verkaufbar", callDecision: "freigegeben" });
+    const notes = (await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, row.id))).map((event) => event.note ?? "");
+    expect(notes.some((note) => note.startsWith("Gesprächsbewertung 90/100"))).toBe(true);
+    const calls = await owner.leadops.listCalls({});
+    const call = calls.find((item) => item.externalCallId === "od-1001")!;
+    expect(call).toMatchObject({ leadPublicId: lead.publicId, agentName: "Müller", campaign: "WP Herbst", durationSeconds: 312, consent: true, status: "bewertet", score: 90, decision: "freigegeben", decidedBy: "automatisch" });
+    const detail = await owner.leadops.getCall({ callId: call.id });
+    expect(detail.transcript).toContain("Eigentümerin"); expect(detail.criteria.every((criterion) => criterion.score === 9)).toBe(true); expect(detail.criteria[0].evidence).toBe("Beleg bedarf");
+    expect((await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "od-1001", lead_id: lead.publicId, consent: true }) })).status).toBe(200); // Duplikat wird nicht erneut bewertet
+    expect((await owner.leadops.listCalls({})).filter((item) => item.externalCallId === "od-1001")).toHaveLength(1);
+
+    // (b) ohne Einwilligung → nichts transkribiert (202), Verlaufseintrag am Lead
+    const noConsent = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "od-1002", phone: "+49 40 777001", recording_url: "https://dialer.example/recordings/1002.mp3", consent: false }) });
+    expect(noConsent.status).toBe(202); expect((await noConsent.json()).evaluated).toBe(false);
+    expect((await owner.leadops.listCalls({ status: "ohne_einwilligung" }))[0]).toMatchObject({ externalCallId: "od-1002", leadPublicId: lead.publicId }); // Lead über die Telefonnummer gefunden
+    await expect(owner.leadops.reevaluateCall({ callId: (await owner.leadops.listCalls({ status: "ohne_einwilligung" }))[0].id })).rejects.toThrow("Einwilligung");
+
+    // (c) Warnsignal → zurückgewiesen, Lead fehlerhaft; Transkript kommt direkt vom Dialer
+    const angry = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Bernd", lastName: "Böse", phone: "+49 40 777002", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    const rejected = await (await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "od-1003", lead_id: angry.publicId, consent: true, transcript: "Agent: Hallo. Kunde: Ich möchte nicht angerufen werden, bitte meine Daten löschen." }) })).json();
+    expect(rejected).toMatchObject({ evaluated: true, verdict: "nicht_verkaufbar", decision: "zurueckgewiesen" });
+    expect((await leadRow(angry.publicId)).status).toBe("fehlerhaft");
+
+    // (d) mittlere Bewertung → zur Prüfung; manuelle Freigabe verkauft den Lead
+    const maybe = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Mia", lastName: "Mittel", phone: "+49 40 777003", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    const pending = await (await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "od-1004", lead_id: maybe.publicId, consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch." }) })).json();
+    expect(pending).toMatchObject({ score: 50, verdict: "nachfassen", decision: "pruefen" });
+    expect((await leadRow(maybe.publicId)).status).toBe("hängend");
+    await owner.leadops.reviewCall({ callId: pending.call_id, decision: "freigegeben", note: "Rückruf war positiv." });
+    expect((await leadRow(maybe.publicId)).status).toBe("zugewiesen");
+    expect((await owner.leadops.getCall({ callId: pending.call_id }))).toMatchObject({ decision: "freigegeben", decidedBy: "manuell", reviewNote: "Rückruf war positiv." });
+
+    // (e) Test-Bewertung ohne Dialer, Statistik, Token-Rotation, Aufbewahrung
+    const simulated = await owner.leadops.simulateCall({ transcript: "Agent: Guten Tag. Kunde: Ja gerne, ich bin Eigentümer und einverstanden. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch erreichbar.", publicId: null, agentName: "Test" });
+    expect(simulated).toMatchObject({ status: "bewertet", score: 90, decision: "freigegeben" });
+    const stats = await owner.leadops.callStatistics();
+    expect(stats).toMatchObject({ total: 5, evaluated: 4, approved: 3, rejected: 1, noConsent: 1 });
+    const rotated = await owner.leadops.rotateCallQaToken();
+    expect((await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "od-1005", consent: true }) })).status).toBe(404);
+    expect(rotated.webhookToken).toHaveLength(40);
+    await owner.leadops.saveCallQaSettings({ ...settings, enabled: true, instructions: "", recordingAuthHeader: "••••••••", retentionDays: 1 });
+    await db.update(callRecords).set({ createdAt: new Date(Date.now() - 3 * 24 * 3_600_000) }).where(eq(callRecords.externalCallId, "od-1001"));
+    const { purgeExpiredCalls } = await import("./call-qa");
+    expect((await purgeExpiredCalls(db as never)).purged).toBe(1);
+    const purged = await owner.leadops.getCall({ callId: call.id });
+    expect(purged.transcript).toBeNull(); expect(purged.recordingUrl).toBeNull(); expect(purged.score).toBe(90);
+    await expect(invitee.leadops.getCallQaSettings()).rejects.toThrow("vorbehalten");
+  });
+
+  it("16. Telefonie: Rufnummern DE/AT/CH, Kampagnen, manueller Dialer, Power-Dialer, Predictive-Dialer, Ergebnisse und Übergabe an die Bewertung", async () => {
+    const settings = await owner.leadops.getTelephonySettings();
+    expect(settings.provider).toBe("simulation"); expect(settings.numbers).toHaveLength(0);
+    await owner.leadops.saveTelephonySettings({ provider: "simulation", credentials: settings.credentials, addressSid: "", bundleSids: settings.bundleSids, defaultNumberId: null, agentConnection: "browser", announcement: settings.announcement ?? "", consentMode: "ansage", recordCalls: true, amdEnabled: true, maxAttempts: 2, retryMinutes: 60, wrapUpSeconds: 30, pacingRatio: 2, maxAbandonRate: 3, callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } });
+    // Rufnummern suchen und kaufen (DE lokal, AT mobil, CH national)
+    const de = await owner.leadops.searchPhoneNumbers({ country: "DE", type: "lokal", contains: "30" });
+    expect(de.length).toBeGreaterThan(0); expect(de[0].e164.startsWith("+4930")).toBe(true); expect(de[0].monthlyPrice).toBe(1.15);
+    const bought = await owner.leadops.purchasePhoneNumber({ e164: de[0].e164, country: "DE", type: "lokal", region: de[0].region, monthlyPrice: de[0].monthlyPrice, currency: "EUR" });
+    const at = await owner.leadops.searchPhoneNumbers({ country: "AT", type: "mobil" }); await owner.leadops.purchasePhoneNumber({ e164: at[0].e164, country: "AT", type: "mobil" });
+    const ch = await owner.leadops.searchPhoneNumbers({ country: "CH", type: "national" }); const swiss = await owner.leadops.purchasePhoneNumber({ e164: ch[0].e164, country: "CH", type: "national" });
+    const withNumbers = await owner.leadops.getTelephonySettings();
+    expect(withNumbers.numbers.map((number) => number.country)).toEqual(["DE", "AT", "CH"]); expect(withNumbers.defaultNumberId).toBe(bought.id);
+    await owner.leadops.releasePhoneNumber({ id: swiss.id });
+    expect((await owner.leadops.getTelephonySettings()).numbers).toHaveLength(2);
+    await expect(owner.leadops.placeManualCall({ phone: "+49 170 1111114" })).rejects.toThrow("Sitzung");
+
+    // Manueller Anruf (Simulation: Endziffer 4 → Mensch), Auflegen → Aufzeichnung → Bewertung → Ergebnis „verkauft“ → Lead genehmigt + Automatisierung
+    const lead = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Doris", lastName: "Dialer", phone: "+49 170 2222224", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    await owner.leadops.updateLeadStatus({ publicId: lead.publicId, status: "hängend" });
+    const session = await owner.leadops.startDialerSession({ campaignId: null, mode: "manuell", connection: "browser" });
+    expect(session).toMatchObject({ mode: "manuell", status: "bereit", campaign: null });
+    const instruction = await owner.leadops.placeManualCall({ publicId: lead.publicId });
+    expect(instruction).toMatchObject({ mode: "manuell", connection: "simulation" });
+    const during = await owner.leadops.currentDialerSession();
+    expect(during?.status).toBe("im_gespraech"); expect(during?.call).toMatchObject({ status: "verbunden", toNumber: "+491702222224", fromNumber: de[0].e164, amdResult: "human" });
+    await expect(owner.leadops.placeManualCall({ phone: "+49 170 3333334" })).rejects.toThrow("bereits ein Anruf");
+    S.transcriptForStub = "Agent: Guten Tag Frau Dialer. Kundin: Ja gerne, ich bin Eigentümerin und einverstanden. Agent: Termin vor Ort nächste Woche? Kundin: Ja gerne, passt. Agent: Dürfen wir Sie anrufen? Kundin: Ja, telefonisch erreichbar.";
+    const ended = await owner.leadops.endDialerCall({ callId: instruction.callId, durationSeconds: 300 });
+    expect(ended).toMatchObject({ status: "beendet", talkSeconds: 300, recordingUrl: expect.stringContaining("simulation.local/recordings/") });
+    expect(ended?.evaluation).toMatchObject({ score: 90, verdict: "verkaufbar", decision: "freigegeben" }); // Ansage-Modus: Einwilligung dokumentiert → bewertet
+    expect((await owner.leadops.currentDialerSession())?.status).toBe("nachbereitung");
+    expect(ended?.autoNotes).toBe(true); expect(ended?.summary).toContain("📞 Gesprächsnotiz (automatisch)"); expect(ended?.summary).toContain("Termin besprochen"); // automatische Notiz direkt nach dem Gespräch (Transkript-Kurzfassung ohne KI-Schlüssel)
+    const dispositioned = await owner.leadops.setCallDisposition({ callId: instruction.callId, disposition: "verkauft", notes: "Termin vereinbart" });
+    expect(dispositioned?.disposition).toBe("verkauft");
+    expect(dispositioned?.summary).toContain("Ergebnis: Verkauft / Termin"); expect(dispositioned?.summary).toContain("Notiz des Agenten: Termin vereinbart");
+    const autoNotes = await owner.leadops.listPipelineNotes({ publicId: lead.publicId }); expect(autoNotes.filter((note) => note.source === "gespraech")).toHaveLength(1); expect(autoNotes[0].text).toBe(dispositioned?.summary); // eine Notiz je Anruf, aktualisiert statt verdoppelt
+    expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, (await leadRow(lead.publicId)).id))).some((event) => String(event.note ?? "").startsWith("📞 Gesprächsnotiz"))).toBe(true); // auch im Verlauf des Leads
+    expect((await leadRow(lead.publicId)).status).toBe("zugewiesen"); // genehmigt → Regel aus Test 15 → Bestellung → Auslieferung
+    expect((await owner.leadops.currentDialerSession())?.status).toBe("bereit");
+
+    // Aufzeichnung ohne Einwilligungsabfrage (Einstellung): kein Klick nötig, Bewertung läuft trotzdem, Quelle dokumentiert
+    await owner.leadops.saveTelephonySettings({ provider: "simulation", credentials: settings.credentials, addressSid: "", bundleSids: settings.bundleSids, defaultNumberId: null, agentConnection: "browser", announcement: settings.announcement ?? "", consentMode: "agent_button", recordCalls: true, recordWithoutConsent: true, amdEnabled: true, maxAttempts: 2, retryMinutes: 60, wrapUpSeconds: 30, pacingRatio: 2, maxAbandonRate: 3, callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } });
+    expect((await owner.leadops.getTelephonySettings()).recordWithoutConsent).toBe(true);
+    const silentLead = await owner.leadops.importLead({ categoryId: S.pv.id, firstName: "Ohne", lastName: "Abfrage", phone: "+49 170 2222229", supplierId: S.supplierId, metadata: { dachtyp: "Satteldach", eigentuemer: "Ja" } });
+    const silentCall = await owner.leadops.placeManualCall({ publicId: silentLead.publicId });
+    S.transcriptForStub = "Agent: Guten Tag Herr Abfrage. Kunde: Ja, ich bin Eigentümer und einverstanden, ein Fachbetrieb darf sich melden. Agent: Danke.";
+    const silentEnded = await owner.leadops.endDialerCall({ callId: silentCall.callId, durationSeconds: 120 });
+    expect(silentEnded?.consentAt).toBeNull(); expect(silentEnded?.evaluation?.status).toBe("bewertet"); // ohne Agenten-Klick bewertet
+    expect((await db.select().from(callRecords).where(eq(callRecords.id, silentEnded!.callRecordId!)))[0]).toMatchObject({ consent: true, consentSource: expect.stringContaining("ohne Abfrage") });
+    expect(silentEnded?.summary).toContain("Eigentümer bestätigt");
+    await owner.leadops.setCallDisposition({ callId: silentCall.callId, disposition: "interessiert" });
+    await owner.leadops.saveTelephonySettings({ provider: "simulation", credentials: settings.credentials, addressSid: "", bundleSids: settings.bundleSids, defaultNumberId: null, agentConnection: "browser", announcement: settings.announcement ?? "", consentMode: "ansage", recordCalls: true, recordWithoutConsent: false, amdEnabled: true, maxAttempts: 2, retryMinutes: 60, wrapUpSeconds: 30, pacingRatio: 2, maxAbandonRate: 3, callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } });
+    await owner.leadops.updateDialerSession({ status: "offline" }); await owner.leadops.startDialerSession({ campaignId: null, mode: "manuell", connection: "browser" });
+    // Kampagne + Wählliste + Power-Dialer (nacheinander), Anrufbeantworter/besetzt → Wiederholung
+    const leads: Array<{ publicId: string }> = []; for (const [firstName, phone] of [["Anna", "+49 170 4444440"], ["Bert", "+49 170 4444442"], ["Cem", "+49 170 4444445"]]) leads.push(await owner.leadops.importLead({ categoryId: S.wp.id, firstName, lastName: "Power", phone, supplierId: S.supplierId, metadata: { heizungsart: "Strom" } }));
+    for (const item of leads) await owner.leadops.updateLeadStatus({ publicId: item.publicId, status: "hängend" });
+    const campaign = await owner.leadops.saveDialerCampaign({ name: "WP Power", mode: "power", leadFilter: { categoryIds: [S.wp.id], statuses: ["hängend"], onlyWithoutCall: true }, callerNumberId: null, maxAttempts: null, retryMinutes: 1, wrapUpSeconds: 0, pacingRatio: null, callWindow: null, script: "Guten Tag, hier ist …" });
+    const built = await owner.leadops.buildDialerQueue({ campaignId: campaign.id });
+    expect(built.added).toBe(3);
+    expect((await owner.leadops.buildDialerQueue({ campaignId: campaign.id })).added).toBe(0); // kein Doppel
+    await expect(owner.leadops.nextDialerCall()).rejects.toThrow("Sitzung mit Kampagne");
+    await owner.leadops.startDialerSession({ campaignId: campaign.id, mode: "power", connection: "browser" });
+    await expect(owner.leadops.nextDialerCall()).rejects.toThrow("nicht aktiv");
+    await owner.leadops.setDialerCampaignStatus({ id: campaign.id, status: "aktiv" });
+    // Automatische Notiz: Schalter global aus → Kampagne an (gilt vor dem Standard) → im Dialer sichtbar
+    await owner.leadops.setAutoCallNotes({ scope: "global", enabled: false }); expect((await owner.leadops.getTelephonySettings()).autoCallNotes).toBe(false); expect((await owner.leadops.currentDialerSession())?.autoNotes).toBe(false);
+    await owner.leadops.setAutoCallNotes({ scope: "kampagne", campaignId: campaign.id, enabled: true }); expect((await owner.leadops.currentDialerSession())?.autoNotes).toBe(true);
+    const first = await owner.leadops.nextDialerCall(); // Anna …0 → Anrufbeantworter
+    expect(first.done).toBe(false);
+    let current = await owner.leadops.currentDialerSession();
+    expect(current?.status).toBe("bereit"); // Anrufbeantworter → sofort frei
+    const queueAfterFirst = await owner.leadops.listDialerQueue({ campaignId: campaign.id });
+    expect(queueAfterFirst.find((item) => item.name.startsWith("Anna"))).toMatchObject({ status: "wiederholen", attempts: 1, lastResult: "anrufbeantworter" });
+    const second = await owner.leadops.nextDialerCall(); // Bert …2 → besetzt
+    expect(second.done).toBe(false);
+    expect((await owner.leadops.listDialerQueue({ campaignId: campaign.id })).find((item) => item.name.startsWith("Bert"))).toMatchObject({ status: "wiederholen", lastResult: "besetzt" });
+    const third = await owner.leadops.nextDialerCall(); // Cem …5 → Mensch
+    current = await owner.leadops.currentDialerSession();
+    expect(current?.status).toBe("im_gespraech"); expect(current?.call?.lead?.name).toBe("Cem Power");
+    await owner.leadops.setAutoCallNotes({ scope: "anruf", callId: third.instruction!.callId, enabled: false }); // für diesen Anruf ausgeschaltet
+    await owner.leadops.endDialerCall({ callId: third.instruction!.callId, durationSeconds: 120 });
+    const thirdResult = await owner.leadops.setCallDisposition({ callId: third.instruction!.callId, disposition: "wiedervorlage", notes: "Rückruf morgen", followUpMinutes: 1440 });
+    expect(thirdResult?.autoNotes).toBe(false); expect(thirdResult?.summary).toBeNull(); expect((await owner.leadops.listPipelineNotes({ publicId: leads[2].publicId })).length).toBe(0);
+    await owner.leadops.setAutoCallNotes({ scope: "global", enabled: true }); await owner.leadops.setAutoCallNotes({ scope: "kampagne", campaignId: campaign.id, enabled: null }); // zurück auf Standard an
+    expect((await owner.leadops.listDialerQueue({ campaignId: campaign.id })).find((item) => item.name.startsWith("Cem"))).toMatchObject({ status: "wiederholen", lastResult: "wiedervorlage" });
+    expect((await owner.leadops.nextDialerCall()).done).toBe(true); // alles wartet auf Wiederholung
+    const stats = (await owner.leadops.listDialerCampaigns()).find((item) => item.id === campaign.id)!.stats;
+    expect(stats).toMatchObject({ queue: 3, open: 3, calls: 3, connected: 1 });
+    await owner.leadops.updateDialerSession({ status: "offline" });
+    expect(await owner.leadops.currentDialerSession()).toBeNull();
+
+    // Predictive: zwei bereite Agenten (Owner + Invitee), Wählfaktor 2 → bis zu 4 gleichzeitige Anrufe, Menschen werden an Agenten vermittelt, Überschuss abgebrochen
+    await owner.leadops.createTag({ name: "Predictive-Test", color: "#7c6cff" }); const tag = (await owner.leadops.listTags()).find((row) => row.name === "Predictive-Test")!;
+    for (const [firstName, phone] of [["P1", "+49 170 5555554"], ["P2", "+49 170 5555555"], ["P3", "+49 170 5555556"], ["P4", "+49 170 5555557"], ["P5", "+49 170 5555550"]]) { const created = await owner.leadops.importLead({ categoryId: S.wp.id, firstName, lastName: "Predictive", phone, supplierId: S.supplierId, metadata: { heizungsart: "Strom" } }); await owner.leadops.assignLeadTag({ publicId: created.publicId, tagId: tag.id }); }
+    const predictiveLeads = null;
+    void predictiveLeads;
+    const predictive = await owner.leadops.saveDialerCampaign({ name: "WP Predictive", mode: "predictive", leadFilter: { categoryIds: [S.wp.id], statuses: ["neu"], tagIds: [tag.id] }, callerNumberId: null, maxAttempts: null, retryMinutes: null, wrapUpSeconds: 0, pacingRatio: 2, callWindow: null, script: "" });
+    expect((await owner.leadops.buildDialerQueue({ campaignId: predictive.id })).added).toBe(5);
+    await owner.leadops.setDialerCampaignStatus({ id: predictive.id, status: "aktiv" });
+    // zweiter Agent: der interne Vertriebsnutzer aus Test 2 (Käufer-Zugänge dürfen nicht telefonieren)
+    const agentUserId = (await db.select({ id: users.id }).from(users).where(eq(users.name, "Neu Mitglied")))[0].id;
+    const agent = appRouter.createCaller({ user: { id: agentUserId } } as never);
+    await expect(invitee.leadops.startDialerSession({ campaignId: predictive.id, mode: "predictive", connection: "browser" })).rejects.toThrow("Käufer");
+    await owner.leadops.startDialerSession({ campaignId: predictive.id, mode: "predictive", connection: "browser" });
+    await agent.leadops.startDialerSession({ campaignId: predictive.id, mode: "predictive", connection: "telefon", agentPhone: "+49 40 12345" });
+    expect((await owner.leadops.listDialerSessions()).filter((row) => row.campaignId === predictive.id)).toHaveLength(2);
+    const tick = await owner.leadops.runPredictiveTick();
+    expect(tick.dialed).toBe(4); // 2 Agenten × Faktor 2
+    const ownerSession = await owner.leadops.currentDialerSession(); const inviteeSession = await agent.leadops.currentDialerSession();
+    expect([ownerSession?.status, inviteeSession?.status].filter((status) => status === "im_gespraech").length).toBe(2);
+    const predictiveCalls = await owner.leadops.listDialerCalls({ campaignId: predictive.id });
+    expect(predictiveCalls.filter((call) => call.status === "verbunden")).toHaveLength(2);
+    expect(predictiveCalls.filter((call) => call.status === "wartet")).toHaveLength(2); // Menschen ohne freien Agenten warten
+    const later = await owner.leadops.runPredictiveTick(); // Wartende > 5 s ohne Agent → abgebrochen (hier direkt, da Zeit simuliert wird)
+    void later;
+    S.transcriptForStub = "Agent: Hallo. Kunde: Ich möchte nicht angerufen werden, bitte meine Daten löschen."; // Bewertung: Warnsignal → zurückgewiesen
+    const ownerEnded = await owner.leadops.endDialerCall({ callId: ownerSession!.call!.id, durationSeconds: 90 });
+    expect(ownerEnded?.evaluation).toMatchObject({ verdict: "nicht_verkaufbar", decision: "zurueckgewiesen" });
+    expect((await leadRow(ownerSession!.call!.lead!.publicId)).status).toBe("fehlerhaft");
+    await owner.leadops.setCallDisposition({ callId: ownerSession!.call!.id, disposition: "kein_interesse" });
+    expect((await leadRow(ownerSession!.call!.lead!.publicId)).status).toBe("deaktiviert");
+    await owner.leadops.updateDialerSession({ status: "offline" }); await agent.leadops.updateDialerSession({ status: "offline" });
+    expect((await owner.leadops.listDialerCalls({}))!.length).toBeGreaterThanOrEqual(8);
+    await expect(invitee.leadops.getTelephonySettings()).rejects.toThrow("vorbehalten");
+  });
+
+  it("17. Gesprächsbewertung ausbauen: Entscheidungsregeln, Fragen an das Gespräch, Beispiele für die KI", async () => {
+    // Gesprächsbewertung erweitert: Regel, Fragen an das Gespräch, Beispiele
+    const qa = await owner.leadops.getCallQaSettings();
+    await owner.leadops.saveCallQaSettings({ ...qa, enabled: true, instructions: "", recordingAuthHeader: "••••••••", decisionRules: [{ id: "r1", label: "Mieter prüfen", field: "transcript", op: "contains", value: "mieter", decision: "pruefen", active: true }], examples: [{ title: "Mieter", transcript: "Ich bin nur Mieter.", verdict: "nachfassen", reason: "Mieter dürfen nicht beauftragen." }], extractFields: [{ key: "dachflaeche", label: "Dachfläche", question: "Wie groß ist die Dachfläche?" }] });
+    const extended = await owner.leadops.getCallQaSettings();
+    expect(extended.decisionRules).toHaveLength(1); expect(extended.examples[0].title).toBe("Mieter"); expect(extended.extractFields[0].key).toBe("dachflaeche");
+    const ruled = await owner.leadops.simulateCall({ transcript: "Agent: Hallo. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, aber mein Mieter wohnt oben.", publicId: null });
+    expect(ruled).toMatchObject({ score: 90, decision: "pruefen" }); // Regel schlägt die Schwelle
+    expect((await owner.leadops.getCall({ callId: ruled.callId })).nextStep).toContain("Regel: Mieter prüfen");
+    await owner.leadops.saveCallQaSettings({ ...extended, recordingAuthHeader: "••••••••", decisionRules: [] });
+  });
+
+  it("18. Rohdaten: Upload mit Doppelprüfung, Wählliste aus der Liste, Übernahme als Lead nur nach Qualifizierung (Ergebnis oder KI-Freigabe), Auslieferung über die Regeln", async () => {
+    const leadsBefore = (await db.select({ id: leads.id }).from(leads).where(eq(leads.tenantId, S.tenantId))).length;
+    const batch = await owner.leadops.createRawBatch({ name: "Messe Liste", categoryId: S.wp.id, sourceName: "Messe", mapping: { firstName: "Vorname" }, rows: [
+      { firstName: "Roh", lastName: "Eins", phone: "030 7700 9004", city: "Berlin", data: { Dachform: "Satteldach" } }, // …4 → Mensch
+      { firstName: "Roh", lastName: "Zwei", phone: "+49 30 7700 9005", email: "zwei@example.de" }, // …5 → Mensch
+      { firstName: "Roh", lastName: "Drei", phone: "+49 30 7700 9006" }, // …6 → Mensch
+      { firstName: "Anke", lastName: "Anruf", phone: "+49 40 777001" }, // gibt es schon als Lead (Test 15)
+      { firstName: "Roh", lastName: "Doppel", phone: "+49 30 7700 9004" }, // doppelt in der Liste
+      { firstName: "Ohne", lastName: "Kontakt" }, // weder Telefon noch E-Mail
+    ] });
+    expect(batch).toMatchObject({ imported: 5, duplicates: 2, skipped: 1, usable: 3 });
+    expect((await db.select({ id: leads.id }).from(leads).where(eq(leads.tenantId, S.tenantId))).length).toBe(leadsBefore); // Upload erzeugt keine Leads
+    const listed = await owner.leadops.listRawBatches();
+    expect(listed[0]).toMatchObject({ name: "Messe Liste", categoryShortcode: S.wp.shortcode, counts: { total: 5, neu: 3, duplikat: 2 } });
+    const contacts = await owner.leadops.listRawContacts({ batchId: batch.batchId });
+    expect(contacts.find((row) => row.lastName === "Anruf")).toMatchObject({ status: "duplikat", note: "Bereits als Lead vorhanden" });
+    expect(contacts.find((row) => row.lastName === "Eins")?.phone).toBe("+493077009004");
+
+    // Wählliste nur aus der Rohdaten-Liste; Power-Dialer; Ergebnis „interessiert“ → Lead genehmigt → Regel → Bestellung → Auslieferung
+    const campaign = await owner.leadops.saveDialerCampaign({ name: "Messe abtelefonieren", mode: "power", leadFilter: { leadsEnabled: false, rawBatchIds: [batch.batchId] }, callerNumberId: null, maxAttempts: 2, retryMinutes: 30, wrapUpSeconds: 0, pacingRatio: null, callWindow: null, script: "" });
+    await owner.leadops.setDialerCampaignStatus({ id: campaign.id, status: "aktiv" });
+    expect((await owner.leadops.buildDialerQueue({ campaignId: campaign.id })).added).toBe(3);
+    expect((await owner.leadops.listDialerQueue({ campaignId: campaign.id })).map((item) => item.source)).toEqual(["rohdaten", "rohdaten", "rohdaten"]);
+    expect((await owner.leadops.listRawContacts({ batchId: batch.batchId, status: "in_liste" })).length).toBe(3);
+    await owner.leadops.startDialerSession({ campaignId: campaign.id, mode: "power", connection: "browser" });
+    S.transcriptForStub = "Agent: Hallo Herr Eins. Kunde: Ich überlege noch."; // Bewertung: nachfassen → prüfen (kein Lead durch die KI)
+    const first = await owner.leadops.nextDialerCall();
+    const live = await owner.leadops.currentDialerSession();
+    expect(live?.call).toMatchObject({ status: "verbunden", lead: null, rawContact: { name: "Roh Eins", status: "in_liste" } });
+    await owner.leadops.endDialerCall({ callId: first.instruction!.callId, durationSeconds: 100 });
+    expect((await owner.leadops.getDialerCall({ callId: first.instruction!.callId }))?.evaluation).toMatchObject({ decision: "pruefen" });
+    expect((await owner.leadops.listRawContacts({ batchId: batch.batchId })).find((row) => row.lastName === "Eins")?.status).toBe("in_liste"); // noch kein Lead
+    await owner.leadops.setCallDisposition({ callId: first.instruction!.callId, disposition: "interessiert", notes: "Will ein Angebot" });
+    const converted = (await owner.leadops.listRawContacts({ batchId: batch.batchId })).find((row) => row.lastName === "Eins")!;
+    expect(converted.status).toBe("konvertiert"); expect(converted.leadPublicId).toBeTruthy();
+    const newLead = await leadRow(converted.leadPublicId!);
+    expect(newLead.status).toBe("zugewiesen"); // genehmigt → Regel aus Test 15 → Bestellung → Echtzeit-Auslieferung
+    expect(newLead.metadata).toMatchObject({ Dachform: "Satteldach", rawBatch: "Messe Liste", source: "Messe", lastCallDisposition: "interessiert" });
+    expect(newLead.supplierName).toBe("Messe");
+    expect((await owner.leadops.getDialerCall({ callId: first.instruction!.callId }))?.leadId).toBe(newLead.id);
+    expect((await owner.leadops.listCalls({})).find((row) => row.externalCallId === `dialer-${first.instruction!.callId}`)).toMatchObject({ leadPublicId: converted.leadPublicId, rawContactName: "Roh Eins" });
+
+    // KI-Freigabe macht den nächsten Kontakt direkt zum Lead (ohne Klick des Agenten)
+    S.transcriptForStub = "Agent: Hallo Frau Zwei. Kundin: Ja gerne, ich bin Eigentümerin und einverstanden. Agent: Termin vor Ort nächste Woche? Kundin: Ja gerne, passt. Agent: Dürfen wir Sie anrufen? Kundin: Ja, telefonisch erreichbar.";
+    const second = await owner.leadops.nextDialerCall();
+    await owner.leadops.endDialerCall({ callId: second.instruction!.callId, durationSeconds: 80 });
+    const zwei = (await owner.leadops.listRawContacts({ batchId: batch.batchId })).find((row) => row.lastName === "Zwei")!;
+    expect(zwei.status).toBe("konvertiert"); expect(zwei.note).toContain("Gesprächsbewertung 90/100");
+    expect((await leadRow(zwei.leadPublicId!)).status).toBe("zugewiesen");
+    await owner.leadops.setCallDisposition({ callId: second.instruction!.callId, disposition: "verkauft" });
+
+    // Ablehnung durch die KI verwirft den Kontakt
+    S.transcriptForStub = "Agent: Hallo. Kunde: Ich möchte nicht angerufen werden, bitte meine Daten löschen.";
+    const third = await owner.leadops.nextDialerCall();
+    await owner.leadops.endDialerCall({ callId: third.instruction!.callId, durationSeconds: 20 });
+    expect((await owner.leadops.listRawContacts({ batchId: batch.batchId })).find((row) => row.lastName === "Drei")).toMatchObject({ status: "verworfen", note: expect.stringContaining("nicht_verkaufbar") });
+    await owner.leadops.setCallDisposition({ callId: third.instruction!.callId, disposition: "nicht_anrufen" });
+    expect((await owner.leadops.nextDialerCall()).done).toBe(true);
+    await owner.leadops.updateDialerSession({ status: "offline" });
+
+    // manuelle Übernahme, Wiederaufnahme, Liste löschen (übernommene Leads bleiben)
+    const doppel = (await owner.leadops.listRawContacts({ batchId: batch.batchId })).find((row) => row.lastName === "Doppel")!;
+    await owner.leadops.restoreRawContact({ id: doppel.id });
+    const manual = await owner.leadops.convertRawContact({ id: doppel.id, initialStatus: "neu", note: "bewusst übernommen" });
+    expect(manual.alreadyConverted).toBe(false); expect((await leadRow(manual.publicId)).status).not.toBe("genehmigt");
+    expect((await owner.leadops.convertRawContact({ id: doppel.id })).alreadyConverted).toBe(true);
+    await expect(owner.leadops.discardRawContact({ id: doppel.id })).rejects.toThrow("bereits ein Lead");
+    expect((await owner.leadops.listRawBatches())[0].counts).toMatchObject({ konvertiert: 3, verworfen: 1, duplikat: 1 });
+    expect(await owner.leadops.deleteRawBatch({ batchId: batch.batchId })).toMatchObject({ keptConverted: 3 });
+    expect((await owner.leadops.listRawContacts({ batchId: batch.batchId })).length).toBe(3);
+    await expect(invitee.leadops.listRawBatches()).rejects.toThrow("vorbehalten");
+
+    // mehrere Lead-Kategorien je Liste: Kategorie aus der Spalte, Auswahl beim Übernehmen bzw. beim Anruf-Ergebnis, sonst Standard
+    const multi = await owner.leadops.createRawBatch({ name: "Multi-Liste", categoryId: S.wp.id, categoryIds: [S.wp.id, S.pv.id], rows: [{ firstName: "Multi", lastName: "Spalte", phone: "+49 30 6600 1114", category: S.pv.shortcode }, { firstName: "Multi", lastName: "Standard", phone: "+49 30 6600 1115" }, { firstName: "Multi", lastName: "Anruf", phone: "+49 30 6600 1116", category: "gibt es nicht" }] });
+    expect(multi).toMatchObject({ imported: 3, categoryIds: [S.wp.id, S.pv.id], unmatchedCategories: 1 });
+    expect((await owner.leadops.listRawBatches()).find((row) => row.name === "Multi-Liste")!.categories.map((item) => item.shortcode)).toEqual([S.wp.shortcode, S.pv.shortcode]);
+    const multiRows = await owner.leadops.listRawContacts({ batchId: multi.batchId });
+    expect(multiRows.find((row) => row.lastName === "Spalte")).toMatchObject({ categoryShortcode: S.pv.shortcode, batchCategoryIds: [S.wp.id, S.pv.id] });
+    const spalte = await owner.leadops.convertRawContact({ id: multiRows.find((row) => row.lastName === "Spalte")!.id });
+    expect((await leadRow(spalte.publicId)).categoryId).toBe(S.pv.id);
+    const standard = await owner.leadops.convertRawContact({ id: multiRows.find((row) => row.lastName === "Standard")!.id });
+    expect((await leadRow(standard.publicId)).categoryId).toBe(S.wp.id);
+    await expect(owner.leadops.convertRawContact({ id: multiRows.find((row) => row.lastName === "Anruf")!.id, categoryId: 999999 })).rejects.toThrow("nicht freigegeben");
+    const multiCampaign = await owner.leadops.saveDialerCampaign({ name: "Multi abtelefonieren", mode: "power", leadFilter: { leadsEnabled: false, rawBatchIds: [multi.batchId] }, callerNumberId: null, maxAttempts: 2, retryMinutes: 30, wrapUpSeconds: 0, pacingRatio: null, callWindow: null, script: "" });
+    await owner.leadops.setDialerCampaignStatus({ id: multiCampaign.id, status: "aktiv" });
+    expect((await owner.leadops.buildDialerQueue({ campaignId: multiCampaign.id })).added).toBe(1);
+    await owner.leadops.startDialerSession({ campaignId: multiCampaign.id, mode: "power", connection: "browser" });
+    S.transcriptForStub = "Agent: Hallo. Kunde: Ich überlege noch.";
+    const multiCall = await owner.leadops.nextDialerCall();
+    expect((await owner.leadops.currentDialerSession())?.call?.rawContact).toMatchObject({ name: "Multi Anruf", categoryIds: [S.wp.id, S.pv.id] });
+    await owner.leadops.endDialerCall({ callId: multiCall.instruction!.callId, durationSeconds: 60 });
+    await owner.leadops.setCallDisposition({ callId: multiCall.instruction!.callId, disposition: "interessiert", categoryId: S.pv.id }); // Agent wählt PV
+    const anruf = (await owner.leadops.listRawContacts({ batchId: multi.batchId })).find((row) => row.lastName === "Anruf")!;
+    expect(anruf.status).toBe("konvertiert"); expect((await leadRow(anruf.leadPublicId!)).categoryId).toBe(S.pv.id);
+    await owner.leadops.updateDialerSession({ status: "offline" });
+  });
+
+  it("19. Haustür-Erfassung: Agenturen, Vertriebler mit Sub-ID, Erfassung → Lead → Aroundhome (Sub-ID im Payload), Tagesabgleich je Sub-ID, Übersicht und CSV", async () => {
+    // Vertriebler und Agenturen
+    const agency = await owner.leadops.saveD2dAgency({ name: "SolarDoor Test GmbH", contactName: "Nina", email: "nina@solardoor.example" });
+    const rep1 = await owner.leadops.saveD2dRep({ name: "Ali Test", agencyId: agency.id, subId: "D2D-TEST1" });
+    const rep2 = await owner.leadops.saveD2dRep({ name: "Mara Test", agencyId: agency.id, subId: "D2D-TESTB" });
+    expect(rep2.subId).toBe("D2D-TESTB");
+    const repNoSub = await owner.leadops.saveD2dRep({ name: "Ohne Sub", agencyId: agency.id }); expect(repNoSub.subId).toBeNull(); // Spezifikation: Sub-ID optional („Sub-ID fehlt“)
+    await expect(owner.leadops.saveD2dRep({ name: "Doppel", subId: "D2D-TEST1" })).rejects.toThrow("bereits vergeben");
+    await expect(owner.leadops.saveD2dRep({ name: "Falsch", subId: "ab c" })).rejects.toThrow("Sub-ID: nur Buchstaben");
+    // Login für Vertriebler + Sperren, Agentur mit Agenturleiter-Login, Zuweisung, iFrame
+    const withLogin = await owner.leadops.saveD2dRep({ name: "Lea Login", agencyId: agency.id, email: "lea@haustuer-test.example", createLogin: true, password: "Haustuer!2026" });
+    expect((await owner.leadops.listD2dReps()).find((row) => row.id === withLogin.id)?.userId).toBeTruthy();
+    await owner.leadops.setD2dRepActive({ id: withLogin.id, active: false }); expect((await owner.leadops.listD2dReps()).find((row) => row.id === withLogin.id)?.active).toBe(false);
+    const agency2 = await owner.leadops.createD2dAgency({ name: "Leiter Test Agentur", leaderFirstName: "Lars", leaderLastName: "Leiter", leaderEmail: "lars@agentur-test.example", password: "Agentur!2026" });
+    expect(agency2.code).toMatch(/^[A-Z0-9]{2,8}$/); expect(agency2.leaderUserId).toBeTruthy();
+    await expect(owner.leadops.saveD2dSettings({ categoryId: null, buyerUserId: 1 })).rejects.toThrow("Für einen Käufer bitte auch eine Sparte wählen.");
+    await expect(owner.leadops.saveD2dEmbed({ raw: "https://boese.example/script.js" })).rejects.toThrow("aroundhome.de");
+    expect((await owner.leadops.saveD2dEmbed({ raw: '<script src="https://aaa.aroundhome.de/trck/ehtml/abc.js"></script>' })).embedScriptUrl).toBe("https://aaa.aroundhome.de/trck/ehtml/abc.js");
+    expect((await owner.leadops.d2dContext()).role).toBe("admin");
+    expect((await owner.leadops.listD2dAgencies()).find((row) => row.id === agency.id)).toMatchObject({ name: "SolarDoor Test GmbH" });
+    const settings = await owner.leadops.getD2dSettings();
+    expect(settings.consentText.length).toBeGreaterThan(20);
+
+    // Aroundhome als Käufer: die Partnerintegration ist die Standard-Vorlage (mit sub_id im Payload), Bestellung S.orderId
+    const integrationConfig = ((await owner.leadops.listPartnerIntegrations()).find((row) => row.id === S.integrationId)?.config ?? {}) as Record<string, unknown>;
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/leads", config: { ...integrationConfig, payloadMapping: { publisher_id: "publisherId", sub_id: "d2d_sub_id", external_id: "publicId", first_name: "firstName", last_name: "lastName", phone: "phone", zip_code: "postcode", city: "city", custom_data: "metadata" } } });
+    await owner.leadops.saveD2dSettings({ aroundhomeAccountId: null, orderId: S.orderId, supplierId: null, consentText: settings.consentText });
+    await expect(owner.leadops.createD2dCapture({ repId: rep1.id, categoryId: S.wp.id, lastName: "Ohne", phone: "+49 30 1", consentGiven: false })).rejects.toThrow("Einwilligung");
+    await expect(owner.leadops.createD2dCapture({ repId: rep1.id, categoryId: S.wp.id, lastName: "Ohne", consentGiven: true })).rejects.toThrow("Telefonnummer");
+    const before = outbound.length;
+    const capture = await owner.leadops.createD2dCapture({ repId: rep1.id, categoryId: S.wp.id, firstName: "Haus", lastName: "Tür", phone: "030 998877", street: "Ahornweg 3", postcode: "12163", city: "Berlin", country: "DE", notes: "Satteldach", consentGiven: true, extra: { heizungsart: "Strom" } });
+    expect(capture).toMatchObject({ status: "uebermittelt", leadStatus: "zugewiesen" });
+    expect(capture.partnerReference).toMatch(/^ah-/); // Referenz aus der Aroundhome-Antwort
+    const lead = await leadRow(capture.publicId);
+    expect(lead).toMatchObject({ status: "zugewiesen", supplierName: "Haustür: SolarDoor Test GmbH", phone: "+4930998877" });
+    expect(lead.metadata).toMatchObject({ d2d_sub_id: "D2D-TEST1", d2d_rep: "Ali Test", d2d_agency: "SolarDoor Test GmbH", street: "Ahornweg 3", consent: true, source: "Haustür", partnerReference: capture.partnerReference });
+    const sent = outbound.slice(before).find((call) => call.url === "https://crm.partner-solar.example/api/leads");
+    expect(sent?.body).toMatchObject({ sub_id: "D2D-TEST1", external_id: capture.publicId, last_name: "Tür", zip_code: "12163" }); // Sub-ID geht mit an Aroundhome
+    const notes = (await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, lead.id))).map((event) => event.note ?? "");
+    expect(notes.some((note) => note.startsWith("Haustür-Erfassung durch Ali Test"))).toBe(true);
+    expect((await owner.leadops.listD2dCaptures({ repId: rep1.id }))[0]).toMatchObject({ status: "uebermittelt", leadPublicId: capture.publicId, subId: "D2D-TEST1", agencyName: "SolarDoor Test GmbH", name: "Haus Tür" });
+
+    // Ablehnung durch Aroundhome → Erfassung „fehler“, erneut senden
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/reject" });
+    const failed = await owner.leadops.createD2dCapture({ repId: rep2.id, categoryId: S.wp.id, firstName: "Fehl", lastName: "Schlag", phone: "+49 30 998878", consentGiven: true, extra: { heizungsart: "Strom" } });
+    expect(failed.status).toBe("fehler"); expect(failed.deliveryNote).toContain("abgelehnt");
+    await owner.leadops.updatePartnerIntegration({ id: S.integrationId, callbackUrl: "https://crm.partner-solar.example/api/leads" });
+    const retried = await owner.leadops.retryD2dCapture({ captureId: failed.captureId });
+    expect(retried.status).toBe("uebermittelt");
+    expect((await leadRow(failed.publicId)).status).toBe("zugewiesen");
+
+    // Tagesabgleich je Sub-ID aus dem Aroundhome-Export
+    const account = await owner.leadops.saveAroundhomeAccount({ label: "Aroundhome D2D", publisherId: "pub-d2d", accessToken: "tok", exportUrl: "https://partner.example/aroundhome-d2d", reclaimOnCancel: false, reclaimReasonId: null, enabled: true });
+    await owner.leadops.saveD2dSettings({ aroundhomeAccountId: account.id, orderId: S.orderId, supplierId: null, consentText: settings.consentText });
+    const sync = await owner.leadops.syncAroundhomeAccount({ id: account.id });
+    expect(sync.dailyDays).toBe(3); expect(sync.summary).toContain("Sub-ID-Tage abgeglichen");
+    const overview = await owner.leadops.d2dOverview({});
+    expect(overview.kpis).toMatchObject({ captured: 2, submitted: 2, failed: 0, qualified: 1, open: 1, cancelled: 0 }); // D2D-FREMD und D2D-TEST2 zählen nicht (keine eigenen Vertriebler)
+    expect(overview.topReps[0]).toMatchObject({ name: "Ali Test", subId: "D2D-TEST1", captured: 1, qualified: 1 });
+    expect(overview.topAgencies[0]).toMatchObject({ agency: "SolarDoor Test GmbH", captured: 2, submitted: 2, qualified: 1 });
+    expect(overview.days.length).toBe(7); expect(overview.days[overview.days.length - 1]).toMatchObject({ captured: 2, qualified: 1, open: 1 });
+    const only = await owner.leadops.d2dOverview({ repId: rep2.id });
+    expect(only.kpis).toMatchObject({ captured: 1, qualified: 0, cancelled: 0 }); // D2D-TEST2 gehört keinem Vertriebler → zählt nicht
+    const csv = await owner.leadops.exportD2dCsv({});
+    expect(csv.csv.split("\r\n")).toHaveLength(3); expect(csv.csv.startsWith("\uFEFF")).toBe(true); expect(csv.csv).toContain("Erfasst am;Nr.;Vertriebler;Sub-ID;Agentur;Anrede;Vorname;Nachname;Telefon;E-Mail;Straße;PLZ;Ort;Notiz"); expect(csv.csv).toContain("Ali Test;D2D-TEST1;SolarDoor Test GmbH"); expect(csv.filename).toMatch(/^haustuer_/);
+    expect((await owner.leadops.deleteD2dRep({ id: rep1.id })).deactivated).toBe(true);
+    await expect(invitee.leadops.listD2dReps()).rejects.toThrow("vorbehalten");
+  });
+
+  it("20. Kundenpfad ohne Handarbeit: Kunden-Benutzer anlegen → API-Integration am Benutzer → Bestellung → Leads verteilen (automatisch)", async () => {
+    // 1) Kunde als Benutzer (Käufer)
+    const created = await owner.leadops.createMember({ firstName: "Klara", lastName: "Kundin", company: "Kundin Solar GmbH", email: `klara-${Date.now().toString(36)}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const membershipId = created.membershipId;
+    const detail = await owner.leadops.getMemberDetail({ membershipId });
+    expect(detail.membership.partnerType).toBe("käufer"); expect(detail.membership.status).toBe("aktiv");
+    // 2) API-Integration direkt am Benutzer (Reiter Integration): Endpoint für PV
+    await owner.leadops.saveDeliveryEndpoint({ membershipId, categoryId: S.pv.id, enabled: true, method: "POST", url: "https://kundin-crm.example/api/leads", sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [{ name: "Authorization", value: "Bearer kundin-key" }], authEnabled: false, auth: null, bodyTemplate: '{ "name": "{{first_name}} {{last_name}}", "phone": "{{phone}}", "zip": "{{postal_code}}", "heizung": "{{custom_data.heizungsart}}" }', omitAutoFields: false, rotate: false, valueMappings: [] });
+    expect((await owner.leadops.getMemberIntegration({ membershipId })).endpoints).toHaveLength(1);
+    // 3) Bestellung für diesen Käufer – ohne selbst eine Lieferkette anzulegen
+    const order = await owner.leadops.createOrder({ name: "Kundin PV 50", buyerName: "Kundin Solar GmbH", categoryId: S.pv.id, quantity: 50, unitPrice: 39, status: "aktiv" });
+    await owner.leadops.saveOrderWorkspace({ orderId: order.orderId, name: "Kundin PV 50", buyerName: "Kundin Solar GmbH", buyerUserId: detail.user.id, categoryId: S.pv.id, categoryIds: [S.pv.id], quantity: 50, unitPrice: 39, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "sofort", compensateClaims: true, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
+    await owner.leadops.setOrderWorkspaceActive({ orderId: order.orderId, active: true });
+    expect((await owner.leadops.listDeliveryChains()).filter((chain) => chain.orderId === order.orderId)).toHaveLength(0); // keine Lieferkette von Hand nötig
+    // 4) Verteilung: eine Regel „Neuer PV-Lead → automatisch ausliefern“ (ohne feste Bestellung)
+    await owner.leadops.createAutomationRule({ name: "PV automatisch ausliefern", triggerType: "lead_erstellt", sourceCategoryId: S.pv.id, targetCategoryId: S.pv.id, conditions: [], actionType: "lead_ausliefern", actionConfig: {}, status: "aktiv" });
+    const before = outbound.length;
+    const lead = await owner.leadops.importLead({ categoryId: S.pv.id, firstName: "Peter", lastName: "Probe", phone: "+49 30 5551234", postcode: "10115", city: "Berlin", supplierId: S.supplierId, metadata: { heizungsart: "Gas" } });
+    expect(lead.automation.delivered).toBe(1);
+    const row = await leadRow(lead.publicId);
+    expect(row.status).toBe("zugewiesen");
+    const delivery = (await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, row.id)))[0];
+    expect(delivery).toMatchObject({ buyerName: "Kundin Solar GmbH", orderId: order.orderId, result: "angenommen", unitPrice: "39.00" });
+    const chains = (await owner.leadops.listDeliveryChains()).filter((chain) => chain.orderId === order.orderId);
+    expect(chains).toHaveLength(1); expect(chains[0]).toMatchObject({ name: expect.stringContaining("Bestellung ORD-"), status: "aktiv" }); // Standard-Kette mit Stop wurde bei der ersten Auslieferung automatisch angelegt
+    const sent = outbound.slice(before).find((call) => call.url === "https://kundin-crm.example/api/leads");
+    expect(sent?.headers.authorization).toBe("Bearer kundin-key");
+    expect(sent?.body).toMatchObject({ lead_id: lead.publicId, name: "Peter Probe", phone: "+49 30 5551234", zip: "10115", heizung: "Gas" }); // API-Call des Benutzers wurde genutzt
+    expect((await owner.leadops.getOrderWorkspace({ orderId: order.orderId })).order.deliveredCount).toBe(1);
+    // Käufer sieht seinen Lead, aber nicht die Callcenter-Bereiche
+    const buyer = appRouter.createCaller({ user: { id: detail.user.id } } as never);
+    expect((await buyer.leadops.listLeadsPaged({ page: 1, pageSize: 20 })).rows.some((item) => item.publicId === lead.publicId)).toBe(true);
+    await expect(buyer.leadops.listRawBatches()).rejects.toThrow("vorbehalten");
+    // Kundenbereich („MEIN BEREICH“): Zugang, sichtbare Seiten laut Tab „Ansicht“, Kennzahlen, eigene Leads/Bestellungen/Anbindung
+    const access = await buyer.leadops.customerAccess();
+    expect(access).toMatchObject({ membershipId, partnerType: "käufer", company: "Kundin Solar GmbH" });
+    expect(access.pages).toEqual(["Dashboard", "Leads", "Bestellungen", "Reklamationen", "Integrationen", "Support", "Einstellungen"]);
+    await owner.leadops.updateMemberVisibility({ membershipId, visibleAreas: ["Bestellungen", "Support"], visibleCategoryIds: null });
+    expect((await buyer.leadops.customerAccess()).pages).toEqual(["Dashboard", "Leads", "Bestellungen", "Support", "Einstellungen"]);
+    const home = await buyer.leadops.customerDashboard();
+    expect(home.kpis).toMatchObject({ leadsTotal: 1, leadsThisMonth: 1, openClaims: 0, activeOrders: 1 }); expect(home.recent[0]).toMatchObject({ publicId: lead.publicId, unitPrice: "39.00" });
+    expect((await buyer.leadops.customerLeads({})).map((item) => item.publicId)).toEqual([lead.publicId]);
+    expect((await buyer.leadops.customerOrders()).map((item) => [item.orderNumber, item.deliveredCount])).toEqual([[order.orderNumber, 1]]);
+    expect((await buyer.leadops.customerEndpoints()).endpoints.map((item) => item.url)).toEqual(["https://kundin-crm.example/api/leads"]);
+    await expect(buyer.leadops.customerLeads({})).resolves.toBeTruthy(); await expect(buyer.leadops.chainOverview({ range: "heute" })).resolves.toBeTruthy(); // Abfragen bleiben erlaubt, Admin-Akten nicht
+    await expect(buyer.leadops.getMemberDetail({ membershipId })).rejects.toThrow("vorbehalten");
+    // Lead-Seite: alle relevanten Informationen auf einen Blick (auch für den Käufer selbst, eingeschränkt auf seine Leads)
+    const page = await owner.leadops.getLeadDetail({ publicId: lead.publicId });
+    expect(page).toMatchObject({ publicId: lead.publicId, status: "zugewiesen", category: { name: S.pv.name } });
+    expect(page.deliveries[0]).toMatchObject({ buyerName: "Kundin Solar GmbH", unitPrice: "39.00", result: "angenommen" }); expect(page.deliveries[0].orderNumber).toBe(order.orderNumber);
+    expect((await buyer.leadops.getLeadDetail({ publicId: lead.publicId })).publicId).toBe(lead.publicId);
+    // E-Mail-Automatik: Willkommensmail sofort (ohne SMTP simuliert), Erinnerungen geplant; nach Anmeldung werden fällige Erinnerungen übersprungen
+    const mails = await owner.leadops.emailOverview({});
+    const mine = mails.events.filter((event) => event.membershipId === membershipId);
+    expect(mine.map((event) => [event.kind, event.deliveryStatus]).sort()).toEqual([["erinnerung_1", "geplant"], ["erinnerung_2", "geplant"], ["willkommen", "simuliert"]]);
+    expect(mine.find((event) => event.kind === "willkommen")!.bodyPreview).toContain("••••••••"); // Passwort wird nie im Protokoll gespeichert
+    expect(mine.find((event) => event.kind === "willkommen")!.subject).toContain("Klara"); // Platzhalter (Vorname) ersetzt
+    await db.update(emailEvents).set({ scheduledFor: new Date(Date.now() - 60_000) }).where(and(eq(emailEvents.membershipId, membershipId), eq(emailEvents.kind, "erinnerung_1")));
+    await db.update(users).set({ lastSignedIn: new Date(Date.now() + 120_000) }).where(eq(users.id, (await owner.leadops.getMemberDetail({ membershipId })).user.id)); // deutlich nach dem Anlegen (Zeitzonen-/Sekundenrundung der DB)
+    const queue = await owner.leadops.runEmailQueue(); expect(queue.skipped).toBeGreaterThanOrEqual(1);
+    expect((await owner.leadops.emailOverview({})).events.find((event) => event.membershipId === membershipId && event.kind === "erinnerung_1")!.deliveryStatus).toBe("übersprungen");
+    const templates = (await owner.leadops.emailOverview({})).templates; const welcome = templates.find((template) => template.kind === "willkommen")!;
+    await owner.leadops.updateEmailTemplate({ id: welcome.id, subject: "Hallo {{vorname}} – willkommen!", delayDays: 0 });
+    const test = await owner.leadops.sendTestEmail({ templateId: welcome.id }); expect(test.status).toBe("simuliert");
+    await owner.leadops.resetEmailTemplate({ id: welcome.id }); expect((await owner.leadops.emailOverview({})).templates.find((template) => template.id === welcome.id)!.subject).toContain("Willkommen bei");
+  });
+
+  it("21. Integrations-Presets: Endpoint/Mapping/Rückgabe-Webhook als Preset sichern und bei anderen Benutzern hinzufügen", async () => {
+    const buyer = (await db.select({ id: memberships.id }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).where(and(eq(memberships.tenantId, S.tenantId), eq(users.name, "Klara Kundin"))))[0];
+    const karla = (await db.select({ id: memberships.id }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).where(and(eq(memberships.tenantId, S.tenantId), eq(users.email, "karla@kunde.example"))))[0];
+    const endpoint = (await owner.leadops.getMemberIntegration({ membershipId: buyer.id })).endpoints[0];
+    // Preset ohne Schlüssel → beim Hinzufügen werden sie abgefragt
+    const preset = await owner.leadops.saveEndpointPreset({ membershipId: buyer.id, endpointId: endpoint.id, name: "Kundin-CRM Standard", description: "Body mit Heizungsart", includeSecrets: false });
+    const listed = await owner.leadops.listIntegrationPresets();
+    expect(listed.find((row) => row.id === preset.id)).toMatchObject({ kind: "endpoint", categoryShortcode: S.pv.shortcode, hasSecrets: false, summary: "POST https://kundin-crm.example/api/leads", createdBy: expect.any(String) });
+    expect(await owner.leadops.integrationPresetRequirements({ presetId: preset.id })).toMatchObject({ kind: "endpoint", url: "https://kundin-crm.example/api/leads", headers: [{ name: "Authorization", missing: true }], authCredentials: [] });
+    await expect(owner.leadops.applyIntegrationPreset({ presetId: preset.id, membershipId: karla.id })).rejects.toThrow("fehlenden Schlüssel");
+    const applied = await owner.leadops.applyIntegrationPreset({ presetId: preset.id, membershipId: karla.id, categoryId: S.wp.id, url: "https://karla-crm.example/leads", headers: [{ name: "Authorization", value: "Bearer karla-key" }] });
+    const karlaIntegration = await owner.leadops.getMemberIntegration({ membershipId: karla.id });
+    expect(karlaIntegration.endpoints.find((row) => row.id === applied.id)).toMatchObject({ categoryId: S.wp.id, url: "https://karla-crm.example/leads", headers: [{ name: "Authorization", value: "Bearer karla-key" }], bodyTemplate: expect.stringContaining("custom_data.heizungsart") });
+    expect((await owner.leadops.listIntegrationPresets()).find((row) => row.id === preset.id)?.usageCount).toBe(1);
+    // Preset mit Schlüsseln → direkt übernehmbar
+    const withSecrets = await owner.leadops.saveEndpointPreset({ membershipId: buyer.id, endpointId: endpoint.id, name: "Kundin-CRM inkl. Schlüssel", includeSecrets: true });
+    expect((await owner.leadops.listIntegrationPresets()).find((row) => row.id === withSecrets.id)?.hasSecrets).toBe(true);
+    const direct = await owner.leadops.applyIntegrationPreset({ presetId: withSecrets.id, membershipId: karla.id, categoryId: S.pv.id });
+    expect((await owner.leadops.getMemberIntegration({ membershipId: karla.id })).endpoints.find((row) => row.id === direct.id)?.headers).toEqual([{ name: "Authorization", value: "Bearer kundin-key" }]);
+    // Response-Mapping und Rückgabe-Webhook als Preset
+    const inviteeMembership = (await db.select({ id: memberships.id }).from(memberships).where(and(eq(memberships.tenantId, S.tenantId), eq(memberships.userId, inviteeUserId))))[0];
+    const mappingPreset = await owner.leadops.saveResponseMappingPreset({ membershipId: inviteeMembership.id, name: "Aroundhome Fehlercodes" });
+    const mapped = await owner.leadops.applyIntegrationPreset({ presetId: mappingPreset.id, membershipId: karla.id });
+    expect(mapped.count).toBe(5); expect((await owner.leadops.getMemberIntegration({ membershipId: karla.id })).rules).toHaveLength(5);
+    const hookPreset = await owner.leadops.saveReturnWebhookPreset({ membershipId: karla.id, categoryId: S.wp.id, name: "Rückgabe Standard", includeSecrets: true });
+    await owner.leadops.applyIntegrationPreset({ presetId: hookPreset.id, membershipId: buyer.id, categoryId: S.pv.id, url: "https://kundin-crm.example/rueckgabe" });
+    expect((await owner.leadops.getMemberIntegration({ membershipId: buyer.id })).returnWebhooks.find((row) => row.categoryId === S.pv.id)).toMatchObject({ enabled: true, url: "https://kundin-crm.example/rueckgabe" });
+    await owner.leadops.updateIntegrationPreset({ id: preset.id, name: "Kundin-CRM (umbenannt)" });
+    expect((await owner.leadops.listIntegrationPresets()).find((row) => row.id === preset.id)?.name).toBe("Kundin-CRM (umbenannt)");
+    await owner.leadops.deleteIntegrationPreset({ id: withSecrets.id });
+    expect((await owner.leadops.listIntegrationPresets()).some((row) => row.id === withSecrets.id)).toBe(false);
+    await expect(invitee.leadops.listIntegrationPresets()).rejects.toThrow("vorbehalten");
+  });
+
+  it("22. Lieferkette (Wasserfall): Stops der Reihe nach, Skip mit Grund, Reklamationsfenster je Stop, Reklamation → weitergeben, erschöpft, Übersicht & Detail", async () => {
+    const stamp = Date.now().toString(36);
+    const first = await owner.leadops.createMember({ firstName: "Hanna", lastName: "Hyper", company: "Hyper Energy Solutions", email: `hyper-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const second = await owner.leadops.createMember({ firstName: "Nils", lastName: "Nodes", company: "Leadnodes", email: `nodes-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const firstUser = (await owner.leadops.getMemberDetail({ membershipId: first.membershipId })).user.id; const secondUser = (await owner.leadops.getMemberDetail({ membershipId: second.membershipId })).user.id;
+    for (const [membershipId, url] of [[first.membershipId, "https://hyper-crm.example/contacts"], [second.membershipId, "https://leadnodes-crm.example/api/refunds"]] as const) await owner.leadops.saveDeliveryEndpoint({ membershipId, categoryId: S.pv.id, enabled: true, method: "POST", url, sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] });
+    // Kette + zwei Stops (Käufer-Konten), Stop 1 mit 240 h Fenster, Stop 2 sofort angenommen
+    const created = await owner.leadops.createDeliveryChain({ categoryId: S.pv.id, name: "Ondialer PV: Hyper → Leadnodes", priority: 1, sellTarget: 1, status: "aktiv" });
+    const chainId = created.chainId;
+    await owner.leadops.updateDeliveryChain({ id: chainId, exhaustedAction: "return", country: "DE", supplierFilterMode: "include", supplierIds: [S.supplierId], dailyCap: null, totalCap: null });
+    const stop1 = await owner.leadops.addChainStop({ chainId, buyerUserId: firstUser, unitPrice: 12, reclamationWindowHours: 240 });
+    const stop2 = await owner.leadops.addChainStop({ chainId, buyerUserId: secondUser, unitPrice: 9, reclamationWindowHours: 0 });
+    expect([stop1.position, stop2.position]).toEqual([1, 2]);
+    await owner.leadops.reorderChainStops({ chainId, stopIds: [stop2.stopId, stop1.stopId] }); await owner.leadops.reorderChainStops({ chainId, stopIds: [stop1.stopId, stop2.stopId] });
+    // Stop 1 nur für PLZ 60…, Reklamationsgrund „Dublette“ → weitergeben, andere enden hier, „Sperrliste“ nicht erlaubt
+    await owner.leadops.updateChainStop({ id: stop1.stopId, geoCountry: "DE", geoMode: "plz", geoValues: ["60"] });
+    const reasons = await owner.leadops.listReclamationReasons(); const dublette = reasons.find((reason) => reason.name === "Dublette")!;
+    await owner.leadops.saveStopRules({ stopId: stop1.stopId, rules: reasons.map((reason) => ({ reasonId: reason.id, allowed: reason.name !== "Sperrliste", passOn: reason.id === dublette.id })) });
+    // Alle anderen PV-Ketten pausieren, damit der Wasserfall allein greift
+    const others = (await owner.leadops.listDeliveryChains()).filter((chain) => chain.categoryId === S.pv.id && chain.id !== chainId && chain.status === "aktiv");
+    for (const chain of others) await owner.leadops.updateDeliveryChain({ id: chain.id, status: "inaktiv" });
+    const autoRules = (await owner.leadops.listAutomationRules()).filter((rule) => rule.status === "aktiv" && rule.actionType === "lead_ausliefern");
+    for (const rule of autoRules) await owner.leadops.updateAutomationRule({ id: rule.id, status: "pausiert" }); // Auto-Auslieferung aus Test 20 pausieren
+    const restore = async () => { for (const chain of others) await owner.leadops.updateDeliveryChain({ id: chain.id, status: "aktiv" }); for (const rule of autoRules) await owner.leadops.updateAutomationRule({ id: rule.id, status: "aktiv" }); };
+    try {
+      // (a) Lead aus Berlin: Stop 1 übersprungen (PLZ), Stop 2 nimmt (0 h → sofort angenommen)
+      const berlin = await owner.leadops.importLead({ categoryId: S.pv.id, firstName: "Bea", lastName: "Berlin", email: `bea-${stamp}@example.de`, postcode: "10115", city: "Berlin", supplierId: S.supplierId, metadata: { heizungsart: "Gas" } });
+      const one = await owner.leadops.deliverLead({ publicId: berlin.publicId });
+      expect(one.result).toBe("angenommen"); expect(one.buyerName).toBe("Leadnodes"); expect(one.unitPrice).toBe("9.00");
+      expect(one.attempts.map((attempt) => attempt.outcome)).toEqual(["übersprungen", "angenommen"]); expect(one.attempts[0].reason).toContain("PLZ");
+      const berlinRows = (await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, (await leadRow(berlin.publicId)).id))).sort((a, b) => a.id - b.id);
+      expect(berlinRows.map((row) => [row.result, row.skipReason ?? null])).toEqual([["übersprungen", "Geo-Targeting: PLZ passt nicht"], ["angenommen", null]]);
+      expect(berlinRows[1].acceptedAt).not.toBeNull(); // 0 h Fenster = sofort angenommen
+      // (b) Lead aus Frankfurt: Stop 1 nimmt, 240 h Fenster → reklamierbar; Reklamation „Dublette“ → weitergeben an Stop 2
+      const frankfurt = await owner.leadops.importLead({ categoryId: S.pv.id, firstName: "Frank", lastName: "Frankfurt", email: `frank-${stamp}@example.de`, phone: "+49 69 5550000", postcode: "60311", city: "Frankfurt", supplierId: S.supplierId, metadata: { heizungsart: "Öl" } });
+      const two = await owner.leadops.deliverLead({ publicId: frankfurt.publicId });
+      expect(two.result).toBe("angenommen"); expect(two.buyerName).toBe("Hyper Energy Solutions"); expect(two.attempts).toHaveLength(1);
+      const frankfurtRow = await leadRow(frankfurt.publicId);
+      const inWindow = (await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, frankfurtRow.id)))[0];
+      expect(inWindow.acceptedAt).toBeNull(); expect(inWindow.windowEndsAt!.getTime() - inWindow.occurredAt.getTime()).toBe(240 * 3_600_000);
+      const hyperToken = await owner.leadops.issueSupplierToken({ membershipId: first.membershipId });
+      await owner.leadops.updateMemberClaimSettings({ membershipId: first.membershipId, reclamationPeriodHours: 24, autoAcceptApiClaims: true, blockedClaimCategoryIds: [], excludedClaimReasonIds: [] });
+      const blocked = await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${hyperToken.token}` }, body: JSON.stringify({ reason: "sperrliste", lead_number: frankfurtRow.id }) });
+      expect(blocked.status).toBe(403); // Grund für diesen Stop nicht erlaubt
+      const reclaimed = await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${hyperToken.token}` }, body: JSON.stringify({ reason: "duplikat", lead_number: frankfurtRow.id, comment: "schon bekannt" }) });
+      expect(reclaimed.status).toBe(200); expect(await reclaimed.json()).toMatchObject({ status: "approved", reinjected: true });
+      const chainRows = (await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, frankfurtRow.id))).sort((a, b) => a.id - b.id);
+      expect(chainRows.map((row) => [row.stopId, row.result])).toEqual([[stop1.stopId, "reklamiert"], [stop1.stopId, "übersprungen"], [stop2.stopId, "angenommen"]]); // Dublette = weitergeben: Stop 1 wird als Dublette übersprungen → Stop 2
+      expect(chainRows[0].claimId).toBeGreaterThan(0);
+      // Stop 2 (0 h): keine Reklamation möglich
+      const nodesToken = await owner.leadops.issueSupplierToken({ membershipId: second.membershipId });
+      await owner.leadops.updateMemberClaimSettings({ membershipId: second.membershipId, reclamationPeriodHours: 24, autoAcceptApiClaims: true, blockedClaimCategoryIds: [], excludedClaimReasonIds: [] });
+      const noWindow = await fetch(`${apiBase}/api/reclaim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${nodesToken.token}` }, body: JSON.stringify({ reason: "duplikat", lead_number: frankfurtRow.id }) });
+      expect(noWindow.status).toBe(403);
+      // (c) Beide Käufer hatten den Kontakt bereits (reklamiert / angenommen) → Kette ist per Dublettenschutz nicht mehr zuständig
+      await expect(owner.leadops.deliverLead({ publicId: frankfurt.publicId, chainId, allowRepeat: true })).rejects.toThrow("Dublettenschutz");
+      expect((await leadRow(frankfurt.publicId)).status).toBe("zugewiesen");
+      // (d) Lieferanten-Filter der Kette: ausgeschlossener Lieferant → Kette nicht zuständig
+      await owner.leadops.updateDeliveryChain({ id: chainId, supplierFilterMode: "exclude", supplierIds: [S.supplierId] });
+      const foreign = await owner.leadops.importLead({ categoryId: S.pv.id, firstName: "Fritz", lastName: "Fremd", email: `fritz-${stamp}@example.de`, postcode: "60313", city: "Frankfurt", supplierId: S.supplierId, metadata: { heizungsart: "Öl" } });
+      await expect(owner.leadops.deliverLead({ publicId: foreign.publicId, chainId })).rejects.toThrow("Lieferant für diese Kette ausgeschlossen");
+      await owner.leadops.updateDeliveryChain({ id: chainId, supplierFilterMode: "all", supplierIds: [] });
+      // (e) Übersicht + Detail + Aktivität
+      const overview = await owner.leadops.chainOverview({ range: "maximal" });
+      const entry = overview.chains.find((chain) => chain.id === chainId)!;
+      expect(entry).toMatchObject({ categoryName: S.pv.name, stops: 2, sellTarget: 1, status: "aktiv" }); expect(entry.stats.total).toBe(3); expect(entry.stats.rejected).toBe(1); expect(entry.stats.skipped).toBe(2);
+      const detail = await owner.leadops.chainDetail({ chainId, range: "maximal" });
+      expect(detail.chain).toMatchObject({ exhaustedAction: "return", country: "DE", supplierFilterMode: "all" });
+      expect(detail.stops.map((stop) => [stop.position, stop.buyerCompany, stop.api, stop.reclamationWindowHours])).toEqual([[1, "Hyper Energy Solutions", true, 240], [2, "Leadnodes", true, 0]]);
+      expect(detail.stops[0].rules.find((rule) => rule.reasonId === dublette.id)).toMatchObject({ allowed: true, passOn: true });
+      expect(detail.stops[0].stats).toMatchObject({ total: 1, reclaimed: 1, rejected: 1, skipped: 2 }); expect(detail.stops[1].stats).toMatchObject({ total: 2, accepted: 2, skipped: 0, acceptanceRate: 100 });
+      expect(detail.stops[1].activity.recent.map((row) => row.status)).toEqual(["angenommen", "angenommen"]); expect(detail.stops[0].activity.recent.map((row) => row.status)).toEqual(expect.arrayContaining(["reklamiert", "übersprungen"]));
+      expect((await owner.leadops.listStopDeliveries({ stopId: stop2.stopId, range: "maximal" })).length).toBe(2);
+      expect((await owner.leadops.chainOverview({ range: "heute" })).distributionMode).toBe("lieferketten_round_robin");
+      await owner.leadops.setChainDistributionMode({ mode: "bestellungen_round_robin" }); expect((await owner.leadops.chainOverview({ range: "heute" })).distributionMode).toBe("bestellungen_round_robin"); await owner.leadops.setChainDistributionMode({ mode: "lieferketten_round_robin" });
+      await owner.leadops.deleteChainStop({ stopId: stop2.stopId }); expect((await owner.leadops.chainDetail({ chainId, range: "maximal" })).stops).toHaveLength(1);
+      await owner.leadops.deleteDeliveryChain({ chainId }); expect((await owner.leadops.chainOverview({ range: "maximal" })).chains.some((chain) => chain.id === chainId)).toBe(false);
+    } finally { await restore(); }
+  });
+
+  it("8. Bestellkonfiguration (reine Logik): Zeitraum, Liefertage, Pausen, Menge, Lieferant, PLZ, Preis", () => {
+    const base = { active: true, ongoing: true, startsAt: null, endsAt: null, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], pauses: [], requestedQuantity: 10, advancedFilters: null, supplierRestrictions: null };
+    const lead = { supplierId: 7, postcode: "60311", cost: "20.00" };
+    const monday = new Date("2026-09-21T10:00:00+02:00");
+    expect(evaluateOrderEligibility(undefined, lead, 0, monday)).toEqual({ eligible: true });
+    expect(evaluateOrderEligibility(base, lead, 0, monday)).toEqual({ eligible: true });
+    expect(evaluateOrderEligibility({ ...base, active: false }, lead, 0, monday).reason).toMatch(/deaktiviert/);
+    expect(evaluateOrderEligibility({ ...base, ongoing: false, endsAt: new Date("2026-09-01") }, lead, 0, monday).reason).toMatch(/abgelaufen/);
+    expect(evaluateOrderEligibility({ ...base, deliveryDays: ["Dienstag"] }, lead, 0, monday).reason).toMatch(/Kein Liefertag/);
+    expect(evaluateOrderEligibility({ ...base, pauses: [{ from: "2026-09-20", until: "2026-09-22" }] }, lead, 0, monday).reason).toMatch(/pausiert bis 2026-09-22/);
+    expect(evaluateOrderEligibility(base, lead, 10, monday).reason).toMatch(/Bestellmenge erreicht/);
+    expect(evaluateOrderEligibility({ ...base, supplierRestrictions: { blockUnknownSuppliers: true, allowedSupplierIds: [1] } }, lead, 0, monday).reason).toMatch(/Lieferant/);
+    expect(evaluateOrderEligibility({ ...base, advancedFilters: { postcodes: "10, 20" } }, lead, 0, monday).reason).toMatch(/Postleitzahl/);
+    expect(evaluateOrderEligibility({ ...base, advancedFilters: { postcodes: "60, 61" } }, lead, 0, monday)).toEqual({ eligible: true });
+    expect(evaluateOrderEligibility({ ...base, advancedFilters: { maxLeadPrice: 15 } }, lead, 0, monday).reason).toMatch(/Leadpreis/);
+    expect(buildProviderPayload({ publicId: "X1", categoryId: 1, firstName: "A", lastName: null, email: null, phone: "1", postcode: "2", city: null, country: "DE", metadata: { extra: 1 } }, { firstName: "firstName", lastName: "lastName", locationId: "publisherId", customFields: "metadata", extra: "extra" }, "loc")).toEqual({ firstName: "A", locationId: "loc", customFields: { extra: 1 }, extra: 1 });
+  });
+
+  it("23. Vertriebspipeline & Meta Lead Ads: Seiten-Token verbinden, Formular-Zuordnung, Webhook-Prüfung, neuer Lead per Webhook mit Kampagne, Kennzahlen, Stufen bis zum Kunden", async () => {
+    const before = await owner.leadops.metaConnection(); expect(before.status).toBe("nicht_verbunden"); expect(before.webhookUrl).toContain("/api/meta/webhook"); expect(before.verifyToken).toMatch(/^tanesco-/);
+    const connected = await owner.leadops.metaConnectWithToken({ pageId: "1029384756", pageAccessToken: "EAAG-test-page-token-1234567890", adAccountId: "55512345" });
+    expect(connected).toMatchObject({ pageName: "Tanesco Energie", webhookSubscribed: true }); expect(connected.forms[0]).toMatchObject({ id: "form-pv", name: "Photovoltaik – Beratung" });
+    const after = await owner.leadops.metaConnection(); expect(after).toMatchObject({ status: "verbunden", pageId: "1029384756", adAccountId: "act_55512345", adAccountName: "Tanesco Ads" });
+    const pvCategory = (await owner.leadops.listCategories()).find((category) => category.shortcode === "PV") ?? (await owner.leadops.listCategories())[0];
+    await owner.leadops.metaSaveFormMappings({ mappings: [{ formId: "form-pv", formName: "Photovoltaik – Beratung", categoryId: pvCategory.id }] });
+    // Webhook-Prüfung (GET) und neuer Lead (POST)
+    const verify = await fetch(`${apiBase}/api/meta/webhook?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(after.verifyToken)}&hub.challenge=abc123`); expect(verify.status).toBe(200); expect(await verify.text()).toBe("abc123");
+    expect((await fetch(`${apiBase}/api/meta/webhook?hub.mode=subscribe&hub.verify_token=falsch&hub.challenge=x`)).status).toBe(403);
+    const hook = await fetch(`${apiBase}/api/meta/webhook`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ object: "page", entry: [{ id: "1029384756", changes: [{ field: "leadgen", value: { leadgen_id: "lg-777", page_id: "1029384756", form_id: "form-pv", ad_id: "ad-1", adgroup_id: "as-1", campaign_id: "cmp-1", created_time: Math.floor(Date.now() / 1000) } }] }] }) });
+    expect(hook.status).toBe(200); await new Promise((resolve) => setTimeout(resolve, 400));
+    const metaLead = (await db.select().from(leads).where(eq(leads.leadgenId, "lg-777")))[0];
+    expect(metaLead).toMatchObject({ firstName: "Mia", lastName: "Meta", email: "meta.lead@beispiel.de", postcode: "80331", city: "München", categoryId: pvCategory.id, supplierName: "Meta Ads", pipelineStage: "neu", adCampaignId: "cmp-1", adCampaignName: "PV Süd", adsetName: "Eigenheim", adName: "Video", adFormName: "Photovoltaik – Beratung", adPlatform: "instagram" });
+    expect(metaLead.publicId).toMatch(/^META-[A-Z0-9]{7}$/);
+    // Dublette per leadgen_id
+    await fetch(`${apiBase}/api/meta/webhook`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ object: "page", entry: [{ changes: [{ field: "leadgen", value: { leadgen_id: "lg-777", page_id: "1029384756" } }] }] }) }); await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await db.select().from(leads).where(eq(leads.leadgenId, "lg-777"))).length).toBe(1);
+    // Kennzahlen laden → Kampagne mit Ausgaben, Kosten je Lead
+    const sync = await owner.leadops.metaSyncInsights({ days: 7 }); expect(sync.rows).toBe(1);
+    const overview = await owner.leadops.pipelineOverview({});
+    const campaign = overview.campaigns.find((row) => row.campaignId === "cmp-1")!; expect(campaign).toMatchObject({ campaignName: "PV Süd", spend: 120.5, impressions: 8000, clicks: 160, leads: 1, costPerLead: 120.5, customers: 0 }); expect(campaign.adsets).toEqual(["Eigenheim"]);
+    expect(overview.funnel.steps[0].count).toBeGreaterThanOrEqual(1); expect(overview.stages.find((stage) => stage.key === "neu")!.leads.some((lead) => lead.publicId === metaLead.publicId)).toBe(true);
+    // Stufen bis zum Kunden mit Verlauf
+    for (const stage of ["kontaktiert", "qualifiziert", "termin", "angebot", "kunde"] as const) expect((await owner.leadops.movePipelineStage({ publicId: metaLead.publicId, stage, note: `→ ${stage}` })).to).toBe(stage);
+    const history = await owner.leadops.pipelineHistory({ publicId: metaLead.publicId }); expect(history.map((event) => event.toStage)).toEqual(["kunde", "angebot", "termin", "qualifiziert", "kontaktiert", "neu"]); expect(history[0].actor).toBe("Tanesco Digital");
+    const won = await owner.leadops.pipelineOverview({ campaignId: "cmp-1" }); expect(won.totals).toMatchObject({ leads: 1, customers: 1, spend: 120.5, costPerCustomer: 120.5 });
+    // Testlead ohne Facebook und Trennen
+    const test = await owner.leadops.metaCreateTestLead({ campaignName: "Testkampagne", firstName: "Max", lastName: "Muster", email: "max@beispiel.de" }); expect(test.publicId).toMatch(/^META-[A-Z0-9]{7}$/);
+    await owner.leadops.metaDisconnect(); expect((await owner.leadops.metaConnection()).status).toBe("nicht_verbunden");
+  });
+
+  it("24. Kaltakquise & E-Mail-Kampagnen: Liste hochladen → Pipeline, Anrufkampagne (power) im Dialer, E-Mail-Serie starten, Öffnung per Pixel, Verzweigung Dann/Sonst", async () => {
+    const parsed = await owner.leadops.parseColdList({ csv: "Vorname;Nachname;Firma;Telefon;E-Mail;PLZ;Ort\nPeter;Hansen;Hansen Bedachungen;+49 69 5550101;peter@hansen-test.de;60311;Frankfurt\nSabine;Koch;Koch Dach GmbH;+49 611 5550102;sabine@koch-test.example;65183;Wiesbaden\nKlaus;Brandt;Brandt Bedachung;+49 6421 5550105;;35037;Marburg" });
+    expect(parsed.count).toBe(3);
+    const imported = await owner.leadops.importColdList({ listName: "Dachdecker Test", rows: parsed.rows }); expect(imported).toMatchObject({ created: 3, duplicates: 0 });
+    expect((await owner.leadops.importColdList({ listName: "Dachdecker Test", rows: parsed.rows })).duplicates).toBe(3);
+    const lists = await owner.leadops.listColdLists(); expect(lists.find((list) => list.listName === "Dachdecker Test")).toMatchObject({ contacts: 3, withPhone: 3, withEmail: 2 });
+    // Vertriebler: Zuteilung einzeln und 50/50-Verteilung
+    const sellers = await owner.leadops.pipelineOwners(); expect(sellers.length).toBeGreaterThanOrEqual(1);
+    const second = await owner.leadops.importColdList({ listName: "Dachdecker Verteilt", ownerUserIds: sellers.slice(0, 2).map((seller) => seller.userId), rows: [{ lastName: "Eins", phone: "+49 30 7770001" }, { lastName: "Zwei", phone: "+49 30 7770002" }, { lastName: "Drei", phone: "+49 30 7770003" }, { lastName: "Vier", phone: "+49 30 7770004" }] }); expect(second.created).toBe(4);
+    const distributed = await owner.leadops.pipelineOverview({ source: "kaltakquise", campaignId: "liste-dachdecker-verteilt" }); const ownersUsed = distributed.stages.flatMap((stage) => stage.leads).map((lead) => lead.ownerUserId); expect(ownersUsed.every((id) => id !== null)).toBe(true); if (sellers.length >= 2) expect(new Set(ownersUsed).size).toBe(2);
+    const firstLead = distributed.stages[0].leads[0]; const reassigned = await owner.leadops.assignPipelineOwner({ publicIds: [firstLead.publicId], ownerUserId: null }); expect(reassigned.updated).toBe(1);
+    expect((await owner.leadops.pipelineOverview({ source: "kaltakquise", campaignId: "liste-dachdecker-verteilt", ownerUserId: "ohne" })).totals.leads).toBe(1);
+    expect((await owner.leadops.pipelineHistory({ publicId: firstLead.publicId }))[0]).toMatchObject({ toStage: "besitzer", note: "Zuteilung entfernt" });
+    const pipeline = await owner.leadops.pipelineOverview({ source: "kaltakquise", campaignId: "liste-dachdecker-test" }); expect(pipeline.totals.leads).toBe(3); expect(pipeline.stages[0].leads.every((lead) => lead.adPlatform === "kaltakquise")).toBe(true);
+    expect((await owner.leadops.pipelineOverview({ source: "ads" })).stages.flatMap((stage) => stage.leads).some((lead) => lead.adPlatform === "kaltakquise")).toBe(false); // Meta-Pipeline enthält keine Kaltakquise
+    const calls = await owner.leadops.startCallCampaign({ listName: "Dachdecker Test", mode: "power" }); expect(calls.mode).toBe("power"); expect(calls.queued).toBe(3);
+    expect((await owner.leadops.listDialerCampaigns()).find((campaign) => campaign.id === calls.campaignId)).toMatchObject({ name: "Kaltakquise: Dachdecker Test", mode: "power", status: "aktiv" });
+    // E-Mail-Serie
+    const starter = await owner.leadops.emailCampaignStarter(); expect(starter.tree.nodes).toHaveLength(6);
+    const saved = await owner.leadops.saveEmailCampaign({ name: "Dachdecker Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Dachdecker Test" }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown> });
+    expect((await owner.leadops.previewEmailAudience({ source: "liste", listName: "Dachdecker Test" })).count).toBe(2); // nur mit E-Mail
+    const started = await owner.leadops.startEmailCampaign({ id: saved.id }); expect(started.added).toBe(2); if (started.processed < 2) await owner.leadops.runEmailCampaigns(); // Versand kann im Hintergrund laufen
+    let detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.status).toBe("aktiv"); expect(detail.stats).toMatchObject({ total: 2, sent: 2, opened: 0 }); expect(detail.recipients.every((recipient) => recipient.status === "wartet" && recipient.sentCount === 1)).toBe(true);
+    const tokens = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, saved.id))).map((row) => ({ id: row.id, token: row.token }));
+    const pixel = await fetch(`${apiBase}/api/mail/o/${tokens[0].token}.gif`); expect(pixel.status).toBe(200); expect(pixel.headers.get("content-type")).toContain("image/gif");
+    const click = await fetch(`${apiBase}/api/mail/c/${tokens[0].token}?u=${encodeURIComponent("https://tanesco.digital/termin")}`, { redirect: "manual" }); expect(click.status).toBe(302); expect(click.headers.get("location")).toBe("https://tanesco.digital/termin");
+    detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.stats).toMatchObject({ opened: 1, clicked: 1 });
+    // Wartezeit abgelaufen → Verzweigung: Empfänger 1 (geöffnet) bekommt den Dann-Zweig, Empfänger 2 den Sonst-Zweig
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, saved.id));
+    expect((await owner.leadops.runEmailCampaigns()).processed).toBe(2);
+    detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.status).toBe("beendet"); expect(detail.stats.sent).toBe(2); expect(detail.recipients.every((recipient) => recipient.status === "fertig" && recipient.sentCount === 2)).toBe(true);
+    const notes = detail.events.filter((event) => event.kind === "verzweigt").map((event) => event.note).sort(); expect(notes).toEqual(["Wenn geöffnet: ja → Dann-Zweig", "Wenn geöffnet: nein → Sonst-Zweig"]);
+    expect(detail.events.filter((event) => event.kind === "gesendet").map((event) => event.subject).sort()).toEqual(["Haben Sie meine E-Mail gesehen, Sabine?", "Kurze Frage zu Ihrem Bedarf, Peter", "Mehr Anfragen für Hansen Bedachungen – ohne Risiko", "Mehr Anfragen für Koch Dach GmbH – ohne Risiko"].sort()); // Verlauf zeigt den gefüllten Betreff je Empfänger
+    expect((await fetch(`${apiBase}/api/mail/u/${tokens[1].token}`)).status).toBe(200); expect((await owner.leadops.getEmailCampaign({ id: saved.id })).recipients.find((recipient) => recipient.id === tokens[1].id)?.status).toBe("abgemeldet");
+    // Posteingang: Antwort eines Serien-Empfängers + unbekannte Anfrage → als Lead in die Pipeline
+    const replyMail = await owner.leadops.storeInboxMessage({ fromEmail: "peter@hansen-test.de", fromName: "Peter Hansen", subject: "Re: Mehr Anfragen", bodyText: "Klingt gut, rufen Sie mich an.\n\nAm 02.10. schrieb Tanesco: > alte Mail" }); expect(replyMail.replied).toBe(true); expect((await owner.leadops.getEmailCampaign({ id: saved.id })).stats.replied).toBe(1); // Antwort erkannt → Empfänger „geantwortet“
+    const unknownMail = await owner.leadops.storeInboxMessage({ fromEmail: "m.mayer@solartechnik-test.example", fromName: "Markus Mayer", subject: "Anfrage PV Leads", bodyText: "Bitte Angebot für 20 Leads." });
+    const listed = await owner.leadops.listInbox({ filter: "alle" }); expect(listed.counts.alle).toBeGreaterThanOrEqual(2); expect(listed.items.find((item) => item.id === replyMail.id)?.campaignName).toBe("Dachdecker Serie"); expect(listed.items.find((item) => item.id === replyMail.id)?.lead?.publicId).toBeTruthy(); expect(listed.items.find((item) => item.id === unknownMail.id)?.lead).toBeNull();
+    // Filter je Kampagne: Kampagnen-Chips mit Zähler, nur Antworten auf die gewählte Serie
+    const replyCampaignId = listed.items.find((item) => item.id === replyMail.id)?.campaignId ?? 0; expect(replyCampaignId).toBeGreaterThan(0); expect(listed.campaigns.find((row) => row.id === replyCampaignId)).toMatchObject({ name: "Dachdecker Serie", count: expect.any(Number) });
+    const perCampaign = await owner.leadops.listInbox({ filter: "alle", campaignId: replyCampaignId }); expect(perCampaign.items.length).toBeGreaterThanOrEqual(1); expect(perCampaign.items.every((item) => item.campaignId === replyCampaignId)).toBe(true); expect(perCampaign.items.some((item) => item.id === unknownMail.id)).toBe(false); expect(perCampaign.counts.alle).toBe(listed.counts.alle);
+    expect((await owner.leadops.listInbox({ filter: "alle", campaignId: 999999 })).items).toEqual([]);
+    expect((await owner.leadops.listInbox({ filter: "unbekannt" })).items.some((item) => item.id === unknownMail.id)).toBe(true);
+    const createdLead = await owner.leadops.createLeadFromInbox({ messageId: unknownMail.id, pipeline: "ads", stage: "qualifiziert", ownerUserId: sellers[0]?.userId ?? null, company: "Solartechnik Mayer" }); expect(createdLead.created).toBe(true); expect(createdLead.publicId).toMatch(/^MAIL-/);
+    const inPipeline = (await owner.leadops.pipelineOverview({ source: "ads" })).stages.find((stage) => stage.key === "qualifiziert")!.leads.find((lead) => lead.publicId === createdLead.publicId); expect(inPipeline).toMatchObject({ adPlatform: "posteingang", email: "m.mayer@solartechnik-test.example", company: "Solartechnik Mayer" });
+    const moved = await owner.leadops.createLeadFromInbox({ messageId: replyMail.id, pipeline: "kaltakquise", stage: "termin" }); expect(moved.created).toBe(false); expect((await owner.leadops.pipelineOverview({ source: "kaltakquise" })).stages.find((stage) => stage.key === "termin")!.leads.some((lead) => lead.publicId === moved.publicId)).toBe(true);
+    expect((await owner.leadops.listInbox({ filter: "ungelesen" })).items.some((item) => item.id === unknownMail.id)).toBe(false); // nach Übernahme gelesen
+    await owner.leadops.archiveInboxMessage({ id: unknownMail.id, archived: true }); expect((await owner.leadops.listInbox({ filter: "archiv" })).items.some((item) => item.id === unknownMail.id)).toBe(true);
+    expect((await owner.leadops.replyInboxMessage({ messageId: replyMail.id, text: "Gerne – ich rufe Sie morgen an." })).status).toBe("simuliert");
+    // Strikte Trennung: ein Lead zum Verkauf bleibt draußen – eine Serie an „alle“ erreicht nur Vertriebskontakte, der Verkaufs-Lead wird weder Empfänger noch Pipeline-Karte
+    const plainCategory = (await owner.leadops.listCategories())[0]; const plain = await owner.leadops.importLead({ categoryId: plainCategory.id, firstName: "Jürgen", lastName: "Stadler", email: "juergen@stadler-test.example", phone: "+49 89 5550201", postcode: "80331", city: "München" } as never); expect(plain).toBeTruthy();
+    const emailSeries = await owner.leadops.saveEmailCampaign({ name: "PV-Betriebe Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "alle" }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown> });
+    const seriesStart = await owner.leadops.startEmailCampaign({ id: emailSeries.id }); expect(seriesStart.added).toBeGreaterThan(0);
+    expect((await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, emailSeries.id), eq(emailCampaignRecipients.email, "juergen@stadler-test.example")))).length).toBe(0);
+    expect((await owner.leadops.pipelineOverview({ source: "alle" })).stages.flatMap((stage) => stage.leads).some((lead) => lead.email === "juergen@stadler-test.example")).toBe(false);
+    expect((await db.select().from(leads).where(eq(leads.email, "juergen@stadler-test.example")))[0]).toMatchObject({ kind: "verkauf", adPlatform: null, pipelineStage: null });
+    // Antwort eines Vertriebskontakts aus der Serie → Stufe „Kontaktiert“ (Automatik), Verkaufs-Lead mit gleicher Adresse bleibt unberührt
+    const seriesRecipients = await db.select({ recipient: emailCampaignRecipients, stage: leads.pipelineStage }).from(emailCampaignRecipients).innerJoin(leads, eq(leads.id, emailCampaignRecipients.leadId)).where(eq(emailCampaignRecipients.campaignId, emailSeries.id)); const seriesRecipient = seriesRecipients.find((row) => row.stage === "neu")!.recipient; expect(seriesRecipient.leadId).toBeTruthy();
+    await db.update(emailCampaignRecipients).set({ sentCount: 1 }).where(eq(emailCampaignRecipients.id, seriesRecipient.id));
+    await owner.leadops.storeInboxMessage({ fromEmail: seriesRecipient.email, fromName: seriesRecipient.name ?? "Kontakt", subject: "Re: Mehr Anfragen", bodyText: "Ja, bitte anrufen." });
+    expect((await db.select().from(leads).where(eq(leads.id, seriesRecipient.leadId!)))[0].pipelineStage).toBe("kontaktiert");
+    const inboxLead = await owner.leadops.createLeadFromInbox({ messageId: (await owner.leadops.storeInboxMessage({ fromEmail: "neu@firma-test.example", fromName: "Nina Neu", subject: "Interesse", bodyText: "Bitte Infos." })).id, pipeline: "email", stage: "qualifiziert" }); expect(inboxLead.created).toBe(true);
+    expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.find((stage) => stage.key === "qualifiziert")!.leads.find((lead) => lead.publicId === inboxLead.publicId)).toMatchObject({ adPlatform: "email", adCampaignName: "Posteingang" });
+    // Stufen bearbeiten: neue Stufe „Nachfassen“ vor „Verloren“, „Angebot“ entfernen → Leads aus „Angebot“ rutschen auf „Neu“; Notiz an einer Karte
+    const defaults = await owner.leadops.pipelineStages(); expect(defaults.map((stage) => stage.key)).toEqual(["neu", "kontaktiert", "qualifiziert", "termin", "angebot", "kunde", "verloren"]);
+    const edited = await owner.leadops.savePipelineStages({ stages: [...defaults.filter((stage) => stage.key !== "angebot").map((stage) => stage.key === "termin" ? { ...stage, label: "Vor-Ort-Termin" } : stage), { label: "Nachfassen", hint: "Später erneut melden" }] });
+    expect(edited.stages.map((stage) => stage.key)).toEqual(["neu", "kontaktiert", "qualifiziert", "termin", "kunde", "stufe_nachfassen", "verloren"]); expect(edited.stages.find((stage) => stage.key === "termin")?.label).toBe("Vor-Ort-Termin");
+    await expect(owner.leadops.savePipelineStages({ stages: edited.stages.filter((stage) => stage.key !== "kunde") })).rejects.toThrow("Kunde");
+    const customOverview = await owner.leadops.pipelineOverview({ source: "ads" }); expect(customOverview.stageDefs.map((stage) => stage.label)).toContain("Nachfassen"); expect(customOverview.stages.some((stage) => stage.key === "angebot")).toBe(false);
+    await expect(owner.leadops.movePipelineStage({ publicId: inboxLead.publicId, stage: "angebot" })).rejects.toThrow("Unbekannte Stufe");
+    expect((await owner.leadops.movePipelineStage({ publicId: inboxLead.publicId, stage: "stufe_nachfassen" })).to).toBe("stufe_nachfassen");
+    await owner.leadops.addPipelineNote({ publicId: inboxLead.publicId, text: "Rückruf Dienstag 10 Uhr", source: "sprache" }); const pipelineNoteRows = await owner.leadops.listPipelineNotes({ publicId: inboxLead.publicId }); expect(pipelineNoteRows[0]).toMatchObject({ text: "Rückruf Dienstag 10 Uhr", source: "sprache" });
+    await owner.leadops.savePipelineStages({ stages: defaults }); // zurück auf Standard
+    // Lead-Finder: Suche (OpenStreetMap gestubbt) → Profil laden → in die Kaltakquise-Pipeline
+    const found = await owner.leadops.findCompanies({ query: "Dachdecker", location: "Frankfurt", radiusKm: 25, limit: 20 }); expect(found).toMatchObject({ provider: "osm", found: 2, created: 2 }); expect((await owner.leadops.findCompanies({ query: "Dachdecker", location: "Frankfurt" })).created).toBe(0); // Dubletten
+    const prospects = await owner.leadops.listProspects({ status: "neu" }); const hansen = prospects.find((row) => row.name === "Hansen Bedachungen GmbH")!; expect(hansen).toMatchObject({ phone: "+49 69 5550101", postcode: "60311", city: "Frankfurt", website: "https://hansen-test.de" });
+    const enriched = await owner.leadops.enrichProspect({ id: hansen.id }); expect(enriched.profile).toMatchObject({ management: "Peter Hansen", employees: "24 Mitarbeiter", founded: "1998", registry: "HRB 12345" }); expect(enriched.profile?.emails).toEqual(["info@hansen-test.de"]); expect(enriched.profile?.revenue).toContain("3,2"); expect(enriched.profile?.serviceArea).toContain("Frankfurt");
+    const taken = await owner.leadops.prospectsToPipeline({ ids: prospects.map((row) => row.id), ownerUserIds: sellers.slice(0, 2).map((seller) => seller.userId) }); expect(taken).toMatchObject({ created: 2, skipped: 0, listName: "Lead-Finder: Dachdecker Frankfurt" });
+    const finderLeads = (await owner.leadops.pipelineOverview({ source: "kaltakquise", campaignId: "liste-lead-finder-dachdecker-frankfurt" })).stages.flatMap((stage) => stage.leads); expect(finderLeads).toHaveLength(2); expect(finderLeads.find((lead) => lead.company === "Hansen Bedachungen GmbH")).toMatchObject({ email: "info@hansen-test.de", phone: "+49 69 5550101" }); expect(finderLeads.every((lead) => lead.ownerUserId)).toBe(true);
+    expect((await owner.leadops.listProspects({ status: "uebernommen" })).length).toBe(2);
+  });
+
+  it("25. Meta-Verbindung komplett: Facebook-Login (OAuth-Start und Rückruf), Seite + Werbekonto + Webhook-Abo, Signaturprüfung des Webhooks, Formulare, Kennzahlen, Trennen", async () => {
+    process.env.META_APP_ID = "123456789012345"; process.env.META_APP_SECRET = "meta-test-secret"; process.env.APP_URL = apiBase;
+    try {
+      expect((await owner.leadops.metaConnection()).status).toBe("nicht_verbunden");
+      const start = await owner.leadops.metaOauthUrl(); expect(start.url).toContain("https://www.facebook.com/v21.0/dialog/oauth?client_id=123456789012345"); expect(start.url).toContain(encodeURIComponent(`${apiBase}/api/meta/oauth/callback`)); expect(start.url).toContain("leads_retrieval"); expect(start.state).toBeTruthy();
+      const callback = await fetch(`${apiBase}/api/meta/oauth/callback?code=AQD-test-code&state=${start.state}`, { redirect: "manual" }); expect(callback.status).toBe(302); expect(callback.headers.get("location")).toBe("/?page=Vertriebspipeline&meta=verbunden");
+      const connected = await owner.leadops.metaConnection(); expect(connected).toMatchObject({ status: "verbunden", pageId: "1029384756", pageName: "Tanesco Energie", adAccountId: "act_55512345", adAccountName: "Tanesco Ads", webhookSubscribed: true, oauthReady: true }); expect(connected.tokenHint).toContain("EAAG-p"); expect(connected.tokenExpiresAt).toBeTruthy();
+      expect((await fetch(`${apiBase}/api/meta/oauth/callback?code=x&state=kaputt`, { redirect: "manual" })).headers.get("location")).toBe("/?page=Vertriebspipeline&meta=fehler");
+      // Webhook-Signatur: ohne/falsch → 401, richtig → 200 und Lead importiert
+      const payload = JSON.stringify({ object: "page", entry: [{ id: "1029384756", changes: [{ field: "leadgen", value: { leadgen_id: "lg-778", page_id: "1029384756", form_id: "form-pv" } }] }] });
+      const { createHmac } = await import("node:crypto"); const good = `sha256=${createHmac("sha256", "meta-test-secret").update(payload).digest("hex")}`;
+      expect((await fetch(`${apiBase}/api/meta/webhook`, { method: "POST", headers: { "content-type": "application/json" }, body: payload })).status).toBe(401);
+      expect((await fetch(`${apiBase}/api/meta/webhook`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": "sha256=deadbeef" }, body: payload })).status).toBe(401);
+      expect((await fetch(`${apiBase}/api/meta/webhook`, { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": good }, body: payload })).status).toBe(200); await new Promise((resolve) => setTimeout(resolve, 400));
+      const imported = (await db.select().from(leads).where(eq(leads.leadgenId, "lg-778")))[0]; expect(imported).toMatchObject({ firstName: "Mia", lastName: "Meta", adCampaignName: "PV Süd", adPlatform: "instagram", pipelineStage: "neu" });
+      const verify = await fetch(`${apiBase}/api/meta/webhook?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(connected.verifyToken)}&hub.challenge=ok-123`); expect(await verify.text()).toBe("ok-123");
+      const forms = await owner.leadops.metaForms(); expect(forms[0]).toMatchObject({ id: "form-pv", name: "Photovoltaik – Beratung" });
+      expect((await owner.leadops.metaSyncInsights({ days: 7 })).rows).toBe(1); expect((await owner.leadops.pipelineOverview({ source: "ads" })).campaigns.find((row) => row.campaignId === "cmp-1")).toMatchObject({ spend: 120.5, leads: 2 }); // lg-777 (Test 23) + lg-778
+      await owner.leadops.metaDisconnect(); expect((await owner.leadops.metaConnection())).toMatchObject({ status: "nicht_verbunden", pageId: null, webhookSubscribed: false });
+    } finally { delete process.env.META_APP_ID; delete process.env.META_APP_SECRET; delete process.env.APP_URL; }
+  });
+
+  it("26. Pipeline-Erweiterungen: Wiedervorlagen („Heute“), eingeschlafene Karten + Aufweck-Serie, Stufe/Anruf/Antwort → Serie, SMS/WhatsApp/E-Mail aus der Karte, Termine mit Einladung & Erinnerung, Angebotswerte, Verteilregeln & Team, A/B-Test, Versandfenster, Sperrliste/Bounce-Webhook, Vorlagen, Mehrfachauswahl, CSV, Lead-Punkte", async () => {
+    const pipelineExtras = await import("./pipeline-extras");
+    const sellers = await owner.leadops.pipelineOwners(); expect(sellers.length).toBeGreaterThanOrEqual(1);
+    // Grunddaten: eigene Liste mit drei Kontakten
+    const imported = await owner.leadops.importColdList({ listName: "Erweiterungen", rows: [{ firstName: "Erika", lastName: "Eins", company: "Eins GmbH", phone: "+49 69 8880001", email: "erika@eins-test.example", postcode: "60311", city: "Frankfurt", salutation: "frau" }, { firstName: "Zed", lastName: "Zwei", company: "Zwei GmbH", phone: "+49 89 8880002", email: "zed@zwei-test.example", postcode: "80331", city: "München" }, { firstName: "Dora", lastName: "Drei", phone: "+49 40 8880003", postcode: "20095", city: "Hamburg" }] }); expect(imported.created).toBe(3);
+    const [eins, zwei, drei] = await Promise.all(imported.leadIds.map(async (id) => (await db.select().from(leads).where(eq(leads.id, id)))[0]));
+    // 1) Wiedervorlagen: anlegen, „Heute“, verschieben, erledigen; Wiedervorlage-Datum am Lead
+    const dueToday = new Date(); dueToday.setHours(16, 0, 0, 0);
+    const task = await owner.leadops.createPipelineTask({ publicId: eins.publicId, kind: "anruf", title: "Rückruf Angebot", dueAt: dueToday });
+    const due = await owner.leadops.pipelineDueList({}); expect(due.tasks.find((item) => item.id === task.id)).toMatchObject({ kind: "anruf", title: "Rückruf Angebot", lead: { publicId: eins.publicId, phone: "+49 69 8880001" } });
+    expect((await leadRow(eins.publicId)).followUpAt?.getTime()).toBe(dueToday.getTime());
+    const later = new Date(dueToday.getTime() + 2 * 86_400_000); await owner.leadops.snoozePipelineTask({ id: task.id, dueAt: later }); expect((await leadRow(eins.publicId)).followUpAt?.getTime()).toBe(later.getTime());
+    await owner.leadops.completePipelineTask({ id: task.id }); expect((await leadRow(eins.publicId)).followUpAt).toBeNull(); expect((await owner.leadops.listPipelineTasks({ publicId: eins.publicId })).length).toBe(0); expect((await owner.leadops.listPipelineTasks({ publicId: eins.publicId, includeDone: true })).length).toBe(1);
+    // 2) Automatik einstellen: Aufweck-Serie (5 Tage), Angebot → Nachfass-Serie, Interessiert → Serie, Antwort → Kontaktiert, Terminerinnerung per E-Mail, Verteilregeln, Tagesziele
+    const offerStarter = await owner.leadops.emailCampaignStarter({ kind: "angebot" }); expect(offerStarter.name).toBe("Nachfassen nach Angebot"); expect(offerStarter.tree.nodes.find((node) => node.type === "condition")).toMatchObject({ check: "replied" });
+    const offerSeries = await owner.leadops.saveEmailCampaign({ name: "Nachfassen nach Angebot", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "alle" }, tree: offerStarter.tree, design: offerStarter.design as unknown as Record<string, unknown> });
+    const wakeStarter = await owner.leadops.emailCampaignStarter({ kind: "aufwecken" }); const wakeSeries = await owner.leadops.saveEmailCampaign({ name: "Aufwecken", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "alle" }, tree: wakeStarter.tree, design: wakeStarter.design as unknown as Record<string, unknown> });
+    const settings = await owner.leadops.savePipelineSettings({ staleDays: 5, staleCampaignId: wakeSeries.id, stageCampaigns: { angebot: offerSeries.id }, dispositionCampaigns: { interessiert: offerSeries.id }, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "regeln", rules: [{ id: "r1", userId: sellers[0].userId, postcodePrefixes: ["6"], categoryIds: [], maxOpen: null }], fallback: "ohne" }, dailyTargets: { [String(sellers[0].userId)]: { calls: 30, appointments: 2, deals: 1 } } });
+    expect(settings.stageCampaigns.angebot).toBe(offerSeries.id); expect((await owner.leadops.pipelineSettings()).distribution.rules[0].postcodePrefixes).toEqual(["6"]);
+    // 3) Stufe „Angebot“ → Nachfass-Serie (Entwurf wird aktiv, erste Mail sofort), Anruf-Ergebnis „Interessiert“ → Aufgabe + Serie (kein Doppel), „Wiedervorlage“ → Aufgabe; Antwort → Kontaktiert nur vorwärts
+    const moved = await owner.leadops.movePipelineStage({ publicId: zwei.publicId, stage: "angebot", note: "Angebot raus" }); expect(moved.series).toBe("Nachfassen nach Angebot");
+    const enrolled = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, offerSeries.id))); expect(enrolled.map((row) => row.email)).toEqual(["zed@zwei-test.example"]); expect((await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, offerSeries.id)))[0].status).toBe("aktiv");
+    expect((await owner.leadops.pipelineHistory({ publicId: zwei.publicId })).some((event) => event.toStage === "serie" && event.note?.includes("Stufe „Angebot“"))).toBe(true);
+    await pipelineExtras.onDisposition(db, S.tenantId, { leadId: zwei.id, disposition: "interessiert", actorUserId: ownerUserId });
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, offerSeries.id))).length).toBe(1); // bereits Empfänger → kein Doppel
+    expect((await owner.leadops.listPipelineTasks({ publicId: zwei.publicId })).find((item) => item.source === "dialer")).toMatchObject({ kind: "email", title: "Angebot / Unterlagen schicken" });
+    await pipelineExtras.onDisposition(db, S.tenantId, { leadId: drei.id, disposition: "wiedervorlage", followUpMinutes: 90, actorUserId: ownerUserId });
+    const dreiTask = (await owner.leadops.listPipelineTasks({ publicId: drei.publicId }))[0]; expect(dreiTask).toMatchObject({ kind: "anruf", source: "dialer" }); expect(dreiTask.dueAt.getTime()).toBeGreaterThan(Date.now());
+    expect(await pipelineExtras.onInboxReply(db, S.tenantId, { leadId: eins.id, subject: "Re: Angebot" })).toBe("kontaktiert"); expect((await leadRow(eins.publicId)).pipelineStage).toBe("kontaktiert");
+    expect(await pipelineExtras.onInboxReply(db, S.tenantId, { leadId: zwei.id, subject: "Re" })).toBeNull(); expect((await leadRow(zwei.publicId)).pipelineStage).toBe("angebot"); // nie rückwärts
+    // 4) Nachrichten aus der Karte: SMS (Simulation über die eigene Rufnummer), WhatsApp als Link, Einzel-E-Mail aus Kampagnen-Vorlage; erste Nachricht zieht aus „Neu“
+    const sms = await owner.leadops.sendLeadMessage({ publicId: drei.publicId, channel: "sms", text: "Guten Tag {{anrede}} {{nachname}}, hier {{absender}} von Tanesco.", templateKey: "frei" }); expect(sms.status).toBe("simuliert"); expect(sms.text).toContain("Drei, hier"); expect(sms.to).toBe("+49408880003");
+    expect((await leadRow(drei.publicId)).pipelineStage).toBe("kontaktiert");
+    const wa = await owner.leadops.sendLeadMessage({ publicId: drei.publicId, channel: "whatsapp", text: "Kurze Frage, {{vorname}}?" }); expect(wa.status).toBe("link"); expect(wa.link).toContain("https://wa.me/49408880003?text=Kurze%20Frage%2C%20Dora%3F");
+    const nodes = await owner.leadops.emailSendNodes(); const node = nodes.find((item) => item.campaignId === offerSeries.id)!; expect(node.label).toBe("Nachfassen 1");
+    const mail = await owner.leadops.sendLeadMessage({ publicId: eins.publicId, channel: "email", text: "", campaignId: node.campaignId, nodeId: node.nodeId }); expect(mail.status).toBe("simuliert"); expect(mail.subject).toBe("Noch Fragen zu unserem Angebot, Erika?");
+    const messages = await owner.leadops.listLeadMessages({ publicId: drei.publicId }); expect(messages.map((item) => item.channel).sort()).toEqual(["sms", "whatsapp"]);
+    await expect(owner.leadops.sendLeadMessage({ publicId: drei.publicId, channel: "email", text: "x" })).rejects.toThrow("keine E-Mail-Adresse");
+    // 5) Termine: Datum + Einladung (ICS, simuliert) + Stufe „Termin“ + Aufgabe; Erinnerung per Automatik (24 h vorher), nur einmal
+    const when = new Date(Date.now() + 20 * 3_600_000); when.setSeconds(0, 0);
+    const appointment = await owner.leadops.setPipelineAppointment({ publicId: eins.publicId, appointmentAt: when, location: "Vor Ort", note: "Dach prüfen", sendInvitation: true }); expect(appointment.invitation?.status).toBe("simuliert");
+    expect((await leadRow(eins.publicId))).toMatchObject({ pipelineStage: "termin" }); expect((await leadRow(eins.publicId)).appointmentAt?.getTime()).toBe(when.getTime());
+    expect((await db.select().from(outboundMessages).where(eq(outboundMessages.leadId, eins.id))).some((row) => row.templateKey === "termin_einladung" && row.subject?.startsWith("Terminbestätigung"))).toBe(true);
+    expect((await db.select().from(pipelineTasks).where(eq(pipelineTasks.leadId, eins.id))).some((row) => row.kind === "termin" && row.source === "termin" && !row.doneAt)).toBe(true);
+    const automation = await owner.leadops.runPipelineAutomations(); expect(automation.reminders).toBe(1);
+    expect((await db.select().from(outboundMessages).where(eq(outboundMessages.leadId, eins.id))).some((row) => row.templateKey === "erinnerung")).toBe(true);
+    expect((await owner.leadops.runPipelineAutomations()).reminders).toBe(0);
+    // 6) Angebotswerte: Pipeline-Wert, Gewichtung, Umsatz je Vertriebler, Lead-Punkte, eingeschlafene Karten in der Übersicht
+    expect((await owner.leadops.setPipelineDealValue({ publicId: eins.publicId, dealValue: 12500.5 })).dealValue).toBe(12500.5);
+    await owner.leadops.setPipelineDealValue({ publicId: zwei.publicId, dealValue: 8000 }); await owner.leadops.movePipelineStage({ publicId: zwei.publicId, stage: "kunde" });
+    await db.update(leads).set({ pipelineUpdatedAt: new Date(Date.now() - 9 * 86_400_000), createdAt: new Date(Date.now() - 12 * 86_400_000) }).where(eq(leads.id, drei.id)); await db.delete(pipelineEvents).where(eq(pipelineEvents.leadId, drei.id)); await db.delete(outboundMessages).where(eq(outboundMessages.leadId, drei.id));
+    const overview = await owner.leadops.pipelineOverview({ source: "kaltakquise", campaignId: "liste-erweiterungen" }); const cards = overview.stages.flatMap((stage) => stage.leads);
+    expect(cards.find((card) => card.publicId === eins.publicId)).toMatchObject({ dealValue: 12500.5, stale: false }); expect(cards.find((card) => card.publicId === eins.publicId)).not.toHaveProperty("score");
+    expect(cards.find((card) => card.publicId === drei.publicId)).toMatchObject({ stale: true, openTasks: 1 }); expect(cards.find((card) => card.publicId === drei.publicId)?.staleDays).toBeGreaterThanOrEqual(8); expect(overview.staleCount).toBe(1);
+    expect(overview.value).toMatchObject({ openValue: 12500.5, wonValue: 8000, wonCount: 1, closeRateEuro: 100 }); expect(overview.value.weighted).toBe(Math.round(12500.5 * 0.7)); // Stufe „Termin“ = 70 %
+    // eingeschlafene Karte → Aufweck-Serie (nur mit E-Mail; Drei hat keine → nicht aufgenommen, aber markiert)
+    const woke = await owner.leadops.runPipelineAutomations(); expect(woke.enrolled).toBe(0); expect(JSON.stringify((await leadRow(drei.publicId)).metadata ?? {})).not.toContain("staleEnrolledAt"); // ohne E-Mail: nichts zu tun
+    await db.update(leads).set({ email: "dora@drei-test.example" }).where(eq(leads.id, drei.id)); expect((await owner.leadops.runPipelineAutomations()).enrolled).toBe(1); expect(JSON.stringify((await leadRow(drei.publicId)).metadata)).toContain("staleEnrolledAt"); expect((await owner.leadops.runPipelineAutomations()).enrolled).toBe(0);
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, wakeSeries.id))).map((row) => row.email)).toEqual(["dora@drei-test.example"]);
+    // 7) Verteilung & Team: Regel PLZ 6 → Vertriebler 1, sonst offen; Team-Übersicht mit Zielen
+    const auto = await owner.leadops.importColdList({ listName: "Erweiterungen", rows: [{ lastName: "Regel-Frankfurt", phone: "+49 69 8880004", postcode: "60486" }, { lastName: "Regel-Berlin", phone: "+49 30 8880005", postcode: "10115" }] }); expect(auto.created).toBe(2);
+    const [frankfurt, berlin] = await Promise.all(auto.leadIds.map(async (id) => (await db.select().from(leads).where(eq(leads.id, id)))[0])); expect(frankfurt.ownerUserId).toBe(sellers[0].userId); expect(berlin.ownerUserId).toBeNull();
+    const forced = await owner.leadops.distributePipelineByRules({ publicIds: [berlin.publicId] }); expect(forced).toMatchObject({ assigned: 0, skipped: 1 }); // keine Regel passt, „offen lassen“
+    const team = await owner.leadops.pipelineTeamOverview({ from: new Date(Date.now() - 86_400_000), until: new Date() }); const me = team.rows.find((row) => row.userId === sellers[0].userId)!; expect(me.target).toEqual({ calls: 30, appointments: 2, deals: 1 }); expect(me.openCards).toBeGreaterThanOrEqual(1);
+    // 8) E-Mail-Details: A/B-Betreff mit Anteil, Versandfenster, Link-Bedingung, Bounce-Webhook + Sperrliste, Vorlage duplizieren
+    const abStarter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" }); const abSend = abStarter.tree.nodes.find((n): n is Extract<typeof n, { type: "send" }> => n.type === "send")!; abSend.subjectB = "Variante B für {{firma}}"; const abCond = abStarter.tree.nodes.find((n): n is Extract<typeof n, { type: "condition" }> => n.type === "condition")!; abCond.check = "clicked"; abCond.url = "/termin";
+    const ab = await owner.leadops.saveEmailCampaign({ name: "A/B-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Erweiterungen" }, tree: abStarter.tree, design: abStarter.design as unknown as Record<string, unknown>, sendWindow: { enabled: true, weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59", timezone: "Europe/Berlin" }, abSplit: 50 });
+    const abList = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === ab.id)!; expect(abList).toMatchObject({ abTest: true, abSplit: 50 }); expect(abList.sendWindow.enabled).toBe(true);
+    const abStarted = await owner.leadops.startEmailCampaign({ id: ab.id }); expect(abStarted.added).toBe(3); if (abStarted.processed < 3) await owner.leadops.runEmailCampaigns();
+    let abDetail = await owner.leadops.getEmailCampaign({ id: ab.id }); expect(abDetail.recipients.map((row) => row.variant).sort()).toEqual(["A", "A", "B"]); expect(abDetail.stats.abTest).toBeTruthy(); expect(abDetail.stats.abTest?.b.sent).toBe(1);
+    expect(abDetail.events.filter((event) => event.kind === "gesendet").map((event) => event.subject).sort()).toEqual(["Mehr Anfragen für  – ohne Risiko", "Mehr Anfragen für Eins GmbH – ohne Risiko", "Variante B für Zwei GmbH"]); // gefüllte Betreffs (ein Empfänger ohne Firma)
+    // Versandfenster „nachts zu“: fällige Mails warten
+    await owner.leadops.saveEmailCampaign({ id: ab.id, name: "A/B-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Erweiterungen" }, tree: abStarter.tree, design: abStarter.design as unknown as Record<string, unknown>, sendWindow: { enabled: true, weekdays: [new Date().getDay() === 0 ? 1 : 0], from: "01:00", to: "01:30", timezone: "Europe/Berlin" } });
+    const abRecipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, ab.id)); const [clicker, other, third] = abRecipients;
+    await fetch(`${apiBase}/api/mail/c/${clicker.token}?u=${encodeURIComponent("https://tanesco.digital/termin")}`, { redirect: "manual" }); await fetch(`${apiBase}/api/mail/c/${other.token}?u=${encodeURIComponent("https://tanesco.digital/preise")}`, { redirect: "manual" });
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, clicker.id)))[0].clickedUrls).toEqual(["https://tanesco.digital/termin"]);
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, ab.id)); await owner.leadops.runEmailCampaigns();
+    abDetail = await owner.leadops.getEmailCampaign({ id: ab.id }); const branches = abDetail.events.filter((event) => event.kind === "verzweigt");
+    expect(branches.find((event) => event.recipientId === clicker.id)?.note).toContain("ja → Dann-Zweig"); expect(branches.find((event) => event.recipientId === other.id)?.note).toContain("nein → Sonst-Zweig");
+    expect(abDetail.recipients.every((row) => row.status === "wartet" && row.sentCount === 1)).toBe(true); expect(abDetail.events.some((event) => event.note.includes("Versandfenster: wartet bis"))).toBe(true); // Fenster geschlossen → zweite Mail wartet
+    // Bounce per Webhook (Mailgun-Form) → Empfänger gestoppt, Adresse gesperrt, nicht mehr in Zielgruppen; Beschwerde per Knopf; Sperre aufheben
+    const hook = await fetch(`${apiBase}/api/mail/bounce`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "failed", recipient: third.email, reason: "550 mailbox unavailable" }) }); expect(await hook.json()).toEqual({ handled: 1 });
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, third.id)))[0].status).toBe("bounce"); expect((await owner.leadops.listEmailSuppressions()).items.find((row) => row.email === third.email)).toMatchObject({ reason: "bounce" });
+    expect((await owner.leadops.previewEmailAudience({ source: "liste", listName: "Erweiterungen" })).sample.some((row) => row.email === third.email)).toBe(false);
+    const complaint = await owner.leadops.markEmailBounced({ recipientId: other.id, kind: "beschwerde" }); expect(complaint.stopped).toBeGreaterThanOrEqual(1); expect((await owner.leadops.getEmailCampaign({ id: ab.id })).stats.bounced).toBe(2);
+    const suppression = (await owner.leadops.listEmailSuppressions()).items.find((row) => row.email === third.email)!; await owner.leadops.removeEmailSuppression({ id: suppression.id }); expect((await owner.leadops.previewEmailAudience({ source: "liste", listName: "Erweiterungen" })).sample.some((row) => row.email === third.email)).toBe(true);
+    await expect(owner.leadops.sendLeadMessage({ publicId: (await db.select().from(leads).where(eq(leads.email, other.email)))[0].publicId, channel: "email", subject: "Hallo", text: "Test" })).rejects.toThrow("Sperrliste");
+    // Vorlagen: als Vorlage kopieren (nicht startbar), daraus neue Kampagne
+    const template = await owner.leadops.duplicateEmailCampaign({ id: ab.id, asTemplate: true }); expect(template.name).toBe("A/B-Serie (Vorlage)"); expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === template.id)).toMatchObject({ isTemplate: true, abTest: true });
+    await expect(owner.leadops.startEmailCampaign({ id: template.id })).rejects.toThrow("Vorlage");
+    const fromTemplate = await owner.leadops.duplicateEmailCampaign({ id: template.id, name: "Aus Vorlage" }); expect((await owner.leadops.getEmailCampaign({ id: fromTemplate.id })).isTemplate).toBe(false); expect((await owner.leadops.getEmailCampaign({ id: fromTemplate.id })).recipients.length).toBe(0);
+    await owner.leadops.setEmailCampaignTemplate({ id: fromTemplate.id, isTemplate: true }); expect((await owner.leadops.getEmailCampaign({ id: fromTemplate.id })).isTemplate).toBe(true);
+    // 9) Mehrfachauswahl verschieben, CSV-Export, Suche über Punkte
+    const bulk = await owner.leadops.bulkMovePipelineStage({ publicIds: [frankfurt.publicId, berlin.publicId], stage: "qualifiziert" }); expect(bulk).toMatchObject({ moved: 2, label: "Qualifiziert" });
+    const csv = await owner.leadops.exportPipelineCsv({ source: "kaltakquise", campaignId: "liste-erweiterungen" }); expect(csv.rows).toBe(5); expect(csv.csv.split("\n")[0]).toContain("Lead-ID;Name;Firma;E-Mail;Telefon"); expect(csv.csv).toContain("12500,5"); expect(csv.csv).toContain("Qualifiziert");
+    await owner.leadops.savePipelineSettings({ ...settings, distribution: { mode: "aus", rules: [], fallback: "reihum" }, stageCampaigns: {}, dispositionCampaigns: {}, staleCampaignId: null });
+  });
+
+  it("27. Dialer für Posteingangs-Leads (Telefon aus der Signatur, nachtragen an der Karte) und KI-Vorlagen-Builder (E-Mail, Serie, Kurztext – ohne Schlüssel regelbasiert)", async () => {
+    const stored = await owner.leadops.storeInboxMessage({ fromEmail: "k.keller@keller-bau-test.example", fromName: "Karin Keller", subject: "Anfrage Treppenlift", bodyText: "Guten Tag,\n\nbitte schicken Sie mir ein Angebot.\n\nViele Grüße\nKarin Keller\nKeller Bau GmbH\nTel. 0711 5550177" });
+    expect((await owner.leadops.listInbox({ filter: "alle" })).items.find((item) => item.id === stored.id)?.phoneHint).toBe("+497115550177");
+    const created = await owner.leadops.createLeadFromInbox({ messageId: stored.id, pipeline: "email", stage: "kontaktiert", company: "Keller Bau GmbH" }); expect(created.created).toBe(true);
+    expect((await leadRow(created.publicId)).phone).toBe("+497115550177"); // ohne Eingabe aus der Signatur übernommen
+    const card = (await owner.leadops.pipelineOverview({ source: "email" })).stages.flatMap((stage) => stage.leads).find((lead) => lead.publicId === created.publicId)!; expect(card.phone).toBe("+497115550177");
+    // Lead ohne Nummer: an der Karte nachtragen (Eingabe über den Telefon-Knopf), danach wählbar
+    await db.update(leads).set({ phone: null }).where(eq(leads.publicId, created.publicId));
+    await expect(owner.leadops.setPipelineContact({ publicId: created.publicId, phone: "12" })).rejects.toThrow("gültige Telefonnummer");
+    expect((await owner.leadops.setPipelineContact({ publicId: created.publicId, phone: "+49 711 5550177" })).phone).toBe("+49 711 5550177"); expect((await owner.leadops.pipelineHistory({ publicId: created.publicId }))[0]).toMatchObject({ toStage: "kontakt" });
+    await owner.leadops.startDialerSession({ campaignId: null, mode: "manuell", connection: "browser", agentPhone: null }); const placed = await owner.leadops.placeManualCall({ publicId: created.publicId }); expect(placed.callId).toBeGreaterThan(0); await owner.leadops.endDialerCall({ callId: placed.callId, durationSeconds: 3 }); await owner.leadops.updateDialerSession({ status: "offline" });
+    // Lead zum Verkauf mit derselben E-Mail bleibt unberührt – aus dem Posteingang entsteht ein eigener Vertriebskontakt mit der Nummer aus dem Formular
+    const existing = await owner.leadops.importLead({ categoryId: (await owner.leadops.listCategories())[0].id, firstName: "Olaf", lastName: "Ohne", email: "olaf@ohne-test.example" } as never); expect(existing).toBeTruthy();
+    const mail2 = await owner.leadops.storeInboxMessage({ fromEmail: "olaf@ohne-test.example", subject: "Rückruf", bodyText: "Bitte zurückrufen." }); expect(mail2.leadId).toBeNull();
+    const fromInbox = await owner.leadops.createLeadFromInbox({ messageId: mail2.id, pipeline: "kaltakquise", stage: "kontaktiert", phone: "0160 7770001" }); expect(fromInbox.created).toBe(true);
+    const olafRows = await db.select().from(leads).where(eq(leads.email, "olaf@ohne-test.example")); expect(olafRows.find((row) => row.kind === "vertrieb")?.phone).toBe("0160 7770001"); expect(olafRows.find((row) => row.kind === "verkauf")).toMatchObject({ phone: null, pipelineStage: null });
+    // Bestehender Vertriebskontakt ohne Nummer → Nummer aus dem Posteingang nachgetragen
+    await db.update(leads).set({ phone: null }).where(eq(leads.publicId, fromInbox.publicId)); const mail3 = await owner.leadops.storeInboxMessage({ fromEmail: "olaf@ohne-test.example", subject: "Nochmal", bodyText: "Meine Nummer: 0160 7770002\nOlaf" }); expect(mail3.leadId).toBe(fromInbox.leadId);
+    expect((await owner.leadops.createLeadFromInbox({ messageId: mail3.id, pipeline: "kaltakquise", stage: "qualifiziert" })).created).toBe(false); expect((await db.select().from(leads).where(eq(leads.publicId, fromInbox.publicId)))[0].phone).toBe("+491607770002");
+    // KI-Vorlagen-Builder ohne Schlüssel: regelbasiert, aber vollständig und als Kampagne startbar
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const single = await owner.leadops.draftEmailWithAi({ brief: "Nachfass-Mail nach Angebot für Dachdecker, freundlich, mit Terminlink", tone: "freundlich", length: "mittel", abTest: true }); expect(single.source).toBe("vorlage"); expect(single.draft.subjectB).toBeTruthy(); expect(single.draft.blocks.map((block) => block.type)).toContain("button");
+      const series = await owner.leadops.draftEmailSeriesWithAi({ brief: "Erstkontakt für PV-Betriebe in Bayern", count: 3, waitDays: 4, stopWhen: "replied", audience: "PV-Betriebe Bayern" }); expect(series.series.mails).toHaveLength(3); expect(series.tree.nodes.filter((node) => node.type === "condition").every((node) => node.type === "condition" && node.check === "replied")).toBe(true);
+      const campaign = await owner.leadops.saveEmailCampaign({ name: series.series.name, fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Erweiterungen" }, tree: series.tree, design: {} });
+      const started = await owner.leadops.startEmailCampaign({ id: campaign.id }); expect(started.added).toBeGreaterThanOrEqual(2); if (started.processed < started.added) await owner.leadops.runEmailCampaigns();
+      const detail = await owner.leadops.getEmailCampaign({ id: campaign.id }); expect(detail.events.filter((event) => event.kind === "gesendet").length).toBe(started.added); expect(detail.events.find((event) => event.kind === "gesendet")?.subject).toBeTruthy();
+      const text = await owner.leadops.draftMessageWithAi({ brief: "Rückruf wegen Angebot", channel: "whatsapp", sender: "Taner" }); expect(text.source).toBe("vorlage"); expect(text.text.length).toBeLessThanOrEqual(480); expect(text.text).toContain("Taner");
+      // Vorlagen vorschreiben lassen: Vorschläge → fertige Vorlagen unter „Vorlagen“, zugeschnitten auf eine Kategorie
+      const written = await owner.leadops.createEmailTemplatesWithAi({ keys: ["erstkontakt", "rueckruf"], category: "Wärmepumpe", sender: "Taner" }); expect(written.created).toHaveLength(2); expect(written.source).toBe("vorlage");
+      expect(written.created[0].name).toBe("Vorlage: Erstkontakt Kaltakquise – Wärmepumpe"); expect(written.created[0].mails).toBe(3); expect(written.created[1].mails).toBe(1);
+      const templates = (await owner.leadops.listEmailCampaigns()).filter((row) => row.isTemplate); expect(templates.map((row) => row.name)).toEqual(expect.arrayContaining(written.created.map((row) => row.name)));
+      const writtenDetail = await owner.leadops.getEmailCampaign({ id: written.created[1].id }); expect(writtenDetail.isTemplate).toBe(true); expect(writtenDetail.tree.nodes.filter((node) => node.type === "send")).toHaveLength(1); expect(writtenDetail.tree.nodes.find((node) => node.type === "send" && node.subject.includes("Rückfrage"))).toBeTruthy();
+    } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; }
+  });
+  it("28. Strikte Trennung Verkaufs-Leads/Vertriebskontakte, Sperrliste als Protokoll mit Unterlisten, Sperren & Abmelde-Erkennung im Posteingang, Lead-Fenster", async () => {
+    const tenantId = S.tenantId as number;
+    // Trennung: Vertriebskontakte tragen kind=vertrieb, Leads zum Verkauf kind=verkauf – keine Seite sieht die andere
+    const rows = await db.select({ id: leads.id, kind: leads.kind, pipelineStage: leads.pipelineStage, adPlatform: leads.adPlatform, publicId: leads.publicId, email: leads.email, status: leads.status }).from(leads).where(eq(leads.tenantId, tenantId));
+    const prospects = rows.filter((row) => row.kind === "vertrieb"); const sales = rows.filter((row) => row.kind === "verkauf"); expect(prospects.length).toBeGreaterThan(3); expect(sales.length).toBeGreaterThan(3);
+    expect(prospects.every((row) => row.pipelineStage && row.adPlatform)).toBe(true); expect(sales.every((row) => !row.adPlatform && !row.pipelineStage)).toBe(true);
+    const listed = await owner.leadops.listLeads({}); const listedIds = new Set(listed.map((row) => row.id)); expect(prospects.some((row) => listedIds.has(row.id))).toBe(false); expect(sales.every((row) => listedIds.has(row.id))).toBe(true);
+    const board = await owner.leadops.pipelineOverview({ source: "alle" }); const boardIds = new Set(board.stages.flatMap((stage) => stage.leads.map((lead) => lead.id))); expect(sales.some((row) => boardIds.has(row.id))).toBe(false); expect(prospects.every((row) => boardIds.has(row.id))).toBe(true);
+    await expect(owner.leadops.movePipelineStage({ publicId: sales[0].publicId, stage: "kontaktiert" })).rejects.toThrow(/nicht gefunden/);
+    await expect(owner.leadops.getLeadDetail({ publicId: prospects[0].publicId })).rejects.toThrow(/nicht gefunden/);
+    const preview = await owner.leadops.previewEmailAudience({ source: "alle" }); const blocked = new Set((await db.select({ email: emailSuppressions.email }).from(emailSuppressions).where(eq(emailSuppressions.tenantId, tenantId))).map((row) => row.email));
+    expect(preview.count).toBe(prospects.filter((row) => row.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email) && !blocked.has(row.email.toLowerCase())).length);
+    const stats = await owner.leadops.dashboard(); expect(stats).toBeTruthy();
+    // Sperrliste: Unterlisten + Quelle
+    const bounced = await owner.leadops.markEmailBounced({ email: "protokoll-bounce@test.example", kind: "bounce", note: "550 unbekannt" }); expect(bounced.email).toBe("protokoll-bounce@test.example");
+    await owner.leadops.addEmailSuppression({ email: "protokoll-manuell@test.example", reason: "manuell", note: "telefonisch", source: "Von Hand" });
+    const list = await owner.leadops.listEmailSuppressions(); expect(list.counts.alle).toBe(list.items.length); expect(list.counts.bounce).toBeGreaterThanOrEqual(1); expect(list.counts.manuell).toBeGreaterThanOrEqual(1);
+    expect(list.items.find((row) => row.email === "protokoll-bounce@test.example")).toMatchObject({ reason: "bounce", source: "Mail-Anbieter (Webhook)" });
+    const csv = await owner.leadops.exportEmailSuppressions(); expect(csv.split("\n")[0]).toContain("Quelle"); expect(csv).toContain("protokoll-manuell@test.example");
+    // Posteingang: Antwort sperren → Sperrliste (Posteingang), Nachricht unter „Gesperrt“, Lead-Anlage blockiert; Entsperren stellt alles wieder her
+    const mail = await owner.leadops.storeInboxMessage({ fromEmail: "stoer@sperren-test.example", fromName: "Störer", subject: "Günstige Leads!!!", bodyText: "Nur heute 1000 Leads." });
+    const blockedResult = await owner.leadops.blockInboxSender({ messageId: mail.id }); expect(blockedResult).toMatchObject({ email: "stoer@sperren-test.example", messages: 1 });
+    expect((await owner.leadops.listEmailSuppressions()).items.find((row) => row.email === "stoer@sperren-test.example")).toMatchObject({ reason: "gesperrt", source: "Posteingang" });
+    expect((await owner.leadops.listInbox({ filter: "alle" })).items.some((row) => row.id === mail.id)).toBe(false); const gesperrt = await owner.leadops.listInbox({ filter: "gesperrt" }); expect(gesperrt.items.find((row) => row.id === mail.id)).toMatchObject({ blocked: true, suppressed: true }); expect(gesperrt.counts.gesperrt).toBeGreaterThanOrEqual(1);
+    await expect(owner.leadops.createLeadFromInbox({ messageId: mail.id, pipeline: "email", stage: "kontaktiert" })).rejects.toThrow(/gesperrt/);
+    const again = await owner.leadops.storeInboxMessage({ fromEmail: "stoer@sperren-test.example", subject: "Nochmal", bodyText: "Hallo?" }); expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, again.id)))[0]).toMatchObject({ blocked: true, isRead: true });
+    const freed = await owner.leadops.unblockInboxSender({ messageId: mail.id }); expect(freed.messages).toBe(2); expect((await owner.leadops.listEmailSuppressions()).items.some((row) => row.email === "stoer@sperren-test.example")).toBe(false); expect((await owner.leadops.listInbox({ filter: "alle" })).items.some((row) => row.id === mail.id)).toBe(true);
+    // Abmeldung in der Antwort eines Serien-Empfängers wird erkannt → Unterliste „Abmeldungen“, Serie gestoppt
+    const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.email, "erika@eins-test.example"))))[0]; expect(recipient).toBeTruthy(); await db.update(emailCampaignRecipients).set({ status: "wartet" }).where(eq(emailCampaignRecipients.id, recipient.id));
+    const optOut = await owner.leadops.storeInboxMessage({ fromEmail: "erika@eins-test.example", subject: "Re: Ihre E-Mail", bodyText: "Bitte nehmen Sie mich aus dem Verteiler. Keine weiteren E-Mails.\n\nErika" });
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, optOut.id)))[0]).toMatchObject({ optOut: true, blocked: false });
+    const entry = (await owner.leadops.listEmailSuppressions()).items.find((row) => row.email === "erika@eins-test.example"); expect(entry).toMatchObject({ reason: "abgemeldet" }); expect(entry?.source).toContain("Antwort");
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)))[0].status).toBe("abgemeldet");
+    // Lead-Fenster: alle Bereiche
+    const detail = await owner.leadops.pipelineLeadDetail({ publicId: prospects[0].publicId }); expect(detail.publicId).toBe(prospects[0].publicId); expect(Array.isArray(detail.history) && Array.isArray(detail.tasks) && Array.isArray(detail.calls) && Array.isArray(detail.campaigns) && Array.isArray(detail.inbox) && Array.isArray(detail.messages)).toBe(true); expect(detail).not.toHaveProperty("score");
+    await expect(owner.leadops.pipelineLeadDetail({ publicId: sales[0].publicId })).rejects.toThrow(/nicht gefunden/);
+    // Lead-Seite: Stammdaten bearbeiten (Verlauf „Kontaktdaten“), Kategorie wechseln, Vertriebskontakt löschen – Verkaufs-Lead bleibt geschützt
+    const categoriesAll = await owner.leadops.listCategories(); const otherCategory = categoriesAll.find((row) => row.id !== detail.categoryId) ?? categoriesAll[0];
+    await expect(owner.leadops.updatePipelineLead({ publicId: prospects[0].publicId, phone: "keine" })).rejects.toThrow(/gültige Telefonnummer/);
+    const edited = await owner.leadops.updatePipelineLead({ publicId: prospects[0].publicId, salutation: "herr", firstName: "Erik", lastName: "Editiert", company: "Editiert GmbH", postcode: "60313", city: "Frankfurt", categoryId: otherCategory.id }); expect(edited.changed).toBeGreaterThanOrEqual(3);
+    const after = await owner.leadops.pipelineLeadDetail({ publicId: prospects[0].publicId }); expect(after).toMatchObject({ firstName: "Erik", lastName: "Editiert", company: "Editiert GmbH", postcode: "60313", salutation: "herr", categoryId: otherCategory.id }); expect(after.history[0]).toMatchObject({ toStage: "kontakt" }); expect(after.history[0].note).toContain("Name: Erik Editiert");
+    expect((await owner.leadops.updatePipelineLead({ publicId: prospects[0].publicId, company: "Editiert GmbH" })).changed).toBe(0);
+    await expect(owner.leadops.deletePipelineLead({ publicId: sales[0].publicId })).rejects.toThrow(/nicht gefunden|Verkaufs-Leads/);
+    const victim = prospects[1]; await owner.leadops.createPipelineTask({ publicId: victim.publicId, kind: "anruf", title: "Rückruf", dueAt: new Date() });
+    const gone = await owner.leadops.deletePipelineLead({ publicId: victim.publicId }); expect(gone.success).toBe(true);
+    expect((await db.select({ id: leads.id }).from(leads).where(eq(leads.id, victim.id))).length).toBe(0); expect((await db.select({ id: pipelineTasks.id }).from(pipelineTasks).where(eq(pipelineTasks.leadId, victim.id))).length).toBe(0); expect((await db.select({ id: pipelineEvents.id }).from(pipelineEvents).where(eq(pipelineEvents.leadId, victim.id))).length).toBe(0);
+    await expect(owner.leadops.pipelineLeadDetail({ publicId: victim.publicId })).rejects.toThrow(/nicht gefunden/);
+  });
+
+  it("29. KI-Einordnung im Posteingang: Beschwerde automatisch gesperrt (Unterliste „Beschwerden“), unsicher → „Prüfen“, Abwesenheit markiert, Schalter in den E-Mail-Einstellungen, Zeitraum-Filter", async () => {
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY; // ohne Schlüssel greifen die Regeln – reicht für den Ablauf
+    try {
+      const settings = await owner.leadops.getMailSettings(); expect(settings).toMatchObject({ replyAiEnabled: true, replyAiAutoBlock: true, replyAiInterest: true, replyAiAvailable: false });
+      // Beschwerde → Sperrliste „Beschwerden“ mit Zitat, Nachricht unter „Gesperrt“, gelesen
+      const angry = await owner.leadops.storeInboxMessage({ fromEmail: "chef@beschwerde-test.example", fromName: "K. Brandt", subject: "Re: Mehr Anfragen", bodyText: "Das ist Spam! Hören Sie auf, mir zu schreiben – sonst melde ich das.\n\nK. Brandt" });
+      expect(angry.ai).toMatchObject({ kind: "beschwerde", action: "gesperrt" });
+      const stored = (await db.select().from(inboxMessages).where(eq(inboxMessages.id, angry.id)))[0]; expect(stored).toMatchObject({ blocked: true, isRead: true, aiKind: "beschwerde", aiAction: "gesperrt", aiSource: "regeln" }); expect(stored.aiQuote).toContain("Hören Sie");
+      const entry = (await owner.leadops.listEmailSuppressions()).items.find((row) => row.email === "chef@beschwerde-test.example"); expect(entry).toMatchObject({ reason: "beschwerde" }); expect(entry?.note).toContain("automatisch gesperrt");
+      expect((await owner.leadops.listInbox({ filter: "gesperrt" })).items.find((row) => row.id === angry.id)).toMatchObject({ blocked: true, ai: { kind: "beschwerde", action: "gesperrt" } });
+      expect((await owner.leadops.listInbox({ filter: "alle" })).items.some((row) => row.id === angry.id)).toBe(false);
+      // Entsperren macht den Fehlgriff rückgängig
+      const freed = await owner.leadops.unblockInboxSender({ messageId: angry.id }); expect(freed.email).toBe("chef@beschwerde-test.example");
+      expect((await owner.leadops.listEmailSuppressions()).items.some((row) => row.email === "chef@beschwerde-test.example")).toBe(false); expect((await owner.leadops.listInbox({ filter: "alle" })).items.some((row) => row.id === angry.id)).toBe(true);
+      // unsicher → Ordner „Prüfen“, nicht gesperrt; „In Ordnung“ schließt die Prüfung
+      const unsure = await owner.leadops.storeInboxMessage({ fromEmail: "info@vogel-test.example", fromName: "M. Vogel", subject: "Re: Kurze Frage", bodyText: "Guten Tag, woher stammen eigentlich meine Kontaktdaten? Ich bin mir nicht sicher, ob das so in Ordnung ist. Aktuell kein Bedarf." });
+      expect(unsure.ai).toMatchObject({ kind: "beschwerde", action: "pruefen" });
+      const check = await owner.leadops.listInbox({ filter: "pruefen" }); expect(check.counts.pruefen).toBeGreaterThanOrEqual(1); expect(check.items.find((row) => row.id === unsure.id)).toMatchObject({ blocked: false });
+      expect((await owner.leadops.listEmailSuppressions()).items.some((row) => row.email === "info@vogel-test.example")).toBe(false);
+      await owner.leadops.resolveInboxCheck({ id: unsure.id }); expect((await owner.leadops.listInbox({ filter: "pruefen" })).items.some((row) => row.id === unsure.id)).toBe(false); expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, unsure.id)))[0].aiAction).toBe("geprueft");
+      // Abwesenheitsnotiz: nur markiert
+      const away = await owner.leadops.storeInboxMessage({ fromEmail: "buero@lang-test.example", fromName: "T. Lang", subject: "Automatische Antwort", bodyText: "Ich bin bis zum 20.10. im Urlaub und erst danach wieder erreichbar." });
+      expect(away.ai).toMatchObject({ kind: "abwesenheit", action: "markiert" }); expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, away.id)))[0].blocked).toBe(false);
+      // Zeitraum-Filter: heute enthält die neuen Nachrichten, ein Zeitraum in der Vergangenheit nicht
+      const start = new Date(); start.setHours(0, 0, 0, 0);
+      const today = await owner.leadops.listInbox({ filter: "alle", from: start, to: new Date(start.getTime() + 86_400_000) }); expect(today.items.some((row) => row.id === away.id)).toBe(true); expect(today.items.every((row) => new Date(row.receivedAt) >= start)).toBe(true);
+      const past = await owner.leadops.listInbox({ filter: "alle", from: new Date(start.getTime() - 30 * 86_400_000), to: new Date(start.getTime() - 86_400_000) }); expect(past.items.some((row) => row.id === away.id)).toBe(false);
+      // Filter nach KI-Einordnung
+      const onlyAway = await owner.leadops.listInbox({ filter: "alle", aiKind: "abwesenheit" }); expect(onlyAway.items.some((row) => row.id === away.id)).toBe(true); expect(onlyAway.items.every((row) => row.ai?.kind === "abwesenheit")).toBe(true);
+      expect((await owner.leadops.listInbox({ filter: "alle", aiKind: "beschwerde" })).items.some((row) => row.id === unsure.id)).toBe(true); expect((await owner.leadops.listInbox({ filter: "alle", aiKind: "interessiert" })).items.some((row) => row.id === away.id)).toBe(false);
+      // Schalter: Auto-Sperre aus → Beschwerde nur zur Prüfung; KI aus → nur die Wortliste (Beschwerde ohne Abmeldewort bleibt unbehandelt)
+      await owner.leadops.saveMailSettings({ provider: settings.provider as "smtp", fromName: settings.fromName, fromEmail: settings.fromEmail, replyAiAutoBlock: false });
+      const flagged = await owner.leadops.storeInboxMessage({ fromEmail: "wut@brandt-test.example", subject: "Re", bodyText: "Unverschämt! Lassen Sie mich in Ruhe, sonst schalte ich meinen Anwalt ein." }); expect(flagged.ai).toMatchObject({ kind: "beschwerde", action: "pruefen" });
+      await owner.leadops.saveMailSettings({ provider: settings.provider as "smtp", fromName: settings.fromName, fromEmail: settings.fromEmail, replyAiEnabled: false });
+      const ignored = await owner.leadops.storeInboxMessage({ fromEmail: "wut2@brandt-test.example", subject: "Re", bodyText: "Unverschämt! Lassen Sie mich in Ruhe, sonst schalte ich meinen Anwalt ein." }); expect(ignored.ai?.action ?? null).toBeNull();
+      const stillOptOut = await owner.leadops.storeInboxMessage({ fromEmail: "raus@brandt-test.example", subject: "Re", bodyText: "Bitte keine weiteren E-Mails an uns." }); expect(stillOptOut.ai).toMatchObject({ kind: "abmeldung", action: "gesperrt" }); // Wortliste wie bisher
+      await owner.leadops.saveMailSettings({ provider: settings.provider as "smtp", fromName: settings.fromName, fromEmail: settings.fromEmail, replyAiEnabled: true, replyAiAutoBlock: true });
+    } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; }
+  });
+
+  it("30. E-Mail-Verlauf am Lead: Antwort aus dem Posteingang wird gespeichert, beim Anlegen hängen alle Mails des Absenders am Lead, Verlauf in Zeitfolge mit Vorgeschichte, Einzel-E-Mail und Serien-Versand", async () => {
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+    try {
+      // Vorgeschichte: Frage vor drei Tagen, unsere Antwort aus dem Posteingang (noch ohne Lead), dann die neue Anfrage
+      const first = await owner.leadops.storeInboxMessage({ fromEmail: "verlauf@mayer-test.example", fromName: "M. Mayer", subject: "Frage zu Ihren Leistungen", bodyText: "Bieten Sie auch PV-Anfragen für Nürnberg an?", receivedAt: new Date(Date.now() - 3 * 86_400_000) });
+      await expect(owner.leadops.replyInboxMessage({ messageId: first.id, text: "   " })).rejects.toThrow();
+      const replied = await owner.leadops.replyInboxMessage({ messageId: first.id, text: "Ja, Mittelfranken decken wir ab – abgerechnet wird pro Anfrage." }); expect(replied.status).toMatch(/gesendet|simuliert/);
+      const stored = (await db.select().from(outboundMessages).where(eq(outboundMessages.inboxMessageId, first.id)))[0]; expect(stored).toMatchObject({ channel: "email", toAddress: "verlauf@mayer-test.example", leadId: null, subject: "Re: Frage zu Ihren Leistungen", provider: "posteingang", status: replied.status }); expect(stored.createdByUserId).toBeTruthy();
+      expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, first.id)))[0].isRead).toBe(true);
+      await db.update(outboundMessages).set({ createdAt: new Date(Date.now() - 2 * 86_400_000) }).where(eq(outboundMessages.id, stored.id)); // Antwort lag zwei Tage zurück
+      const second = await owner.leadops.storeInboxMessage({ fromEmail: "verlauf@mayer-test.example", fromName: "M. Mayer", subject: "Re: Frage zu Ihren Leistungen", bodyText: "Klingt gut, schicken Sie mir gerne ein Angebot.", receivedAt: new Date(Date.now() - 5 * 60_000) });
+      expect(second.ai).toMatchObject({ kind: "interessiert" });
+      // Lead anlegen → beide eingegangenen Mails und die Antwort hängen am Lead
+      const created = await owner.leadops.createLeadFromInbox({ messageId: second.id, pipeline: "email", stage: "qualifiziert" });
+      expect(created.created).toBe(true); expect(created.linked).toEqual({ incoming: 2, replies: 1 });
+      expect((await db.select().from(inboxMessages).where(eq(inboxMessages.fromEmail, "verlauf@mayer-test.example"))).every((row) => row.leadId === created.leadId)).toBe(true);
+      expect((await db.select().from(outboundMessages).where(eq(outboundMessages.id, stored.id)))[0].leadId).toBe(created.leadId);
+      const thread = await owner.leadops.leadEmailThread({ publicId: created.publicId });
+      expect(thread.email).toBe("verlauf@mayer-test.example"); expect(thread.before).toBe(3); expect(thread.leadCreatedAt).toBeTruthy();
+      expect(thread.items.map((item) => item.kind)).toEqual(["eingang", "antwort", "eingang"]); expect(thread.items.map((item) => item.direction)).toEqual(["ein", "aus", "ein"]);
+      expect(thread.items[0]).toMatchObject({ subject: "Frage zu Ihren Leistungen", who: "M. Mayer", status: "gelesen" }); expect(thread.items[1].who).toBeTruthy(); expect(thread.items[1].text).toContain("Mittelfranken"); expect(thread.items[2].aiKind).toBe("interessiert");
+      for (let index = 1; index < thread.items.length; index += 1) expect(new Date(thread.items[index].at).getTime()).toBeGreaterThanOrEqual(new Date(thread.items[index - 1].at).getTime());
+      // Antwort nach dem Anlegen hängt direkt am Lead; Einzel-E-Mail aus der Karte erscheint als eigener Eintrag
+      await owner.leadops.replyInboxMessage({ messageId: second.id, text: "Das Angebot kommt morgen." });
+      expect((await db.select().from(outboundMessages).where(eq(outboundMessages.leadId, created.leadId))).length).toBe(2);
+      await owner.leadops.sendLeadMessage({ publicId: created.publicId, channel: "email", subject: "Ihr Angebot", text: "Anbei das Angebot wie besprochen." });
+      const after = await owner.leadops.leadEmailThread({ publicId: created.publicId });
+      expect(after.items.length).toBe(5); expect(after.before).toBe(3); expect(after.items[3]).toMatchObject({ kind: "antwort", direction: "aus" }); expect(after.items[4]).toMatchObject({ kind: "einzel", direction: "aus", subject: "Ihr Angebot" });
+      expect((await owner.leadops.pipelineLeadDetail({ publicId: created.publicId })).inbox.length).toBe(2);
+      // Serien-Versand im Verlauf: ein Empfänger aus Test 24 mit „gesendet“-Ereignis
+      const sent = (await db.select({ event: emailCampaignEvents, recipient: emailCampaignRecipients }).from(emailCampaignEvents).innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId)).where(eq(emailCampaignEvents.kind, "gesendet")).limit(5)).find((row) => row.recipient.leadId);
+      expect(sent).toBeTruthy();
+      const serieLead = (await db.select().from(leads).where(eq(leads.id, sent!.recipient.leadId!)))[0];
+      const serieThread = await owner.leadops.leadEmailThread({ publicId: serieLead.publicId }); expect(serieThread.items.some((item) => item.kind === "serie" && item.direction === "aus" && item.campaignName)).toBe(true);
+      // Unbekannter Lead → leerer Verlauf
+      expect(await owner.leadops.leadEmailThread({ publicId: "GIBT-ES-NICHT" })).toEqual({ items: [], email: null, before: 0, leadCreatedAt: null });
+    } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; }
+  });
+
+  it("31. Listen-Upload mit Spalten-Zuordnung: unbekannte Spalten werden Platzhalter, Zuordnung von Hand, Felder am Kontakt/in der Liste, Platzhalter in E-Mails gefüllt", async () => {
+    const csv = "Name;Betrieb;Mail;Branche;Anzahl Mitarbeiter\nHansen;Hansen Dach;hansen@mapping-test.example;Dachdecker;12\nKoch;Koch Solar;koch@mapping-test.example;Photovoltaik;5\n";
+    const auto = await owner.leadops.parseColdList({ csv });
+    expect(auto.mapping).toEqual(["lastName", "company", "email", "platzhalter", "platzhalter"]); expect(auto.placeholders).toEqual(["branche", "anzahl_mitarbeiter"]); expect(auto.rows[0]).toMatchObject({ lastName: "Hansen", company: "Hansen Dach", extra: { branche: "Dachdecker", anzahl_mitarbeiter: "12" } });
+    const manual = await owner.leadops.parseColdList({ csv, mapping: ["lastName", "ignorieren", "email", "platzhalter", "ignorieren"] });
+    expect(manual.rows[0].company).toBeUndefined(); expect(manual.rows[0].extra).toEqual({ branche: "Dachdecker" }); expect(manual.placeholders).toEqual(["branche"]);
+    const imported = await owner.leadops.importColdList({ listName: "Mapping-Test", rows: auto.rows, ownerUserIds: [] }); expect(imported.created).toBe(2);
+    const hansen = (await db.select().from(leads).where(and(eq(leads.email, "hansen@mapping-test.example"), eq(leads.kind, "vertrieb"))))[0];
+    expect((hansen.metadata as { felder?: Record<string, string> }).felder).toEqual({ branche: "Dachdecker", anzahl_mitarbeiter: "12" });
+    const list = (await owner.leadops.listColdLists()).find((row) => row.listName === "Mapping-Test")!; expect(list.fields).toEqual([{ key: "branche", sample: "Dachdecker" }, { key: "anzahl_mitarbeiter", sample: "12" }]);
+    expect((await owner.leadops.pipelineLeadDetail({ publicId: hansen.publicId })).fields).toEqual({ branche: "Dachdecker", anzahl_mitarbeiter: "12" });
+    const card = (await owner.leadops.pipelineOverview({ source: "kaltakquise" })).stages.flatMap((stage) => stage.leads).find((row) => row.publicId === hansen.publicId)!; expect(card.fields).toEqual({ branche: "Dachdecker", anzahl_mitarbeiter: "12" });
+    // Einzel-E-Mail aus der Karte und Serien-Versand füllen die Platzhalter aus der Liste
+    const mail = await owner.leadops.sendLeadMessage({ publicId: hansen.publicId, channel: "email", subject: "Für {{branche}} mit {{anzahl_mitarbeiter}} Leuten", text: "Hallo {{nachname}}, als {{branche}}-Betrieb …" });
+    expect(mail.subject).toBe("Für Dachdecker mit 12 Leuten"); expect(mail.text).toContain("als Dachdecker-Betrieb");
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" }); const first = starter.tree.nodes.find((node) => node.type === "send") as Extract<typeof starter.tree.nodes[number], { type: "send" }>; first.subject = "{{branche}}: {{anzahl_mitarbeiter}} Mitarbeiter, {{nachname}}";
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Mapping-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Mapping-Test" }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } });
+    const started = await owner.leadops.startEmailCampaign({ id: campaign.id }); expect(started.added).toBe(2);
+    await owner.leadops.runEmailCampaigns();
+    const sent = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")));
+    expect(sent.map((event) => event.subject).sort()).toEqual(["Dachdecker: 12 Mitarbeiter, Hansen", "Photovoltaik: 5 Mitarbeiter, Koch"]);
+  });
+
+});

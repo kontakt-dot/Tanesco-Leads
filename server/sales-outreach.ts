@@ -1,0 +1,167 @@
+/**
+ * Vertrieb: Kaltakquise-Listen (CSV → Leads in der Pipeline, Anrufkampagne manuell/power/predictive über den Dialer)
+ * und E-Mail-Kampagnen mit Ablauf-Baum (Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst), Tracking per Pixel/Link.
+ */
+import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import crypto from "node:crypto";
+import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, tags, type EmailCampaign } from "../drizzle/schema";
+import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, recipientValues, renderNode, starterTree, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendWindow } from "../shared/email-campaigns";
+import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
+import { DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
+import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
+import { deliverMail } from "./email-onboarding";
+import { distributeOwners } from "./meta-ads";
+import type { Db } from "./lead-pipeline";
+
+/* ---------- Kaltakquise-Listen ---------- */
+import { extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
+export { parseColdList };
+export async function importColdList(db: Db, tenantId: number, input: { listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; actorUserId?: number | null }) {
+  const listName = input.listName.trim(); if (!listName) throw new Error("Bitte einen Listennamen angeben."); if (!input.rows.length) throw new Error("Die Liste enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig).");
+  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id; if (!categoryId) throw new Error("Keine Lead-Kategorie vorhanden.");
+  let tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0];
+  if (!tag) { await db.insert(tags).values({ tenantId, name: `Liste: ${listName}`.slice(0, 80), color: "#f59e0b" }); tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0]; }
+  const existing = await db.select({ phone: leads.phone, email: leads.email }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
+  const phones = new Set(existing.map((row) => (row.phone ?? "").replace(/\D/g, "")).filter(Boolean)); const emails = new Set(existing.map((row) => (row.email ?? "").toLowerCase()).filter(Boolean));
+  let created = 0; let duplicates = 0; const leadIds: number[] = [];
+  for (const row of input.rows) {
+    const phoneKey = (row.phone ?? "").replace(/\D/g, ""); const emailKey = (row.email ?? "").toLowerCase();
+    if ((phoneKey && phones.has(phoneKey)) || (emailKey && emails.has(emailKey))) { duplicates += 1; continue; }
+    const publicId = `KALT-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
+    const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}`, adPlatform: "kaltakquise", company: row.company ?? null, listName });
+    const leadId = Number(inserted[0]?.insertId) || 0; leadIds.push(leadId); created += 1; if (phoneKey) phones.add(phoneKey); if (emailKey) emails.add(emailKey);
+    await db.insert(leadTagAssignments).values({ leadId, tagId: tag.id });
+    await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: null, nextStatus: "neu", actorUserId: null, note: `Kaltakquise-Liste „${listName}“ hochgeladen` });
+    await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: null, note: `Aus Kaltakquise-Liste „${listName}“` });
+  }
+  if (input.ownerUserIds?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
+  else for (const leadId of leadIds) await autoAssign(db, tenantId, leadId); // Verteilregeln, wenn eingeschaltet
+  return { created, duplicates, tagId: tag.id, listName, leadIds };
+}
+export async function listColdLists(db: Db, tenantId: number) {
+  const rows = await db.select({ listName: leads.listName, stage: leads.pipelineStage, phone: leads.phone, email: leads.email, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.adPlatform, "kaltakquise")));
+  const map = new Map<string, { listName: string; contacts: number; withPhone: number; withEmail: number; customers: number; lost: number; fields: Array<{ key: string; sample: string }> }>();
+  for (const row of rows) {
+    const name = row.listName ?? "Ohne Liste"; const entry = map.get(name) ?? { listName: name, contacts: 0, withPhone: 0, withEmail: 0, customers: 0, lost: 0, fields: [] };
+    entry.contacts += 1; if (row.phone) entry.withPhone += 1; if (row.email) entry.withEmail += 1; if (row.stage === "kunde") entry.customers += 1; if (row.stage === "verloren") entry.lost += 1;
+    for (const [key, sample] of Object.entries(extraFieldsOf(row.metadata))) if (!entry.fields.some((field) => field.key === key)) entry.fields.push({ key, sample }); // Zusatzspalten der Liste → Platzhalter {{key}}
+    map.set(name, entry);
+  }
+  return Array.from(map.values()).sort((a, b) => b.contacts - a.contacts);
+}
+/** Anrufkampagne wie im Callcenter (manuell/power/predictive) für eine Liste: Dialer-Kampagne + Warteschlange. */
+export async function startCallCampaign(db: Db, tenantId: number, userId: number, input: { listName: string; mode: "manuell" | "power" | "predictive"; callerNumberId?: number | null; script?: string | null; autoNotes?: boolean | null }) {
+  const tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${input.listName}`.slice(0, 80)))).limit(1))[0]; if (!tag) throw new Error("Zu dieser Liste gibt es kein Listen-Tag – bitte die Liste zuerst hochladen.");
+  const saved = await saveDialerCampaign(db, tenantId, userId, { name: `Kaltakquise: ${input.listName}`, mode: input.mode, leadFilter: { tagIds: [tag.id], onlyWithoutCall: true, kind: "vertrieb" }, callerNumberId: input.callerNumberId ?? null, maxAttempts: 3, retryMinutes: 240, wrapUpSeconds: 20, pacingRatio: input.mode === "predictive" ? 1.5 : null, autoNotes: input.autoNotes ?? null, callWindow: { weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "18:00" }, script: input.script ?? `Guten Tag, hier ist … von Tanesco. Wir vermitteln geprüfte Kundenanfragen aus Ihrer Region – hätten Sie kurz Zeit?` });
+  const queue = await buildQueue(db, tenantId, saved.id); await setCampaignStatus(db, tenantId, saved.id, "aktiv");
+  return { campaignId: saved.id, queued: (queue as { queued?: number; added?: number }).queued ?? (queue as { added?: number }).added ?? 0, mode: input.mode };
+}
+
+/* ---------- E-Mail-Kampagnen ---------- */
+export type Audience = { source: "liste" | "stufe" | "tag" | "alle"; listName?: string | null; stage?: string | null; tagId?: number | null };
+const tree = (campaign: EmailCampaign): EmailTree => (campaign.tree && typeof campaign.tree === "object" ? (campaign.tree as EmailTree) : { start: null, nodes: [] });
+const design = (campaign: EmailCampaign): EmailDesign => ({ ...DEFAULT_DESIGN, ...((campaign.design ?? {}) as Partial<EmailDesign>) });
+export async function listEmailCampaigns(db: Db, tenantId: number) {
+  const rows = await db.select().from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId)).orderBy(desc(emailCampaigns.updatedAt));
+  const recipients = await db.select({ campaignId: emailCampaignRecipients.campaignId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, variant: emailCampaignRecipients.variant }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
+  return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.audience ?? { source: "alle" }) as Audience, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, sendWindow: sendWindowOf(row), stats: summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) }));
+}
+export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
+  const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
+  const recipients = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id))).orderBy(desc(emailCampaignRecipients.createdAt));
+  const events = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id))).orderBy(desc(emailCampaignEvents.createdAt)).limit(200);
+  return { ...row, tree: tree(row), design: design(row), audience: (row.audience ?? { source: "alle" }) as Audience, sendWindow: sendWindowOf(row), recipients: recipients.map((item) => ({ id: item.id, email: item.email, name: item.name, company: item.company, status: item.status, nodeId: item.nodeId, nextActionAt: item.nextActionAt, sentCount: item.sentCount, openedAt: item.openedAt, clickedAt: item.clickedAt, repliedAt: item.repliedAt, variant: (item.variant ?? null) as "A" | "B" | null, clickedUrls: (Array.isArray(item.clickedUrls) ? item.clickedUrls : []) as string[], bouncedAt: item.bouncedAt, lastError: item.lastError })), events: events.map((event) => ({ id: event.id, recipientId: event.recipientId, kind: event.kind, subject: event.subject, note: event.note, createdAt: event.createdAt })), stats: summarizeCampaign(recipients.map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) };
+}
+const sendWindowOf = (campaign: Pick<EmailCampaign, "sendWindow">): SendWindow => resolveSendWindow(campaign.sendWindow as Partial<SendWindow> | null);
+export function normalizeSendWindow(input: unknown): SendWindow {
+  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {}; const time = (value: unknown, fallback: string) => (/^\d{2}:\d{2}$/.test(String(value ?? "")) ? String(value) : fallback);
+  return { enabled: Boolean(raw.enabled), weekdays: Array.isArray(raw.weekdays) ? (raw.weekdays as unknown[]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : DEFAULT_SEND_WINDOW.weekdays, from: time(raw.from, DEFAULT_SEND_WINDOW.from), to: time(raw.to, DEFAULT_SEND_WINDOW.to), timezone: String(raw.timezone ?? DEFAULT_SEND_WINDOW.timezone).slice(0, 60) || DEFAULT_SEND_WINDOW.timezone };
+}
+export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null }) {
+  const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
+  const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.audience, tree: input.tree, design: { ...DEFAULT_DESIGN, ...input.design }, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}) };
+  if (input.id) { await db.update(emailCampaigns).set(values).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))); return { id: input.id }; }
+  const inserted = await db.insert(emailCampaigns).values(values); return { id: Number(inserted[0]?.insertId) || 0 };
+}
+export function starterCampaign(kind: "kaltakquise" | "angebot" | "aufwecken" = "kaltakquise") {
+  if (kind === "angebot") return { tree: followUpTree({ first: starterBlocks("angebot"), second: starterBlocks("nachfassen") }, { firstSubject: "Noch Fragen zu unserem Angebot, {{vorname}}?", secondSubject: "Kurz nachgefragt: unser Angebot für {{firma}}", waitHours: 96 }), design: DEFAULT_DESIGN, name: "Nachfassen nach Angebot" };
+  if (kind === "aufwecken") return { tree: followUpTree({ first: starterBlocks("aufwecken"), second: starterBlocks("nachfassen") }, { firstSubject: "Passt es gerade nicht, {{vorname}}?", secondSubject: "Letzte Nachricht von mir, {{vorname}}", waitHours: 120 }), design: DEFAULT_DESIGN, name: "Eingeschlafene Kontakte aufwecken" };
+  return { tree: starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") }), design: DEFAULT_DESIGN, name: "" };
+}
+/** Kampagne oder Vorlage kopieren (Ablauf + Design, ohne Empfänger) – als neue Kampagne oder als Vorlage. */
+export async function duplicateEmailCampaign(db: Db, tenantId: number, userId: number, input: { id: number; name?: string | null; asTemplate?: boolean }) {
+  const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
+  const name = (input.name?.trim() || `${row.name} ${input.asTemplate ? "(Vorlage)" : "(Kopie)"}`).slice(0, 160);
+  const inserted = await db.insert(emailCampaigns).values({ tenantId, name, status: "entwurf", fromName: row.fromName, fromEmail: row.fromEmail, replyTo: row.replyTo, audience: row.audience, tree: row.tree, design: row.design, sendWindow: row.sendWindow, isTemplate: Boolean(input.asTemplate), abSplit: row.abSplit, createdByUserId: userId });
+  return { id: Number(inserted[0]?.insertId) || 0, name };
+}
+export async function setEmailCampaignTemplate(db: Db, tenantId: number, id: number, isTemplate: boolean) { await db.update(emailCampaigns).set({ isTemplate }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
+export async function deleteEmailCampaign(db: Db, tenantId: number, id: number) { await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id))); await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id))); await db.delete(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
+async function audienceLeads(db: Db, tenantId: number, audience: Audience) {
+  const conditions = [eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")]; // Zielgruppen bestehen nur aus Vertriebskontakten – nie aus Leads zum Verkauf
+  if (audience.source === "liste" && audience.listName) conditions.push(eq(leads.listName, audience.listName));
+  if (audience.source === "stufe" && audience.stage) conditions.push(eq(leads.pipelineStage, audience.stage));
+  let rows = await db.select({ id: leads.id, firstName: leads.firstName, lastName: leads.lastName, email: leads.email, company: leads.company, city: leads.city, metadata: leads.metadata }).from(leads).where(and(...conditions));
+  if (audience.source === "tag" && audience.tagId) { const tagged = new Set((await db.select({ leadId: leadTagAssignments.leadId }).from(leadTagAssignments).where(eq(leadTagAssignments.tagId, audience.tagId))).map((row) => row.leadId)); rows = rows.filter((row) => tagged.has(row.id)); }
+  const blocked = await suppressedSet(db, tenantId);
+  return rows.filter((row) => row.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email) && !blocked.has(row.email.toLowerCase()));
+}
+export async function previewAudience(db: Db, tenantId: number, audience: Audience) { const rows = await audienceLeads(db, tenantId, audience); return { count: rows.length, sample: rows.slice(0, 5).map((row) => ({ name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim(), email: row.email, company: row.company })) }; }
+/** Kampagne starten: Empfänger aus der Zielgruppe anlegen (ohne Doppelte) und sofort den ersten Schritt ausführen. */
+export async function startEmailCampaign(db: Db, tenantId: number, id: number, appUrl: string) {
+  const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
+  const issues = validateTree(tree(campaign)); if (issues.length) throw new Error(issues.join(" "));
+  const rows = await audienceLeads(db, tenantId, (campaign.audience ?? { source: "alle" }) as Audience); if (!rows.length) throw new Error("Die Zielgruppe enthält keine Kontakte mit E-Mail-Adresse.");
+  if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst „Aus Vorlage anlegen“ und dann die Kampagne starten.");
+  const existing = new Set((await db.select({ email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id)))).map((row) => row.email));
+  const abTest = hasAbTest(tree(campaign)); let index = existing.size;
+  let added = 0;
+  for (const row of rows) { if (existing.has(row.email!)) continue; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); }
+    await db.insert(emailCampaignRecipients).values({ tenantId, campaignId: id, leadId: row.id, email: row.email!, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: crypto.randomBytes(16).toString("hex"), nodeId: tree(campaign).start, nextActionAt: new Date(Date.now() - 2000), status: "wartet", sentCount: 0, variant: abTest ? abVariantFor(index, campaign.abSplit) : null }); index += 1; added += 1; } /* 2 s in der Vergangenheit: MySQL rundet Sekunden auf */
+  await db.update(emailCampaigns).set({ status: "aktiv", startedAt: campaign.startedAt ?? new Date() }).where(eq(emailCampaigns.id, id));
+  // Versand läuft im Hintergrund (SMTP kann dauern) – die Anfrage kehrt sofort zurück; der Zeitplaner nimmt den Rest.
+  const processed = await Promise.race([processEmailCampaigns(db, appUrl, { campaignId: id, limit: 25 }).catch((error) => { console.error("[E-Mail-Kampagnen] Start:", error instanceof Error ? error.message : error); return 0; }), new Promise<number>((resolve) => setTimeout(() => resolve(-1), 4000))]);
+  return { added, processed: Math.max(processed, 0), background: processed < 0 };
+}
+export async function setEmailCampaignStatus(db: Db, tenantId: number, id: number, status: "aktiv" | "pausiert" | "beendet") { await db.update(emailCampaigns).set({ status }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
+/** Zeitplaner: fällige Empfänger aller aktiven Kampagnen weiterführen. */
+export async function processEmailCampaigns(db: Db, appUrl: string, options: { campaignId?: number; limit?: number } = {}) {
+  const now = new Date(); const horizon = new Date(now.getTime() + 1500); const base = appUrl.replace(/\/+$/, ""); /* horizon: Toleranz für Sekundenrundung der DB */
+  const campaignConditions = [eq(emailCampaigns.status, "aktiv")]; if (options.campaignId) campaignConditions.push(eq(emailCampaigns.id, options.campaignId));
+  const active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
+  for (const campaign of active) {
+    const due = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), or(isNull(emailCampaignRecipients.nextActionAt), lte(emailCampaignRecipients.nextActionAt, horizon)))).limit(options.limit ?? 100);
+    for (const recipient of due) {
+      const lead = recipient.leadId ? (await db.select().from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] : null;
+      const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: extraFieldsOf(lead?.metadata) }, `${base}/api/mail/u/${recipient.token}`);
+      const state: RecipientState = { nodeId: recipient.nodeId, nextActionAt: recipient.nextActionAt && recipient.nextActionAt <= horizon ? null : recipient.nextActionAt, status: recipient.status as RecipientState["status"], sentCount: recipient.sentCount, openedAt: recipient.openedAt, clickedAt: recipient.clickedAt, repliedAt: recipient.repliedAt, lastSentAt: recipient.lastSentAt, variant: (recipient.variant ?? null) as RecipientState["variant"], clickedUrls: (Array.isArray(recipient.clickedUrls) ? recipient.clickedUrls : []) as string[] };
+      const result = await advanceRecipient(tree(campaign), state, now, async (node, subject) => { const rendered = renderNode(node, design(campaign), values, { pixelUrl: `${base}/api/mail/o/${recipient.token}.gif`, wrapLink: (url) => `${base}/api/mail/c/${recipient.token}?u=${encodeURIComponent(url)}`, unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject }); const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text }, { db, tenantId: campaign.tenantId }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign) });
+      await db.update(emailCampaignRecipients).set({ nodeId: result.state.nodeId, nextActionAt: result.state.nextActionAt, status: result.state.status, sentCount: result.state.sentCount, lastSentAt: result.state.lastSentAt }).where(eq(emailCampaignRecipients.id, recipient.id));
+      for (const event of result.events) await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note });
+      processed += 1;
+    }
+    const open = await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]))).limit(1);
+    if (!open.length && due.length) await db.update(emailCampaigns).set({ status: "beendet" }).where(eq(emailCampaigns.id, campaign.id));
+  }
+  return processed;
+}
+/** Tracking: Öffnung (Pixel), Klick (Weiterleitung), Abmeldung. */
+export async function trackOpen(db: Db, token: string) { const recipient = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.token, token)).limit(1))[0]; if (!recipient) return false; if (!recipient.openedAt || (recipient.lastSentAt && recipient.openedAt < recipient.lastSentAt)) { await db.update(emailCampaignRecipients).set({ openedAt: new Date() }).where(eq(emailCampaignRecipients.id, recipient.id)); await db.insert(emailCampaignEvents).values({ tenantId: recipient.tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: "geoeffnet", note: "E-Mail geöffnet" }); } return true; }
+export async function trackClick(db: Db, token: string, url: string) { const recipient = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.token, token)).limit(1))[0]; if (!recipient) return null; const urls = Array.from(new Set([...((Array.isArray(recipient.clickedUrls) ? recipient.clickedUrls : []) as string[]), url.slice(0, 400)])).slice(-20); await db.update(emailCampaignRecipients).set({ clickedAt: new Date(), openedAt: recipient.openedAt ?? new Date(), clickedUrls: urls }).where(eq(emailCampaignRecipients.id, recipient.id)); await db.insert(emailCampaignEvents).values({ tenantId: recipient.tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: "geklickt", note: `Link geklickt: ${url.slice(0, 200)}` }); return /^https?:\/\//.test(url) ? url : null; }
+export async function unsubscribe(db: Db, token: string) { const recipient = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.token, token)).limit(1))[0]; if (!recipient) return false; await db.update(emailCampaignRecipients).set({ status: "abgemeldet", nextActionAt: null }).where(eq(emailCampaignRecipients.id, recipient.id)); const campaignName = (await db.select({ name: emailCampaigns.name }).from(emailCampaigns).where(eq(emailCampaigns.id, recipient.campaignId)).limit(1))[0]?.name ?? null; await addSuppression(db, recipient.tenantId, { email: recipient.email, reason: "abgemeldet", note: `Abmelde-Link geklickt${campaignName ? ` in „${campaignName}“` : ""}`, source: campaignName ? `Abmelde-Link „${campaignName}“` : "Abmelde-Link" }).catch(() => null); await db.insert(emailCampaignEvents).values({ tenantId: recipient.tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: "abgemeldet", note: "Empfänger hat sich abgemeldet" }); return true; }
+export async function markReplied(db: Db, tenantId: number, recipientId: number) { const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.id, recipientId), eq(emailCampaignRecipients.tenantId, tenantId))).limit(1))[0]; if (!recipient) throw new Error("Empfänger nicht gefunden."); await db.update(emailCampaignRecipients).set({ repliedAt: new Date() }).where(eq(emailCampaignRecipients.id, recipientId)); return { success: true as const }; }
+export async function sendTestEmail(db: Db, tenantId: number, input: { to: string; node: Extract<EmailNode, { type: "send" }>; design: Partial<EmailDesign> }) {
+  const rendered = renderNode(input.node, { ...DEFAULT_DESIGN, ...input.design }, recipientValues({ firstName: "Max", lastName: "Muster", company: "Muster GmbH", city: "Frankfurt", salutation: "herr", email: input.to }, null), { logoBase: process.env.APP_URL ?? "", unsubscribeUrl: `${(process.env.APP_URL ?? "").replace(/\/+$/, "")}/api/mail/u/test` });
+  const result = await deliverMail({ to: input.to, subject: `[Test] ${rendered.subject}`, html: rendered.html, text: rendered.text }, { db, tenantId }); return { status: result.status, note: result.note ?? null };
+}
+export const previewNodeHtml = (node: Extract<EmailNode, { type: "send" }>, designInput: Partial<EmailDesign>) => renderNode(node, { ...DEFAULT_DESIGN, ...designInput }, recipientValues({ firstName: "Max", lastName: "Muster", company: "Muster GmbH", city: "Frankfurt", salutation: "herr", email: "max@beispiel.de" }, "https://beispiel.de/abmelden"), { logoBase: process.env.APP_URL ?? "", unsubscribeUrl: "https://beispiel.de/abmelden", preview: true }).html;
+export { asc };
+
+/** Bild für den E-Mail-Builder ablegen (öffentlich unter APP_URL/uploads/mail/…). */
+export async function uploadMailImage(input: { fileName: string; mimeType: string; base64: string }) {
+  const { default: fs } = await import("node:fs/promises"); const { default: path } = await import("node:path");
+  const ext = ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/svg+xml": "svg" } as Record<string, string>)[input.mimeType]; if (!ext) throw new Error("Nur PNG, JPG, GIF, WebP oder SVG.");
+  const buffer = Buffer.from(input.base64.replace(/^data:[^;]+;base64,/, ""), "base64"); if (!buffer.length) throw new Error("Leere Datei."); if (buffer.length > 5 * 1024 * 1024) throw new Error("Bild ist größer als 5 MB.");
+  const dir = path.resolve(process.cwd(), "uploads", "mail"); await fs.mkdir(dir, { recursive: true }); const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`; await fs.writeFile(path.join(dir, name), buffer);
+  const base = (process.env.APP_URL ?? "").replace(/\/+$/, ""); return { url: `${base}/uploads/mail/${name}`, path: `/uploads/mail/${name}`, size: buffer.length };
+}

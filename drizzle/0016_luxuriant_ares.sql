@@ -1,0 +1,1 @@
+ALTER TABLE `tenantSettings` ADD `navigationHiddenPages` json;

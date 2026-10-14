@@ -1,0 +1,6 @@
+/** Gemeinsame Dialer-Konstanten (Server, Chat-Demo, Oberfläche): Anruf-Ergebnisse und Statusbeschriftungen. */
+export const DISPOSITIONS = [{ key: "verkauft", label: "Verkauft / Termin", leadStatus: "genehmigt" }, { key: "interessiert", label: "Interessiert – Angebot gewünscht", leadStatus: "genehmigt" }, { key: "wiedervorlage", label: "Wiedervorlage", leadStatus: null }, { key: "nicht_erreicht", label: "Nicht erreicht", leadStatus: null }, { key: "kein_interesse", label: "Kein Interesse", leadStatus: "deaktiviert" }, { key: "falsche_nummer", label: "Falsche Nummer", leadStatus: "fehlerhaft" }, { key: "nicht_anrufen", label: "Nicht mehr anrufen", leadStatus: "deaktiviert" }] as const;
+export type DispositionKey = (typeof DISPOSITIONS)[number]["key"];
+export const dispositionLabel = (key: string | null | undefined) => DISPOSITIONS.find((item) => item.key === key)?.label ?? null;
+
+export const CALL_STATUS_LABELS: Record<string, string> = { initiiert: "Wählt", klingelt: "Klingelt", wartet: "Wartet auf Agent", verbunden: "Verbunden", beendet: "Beendet", besetzt: "Besetzt", keine_antwort: "Keine Antwort", anrufbeantworter: "Anrufbeantworter", abgebrochen: "Abgebrochen", fehlgeschlagen: "Fehlgeschlagen" };

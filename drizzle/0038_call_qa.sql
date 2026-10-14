@@ -1,0 +1,62 @@
+CREATE TABLE `callQaConfigs` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`tenantId` int NOT NULL,
+	`enabled` boolean NOT NULL DEFAULT false,
+	`provider` varchar(40) NOT NULL DEFAULT 'ondialer',
+	`webhookToken` varchar(96) NOT NULL,
+	`consentRequired` boolean NOT NULL DEFAULT true,
+	`autoApproveThreshold` int NOT NULL DEFAULT 70,
+	`autoRejectThreshold` int NOT NULL DEFAULT 30,
+	`autoDeliver` boolean NOT NULL DEFAULT true,
+	`criteria` json,
+	`instructions` text,
+	`fieldMapping` json,
+	`recordingAuthHeader` text,
+	`transcriptionProvider` enum('auto','payload','openai','deepgram') NOT NULL DEFAULT 'auto',
+	`transcriptionLanguage` varchar(8) NOT NULL DEFAULT 'de',
+	`retentionDays` int NOT NULL DEFAULT 90,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `callQaConfigs_id` PRIMARY KEY(`id`),
+	CONSTRAINT `call_qa_configs_tenant_unique` UNIQUE(`tenantId`),
+	CONSTRAINT `call_qa_configs_token_unique` UNIQUE(`webhookToken`)
+);
+--> statement-breakpoint
+CREATE TABLE `callRecords` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`tenantId` int NOT NULL,
+	`provider` varchar(40) NOT NULL DEFAULT 'ondialer',
+	`externalCallId` varchar(160),
+	`leadId` int,
+	`phone` varchar(64),
+	`agentName` varchar(160),
+	`campaign` varchar(160),
+	`direction` enum('ausgehend','eingehend') NOT NULL DEFAULT 'ausgehend',
+	`startedAt` timestamp,
+	`durationSeconds` int,
+	`recordingUrl` text,
+	`consent` boolean NOT NULL DEFAULT false,
+	`consentSource` varchar(120),
+	`status` enum('eingegangen','transkribiert','bewertet','fehlgeschlagen','ohne_einwilligung') NOT NULL DEFAULT 'eingegangen',
+	`transcript` text,
+	`score` int,
+	`verdict` enum('verkaufbar','nachfassen','nicht_verkaufbar','unklar'),
+	`criteriaScores` json,
+	`summary` text,
+	`redFlags` json,
+	`nextStep` varchar(320),
+	`decision` enum('offen','freigegeben','pruefen','zurueckgewiesen') NOT NULL DEFAULT 'offen',
+	`decidedBy` enum('automatisch','manuell'),
+	`reviewedByUserId` int,
+	`reviewedAt` timestamp,
+	`reviewNote` varchar(500),
+	`error` text,
+	`payload` json,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `callRecords_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE INDEX `call_records_tenant_idx` ON `callRecords` (`tenantId`,`createdAt`);--> statement-breakpoint
+CREATE INDEX `call_records_lead_idx` ON `callRecords` (`leadId`);--> statement-breakpoint
+CREATE INDEX `call_records_external_idx` ON `callRecords` (`tenantId`,`externalCallId`);

@@ -1,0 +1,1 @@
+ALTER TABLE `partnerIntegrations` MODIFY COLUMN `provider` enum('aroundhome','wattfox','webhook','custom_api') NOT NULL;

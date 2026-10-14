@@ -1,0 +1,1 @@
+ALTER TABLE `leadCategories` ADD `color` varchar(7);

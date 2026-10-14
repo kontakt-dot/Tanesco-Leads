@@ -1,0 +1,1 @@
+ALTER TABLE `leadCategories` ADD `isTemplate` boolean DEFAULT false NOT NULL;

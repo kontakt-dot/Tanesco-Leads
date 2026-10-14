@@ -1,0 +1,423 @@
+# Projekt TODO
+
+- [x] Produktumfang und zugängliche Referenzlogik für Dashboard, Leads, Kategorien, Marktplatz, Lieferketten, Automatisierung und Kooperationen analysieren
+- [x] Mandantenfähiges Datenmodell für Organisationen, Benutzer, Rollen, Teams und Einladungen definieren
+- [x] Datenmodell für Leads, Kategorien, Status, Tags, Lieferanten, Bestellungen und Reklamationen definieren
+- [x] Datenmodell für Lieferketten, Stops, Prioritäten, Verkaufsziele und Round-Robin-Verteilung definieren
+- [x] Datenmodell für Automatisierungsregeln, Trigger, Bedingungen und Lieferantenfilter definieren
+- [x] Datenmodell für Marktplatzangebote, Preisänderungen, Käufe und Wiedervermarktungsregeln definieren
+- [x] Datenmodell für Support-Tickets, Produkte, Rechnungen und Branding-Einstellungen definieren
+- [x] Datenbankschema migrieren und Datenzugriff über geschützte Schnittstellen implementieren
+- [x] Einladungsmodell mit E-Mail, Token, Ablaufdatum und Annahmestatus ergänzen
+- [x] Eigenes Lieferantenmodell sowie Beziehungen zu Leads, Automatisierungen und Bestellungen ergänzen
+- [x] Käufe und Preisänderungs-Historie für den Marktplatz modellieren
+- [x] Geschützte Schnittstellen für Mandantenkontext, globale Suche, Leads und Kategorien vollständig implementieren
+- [x] Durchgängiges deutsches Designsystem mit responsivem Navigationslayout umsetzen
+- [x] Dashboard mit KPI-Karten, Zeitraum-/Kategoriefiltern, Stundendiagramm und neuesten Leads implementieren
+- [x] Lead-Verwaltung mit Suche, Filtern, Statusregistern, Quick-View, Aktionen und CSV-Export implementieren
+- [x] Lead-Kategorien mit vollständiger CRUD-Verwaltung und den spezifizierten Feldern implementieren
+- [x] Lieferketten mit Stops, Prioritäten, Verkaufzielen, Kennzahlen und Round-Robin-Steuerung implementieren
+- [x] Regelbasierte Lead-Duplizierung mit Triggern, Bedingungen und Lieferantenfilter implementieren
+- [x] Marktplatzverwaltung mit Aktivierung, Kategoriefreigabe, Preisen und Reklamationsregel implementieren
+- [x] Bestellungen, Reklamationen und Support-Tickets als filterbare Verwaltungsansichten implementieren
+- [x] Team-, Benutzer-, Rollen-, Tag- und Einladungsverwaltung implementieren
+- [x] Einstellungen für Profil, Branding, Rechnungsdaten, Reklamationsrichtlinien und API-Dokumentation implementieren
+- [x] Stripe-Zahlungsintegration vorbereiten und erst nach sicherer Bereitstellung von Zugangsdaten aktivieren
+- [x] Globale Suche, geschützte Routen und deutsche Oberflächentexte implementieren
+- [x] Globale Suche mit mandantenisolierten Leads, Bestellungen und Mitgliedern sowie direkter Ergebnisnavigation vervollständigen
+- [x] Fehlerzustand und Wiederholungsaktion für fehlgeschlagene globale Suchabfragen ergänzen und testen
+- [x] Globale Suchtreffer zu konkreten Lead-, Bestell- und Mitgliedsdetails per Deep-Link öffnen und den Ablauf nachweisen
+- [x] Unit-Tests für Datenlogik und zentrale Geschäftsregeln schreiben und ausführen
+- [x] Desktop- und Mobilansichten visuell prüfen und verfeinern
+- [x] Abschließende Projektprüfung, Dokumentation und Bereitstellung durchführen
+- [x] Alle sichtbaren Referenzseiten und Detaildialoge systematisch gegen Fluxora abgleichen
+- [x] Dashboard-Kennzahlen sowie Zeitraum- und Kategorienfilter an die Mandantenstatistik anbinden
+- [x] Dashboard-Kennzahlen und die neueste Leadliste an die geschützte Mandantenabfrage anbinden
+- [x] Direkte Zuweisung und Reklamationsstatus im Lead-Quick-View an persistente Abläufe anbinden
+- [x] Lead-Importformular mit mandantenbezogener Speicherung ergänzen
+- [x] Live-Leadliste, Statusfilter, Suche, Quick-View und CSV-Export an geschützte Endpunkte anbinden
+- [x] Geschützte Serverabläufe für Lead-Import, Statuswechsel und CSV-Export ergänzen
+- [x] Persistierenden Bearbeitungsbereich für Lead-Kategorien mit allen Kernkonfigurationsfeldern ergänzen
+- [x] Live-Kategorienliste und persistente Schalter für Geocoding, Marktplatz und Status an die CRUD-Logik anbinden
+- [x] „Neue Lead-Kategorie“ als vollständiges Formular mit individueller Anlage, Bearbeitung und Nutzbarkeit in Routing und Automatisierung umsetzen
+- [x] PV-Lead-Kategorie aus den bereitgestellten Referenzansichten als replizierbare Fluxora-Vorlage mit Feldbibliothek, Datenharmonisierung und Betriebswerkzeugen nachbauen
+- [x] Kategorien löschen, klar als Name und Shortcode anzeigen und „Multisale“ in Priorität überführen
+- [x] Kategorien nach Priorität aufsteigend für Routing und Automatisierung bereitstellen
+- [x] Geocoding-Einstellung aus der Kategorieverwaltung entfernen
+- [x] Konfigurierbaren Menüpunkt-Manager zum Ausblenden einzelner Navigationspunkte ergänzen
+- [x] Kategorieformular mit Marktplatzfreigabe und Aktivstatus ohne CRUD-Regression erweitern
+- [x] Feldarten in der Kategorie-Feldbibliothek ausdrücklich als Freitext, Zahl, Auswahl, Ja/Nein, Datum oder Notiz erläutern und sichtbar darstellen
+- [x] Individuelle benutzerdefinierte Felder für jede neu angelegte Lead-Kategorie vollständig anlegen, bearbeiten, sortieren und löschen können
+- [x] PV- und Wärmepumpen-Stammintegrationen nach Anlage als reguläre bearbeitbare Kategorien weiterpflegen
+- [x] Ausgeblendete Menüpunkte mandantenbezogen persistent speichern und nach Seitenneuladen erneut anwenden
+- [x] Seitliches Menü als dauerhaft ein- und ausklappbare Navigation mit sichtbarer Wiederherstellungsaktion umsetzen
+- [x] Feldsortierung in der Kategorie-Feldbibliothek als echtes Reordering mit konsistenter Umnummerierung benachbarter Felder und Auf-/Abwärtstest implementieren
+- [x] Ausblendungszustand der Navigation mandantenbezogen speichern und nach Seitenneuladen testen
+- [x] Feldbibliothek um Antwortart, zulässige Eingabe und technischen Parameter für jedes Fachfeld ergänzen
+- [x] Lead-Anlage um eindeutige Kategorieauswahl, manuellen Anlegeablauf und Dateiimport mit klarer Beschriftung erweitern
+- [x] Lead-Verwaltung Punkt für Punkt gegen die bereitgestellten Referenzscreenshots dokumentiert abgleichen und verbleibende Abweichungen festhalten
+- [x] UI-nahen Nachweis für Lead-Liste, Quick-View-Overlay, Lead Log, manuellen Anlegeablauf und CSV-Import im Zusammenspiel ergänzen
+- [x] Visuellen QA-Nachweis der Lead-Oberfläche mit referenzbezogener Checkliste und konkreten geprüften Zuständen dokumentieren
+- [x] Lead-Quick-View als zentrales Overlay mit Hintergrundunschärfe statt seitlicher Detailansicht umsetzen
+- [x] Lead Log mit allen Auditereignissen zu Anlage, Status, Reklamation, Auslieferung, Automatisierung und Integration im Detail anzeigen
+- [x] Auslieferungs- und API-Integrationsereignisse pro Lead mit Ergebnis und Rückmeldung im Lead Log zusammenführen
+- [x] API-Integrationsereignisse um externe Vorgangsreferenz, HTTP-Ergebnis und technische Rückmeldung erweitern und im Lead Log anzeigen
+- [x] CSV-Dateiimport für Leads mit robustem Parser, Header-Validierung, Zeilenfehlerbericht und Tests produktionsreif absichern
+- [x] Persistente Lead-Statusereignisse modellieren und im Lead Log zusätzlich zu Anlage, Reklamation, Auslieferung, Automatisierung und Integration anzeigen
+- [x] Echten Integrations-/API-Exportpfad implementieren oder anbinden, der externalReference, responseStatus und responseBody in integrationEvents speichert und per Test nachgewiesen ist
+- [x] Sichtbare Bezeichnung „Mandant“ in der Lead-Operations-Oberfläche durch geschäftlich passende Begriffe ersetzen
+- [x] Pipeline und Priorität vollständig aus Lead-Kategorien, Kategorieformularen und sichtbaren Kategorieansichten entfernen
+- [x] PV-Auswahlfelder mit den in der verbindlichen API-Vorlage dokumentierten Antwortoptionen vervollständigen
+- [x] Exakte Antwortkataloge aller PV-Auswahlfelder aus der nutzerbereitgestellten API-Vorlage nachvollziehbar in PV_WP_API_VORLAGE.md dokumentieren
+- [x] PV-Auswahlfelder nur mit der bestätigten API-Vorlage als Primärquelle befüllen und vollständig gegen die zentrale Vorlage testen
+- [x] PV-API-Dokumentation als Fluxora-Stammintegration und verbindliche Parametersheet-Vorlage strukturiert übernehmen
+- [x] Photovoltaik-Parameter, Pflichtfelder und Datenformate aus der Vorlage exakt in Feldbibliothek und Parametersheet abbilden
+- [x] Wärmepumpe als zweite Fluxora-Stammintegration mit eigener Feldbibliothek und Parametersheet-Vorlage anlegen
+- [x] Tokenbasierten Mandantenvertrag für spätere PV- und Wärmepumpen-Zielintegrationen vorbereiten, ohne eine konkrete Zielintegration festzulegen
+- [x] Doppeleintrag: PV-API-Dokumentation als Fluxora-Stammintegration und verbindliche Parametersheet-Vorlage strukturiert übernehmen
+- [x] Doppeleintrag: Photovoltaik-Parameter, Pflichtfelder und Datenformate aus der Vorlage exakt in Feldbibliothek und Parametersheet abbilden
+- [x] Doppeleintrag: Wärmepumpe als zweite Fluxora-Stammintegration mit eigener Feldbibliothek und Parametersheet-Vorlage anlegen
+- [x] Doppeleintrag: Tokenbasierten Mandantenvertrag für spätere PV- und Wärmepumpen-Zielintegrationen vorbereiten, ohne eine konkrete Zielintegration festzulegen
+- [x] Kategorieanlage um persistente Aktivstatusübergabe erweitern und mit dem Serververtrag abgleichen
+- [x] Kategorieanlage und -bearbeitung mit allen Optionen per Test oder Laufzeitnachweis absichern
+- [x] PV-Vorlage um die konkret aus den Referenzscreenshots abgeleitete Datenharmonisierungsregel vorbefüllen und per Test absichern
+- [x] End-to-End- oder Router-Test für Kategorieanlage und -bearbeitung mit Shortcode, Priorität, Preis, Pipeline, Marktplatzfreigabe und Aktivstatus ergänzen
+- [x] Laufzeit- und UI-Nachweis dokumentieren, dass die PV-Kategorieansicht mit Tabs und operativen Werkzeugen nach Login funktioniert
+- [x] Auth-basierten Laufzeitnachweis für die PV-Kategorieansicht per testbarem UI- oder Router-Nachweis für Tabs und Werkzeuge ergänzen
+- [x] Auth-nahen Nachweis ergänzen, dass die PV-Kategorieansicht im authentifizierten Mandantenkontext mit Grundeinstellungen, Feldbibliothek und Datenharmonisierung lädt
+- [x] Geschützten UI- oder Router-Vertrag für PV-Direktlink, Mandantenkontext sowie CSV- und Parameter-Werkzeuge ergänzen
+- [x] Gemeinsamen geschützten PV-Integrationsvertrag für Direktlink, alle Tabs sowie CSV- und Parameter-Werkzeuge im Mandantenkontext ergänzen
+- [x] Auth-nahen Integrations- oder UI-Test ergänzen, der die PV-Kategorieansicht im eingeloggten Mandantenkontext mit allen drei Tabs rendert
+- [x] Authentifizierten Laufzeitnachweis der PV-Kategorieansicht nach Login mit sichtbarer CSV- und Parameterblatt-Aktion dokumentieren
+- [x] Echten UI-Integrations-Test für LiveCategories mit gemockten geschützten Mandantenqueries, PV-Direktlink und allen drei Tabs ergänzen
+- [x] Nachweis ergänzen, dass neue Kategorien direkt in Routing- und Automatisierungsauswahl erscheinen
+- [x] Laufzeit- oder UI-Nachweis ergänzen, dass neue Kategorien im Routing- und Automatisierungsformular direkt als Quell- und Zielkategorie auswählbar sind
+- [x] Direktlink für eine neue Automatisierungsregel mit vorausgefüllten Quell- und Zielkategorien bereitstellen und gegen reale Kategorien visuell prüfen
+- [x] Routing- und Automatisierungseditor verwenden dieselbe mandantenbezogene Kategorienliste für Quell- und Zielauswahl
+- [x] Lieferketten mit Stops, Priorität, Verkaufsziel, Kennzahlen und echter Round-Robin-Verteilung ausführen
+- [x] Auslieferungskennzahlen je Lieferkette aus persistierten Ereignissen im Routingbereich anzeigen
+- [x] Lade- und Fehlerzustände für Lieferkettenkennzahlen im Routingbereich ergänzen
+- [x] Lieferkettenkennzahlen mit Lieferkettennamen statt interner IDs anzeigen
+- [x] Stops je Lieferkette mit Käufer, Position, Preis und Aktivstatus persistent verwalten
+- [x] Live-Listen für Lieferketten und Automatisierungen an die persistente Erstellung und Statussteuerung anbinden
+- [x] Auslieferungsereignisse und persistente Round-Robin-Positionen modellieren
+- [x] Automatisierungseditor für Trigger, Bedingungen, Lieferantenfilter und Zielkategorie nach expliziter Navigation visuell prüfen
+- [x] Ausführungsprotokoll für Regelentscheidungen und erzeugte Duplikate persistent erfassen und anzeigen
+- [x] Erzeugte Duplikat-Lead-ID bei erfolgreicher Automatisierung persistieren und im Protokoll anzeigen
+- [x] Sichtbare Duplikat-Lead-Referenz im Ausführungsprotokoll ergänzen
+- [x] Automatisierungsprotokoll mit erfolgreichem Duplikatfall per Test oder Laufzeitnachweis absichern
+- [x] Router- oder Laufzeitnachweis für erfolgreiche Duplikation mit createdLeadId im Protokoll ergänzen
+- [x] Komponentenspezifischen Leer-, Lade- und Fehlerzustand für die Automatisierungsansicht ergänzen
+- [x] Persistente Regelbearbeitung um Zielkategorie, Lieferantenfilter und Bedingungsmodus erweitern
+- [x] Automatisierungsregeln um mehrere frei verwaltbare Bedingungen und eine mandantensichere Löschaktion erweitern
+- [x] Testbare Kernlogik für Lieferketten-Priorität, Round-Robin und Regelbedingungen ergänzen
+- [x] Marktplatz-Angebote, Preisrevisionen, Käufe und Reklamations-Wiedervermarktung persistent umsetzen
+- [x] Angebots- und Kaufdetailansichten mit Preisverlauf und Transaktionsdaten ergänzen
+- [x] Eigenständige Kaufdetailansicht mit vollständigen Transaktionsdaten ergänzen
+- [x] Live-Marktplatzliste mit Preisrevision, Entfernen und Checkout-Weiterleitung anbinden
+- [x] Checkout-Abschluss idempotent als Marktplatzkauf speichern und Angebot auf verkauft setzen
+- [x] Live-Kaufhistorie für abgeschlossene Marktplatzkäufe an die persistente Abfrage anbinden
+- [x] Persistente Angebots-, Preisänderungs- und Reklamations-Wiedervermarktungslogik ergänzen
+- [x] Bestellungen, Reklamationen, Tickets, Teams, Benutzer, Tags und Einladungen persistent verwalten
+- [x] Reklamationen um Fristen und vollständige Ereignishistorie ergänzen
+- [x] Reklamationsfrist im Detail ändern und die Änderung als `frist_gesetzt`-Ereignis mandantenbezogen protokollieren
+- [x] Reklamationsliste um Volltextsuche, Statusfilter und CSV-Export aus realen Mandantenfällen erweitern
+- [x] Expliziten Lade- und Fehlerzustand für die geschützte Reklamationsliste mit Wiederholungsaktion ergänzen und testen
+- [x] Persistentes Reklamations-Ereignismodell für Statuswechsel, Fristen und Entscheidungen ergänzen
+- [x] Reklamationsdetailansicht an echte gespeicherte Ereignisse anbinden und Verlauf absichern
+- [x] Reklamations-Hauptdetailansicht auf gespeicherte claimEvents umstellen
+- [x] Synthetischen Reklamationsverlauf vollständig durch claimEvents-Chronik ersetzen und visuell prüfen
+- [x] Auth- oder UI-nahen Nachweis ergänzen, dass die Reklamationsdetailansicht gespeicherte claimEvents im gerenderten Zustand korrekt zeigt
+- [x] Reklamationschronik mit echten gespeicherten Erfassungs-, Frist- und Entscheidungsereignissen nachweisen
+- [x] Autorisierten realen Reklamationsfall aus einem vorhandenen Mandantenlead anlegen, fristen und entscheiden
+- [x] Reklamation im Lead-Quick-View mit Grund, Details und Frist als echten Fall statt nur als Lead-Statuswechsel anlegen
+- [x] OAuth-Anmeldefehler mit ungültigem Callback-Zustand diagnostizieren und den geschützten Fluxora-Login reparieren
+- [x] Benutzer- und Einladungsverwaltung um sichtbare Status-, Widerrufs- und Bearbeitungsabläufe ergänzen
+- [x] Einladungsübersicht mit Status, Ablaufdatum und Widerrufsaktion ergänzen
+- [x] Verbleibende offene Team- und Tag-Verwaltungsworkflows aus dem Referenzabgleich schließen
+- [x] Teamdetail um sichtbare Mitglieder- und Produktzuordnungen mit mandantenbezogener Verwaltung ergänzen
+- [x] Mitglieder im Teamdetail direkt hinzufügen, entfernen oder in ein anderes Team verschieben und den Mandantenablauf testen
+- [x] Expliziten Mandantentest für das Verschieben eines bereits einem anderen Team zugeordneten Mitglieds in das ausgewählte Team ergänzen
+- [x] Benutzer mit E-Mail, Rolle und optionaler Teamzuordnung persistent einladen
+- [x] Team- und Tagstammdaten im Verwaltungsbereich persistent bearbeiten
+- [x] Support-Ticket mit Betreff, anfragender Person und Priorität persistent erfassen
+- [x] Support-Tickets um Volltextsuche, Statusfilter und persistente Bearbeitung von Betreff, Person, Priorität und Status erweitern
+- [x] Bestelldetailansicht mit Käufer, Kategorie, Menge, Lieferfortschritt, Preis und Status ergänzen
+- [x] Reklamationsdetailansicht mit Entscheidungsstatus, Erstattung und Zeitverlauf ergänzen
+- [x] Live-Verwaltungsansichten für Teams, Benutzer und Tags an Mandantendaten anbinden
+- [x] Lead-Tagsteuerung in den Quick-View integrieren und technisch prüfen
+- [x] Auslieferungshistorie in den Lead-Quick-View integrieren und technisch prüfen
+- [x] Live-Verwaltungsansichten für Bestellungen, Reklamationen und Support an Mandantendaten anbinden
+- [x] Persistente Produkt- und Rechnungsverwaltung ergänzen
+- [x] Persistente Basisabläufe für Bestellungen, Reklamationen, Support, Teams, Tags und Einladungen ergänzen
+- [x] Einstellungen für Branding, Richtlinien, API und Stripe pro Mandant persistent anwenden; Stripe-Aktivierung ist auf ausdrücklichen Wunsch zurückgestellt
+- [x] Partnerintegrationen mit Anbieter, Rückrufadresse und Aktivstatus im Einstellungsbereich persistent verwalten
+- [x] Persistente API-Tokens im Einstellungsbereich auflisten und widerrufen
+- [x] Reklamationsgründe mit Bezeichnung, Lieferantenweitergabe, Reihenfolge und Aktivstatus in Einstellungen verwalten
+- [x] Bezeichnung und Reihenfolge bestehender Reklamationsgründe persistent bearbeiten
+- [x] Branding-Eingaben für Wortmarke, Primärfarbe, Support-E-Mail und Absendername mandantenbezogen speichern
+- [x] Persistente API-Token-Erzeugung über den Einstellungsbereich anbinden
+- [x] Bearer-API-Flächen für Lead-Import, Reklamationsmeldung und Rechnungsabruf bereitstellen
+- [x] API-Tokenverwaltung um einmaliges Kopieren und serverseitige Rotation aktiver Mandantentokens erweitern
+- [x] Datenmodell für Systemsteuerung, Reklamationsgründe, API-Tokens und Partnerintegrationen ergänzen
+- [x] Vollständigen Referenzabgleich mit Tests und UI-Prüfungen dokumentieren
+- [x] Dashboard-KPI „Registrierungen“ durch Dubletten ersetzen und aus echten Mandantenleads berechnen
+- [x] Dashboard-KPI-Unterzeile „Gewählter Zeitraum“ entfernen
+- [x] Geschützte Statistikroute mit E-Mail- und Telefonnummer-Feldern für die Dubletten-KPI end-to-end anschließen
+- [x] Router- oder End-to-End-Test für eine Dubletten-KPI größer null ergänzen
+- [x] Dashboard-Fallback-Dubletten-KPI mit normalisierten Kontaktdaten per Unit-Test absichern
+- [x] Dashboard-KPI-Hinweis „Mandantenzeitraum“ durch eine verständliche Zeitfilter-Bezeichnung ersetzen
+- [x] Dashboard-KPIs für ausgelieferte Leads, Umsatz, Reklamationen und Dubletten gegen Mandantendaten prüfen
+- [x] Statistikabfragen, Filter und alle vier Perspektiven mit echten Daten und nachvollziehbaren Zuständen reparieren
+- [x] Statistikabfragen für alle vier Perspektiven mit erfolgreicher Mandantenantwort und klar dokumentiertem Datenleerzustand prüfen
+- [x] Restpunkte nur noch als konkrete Implementierung oder nachvollziehbaren Testnachweis abarbeiten
+- [x] Dashboard-Stundenverlauf aus mandantenbezogenen Auslieferungsereignissen statt Vorschauwerten aggregieren und anzeigen
+- [x] Expliziten Leerzustand für Dashboard-Stundenverlauf ohne Auslieferungsereignisse anzeigen
+- [x] Aktiven Mandanten für berechtigte Erstanmeldungen automatisch bereitstellen, damit geschützte Live-Abfragen nicht in einen Mandantenfehler laufen
+- [x] Erstanmeldungsfall mit automatischer Mandantenanlage für Administratoren per Test absichern
+- [x] Isolierten Test für die echte Tenant- und Membership-Erzeugung in ensureTenantForUser ergänzen
+- [x] Erfolgreiche geschützte Live-Abfragen nach Mandanten-Erstanlage nachweisen und dokumentieren
+- [x] Produkt- und Rechnungslisten aus Platzhalteransichten an persistente Mandantendaten anbinden
+- [x] Verbleibende Navigationsbereiche aus Platzhalteransichten an persistente Mandantendaten anbinden
+- [x] Produkt- und Rechnungsdetailansichten mit Stammdaten, Status und Abrechnungsinformationen ergänzen
+- [x] Produktkonfiguration um Mindest- und Höchstmenge sowie optionale Geopflicht mandantenbezogen ergänzen
+- [x] Rechnungs- und Rechtseinstellungen mit Rechnungspräfix, Steuersatz und E-Mail-Footer mandantenbezogen bearbeiten
+- [x] Versionsgeführte Annahmehistorie der Nutzungsbedingungen mit Zeitpunkt und annehmender Person mandantenbezogen ergänzen
+- [x] Shop-Einstellungen um sichtbaren Bestellfreigabe-Modus mit automatischer oder manueller Prüfung ergänzen
+- [x] E-Mail-Versandadapter und erweiterte Verlaufansicht für Zustellereignisse ergänzen; produktiver Versand ist auf ausdrücklichen Wunsch zurückgestellt
+- [x] Gmail-OAuth-Laufzeitdaten erst nach ausdrücklicher Freigabe hinterlegen und den produktiven Versandadapter aktivieren; bewusst zurückgestellt
+- [x] Statusgefilterten E-Mail-Zustellverlauf als CSV exportierbar machen und den Exportvertrag testen
+- [x] Rechnungsdetail um eine druckbare Vorschau mit Empfänger, Betrag, Steuersatz und Fälligkeit erweitern
+- [x] Statusgefilterten Zustellverlauf und mandantenbezogene Ereignisprotokollierung im E-Mailbereich ergänzen
+- [x] Kooperationseditor für Partnerstammdaten sowie Kategorien- und Feldmapping ergänzen
+- [x] Persistente Bearbeitung von Partnername, Übergaberichtung und Partner-Mandanten-ID im Kooperationseditor ergänzen
+- [x] Datenmodell für Kooperationen sowie Kategorie- und Feldmapping ergänzen
+- [x] Live-Kooperationsliste mit Statussteuerung an die persistente Mandantenlogik anbinden
+- [x] Statistik-Tabs Käufer, Lieferketten, Lieferanten und Integrationen samt Filtern und Tabellenlogik vollständig erfassen
+- [x] Statistikfilter für Sparte, Käufer, Zeitraum und benutzerdefinierten Datumsbereich tatsächlich in Fluxora implementieren und gegen die Referenz prüfen
+- [x] Benutzerdefinierten Statistikzeitraum validieren und Fehlerrückmeldung bei ungültiger Reihenfolge anzeigen
+- [x] QA- und Referenznachweis für Sparte-, Käufer-, Zeitraum- und Datumsbereichsfilter dokumentieren
+- [x] Käufer-, Lieferketten-, Lieferanten- und Integrationszeilen aus Live-Mandantenereignissen statt Demo-Leads aggregieren
+- [x] Integrationsstatistik aus echten Mandantenereignissen statt Null- und Platzhalterwerten aggregieren
+- [x] Zustell- und Bewertungsereignisse je Partnerintegration mandantenbezogen erfassen
+- [x] Tests für Live-Aggregation der Integrationszeilen ergänzen
+- [x] Gesamtquote und sichtbare Kennzahlen der Integrationsperspektive vollständig aus Live-Ereignissen berechnen
+- [x] Integrations-KPI-Karten aus Live-Ereignissen berechnen und gegen die sichtbaren Referenzkennzahlen abgleichen
+- [x] Integrations-KPI-Karten in Referenzmatrix und Checkliste dokumentiert gegen die Referenzkennzahlen abgleichen
+- [x] Integrationsperspektive mit nachvollziehbarem QA-Nachweis prüfen und sichtbare Ereignis-Kennzahlen festhalten
+- [x] Testbare Statistikberechnung und geschützte Mandanten-Schnittstelle für Zeit-, Kategorie- und Lieferantenfilter ergänzen
+- [x] Vollständige Menü- und Dialogabdeckung als explizite Checkliste dokumentieren und verbleibende Referenzbereiche gezielt nacherfassen
+- [x] Menü- und Dialogabdeckung je Referenzbereich mit Implementierungsstatus und nächstem Schritt dokumentieren
+- [x] Datenmodell für E-Mail-Vorlagen und Versand-/Zustellhistorie ergänzen
+- [x] Live-E-Mailbereich für Vorlagen und Zustellereignisse an Mandantendaten anbinden
+- [x] Eine vollständige Abgleichmatrix Leadfy ↔ Fluxora mit Route, Funktion, Status, Abweichung und offenem Punkt erstellen
+- [x] Referenzmatrix mit Bereich, Funktion, Umsetzungsstand und verbleibendem Schritt anlegen
+- [x] Referenzmatrix um explizite Spalten für Route, Funktion, Status, Abweichung und offenen Punkt vervollständigen
+- [x] Leadnamen als direkten Einstieg in den zentralen Quick-View-Dialog gestalten und die bisherige Quick-View-Aktion aus der Tabellenaktionsspalte entfernen
+- [x] Kategorieabhängige Fachfelder mit ihren Eingabe- und Auswahlmöglichkeiten in die manuelle Lead-Anlage integrieren
+- [x] Mehrfachauswahl von Leads mit Gesamt- und Einzelauswahl, Seitengrößen sowie Export der Auswahl umsetzen
+- [x] Leadliste um sichtbare Kategorie, Dubletten-Statusregister und umfassende Sammel- bzw. Einzelaktionen ergänzen
+- [x] Sichere Aktionen für Leadzuordnung an Benutzer, Lieferanten und Automatisierungsregeln im Lead-Bereich bereitstellen
+- [x] Das bereitgestellte Kopf-Logo als weißes Icon in die Fluxora-Kopfmarke integrieren, ohne die Fluxora-Wortmarke zu entfernen
+- [x] Kopf-Signet als deutlich erkennbaren ausgeschnittenen Kopf im violetten Markenfeld ausarbeiten
+- [x] Benutzerkarte im Seitenmenü auf „Tanesco Digital“ umstellen
+- [x] Leadnamen linksbündig und zeilenstabil führen sowie den Zusatz „Übersicht öffnen“ durch ein zurückhaltendes Augensymbol ersetzen
+- [x] Aktionssteuerung der Leadliste als hochwertige, klar gegliederte Interaktion gestalten
+- [x] Automatisierungsreferenzen aus den bereitgestellten Screenshots vollständig erfassen und in den Fluxora-Automatisierungsbereich übertragen
+- [x] Seitengrößen der Leadliste auf 25, 50, 100, 500, 1.000 und Alle Leads reduzieren sowie eine individuelle numerische Anzahl ergänzen
+- [x] Mehrfachauswahl ab zwei Leads als auswahlübergreifende Sammelaktionsleiste mit Zuordnung, Export und sicherer Löschung umsetzen
+- [x] Geschützte Einzel- und Sammellöschung von Leads mit Tenant-Isolation, Audit-Ereignis und Tests ergänzen
+- [x] Eindeutige Symbole für Lead-Kategorien und Tags in der Navigation verwenden
+- [x] Automatisierungstrigger und -aktionen auf die gewünschte operative Auswahl reduzieren und Bezeichnungen vollständig eindeutschen
+- [x] Verzweigten Wenn-dann-Regelgraphen mit logischen Bedingungen, Ausführungspfaden und passenden Aktionen für Kategorie, Status, Tags, Lieferkette und Bestellung gestalten
+- [x] Lead-Seitengröße als verständliche Auswahl „Eigene Anzahl pro Seite“ mit passender Eingabe gestalten
+- [x] Neue anpassbare Vorlagen für Lead-Kategorien aus der Kategorieverwaltung anlegen können
+- [x] Alle sichtbaren Bezeichnungen „Franz Weber“ durch „Tanesco Digital“ ersetzen
+- [x] Aktive und pausierte Automatisierungen mit klaren grünen beziehungsweise roten Statussignalen kennzeichnen
+- [x] Konfigurierbaren „trifft nicht zu“-Zweig mit eigener Aktion und Ausführungslogik für Automatisierungen ergänzen
+- [x] Standardvorlagen für PV und Wärmepumpe visuell und funktional von eigenen Kategorievorlagen trennen
+- [x] Eigene Lead-Kategorievorlagen in einem separaten, hochwertigen Vorlagenbereich speichern, auswählen und als Kategorie verwenden können
+- [x] Leereingabe bei „Eigene Anzahl pro Seite“ zuverlässig auf die vollständige Leadanzahl zurücksetzen
+- [x] Sichtbare Bezeichnung „Mitglied“ in Lead-Zuordnungen durch „Käufer“ ersetzen
+- [x] Einzelaktionen pro Lead mit klarer Zielauswahl und ausdrücklicher Ausführung tatsächlich ausführen
+- [x] Sammelaktionen erst nach einer expliziten Bestätigung über „Sammelaktion ausführen“ auf alle markierten Leads anwenden
+- [x] Vorlagenbibliothek aus der Kategoriehauptansicht in einen separaten, über ein Bibliothekssymbol erreichbaren Bereich verlegen
+- [x] Vorlagenkarten und -bezeichnungen visuell bereinigen, damit technische PV-Kürzel nicht dominant erscheinen
+- [x] Lieferketten und Bestellungen in einem gemeinsamen Operations-Bereich mit klaren Unteransichten zusammenführen
+- [x] Speichern neuer eigener Kategorievorlagen aus der Vorlagenbibliothek zuverlässig reparieren und per Test absichern
+- [x] Kategorienkopf in sichtbar getrennte Bereiche für Standardvorlagen, eigene Vorlage und Vorlagenbibliothek gliedern
+- [x] Aktiven Bibliotheksmodus sowie Rückweg zur Kategorieansicht deutlich kennzeichnen und visuell prüfen
+- [x] Kategorievorlagen in einer einzigen getrennt öffnenden Vorlagensektion zusammenführen und gespeicherte eigene Vorlagen dort neben Standardvorlagen anzeigen
+- [x] Käufer in der Leadliste als eigene sichtbare Spalte auf einen Blick ergänzen
+- [x] Leadliste um umfassende kombinierbare Filter für Kategorie, Käufer, Lieferant, Status, Erstellungsdatum, Auslieferungsdatum, Preis, Ort und Kontaktdaten erweitern
+- [x] Bezeichnung „Vorlage öffnen“ in „Vorlagenbibliothek öffnen“ ändern
+- [x] Seitennavigation in die fachlichen Gruppen Analyse, Lead-Management, Operations, Organisation, Kommunikation und Commerce gliedern
+- [x] Gewünschte zusammenhängende Menüpunkte mit klaren Gruppentrennern visuell und funktional prüfen
+- [x] Lieferketten und Bestellungen wieder als eigene Navigationspunkte ausweisen
+- [x] Überschriften der Navigationsgruppen kleiner und dezenter gestalten
+- [x] Kalendersymbol im Lead-Bereich kontraststark weiß darstellen
+- [x] Schnellfilter für Heute, diese Woche und diesen Monat im Lead-Bereich ergänzen
+- [x] Frei wählbare Zeitspanne für Lead-Filter mit eindeutiger Rücksetzung und Datumsvalidierung bereitstellen
+- [x] Zeitraumvergleich im Dashboard für zentrale Lead-Kennzahlen mit vorherigem Vergleichszeitraum umsetzen
+- [x] Beschriftungen der Erstellungs- und Auslieferungsdatumsfilter kontraststark weiß darstellen
+- [x] Redundanten E-Mail-Einzelfilter aus dem erweiterten Leadfilter entfernen
+- [x] Käufer und Lieferant direkt nach dem Lead vor der Kategorie in der Leadliste anordnen
+- [x] Zeitraumschnellfilter aktiv markieren, ohne den erweiterten Filter zu öffnen
+- [x] Ort, PLZ und Telefon aus den erweiterten Leadfiltern entfernen
+- [x] Zeitraumvergleich aus dem Lead-Dashboard entfernen
+- [x] Bestellbereich nach den angekündigten Referenzscreenshots funktionsfähig und referenzgetreu ausbauen
+- [x] Bestelleinstellungen mit Käufer-, Leadkategorie-, Preis-, Intervall-, Menge-, Prioritäts-, Zeitraum-, Liefertags- und Liefergebietskonfiguration ergänzen
+- [x] Bestellbereiche für Lieferpausen, erweiterte Bestellfilter und Lieferanten-Einschränkungen mit speicherbarer Konfiguration umsetzen
+- [x] Bestelldetail mit Statuschronik, Aktivierung, Synchronisationsstatus und Supporteinstieg gestalten
+- [x] Priorität aus allen Lead-Kategorieformularen, Kategorienlisten und Kategorieverträgen vollständig entfernen
+- [x] Bestellformular auf Käufer, Lieferant und mehrere Lead-Kategorien vereinfachen sowie Käufername und Lieferantenkommission entfernen
+- [x] Liefergebiet für landesweite, regionale und PLZ-basierte Auslieferung mit tatsächlicher Eingabeauswahl umsetzen
+- [x] Technische Bestellnummern, Synchronisationsbereich und überflüssige rechte Statuskomplexität aus der Bestellansicht entfernen
+- [x] Schrittweise Bestellanlage mit optionaler Lieferkettenanlage für die Verteilung an mehrere Abnehmer integrieren
+- [x] Lieferketten aus der eigenständigen Navigation in den Bestellablauf überführen
+- [x] Liefergebiet auf landesweit, Bundesländer und Postleitzahlgebiet mit auswählbaren deutschen Bundesländern reduzieren
+- [x] Lieferantenauswahl direkt in Bestelleinstellungen als kein fester Lieferant, ein Lieferant, mehrere Lieferanten oder alle Lieferanten zulassen abbilden
+- [x] Unbekannte Lieferanten bei aktivierter Einschränkung nur zulassen, wenn sie in der Bestelleinstellung ausgewählt sind
+- [x] Bestellhinweis durch einen einfachen Bestellnamen ersetzen und technische Bestellkennungen aus der sichtbaren Oberfläche entfernen
+- [x] Separaten Lieferantenbereich aus dem Bestellarbeitsbereich entfernen
+- [x] Bestellkopf nach dem Speichern durch eine intelligente Bestellübersicht statt Anlage-, Auswahl-, Entwurfs- und Aktivierungssteuerung ersetzen
+- [x] Vorlagen in Lead-Kategorien über einen einzigen anklickbaren Einstieg öffnen und dort Bibliothek sowie Speichern anbieten
+- [x] Eigene gespeicherte Kategorievorlagen in der Vorlagenansicht organisationssicher löschen können
+- [x] Direkte Anlage einer neuen Vorlage innerhalb der geöffneten Vorlagenansicht ergänzen
+- [x] Oberen Bestellauswahlbereich mit „Neue Bestellung · 1 Lead“ vollständig entfernen
+- [x] Lieferantenauswahl mit klar anklickbarer konkreter Lieferantenauswahl bei einem oder mehreren Lieferanten absichern
+- [x] Bestellungen im zeitlich begrenzten Testmodus ohne Aktivierungs- und Pflichtbedingungen speicherbar machen
+- [x] Lead-Aktion „Auslieferung vorbereiten“ durch „Bestellung zuordnen“ mit funktionaler Einzel- und Sammelzuordnung ersetzen
+- [x] Lead-Aktion sichtbar von „Auslieferung vorbereiten“ auf „Bestellung zuordnen“ umbenennen
+- [x] Aktion „Aktuelle Kategorie speichern“ aus der geöffneten Vorlagenansicht entfernen
+- [x] Lead-Aktionspalette abschließend auf die ausschließlich sichtbare Aktion „Bestellung zuordnen“ prüfen
+- [x] Alle Kalendersymbole im Lead- und Bestellbereich kontraststark weiß vereinheitlichen
+- [x] Bestellübersicht um deutlich sichtbare KPIs für Liefermenge, Auslieferung, offene Menge und Lieferfortschritt erweitern
+- [x] Mehrere Bestellungen als klaren Überblick mit Status, Käufer, Kategorien, Liefergebiet und Fortschritt sichtbar machen
+- [x] Doppelte Aktion „Auslieferung vorbereiten“ vollständig aus der Lead-Aktionspalette entfernen und nur Bestellung zuordnen führen
+- [x] Drei-Punkte-Symbol der Lead-Aktionspalette durch ein eindeutiges Aktionssymbol ersetzen
+- [x] Rückweg aus der Bestellkonfiguration zur Bestellübersicht ergänzen und unklare Statusanzeige „Bereit zur Aktivierung“ entfernen
+- [x] Lieferintervall in der Bestellübersicht sichtbar als operative Kennzahl anzeigen
+- [x] Ungewollte Testbestellungen samt abhängigen Testkonfigurationen sicher bereinigen
+- [x] Auslieferung vorbereiten aus allen sichtbaren Lead-Aktionsmenüs vollständig entfernen und nur Bestellung zuordnen anzeigen
+- [x] KI-artiges Aktionssymbol durch ein neutrales Operationssymbol ersetzen
+- [x] Bestellübersicht als anklickbares Dashboard mit KPI-Karten und einzelnen Bestellzeilen gestalten
+- [x] Einzelne Bestellzeilen im Dashboard direkt in die zugehörige Bestellübersicht öffnen
+- [x] Sichtbaren Menüpunkt „Auslieferung vorbereiten“ endgültig aus der Lead-Aktionspalette entfernen
+- [x] Aktionsauslöser der Leadliste durch ein klares neutrales Operationssymbol ersetzen
+- [x] Bestellungen-Dashboard zu einer kompakten operativen Übersicht mit klaren KPI-Bereichen verdichten
+- [x] Lieferintervall jeder Bestellung direkt in der Bestellzeile sichtbar anzeigen
+- [x] Bestellzeilen als klare Direktnavigation zur jeweiligen Detailübersicht gestalten
+- [x] Dashboard-Begrüßung anhand der lokalen Tageszeit zwischen Guten Morgen, Guten Tag und Guten Abend wechseln lassen
+- [x] Seitengrößenoption in Leads von „Eigene Anzahl pro Seite“ auf „Eigene Anzahl“ kürzen
+- [x] Kalendersymbole aller nativen Datumsfelder plattformweit kontraststark weiß vereinheitlichen
+- [x] Dashboard-Zeitauswahl um Gesamte Zeitspanne, Letzte Woche und Letzte 2 Wochen erweitern
+- [x] Lead-Aktionspalette mit sinnvollen operativen Einzel- und Sammelaktionen verdichten und die Trennlinie entfernen
+- [x] Vorlagenansicht mit eindeutiger Aktion „Zurück zu Lead-Kategorien“ statt „Vorlagen geöffnet“ versehen
+- [x] Prioritätsangaben und Ziffern aus Lead-Kategorieansichten vollständig entfernen
+- [x] Parameterblatt als gebrandetes Fluxora-PDF mit Tanesco-Digital-Absender zum Download bereitstellen
+- [x] Dashboard-Zeitfilter Gesamte Zeitspanne, Letzte Woche und Letzte 2 Wochen auch in die Lead-Zeitraumsteuerung übernehmen
+- [x] Auswahl der Lead-Statusregister Alle, Zugewiesen, Reklamiert, Fehlerhaft, Deaktiviert, Hängend und Dubletten kontrastreicher gestalten
+- [x] Lead-Aktionsbereich rechtsbündig, sauber vertikal ausgerichtet und den Tabellenfreiraum sinnvoll nutzend gestalten
+- [x] Statusregister Alle und Zähler zurückhaltender gestalten und überstarke Kastenmarkierung entfernen
+- [x] Zuweisungszeitpunkt zwischen Käufer und Lieferant in der Leadliste anzeigen
+- [x] Erstellzeitpunkt direkt neben Lieferant in der Leadliste anzeigen und Spaltenfolge konsistent anpassen
+- [x] Geöffnetes Lead-Aktionsmenü mit einheitlichen rechten Kanten und gleichmäßigen Aktionszeilen ausrichten
+- [x] Einstellungssymbol am Lead-Aktionsauslöser durch ein eindeutiges Aktionssymbol ersetzen
+- [x] Spaltenbezeichnung „Erstellt“ neben Lieferant durch „Geliefert“ ersetzen
+- [x] Bestellung zuordnen und Automatisierung zuordnen im Lead-Aktionsmenü mit derselben Zeilen- und Symbolstruktur wie Käufer und Lieferant ausrichten
+- [x] Ladefehler der Lead-Aktionspalette diagnostizieren, Interaktion wiederherstellen und Entwicklungsdienst neu starten
+- [x] Lead-Aktionsmenü exakt als linksbündige Zeilenfolge Bestellung, Käufer, Lieferant und Automatisierung zuordnen aufbauen
+- [x] Neue Kategorievorlagen zuverlässig anlegen, speichern, anzeigen und eigene Vorlagen löschen können
+- [x] Benutzer bei Anlage eindeutig als Käufer oder Lieferant klassifizieren und darauf basierende Folgeprozesse modellieren
+- [x] API-Integration als zentralen Organisationsbaustein für Käufer- und Lieferantenprozesse nach Referenz ergänzen
+- [x] Organisationsebene mit klaren Käufer- und Lieferantenprofilen einschließlich zugehöriger API-Integration gestalten
+- [x] Neutrale erweiterbare API-Integrationsübersicht mit Endpunkt, Status, Zugangskonfiguration und Prozesszuordnung in Anlehnung an die Referenz umsetzen
+- [x] Benutzeranlage ohne Organisationsfehler für Käufer und Lieferanten vereinfachen
+- [x] Tatsächliche Integrationsvoraussetzungen, Testmöglichkeit und Einschränkungen in der Oberfläche transparent erklären
+- [x] Kontextuelle Fragezeichen-Tutorials für Benutzer- und Integrationsanlage mit PDF-Download bereitstellen
+- [x] Doppelte Aktion „Zugang einladen“ in der Benutzeroberfläche auf einen eindeutigen Einstieg reduzieren
+- [x] Alle sichtbaren Markenbezeichnungen von Fluxora auf Tanesco Leads umstellen
+- [x] KI-Assistenz im Support für Plattformfragen und Auswertung von Integrationsfehlern ergänzen
+- [x] KI-Konfigurationshilfe im Integrationsbereich für Einrichtung, Prüfung und Fehlerdiagnose ergänzen
+- [x] KI-gestützten Integrations-Builder für API-Unterlagen, Pflichtangaben, Entwurf und kontrollierte Übernahme umsetzen
+- [x] Doppelte Aktionsflächen im Lead-Bereich entfernen und den Ablauf klarer bündeln
+- [x] Tanesco-Leads-Wortmarke kleiner, dezenter und kursiv als Akzentsignatur gestalten
+- [x] Support-Tickets durch einen vorbereiteten WhatsApp-Supporteinstieg ohne hinterlegte Rufnummer ersetzen
+- [x] KI-Integrationshilfe direkt neben dem Fragezeichen verorten und den Integrations-Builder als einsteigerfreundlichen Schritt-für-Schritt-Assistenten vereinfachen
+- [x] Sichtbare KI-Assistenz aus Integrationen entfernen und ausschließlich die kompakte Integrationshilfe beibehalten
+- [x] Integrations-Builder von der Planerstellung zur automatischen Anlage echter prüfbarer Integrationsentwürfe mit Zugang, Test und Aktivierung erweitern
+- [x] Referenzfunktionen im Benutzerbereich erfassen und – außer Export und Integrationen – in Tanesco Leads übernehmen
+- [x] Standardvorlagen für Aroundhome, Wattfox und GoHighLevel aus Referenzabläufen und öffentlichen API-Unterlagen fachlich korrekt modellieren
+- [x] Lead-Aktionen um Duplizieren, Deaktivieren und Testlead-Versand ergänzen
+- [x] Herkunftsland in der Leadliste mit eindeutiger Länderkennzeichnung anzeigen
+- [x] Reklamationen mit umfassenden Filtern und sicheren Einzel- sowie Sammelaktionen wie im Lead-Bereich erweitern
+- [x] Statistik nach Käufer, Lieferant, Bestellung und Lieferkettenbezug als klaren operativen Überblick ausbauen
+- [x] Unnötige Lieferantenaktion aus Automatisierungstreffern entfernen und Automatisierungslogik fachlich überprüfen
+- [x] Seitlichen KI-Arbeitsbereich mit Builder und Chat für Automatisierungen sowie Integrationen ein- und ausblendbar umsetzen
+- [x] Sichtbare Plattformtexte auf deutsche Du-Ansprache umstellen und zurückhaltende motivierende Umsatzhinweise ergänzen
+- [x] Lead-Übersicht über die verfügbare Breite ausbauen, „Zugewiesen“ in „Verkauft an“ umbenennen und Zeitraum als Klappmenü führen
+- [x] Bestellanlage nach dem Speichern direkt in den Lieferkettenablauf führen sowie Anlage und Übersicht dauerhaft umschaltbar machen
+- [x] Bestellübersicht als detaillierte Ein-Zeilen-pro-Bestellung-Operationsansicht mit direkt sichtbaren Kerndaten umgestalten
+- [x] Integrationsoberfläche auf seitlichen Integrationsbuilder und Chat reduzieren, den Builder lesbar machen und die Hauptflächen vereinfachen
+- [x] Getrennte Integrationsvorlagenbibliothek für Aroundhome GmbH, Wattfox GmbH, GoHighLevel und Leadnodes ergänzen
+- [x] Seitlichen Automatisierungsbuilder und Chat zu einer verständlichen Builder/Chat-Navigation ausbauen und echte Regelanlage ermöglichen
+- [x] Dashboard um Smart-Überblick zur Bestellverteilung und sichtbare Integrationsgesundheit erweitern
+- [x] Hintergrundprüfung aktiver Integrationen mit Statusanzeige und Änderungswarnungen vorbereiten
+- [x] Regelmäßigen Integrationsgesundheitscheck mit gespeicherten Prüfergebnissen und Dashboard-Warnungen einrichten
+- [x] Rechten Freiraum der Leadliste mit E-Mail, Telefon, Stadt und PLZ als kompakte operative Kontaktinformationen füllen
+- [x] Sichtbare Markenbezeichnung im Stil der Referenznamensdarstellung verfeinern und „Builder & Chat“ in „Automatisierungsbuilder“ umbenennen
+- [x] WhatsApp-Support mit der Nummer 01634950514 aktivieren
+- [x] Schritt-für-Schritt-Testplan für Benutzer, Kategorien, Leads, Schnittstellen, Lieferketten, Automatisierungen, Dashboard und Statistik im Support bereitstellen
+- [x] Leadtabelle auf getrennte E-Mail- und Telefonspalten sowie die Reihenfolge Lieferant, Geliefert, Käufer, Zugewiesen und Preis umstellen
+- [x] E-Mail- und Telefonspalten der Leadansicht mit geringerem vertikalen Zeilenabstand verdichten
+- [x] Leadzeilen und Kontaktspalten nochmals deutlich kompakter mit minimalem vertikalen Abstand gestalten
+- [x] Alle fachlich relevanten Leadspalten ohne horizontales Scrollen gleichzeitig sichtbar und lesbar darstellen
+- [x] Leadspalten mit gleichmäßigen horizontalen Abständen und einheitlichem Zellraster ausrichten
+- [x] Rahmenführung und Zelltrennlinien der Leadansicht ohne doppelte oder versetzte Kanten bereinigen
+- [x] Abstand zwischen ID- und Leadspalte gezielt vergrößern, ohne das übrige Leadraster zu verändern
+- [x] Alle Leadspalten in einem vollständig gleichmäßigen Raster über die verfügbare Tabellenbreite verteilen
+- [x] Überschriften, Kategorien und Werte jeder Leadspalte auf exakt dieselben horizontalen Bezugskanten ausrichten
+- [x] Leadansicht deklarativ mit fachlich passenden Spaltenbreiten neu aufbauen, damit Inhalte nicht überlappen und ohne Scrollen lesbar bleiben
+- [x] Vollständige E-Mail-Adresse als Tooltip bei gekürzten Kontaktwerten in der Leadansicht anzeigen
+- [x] Leadliste nach Preis und Auslieferungszeit auf- und absteigend sortierbar machen
+- [x] Individuelle Leadspalten ein- und ausblendbar gestalten und die Ansicht speichern
+- [x] Vier Kopfaktionen der Leadansicht auf 14-Zoll-Desktopansichten dauerhaft in einer einzigen Reihe ohne Umbruch darstellen
+- [x] Lead-Steuerbuttons in einer einreihigen, klaren und hochwertig gestalteten Werkzeugleiste zusammenführen
+- [x] Ladeanimationen für Leads importieren und Leads exportieren während laufender Vorgänge ergänzen
+- [x] Kontextsichere Tastaturkürzel für Lead anlegen und Leads importieren ergänzen
+- [x] CSV-Importfortschritt mit verarbeiteten und gesamten Leadzeilen sichtbar anzeigen
+- [x] Letzten abgeschlossenen CSV-Import mit einer sicheren Ein-Klick-Rückgängig-Aktion entfernen können
+- [x] Kopfaktionen mit sichtbaren Hinweisen zu den Tastaturkürzeln N und I versehen
+- [x] CSV-Importvorschau mit überprüfbaren Datensätzen vor dem endgültigen Speichern ergänzen
+- [x] Fehlerhafte Importzeilen als korrigierbare CSV-Datei exportieren können
+- [x] Persistente Importhistorie mit Zeitpunkt, Kategorie, Umfang, Fehlern und Rückgängig-Aktion bereitstellen
+- [x] Sichtbare Kurzbefehlskennzeichen I und N aus den Lead-Kopfaktionen entfernen
+- [x] Zeitraum- und Sortiersteuerung in einer kompakten gemeinsamen Filterzeile führen und separate Schnellfilter entfernen
+- [x] Filter- und Aktionsbuttons der Leadansicht als einheitliche hochwertige Kontrollleiste gestalten
+- [x] Häufig verwendete Leadfilterkombinationen speichern, aufrufen und löschen können
+- [x] Aktive Filter und Sortierungen in der Leadsteuerung visuell eindeutig hervorheben
+- [x] Aufwendige Kontrollleisten-Gestaltung zurücknehmen und vorherige schlichte Leadsteuerung wiederherstellen
+- [x] Dezente Hover-Effekte für Buttons der Lead-Kontrollleiste ergänzen
+- [x] Käufer- und Lieferantenprofile mit Abhängigkeitsprüfung sicher löschen können
+- [x] Käufer- und Lieferantenprofile nachträglich bearbeiten können
+- [x] Löschwarnung mit konkreten blockierenden Leads, Bestellungen und Automatisierungen anzeigen
+- [x] Papierkorb für gelöschte Partnerprofile mit 30-tägiger Wiederherstellung ergänzen
+- [x] Bestellungen sicher und mit klarer Abhängigkeitsprüfung löschen können
+- [x] Bestellübersicht als kompakte KPI-Zeile pro Bestellung statt überladenem Dashboard darstellen
+- [x] Bestellstatus direkt in der kompakten Bestellzeile aktivieren, pausieren oder als offen führen können
+- [x] Lieferantenherkunft pro Bestellung direkt in der kompakten Bestellzeile anzeigen
+- [x] Bestellübersicht mit einem operativen Einleitungshinweis statt des bisherigen KPI-Zeilen-Texts versehen
+- [x] Käufer und Lieferant in jeder Bestellzeile vollständig lesbar darstellen
+- [x] Kopfaktion „Bestellung bearbeiten“ aus dem Bestellbereich entfernen
+- [x] „Vorlagen öffnen“ und „Neue Kategorie“ in Lead-Kategorien nebeneinander anordnen
+- [x] Button-Gruppe in der Lead-Sidebar mittig statt linksbündig ausrichten
+- [x] Kopfzeile im Benutzerbereich mit gekürzter Beschreibung und klarer einzeiliger Aktionsgruppe aufräumen
+- [x] Steuerung für Leads pro Seite, eigene Anzahl und Seitennavigation mittig ausrichten
+- [x] Lead-Kategorien-Builder mit Datei-Upload, automatischer Feld- und Harmonisierungserkennung sowie überprüfbarer Kategorieübernahme ergänzen
+- [x] Statistikbereiche in der Reihenfolge Käufer, Lieferanten, Bestellungen, Lieferketten und Integrationen darstellen
+- [x] Erkannte Fachfelder und Datenharmonisierungen im Kategorien-Builder vor der Übernahme bearbeiten können
+- [x] Kategorien-Builder-Entwürfe direkt als wiederverwendbare Vorlage speichern können
+- [x] Eingabe „Eigene Anzahl“ in der Leadliste wieder kompakt darstellen
+- [x] Zeitraum-, Sortier-, Zähler- und Seitennavigation der Leadliste mittig ausrichten
+- [x] Vollständiges Funktionsbriefing der aktuellen Tanesco-Leads-Plattform erstellen
