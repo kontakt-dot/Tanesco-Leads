@@ -835,6 +835,8 @@ html:not(.dark) .email-tab.is-active::after { background: linear-gradient(135deg
 html:not(.dark) .email-tab-count { background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .email-tab-count.is-unread { background: #f3f6f8 !important; color: #0f172a !important; }
 html:not(.dark) .email-tab.is-active .email-tab-count { background: #f3f6f8 !important; color: #0f172a !important; }
+@media (max-width:640px) { html:not(.dark) .email-tab { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; } }
+@media (max-width:640px) { html:not(.dark) .email-tab.is-active { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; } }
 html:not(.dark) .preview-contact { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .preview-contact select { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; color: #0f172a !important; }
 html:not(.dark) .mail-tabs { border-bottom: 1px solid #e8ecf1 !important; }
@@ -866,6 +868,7 @@ html:not(.dark) .source-card.is-active { border-color: #d9dfe7 !important; backg
 html:not(.dark) .source-card.is-active svg { color: #111318 !important; }
 html:not(.dark) .source-card.is-active strong { color: #0f172a !important; }
 html:not(.dark) .source-card.is-active small { color: #4b5568 !important; }
+@media (max-width:640px) { html:not(.dark) .source-card.is-active { box-shadow: inset 0 -3px 0 0 rgba(15, 23, 42, .05) !important; } }
 html:not(.dark) .upload-row { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
 html:not(.dark) .upload-main strong { color: #0f172a !important; }
 html:not(.dark) .upload-main small { color: #4b5568 !important; }
@@ -2037,3 +2040,11 @@ html:not(.dark) .lead-temp-head strong { color: #101828 !important; }
 html:not(.dark) .lead-temp-bar { background: #e9edf3 !important; }
 html:not(.dark) .lead-temp-reasons { color: #475467 !important; }
 html:not(.dark) .lead-temp-reasons li::before { background: #98a2b3 !important; }
+
+/* Handy: Pipeline-Reihe und Reiter-Kacheln im hellen Design */
+@media (max-width: 640px) {
+  html:not(.dark) .source-card.is-active { box-shadow: inset 0 -3px 0 0 #bc001d !important; }
+  html:not(.dark) .email-tabs { border-bottom: 0 !important; }
+  html:not(.dark) .email-tab { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+  html:not(.dark) .email-tab.is-active { border-color: #bc001d !important; background: linear-gradient(135deg, rgba(188, 0, 29, .10), rgba(251, 44, 54, .05)) !important; color: #0f172a !important; }
+}

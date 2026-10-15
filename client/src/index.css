@@ -1528,7 +1528,19 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .email-tab-count{display:inline-grid;place-items:center;min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.09);color:#cbd5e1;font-size:11px;font-style:normal;font-weight:600;line-height:1}
 .email-tab-count.is-unread{background:rgba(129,120,255,.3);color:#ddd9ff}
 .email-tab.is-active .email-tab-count{background:rgba(129,120,255,.26);color:#ddd9ff}
-@media (max-width:640px){.email-tab{padding:9px 11px 10px;font-size:12px}.email-tab span{display:inline}}
+.email-tab .tab-short{display:none}
+/* Handy: Reiter nicht mehr abgeschnitten und seitlich scrollen, sondern als Kacheln in drei Spalten – alle auf einen Blick, der aktive farbig */
+@media (max-width:640px){
+  .email-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:0;margin:0 0 12px;border-bottom:0;overflow:visible}
+  .email-tabs:has(> :nth-child(4):last-child){grid-template-columns:repeat(2,minmax(0,1fr))} /* vier Reiter → 2 × 2 */
+  .email-tab{justify-content:center;gap:5px;min-width:0;padding:9px 6px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.03);font-size:12px;font-weight:600}
+  .email-tab svg{display:none}
+  .email-tab span{display:inline;overflow:hidden;text-overflow:ellipsis}
+  .email-tab .tab-full{display:none}.email-tab .tab-short{display:inline}
+  .email-tab::after{display:none}
+  .email-tab.is-active{border-color:rgba(129,120,255,.65);background:rgba(129,120,255,.18);color:#f1f3f9}
+  .email-tab-count{min-width:17px;height:17px;font-size:10px}
+}
 
 /* Werkzeugzeile des Posteingangs: Ordner oben, darunter die Filter in einer Zeile – „Aktualisieren“ rechts außen,
    damit die Aktion dort steht, wo der Blick endet, statt eine eigene Zeile zu belegen. */
@@ -1609,7 +1621,16 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .source-card.is-active strong{color:#f1f3f9}
 .source-card.is-active small{color:#c7c2ff}
 .section-tabs{margin-top:4px}
-@media (max-width:640px){.source-card{flex:1 1 100%;min-width:0}.source-card small{display:none}}
+/* Handy: die drei Pipelines als kompakte Dreier-Reihe (Symbol über Name), Hinweise ausgeblendet */
+@media (max-width:640px){
+  .pipeline-menu,.pipeline-menu-sources{display:block}
+  .source-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;width:100%}
+  .source-card{flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:0;padding:9px 6px 8px;text-align:center}
+  .source-card svg{margin:0}
+  .source-card strong{font-size:11.5px;line-height:1.2;white-space:normal;overflow-wrap:anywhere}
+  .source-card small{display:none}
+  .source-card.is-active{box-shadow:inset 0 -3px 0 0 #8178ff}
+}
 
 .upload-history{display:grid;gap:6px;margin-top:12px}
 .upload-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:9px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.02)}
