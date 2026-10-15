@@ -685,14 +685,20 @@ body:has(.side-drawer-backdrop),body:has(.app-confirm-backdrop){overflow:hidden}
 .tree-outline li{min-width:0;overflow-wrap:anywhere}
 .tree-outline strong{color:#f1effe}
 .tree-outline-button{display:inline-block;padding:1px 8px;border-radius:999px;background:rgba(125,113,255,.18);color:#e5e1fd;font-weight:600}
-.tree-preview{position:relative;display:block;flex:none;width:300px;max-width:100%;height:340px;overflow:hidden;padding:0;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:#f1f1f6;cursor:pointer;text-align:left}
-.tree-preview:hover{border-color:#9b93ff;box-shadow:0 0 0 2px rgba(155,147,255,.25)}
-.tree-preview iframe{width:600px;height:640px;border:0;transform:scale(.5);transform-origin:0 0;pointer-events:none;background:#fff}
-.tree-preview-hint{position:absolute;left:0;right:0;bottom:0;padding:5px 8px;background:rgba(10,9,26,.82);color:#e5e1fd;font-size:11px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Eine Vorschau je E-Mail: die fertige Mail als Bild in einem ruhigen Rahmen, darunter eine Zeile mit Zahlen und dem Weg in den Builder */
+.tree-send{display:grid;gap:10px;margin-top:8px}
+.tree-preview{position:relative;display:grid;gap:0;width:100%;padding:0;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.015));cursor:pointer;text-align:left;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease}
+.tree-preview:hover{border-color:#9b93ff;box-shadow:0 0 0 2px rgba(155,147,255,.22)}
+.tree-preview-frame{display:block;position:relative;height:300px;margin:14px 14px 0;border-radius:10px 10px 0 0;background:#eef0f5;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.tree-preview-frame::after{content:"";position:absolute;left:0;right:0;bottom:0;height:48px;background:linear-gradient(180deg,rgba(238,240,245,0),#eef0f5)}
+.tree-preview-frame iframe{width:600px;height:900px;border:0;transform:scale(var(--tree-scale,.62));transform-origin:0 0;pointer-events:none;background:#fff;position:absolute;left:50%;margin-left:calc(-300px * var(--tree-scale,.62))}
+.tree-preview-hint{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 14px;font-size:11.5px;color:#aeb0cc;white-space:nowrap;overflow:hidden}
+.tree-preview-hint span{overflow:hidden;text-overflow:ellipsis}.tree-preview-hint b{color:#d9d4ff;font-weight:600;flex:none}
+.builder-signature-toggle{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);font-size:12px;color:#c9c5f5}.builder-signature-toggle input{margin-top:3px}.builder-signature-toggle strong{display:block;color:#fff;font-weight:600}.builder-signature-toggle small{display:block;margin-top:2px;color:#8f93af;line-height:1.4}
 /* Schmale E-Mail-Karte (in einem Zweig oder auf kleinen Bildschirmen): kleinere Vorschau unter dem Betreff, Textgerüst ausgeblendet */
-@container (max-width: 560px){.tree-send-grid{grid-template-columns:1fr}.tree-outline{display:none}.tree-preview{width:240px;max-width:100%;height:272px}.tree-preview iframe{transform:scale(.4)}.tree-send-foot{margin-top:6px}}
+@container (max-width: 560px){.tree-preview-frame{height:230px;--tree-scale:.5}}
 @media(max-width:1100px){.tree-branches{grid-template-columns:1fr}}
-@media(max-width:900px){.tree-send-grid{grid-template-columns:1fr}.tree-outline{display:none}.tree-preview{width:240px;max-width:100%;height:272px}.tree-preview iframe{transform:scale(.4)}}
+@media(max-width:900px){.tree-preview-frame{height:230px;--tree-scale:.5}}
 /* Liste direkt im Kampagnen-Editor hochladen (Zielgruppe „Liste“) */
 .list-upload{padding:10px 12px;border:1px dashed rgba(255,255,255,.16);border-radius:10px;background:rgba(255,255,255,.02);transition:border-color .15s ease,background .15s ease}
 .list-upload.is-dragging{border-color:#9b93ff;background:rgba(125,113,255,.1)}

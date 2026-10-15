@@ -1,5 +1,5 @@
 /** E-Mail-Kampagnen mit Ablauf-Baum: Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst … Gemeinsame Logik für Server und Chat-Demo. */
-import { renderEmailHtml, renderEmailText, type EmailBlock, type EmailDesign } from "./email-design";
+import { renderEmailHtml, renderEmailText, type EmailBlock, type EmailDesign, usesSignature } from "./email-design";
 export type EmailNode =
   | { id: string; type: "send"; label?: string; subject: string; subjectB?: string | null; preheader?: string; blocks: EmailBlock[]; next: string | null }
   | { id: string; type: "wait"; hours: number; next: string | null }
@@ -112,8 +112,10 @@ export async function advanceRecipient(tree: EmailTree, state: RecipientState, n
   }
   return { state: current, events };
 }
-export function renderNode(node: Extract<EmailNode, { type: "send" }>, design: EmailDesign, values: Record<string, string | null | undefined>, tracking: { pixelUrl?: string | null; wrapLink?: (url: string) => string; unsubscribeUrl?: string | null; logoBase?: string | null; preview?: boolean; subject?: string | null } = {}) {
-  return { subject: fillPlaceholdersSafe(tracking.subject ?? node.subject, values), html: renderEmailHtml(node.blocks, design, values, { trackingPixelUrl: tracking.pixelUrl ?? null, wrapLink: tracking.wrapLink, unsubscribeUrl: tracking.unsubscribeUrl ?? null, logoBase: tracking.logoBase ?? null, preview: tracking.preview }), text: renderEmailText(node.blocks, values) };
+export type SignatureParts = { html: string; text: string } | null | undefined;
+export function renderNode(node: Extract<EmailNode, { type: "send" }>, design: EmailDesign, values: Record<string, string | null | undefined>, tracking: { pixelUrl?: string | null; wrapLink?: (url: string) => string; unsubscribeUrl?: string | null; logoBase?: string | null; preview?: boolean; subject?: string | null; signature?: SignatureParts } = {}) {
+  const signature = usesSignature(design) && tracking.signature ? tracking.signature : null;
+  return { subject: fillPlaceholdersSafe(tracking.subject ?? node.subject, values), html: renderEmailHtml(node.blocks, design, values, { trackingPixelUrl: tracking.pixelUrl ?? null, wrapLink: tracking.wrapLink, unsubscribeUrl: tracking.unsubscribeUrl ?? null, logoBase: tracking.logoBase ?? null, preview: tracking.preview, signatureHtml: signature?.html ?? null }), text: renderEmailText(node.blocks, values, signature?.text ?? null) };
 }
 export function fillPlaceholdersSafe(text: string, values: Record<string, string | null | undefined>) { return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => values[key] ?? ""); }
 /** Platzhalter-Werte eines Empfängers: feste Felder plus die Zusatzfelder aus der hochgeladenen Liste (z. B. {{branche}}); feste Felder gewinnen bei gleichem Namen. */

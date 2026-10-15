@@ -1808,6 +1808,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const settings = await owner.leadops.getMailSettings();
     await owner.leadops.saveMailSettings({ provider: settings.provider as "smtp", fromName: settings.fromName ?? "Vertrieb Tanesco", fromEmail: settings.fromEmail ?? "vertrieb@tanesco-test.example", signature: { enabled: true, greeting: "Mit freundlichen Grüßen", name: "Thomas Kutzbach", phone: "+49 (0) 178 33 59 146", email: "kontakt@tanescodigital.de", website: "www.tanescodigital.de", showLogo: true, showCompany: true } });
     const saved = (await owner.leadops.getMailSettings() as { signature?: { name?: string } }).signature; expect(saved?.name).toBe("Thomas Kutzbach");
+    // Signatur hängt an jeder Kampagnen-Mail: Vorschau im Ablauf, Nachbau im Ordner „Gesendet“ und frische Mails der laufenden Kampagne (auch eine vor dem Speichern angelegte)
+    const nodePreview = await owner.leadops.previewEmailNode({ node: { id: "sig-n1", type: "send", subject: "Signaturprobe", blocks: [{ id: "b1", type: "text", text: "Hallo {{vorname}}" }], next: null }, design: {} });
+    expect(nodePreview.html).toContain("Thomas Kutzbach"); expect(nodePreview.html).toContain("Tanesco Digital GbR");
+    expect((await owner.leadops.previewEmailNode({ node: { id: "sig-n1", type: "send", subject: "Signaturprobe", blocks: [{ id: "b1", type: "text", text: "Hallo" }], next: null }, design: { signature: false } })).html).not.toContain("Thomas Kutzbach");
+    const sentCampaignMail = (await owner.leadops.listSent({ kind: "kampagne" })).items[0]; if (sentCampaignMail) expect((await owner.leadops.sentMailPreview({ id: sentCampaignMail.id })).html).toContain("Thomas Kutzbach");
     const preview = await owner.leadops.mailSignaturePreview({ signature: { role: "Geschäftsführung" } });
     expect(preview.html).toContain("Thomas Kutzbach"); expect(preview.html).toContain("Geschäftsführung"); expect(preview.html).toContain("tanesco-logo-mail.png"); expect(preview.text).toContain("Telefon: +49 (0) 178 33 59 146");
     const incoming = await owner.leadops.storeInboxMessage({ fromEmail: "antwort@signatur-test.example", fromName: "Signatur Test", subject: "Angebot?", bodyText: "Können Sie mir ein Angebot schicken?" });

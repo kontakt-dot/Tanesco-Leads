@@ -18,6 +18,7 @@ import { suggestCategoryEmoji } from "../shared/category-emoji";
 import { SUPPRESSION_LABELS } from "../shared/email-campaigns";
 import * as metaAds from "./meta-ads";
 import * as outreach from "./sales-outreach";
+import { signatureFor } from "./mail-settings";
 import * as inbox from "./inbox";
 import * as leadFinder from "./lead-finder";
 import * as pipelineExtras from "./pipeline-extras";
@@ -417,7 +418,7 @@ export const appRouter = router({
     markEmailReplied: leadopsProcedure.input(z.object({ recipientId: z.number().int().positive() })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return outreach.markReplied(db, tenant.id, input.recipientId); }),
     sendEmailCampaignTest: leadopsProcedure.input(z.object({ to: z.string().email(), node: z.any(), design: z.record(z.string(), z.unknown()) })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return outreach.sendTestEmail(db, tenant.id, { to: input.to, node: input.node as never, design: input.design as never }); }),
     uploadMailImage: leadopsProcedure.input(z.object({ fileName: z.string().max(200), mimeType: z.string().max(60), base64: z.string().max(8_000_000) })).mutation(async ({ ctx, input }) => { await requireTenant(ctx.user.id); return outreach.uploadMailImage(input); }),
-    previewEmailNode: leadopsProcedure.input(z.object({ node: z.any(), design: z.record(z.string(), z.unknown()) })).query(({ input }) => ({ html: outreach.previewNodeHtml(input.node as never, input.design as never) })),
+    previewEmailNode: leadopsProcedure.input(z.object({ node: z.any(), design: z.record(z.string(), z.unknown()) })).query(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); const signature = db ? await signatureFor(db, tenant.id, appUrlOf(ctx)).then((result) => ({ html: result.html, text: result.text })).catch(() => null) : null; return { html: outreach.previewNodeHtml(input.node as never, input.design as never, signature) }; }),
     /* ---- Vertriebspipeline & Meta Lead Ads */
     metaConnection: leadopsProcedure.query(async ({ ctx }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return metaAds.connectionStatus(db, tenant.id, process.env.APP_URL ?? ""); }),
     metaOauthUrl: leadopsProcedure.mutation(async ({ ctx }) => { const tenant = await requireTenant(ctx.user.id); return metaAds.oauthUrl(tenant.id, process.env.APP_URL ?? ""); }),

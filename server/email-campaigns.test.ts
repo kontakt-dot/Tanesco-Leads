@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { advanceRecipient, recipientValues, starterTree, validateTree, summarizeCampaign } from "../shared/email-campaigns";
-import { fillPlaceholders, renderEmailHtml, starterBlocks } from "../shared/email-design";
+import { fillPlaceholders, renderEmailHtml, renderEmailText, starterBlocks, usesSignature } from "../shared/email-design";
+import { renderNode } from "../shared/email-campaigns";
 import { detectMapping, extraFieldsOf, parseColdList, placeholderKey } from "../shared/cold-list";
 
 describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
@@ -18,6 +19,22 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
   it("rendert Bausteine mit Platzhaltern, Tracking-Pixel und umgeschriebenen Links", () => {
     const html = renderEmailHtml(starterBlocks("kaltakquise"), { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, sans-serif" }, { firma: "Hansen Bedachungen", anrede: "Herr", nachname: "Hansen", abmelden: "Abmelden: https://x.de/u" }, { trackingPixelUrl: "https://x.de/api/mail/o/t.gif", wrapLink: (url) => `https://x.de/api/mail/c/t?u=${encodeURIComponent(url)}` });
     expect(html).toContain("Mehr qualifizierte Anfragen für Hansen Bedachungen"); expect(html).toContain("Guten Tag Herr Hansen"); expect(html).toContain("https://x.de/api/mail/o/t.gif"); expect(html).toContain("api/mail/c/t?u=https%3A%2F%2Ftanesco.digital%2Ftermin"); expect(html).toContain("#bc001d");
+  });
+  it("hängt die Signatur aus den E-Mail-Einstellungen an jede Kampagnen-Mail – ein alter Signatur-Baustein wird ersetzt, per Schalter lässt sie sich abschalten", () => {
+    const design = { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, sans-serif" };
+    const blocks = [...starterBlocks("kaltakquise")]; expect(blocks.some((block) => block.type === "signature")).toBe(true); // Startvorlage hat einen Signatur-Baustein
+    const signature = { html: `<div class="sig">Mit freundlichen Grüßen<br><i>Thomas Kutzbach</i></div>`, text: "\n-- \nMit freundlichen Grüßen\nThomas Kutzbach" };
+    const withSignature = renderEmailHtml(blocks, design, {}, { signatureHtml: signature.html });
+    expect(withSignature).toContain('class="sig"'); expect(withSignature).not.toContain("Ihr Tanesco-Team"); // Baustein-Signatur weg, Einstellungs-Signatur drin
+    expect(withSignature.indexOf('class="sig"')).toBeLessThan(withSignature.indexOf("Hier abmelden")); // vor der Fußzeile
+    const without = renderEmailHtml(blocks, { ...design, signature: false }, {}, { signatureHtml: signature.html });
+    expect(without).not.toContain('class="sig"'); expect(without).toContain("Ihr Tanesco-Team"); // Schalter aus → Baustein bleibt, keine Einstellungs-Signatur
+    expect(usesSignature(design)).toBe(true); expect(usesSignature({ signature: false })).toBe(false); expect(usesSignature(null)).toBe(true);
+    const text = renderEmailText(blocks, {}, signature.text); expect(text).toContain("Thomas Kutzbach"); expect(text).not.toContain("Ihr Tanesco-Team");
+    const node = { id: "n1", type: "send" as const, subject: "Hallo {{vorname}}", blocks, next: null };
+    const rendered = renderNode(node, design, { vorname: "Max" }, { signature });
+    expect(rendered.html).toContain('class="sig"'); expect(rendered.text).toContain("Thomas Kutzbach");
+    expect(renderNode(node, { ...design, signature: false }, { vorname: "Max" }, { signature }).html).not.toContain('class="sig"');
   });
   it("liest Kaltakquise-Listen mit erkannten Spalten (Semikolon, Anführungszeichen)", () => {
     const parsed = parseColdList('Vorname;Nachname;Firma;Telefon;E-Mail;PLZ;Ort\nPeter;Hansen;"Hansen, Bedachungen";+49 69 1;info@hansen.de;60311;Frankfurt\n;;Ohne Kontakt;;;;\nSabine;Koch;Koch Dach;;kontakt@koch.de;65183;Wiesbaden');

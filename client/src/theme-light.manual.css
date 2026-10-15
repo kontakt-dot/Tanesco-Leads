@@ -744,8 +744,12 @@ html:not(.dark) .pipeline-card.is-open { border-color: #111318 !important; box-s
 html:not(.dark) .tree-outline { border-color: #e5e7eb !important; color: #4a5565 !important; }
 html:not(.dark) .tree-outline strong { color: #101828 !important; }
 html:not(.dark) .tree-outline-button { background: #f3f6f8 !important; color: #111318 !important; }
-html:not(.dark) .tree-preview { border-color: #e5e7eb !important; background: #f3f4f6 !important; }
-html:not(.dark) .tree-preview-hint { background: rgba(17, 19, 24, .78) !important; color: #ffffff !important; }
+html:not(.dark) .tree-preview { border-color: #e5e7eb !important; background: #ffffff !important; }
+html:not(.dark) .tree-preview-frame { background: #eef0f5 !important; box-shadow: 0 10px 24px rgba(15, 23, 42, .10) !important; }
+html:not(.dark) .tree-preview-hint { background: #ffffff !important; color: #475467 !important; }
+html:not(.dark) .tree-preview-hint b { color: #bc001d !important; }
+html:not(.dark) .builder-signature-toggle { border-color: #e8ecf1 !important; background: #f8fafb !important; color: #475467 !important; }
+html:not(.dark) .builder-signature-toggle strong { color: #101828 !important; }
 
 html:not(.dark) .insight-card { background: #ffffff !important; border-color: #e8ecf1 !important; color: #1f2937 !important; }
 html:not(.dark) .insight-card svg { color: #4b5568 !important; }
