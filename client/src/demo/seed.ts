@@ -519,5 +519,29 @@ export function buildSeed(): Store {
     insert(store, "callRecords", { ...((): Record<string, unknown> => { const questions = index % 2 ? WP_QUESTIONS : PV_QUESTIONS; const answers = call.transcript ? answerQuestionsHeuristically(questions, call.transcript) : null; const decided = answers && call.status === "bewertet" ? decideByQuestions(questions, answers) : null; return { qualificationAnswers: answers, decision: decided?.decision ?? call.decision ?? "offen", nextStep: decided?.reason ?? call.nextStep ?? null }; })(), tenantId: tenant.id, provider: "ondialer", externalCallId: `OD-${10240 + index}`, leadId: call.lead?.id ?? null, phone: call.lead ? store.tables.leads.find((row) => row.id === call.lead!.id)?.phone ?? "+49 40 555 0199" : "+49 40 555 0199", agentName: call.agent, campaign: index % 2 ? "Wärmepumpe Herbst" : "PV Q4", direction: "ausgehend", startedAt, durationSeconds: call.minutes * 60 + index * 7, recordingUrl: null, consent: call.consent ?? true, consentSource: call.consent === false ? null : "Dialer-Feld consent", status: call.status ?? "bewertet", transcript: call.transcript, score: call.score ?? null, verdict: call.verdict ?? null, criteriaScores: call.scores ? criteria.map((criterion, i) => ({ key: criterion.key, score: call.scores![i], evidence: "" })) : [], summary: call.summary, redFlags: call.redFlags ?? [],   decidedBy: call.decision ? call.decidedBy ?? "automatisch" : null, reviewedByUserId: call.decidedBy === "manuell" ? owner.id : null, reviewedAt: call.decidedBy === "manuell" ? at(index, 11) : null, reviewNote: call.decidedBy === "manuell" ? "Gewerbe – bitte zuerst Dachstatik klären." : null, error: null, createdAt: startedAt, updatedAt: startedAt });
   });
 
+  // Glocke: Verlauf der letzten Tage – so sieht man gleich, wie der Tagesverlauf aussieht (Zusammenfassung je Tag, aufklappbar)
+  const log = (daysAgo: number, hour: number, minute: number, kind: string, title: string, detail: string | null = null, extra: Partial<{ count: number; leadId: number | null; actorUserId: number | null; refType: string | null; refId: number | null }> = {}) => insert(store, "activityLog", { tenantId: tenant.id, kind, title, detail, count: extra.count ?? 1, leadId: extra.leadId ?? null, actorUserId: extra.actorUserId ?? null, refType: extra.refType ?? null, refId: extra.refId ?? null, createdAt: at(daysAgo, hour, minute) });
+  const firstCold = coldLeads[0]; const secondCold = coldLeads[1];
+  log(6, 10, 5, "kontakt_neu", "Liste „Dachdecker Hessen“ hochgeladen: 7 neue Kontakte", "Kaltakquise – Kontakte stehen in der Vertriebspipeline", { count: 7, actorUserId: owner.id });
+  log(5, 9, 2, "kampagne", "Kampagne „Dachdecker Hessen – Erstkontakt“ gestartet", "5 Empfänger aufgenommen", { actorUserId: owner.id });
+  log(5, 9, 6, "email_gesendet", "Kampagne „Dachdecker Hessen – Erstkontakt“: 5 E-Mails gesendet", null, { count: 5 });
+  log(4, 11, 20, "anruf", `Anruf an ${firstCold?.phone ?? "+49 69 1234567"}: Gespräch geführt (6 Min.)`, "Taner Tanesco · manuell · Ergebnis: Verkauft / Termin", { leadId: firstCold?.id ?? null, actorUserId: taner?.id ?? null });
+  log(4, 11, 48, "anruf", `Anruf an ${secondCold?.phone ?? "+49 611 998877"}: keine Antwort`, "Francesco Tanesco · manuell", { leadId: secondCold?.id ?? null, actorUserId: francesco?.id ?? null });
+  log(4, 14, 10, "pipeline_stufe", `${firstCold ? `${firstCold.firstName} ${firstCold.lastName}` : "Kontakt"}: Neu → Termin`, "Termin am Donnerstag 10 Uhr", { leadId: firstCold?.id ?? null, actorUserId: taner?.id ?? null });
+  log(3, 8, 40, "lead_neu", "Neuer Lead aus Meta Ads: Sabine Krüger", "PV Hessen Herbst · Wiesbaden", { refType: "lead" });
+  log(3, 8, 52, "lead_neu", "Neuer Lead aus Meta Ads: Markus Lenz", "PV Hessen Herbst · Mainz", { refType: "lead" });
+  log(3, 10, 15, "lead_verkauft", "Lead META-4F2A9C1 an Aroundhome GmbH verkauft", "45,00 € · Kette PV Hessen · Bestellung ORD-7Q2M8K1A", { actorUserId: owner.id });
+  log(3, 10, 16, "lead_verkauft", "Lead META-8B1D0E7 an Aroundhome GmbH verkauft", "45,00 € · Kette PV Hessen · Bestellung ORD-7Q2M8K1A", { actorUserId: owner.id });
+  log(2, 9, 5, "email_gesendet", "Kampagne „Dachdecker Hessen – Erstkontakt“: 1 E-Mail gesendet", null, { count: 1 });
+  log(2, 13, 30, "gespraech_abgehoert", "Gespräch abgehört: Lena Hartmann · +49 170 2233445", "PV Q4", { actorUserId: owner.id });
+  log(2, 13, 41, "gespraech_bewertet", "Gespräch freigegeben", "Einwilligung vorhanden, alle Pflichtfragen gestellt", { actorUserId: owner.id });
+  log(1, 9, 12, "email_antwort", "Antwort von Hansen Dachtechnik GmbH: „AW: Kurze Frage zu Ihren Projekten“", "KI: interessiert (82 %)", { leadId: firstCold?.id ?? null });
+  log(1, 11, 0, "bestellung", "Bestellung ORD-3K9P2L7Q angelegt: 50 Leads für Energiehaus Süd GmbH", "42,00 € je Lead", { actorUserId: owner.id });
+  log(1, 15, 25, "reklamation", "Reklamation erfasst: Nicht erreichbar", "Dreimal angerufen, Mailbox", { actorUserId: owner.id });
+  log(0, 8, 35, "lead_neu", "Neuer Lead aus Meta Ads: Jonas Weber", "PV Hessen Herbst · Frankfurt", { refType: "lead" });
+  log(0, 9, 10, "anruf", "Anruf an +49 69 7788990: Gespräch geführt (4 Min.)", "Taner Tanesco · manuell · Ergebnis: Interessiert – Angebot gewünscht", { actorUserId: taner?.id ?? null });
+  log(0, 9, 40, "anruf", "Anruf an +49 6131 445566: besetzt", "Francesco Tanesco · manuell", { actorUserId: francesco?.id ?? null });
+  log(0, 10, 5, "pipeline_uebernommen", "3 Kontakte aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen", "Stufe „Kontaktiert“", { count: 3, actorUserId: owner.id });
+
   return store;
 }

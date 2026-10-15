@@ -11,6 +11,7 @@ import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } fr
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
 import { deliverMail } from "./email-onboarding";
 import { distributeOwners } from "./meta-ads";
+import { bumpActivity, logActivity } from "./activity";
 import type { Db } from "./lead-pipeline";
 
 /* ---------- Kaltakquise-Listen ---------- */
@@ -78,6 +79,7 @@ export async function importColdList(db: Db, tenantId: number, input: { listName
   }
   // Upload-Verlauf festhalten – damit man später sieht, was wann hochgeladen wurde, und es rückgängig machen kann.
   await db.insert(listImports).values({ tenantId, listName, source: toPipeline ? "kaltakquise" : "kampagne", rowCount: input.rows.length, created, updated, duplicates, toPipeline, leadIds, actorUserId: input.actorUserId ?? null });
+  if (created || updated) await logActivity(db, tenantId, { kind: "kontakt_neu", title: `Liste „${listName}“ hochgeladen: ${created} neue Kontakte${updated ? `, ${updated} aktualisiert` : ""}${duplicates ? `, ${duplicates} doppelt` : ""}`, detail: toPipeline ? "Kaltakquise – Kontakte stehen in der Vertriebspipeline" : "E-Mail-Kampagnen – Kontakte nur für den E-Mail-Versand", count: Math.max(1, created), actorUserId: input.actorUserId ?? null, refType: "listImport" });
   return { created, duplicates, updated, tagId: tag.id, listName, leadIds, toPipeline };
 }
 export async function listColdLists(db: Db, tenantId: number) {
@@ -194,6 +196,7 @@ export async function startEmailCampaign(db: Db, tenantId: number, id: number, a
   for (const row of rows) { if (existing.has(row.email!)) continue; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); }
     await db.insert(emailCampaignRecipients).values({ tenantId, campaignId: id, leadId: row.id, email: row.email!, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: crypto.randomBytes(16).toString("hex"), nodeId: tree(campaign).start, nextActionAt: new Date(Date.now() - 2000), status: "wartet", sentCount: 0, variant: abTest ? abVariantFor(index, campaign.abSplit) : null }); index += 1; added += 1; } /* 2 s in der Vergangenheit: MySQL rundet Sekunden auf */
   await db.update(emailCampaigns).set({ status: "aktiv", startedAt: campaign.startedAt ?? new Date() }).where(eq(emailCampaigns.id, id));
+  await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“ gestartet`, detail: `${added} Empfänger aufgenommen`, refType: "emailCampaign", refId: id });
   // Versand läuft im Hintergrund (SMTP kann dauern) – die Anfrage kehrt sofort zurück; der Zeitplaner nimmt den Rest.
   const processed = await Promise.race([processEmailCampaigns(db, appUrl, { campaignId: id, limit: 25 }).catch((error) => { console.error("[E-Mail-Kampagnen] Start:", error instanceof Error ? error.message : error); return 0; }), new Promise<number>((resolve) => setTimeout(() => resolve(-1), 4000))]);
   return { added, processed: Math.max(processed, 0), background: processed < 0 };
@@ -205,6 +208,7 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
   const campaignConditions = [eq(emailCampaigns.status, "aktiv")]; if (options.campaignId) campaignConditions.push(eq(emailCampaigns.id, options.campaignId));
   const active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
   for (const campaign of active) {
+    let sentInRun = 0;
     const due = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), or(isNull(emailCampaignRecipients.nextActionAt), lte(emailCampaignRecipients.nextActionAt, horizon)))).limit(options.limit ?? 100);
     for (const recipient of due) {
       const lead = recipient.leadId ? (await db.select().from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] : null;
@@ -214,8 +218,11 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
         return renderNode(node, d, values, d.plain ? { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject } : { pixelUrl: `${base}/api/mail/o/${recipient.token}.gif`, wrapLink: (url) => `${base}/api/mail/c/${recipient.token}?u=${encodeURIComponent(url)}`, unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject }); })(); const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text }, { db, tenantId: campaign.tenantId }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign) });
       await db.update(emailCampaignRecipients).set({ nodeId: result.state.nodeId, nextActionAt: result.state.nextActionAt, status: result.state.status, sentCount: result.state.sentCount, lastSentAt: result.state.lastSentAt }).where(eq(emailCampaignRecipients.id, recipient.id));
       for (const event of result.events) await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note });
+      sentInRun += result.events.filter((event) => event.kind === "gesendet").length;
       processed += 1;
     }
+    // Glocke: E-Mails dieser Kampagne zusammengezählt (ein Eintrag je Stunde, nicht je Durchlauf)
+    if (sentInRun) await bumpActivity(db, campaign.tenantId, { refType: "emailCampaign", refId: campaign.id, withinMinutes: 60 }, { kind: "email_gesendet", title: (count) => `Kampagne „${campaign.name}“: ${count} E-Mail${count === 1 ? "" : "s"} gesendet`, add: sentInRun });
     const open = await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]))).limit(1);
     if (!open.length && due.length) await db.update(emailCampaigns).set({ status: "beendet" }).where(eq(emailCampaigns.id, campaign.id));
   }
@@ -276,6 +283,34 @@ export async function applyFooterToCampaigns(db: Db, tenantId: number, options: 
   return { updated, footerText: patch.footerText };
 }
 
+
+/** Vertriebskontakte samt allem, was an ihnen hängt, löschen – eine Stelle für Liste löschen, Upload rückgängig und Kontakte löschen. */
+async function removeLeadsCascade(db: Db, tenantId: number, ids: number[]) {
+  if (!ids.length) return;
+  await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, ids)));
+  await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, ids)));
+  await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, ids)));
+  await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, ids)));
+  await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, ids)));
+  await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), inArray(dialerQueueItems.leadId, ids)));
+  await db.delete(leadStatusEvents).where(and(eq(leadStatusEvents.tenantId, tenantId), inArray(leadStatusEvents.leadId, ids)));
+  await db.delete(leadTagAssignments).where(inArray(leadTagAssignments.leadId, ids));
+  await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, ids)));
+  await db.update(dialerCalls).set({ leadId: null }).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.leadId, ids)));
+  await db.delete(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, ids)));
+}
+/**
+ * Ausgewählte Kontakte der E-Mail-Akquise löschen. Kunden bleiben erhalten und werden gezählt zurückgemeldet.
+ */
+export async function deleteEmailLeads(db: Db, tenantId: number, input: { leadIds: number[]; keepCustomers?: boolean }) {
+  const ids = Array.from(new Set(input.leadIds)).slice(0, 2000);
+  if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
+  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
+  const keep = (input.keepCustomers ?? true) ? rows.filter((row) => row.stage === "kunde").map((row) => row.id) : [];
+  const weg = rows.filter((row) => !keep.includes(row.id)).map((row) => row.id);
+  await removeLeadsCascade(db, tenantId, weg);
+  return { deleted: weg.length, keptCustomers: keep.length };
+}
 /**
  * Eine hochgeladene Liste löschen – mit allen Kontakten, die daraus entstanden sind.
  * Kunden bleiben standardmäßig erhalten (`keepCustomers`), damit kein Abschluss verloren geht;
@@ -290,17 +325,7 @@ export async function deleteColdList(db: Db, tenantId: number, input: { listName
   const keep = keepCustomers ? rows.filter((row) => row.stage === "kunde").map((row) => row.id) : [];
   const remove = rows.filter((row) => !keep.includes(row.id)).map((row) => row.id);
   if (remove.length) {
-    await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, remove)));
-    await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, remove)));
-    await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, remove)));
-    await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, remove)));
-    await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, remove)));
-    await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), inArray(dialerQueueItems.leadId, remove)));
-    await db.delete(leadStatusEvents).where(and(eq(leadStatusEvents.tenantId, tenantId), inArray(leadStatusEvents.leadId, remove)));
-    await db.delete(leadTagAssignments).where(inArray(leadTagAssignments.leadId, remove));
-    await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, remove)));
-    await db.update(dialerCalls).set({ leadId: null }).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.leadId, remove)));
-    await db.delete(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, remove)));
+    await removeLeadsCascade(db, tenantId, remove);
   }
   if (keep.length) await db.update(leads).set({ listName: null }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, keep)));
   // Das Tag „Liste: …“ nur entfernen, wenn es niemand mehr trägt.
@@ -381,17 +406,18 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
  * Sie erscheinen dort in der Eingangsstufe; die Zuteilung an Vertriebler läuft wie beim Listen-Upload
  * (reihum auf mehrere, alles an einen, oder gar nicht und später von Hand).
  */
-export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { leadIds: number[]; ownerUserIds?: number[] | null; actorUserId?: number | null }) {
+export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { leadIds: number[]; stage?: string | null; actorUserId?: number | null }) {
   const ids = Array.from(new Set(input.leadIds)).slice(0, 2000);
   if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
+  // Kontakte aus der E-Mail-Akquise landen in der Pipeline „E-Mail-Kampagne“ – in der gewählten Stufe, ohne Vertriebler-Verteilung.
+  const stage = (input.stage ?? "neu").trim() || "neu";
   const rows = await db.select({ id: leads.id, inPipeline: leads.inPipeline, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
   const offen = rows.filter((row) => !row.inPipeline).map((row) => row.id);
-  if (!offen.length) return { moved: 0, already: rows.length };
-  await db.update(leads).set({ inPipeline: true, pipelineStage: "neu", pipelineUpdatedAt: new Date() }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, offen)));
-  for (const leadId of offen) await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: input.actorUserId ?? null, note: "Aus der E-Mail-Akquise in die Pipeline übernommen" });
-  if (input.ownerUserIds?.length) await distributeOwners(db, tenantId, { leadIds: offen, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
-  else for (const leadId of offen) await autoAssign(db, tenantId, leadId);
-  return { moved: offen.length, already: rows.length - offen.length };
+  if (!offen.length) return { moved: 0, already: rows.length, stage };
+  await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: stage, pipelineUpdatedAt: new Date() }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, offen)));
+  for (const leadId of offen) await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: stage, actorUserId: input.actorUserId ?? null, note: "Aus der E-Mail-Akquise in die Pipeline übernommen" });
+  await logActivity(db, tenantId, { kind: "pipeline_uebernommen", title: `${offen.length} ${offen.length === 1 ? "Kontakt" : "Kontakte"} aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen`, detail: `Stufe „${stage}“`, count: offen.length, leadId: offen.length === 1 ? offen[0] : null, actorUserId: input.actorUserId ?? null });
+  return { moved: offen.length, already: rows.length - offen.length, stage };
 }
 
 /* ---------- Upload-Verlauf ---------- */
@@ -419,18 +445,38 @@ export async function undoListImport(db: Db, tenantId: number, importId: number)
   const keep = rows.filter((item) => item.stage === "kunde").map((item) => item.id);
   const weg = rows.filter((item) => !keep.includes(item.id)).map((item) => item.id);
   if (weg.length) {
-    await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, weg)));
-    await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, weg)));
-    await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, weg)));
-    await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, weg)));
-    await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, weg)));
-    await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), inArray(dialerQueueItems.leadId, weg)));
-    await db.delete(leadStatusEvents).where(and(eq(leadStatusEvents.tenantId, tenantId), inArray(leadStatusEvents.leadId, weg)));
-    await db.delete(leadTagAssignments).where(inArray(leadTagAssignments.leadId, weg));
-    await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, weg)));
-    await db.update(dialerCalls).set({ leadId: null }).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.leadId, weg)));
-    await db.delete(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, weg)));
+    await removeLeadsCascade(db, tenantId, weg);
   }
   await db.update(listImports).set({ undoneAt: new Date() }).where(eq(listImports.id, row.id));
+  await logActivity(db, tenantId, { kind: "upload_rueckgaengig", title: `Upload „${row.listName}“ rückgängig gemacht: ${weg.length} Kontakte entfernt${keep.length ? `, ${keep.length} Kunden behalten` : ""}`, count: 1, refType: "listImport", refId: row.id });
   return { deleted: weg.length, keptCustomers: keep.length, listName: row.listName };
+}
+
+/**
+ * Eine gesendete E-Mail noch einmal so zeigen, wie sie rausging. Kampagnen-Mails werden aus dem damaligen
+ * Schritt und den Daten des Empfängers neu aufgebaut (Kennung „k<Ereignis-ID>“); Antworten und Einzel-E-Mails
+ * kommen aus dem gespeicherten Text (Kennung „e<Nachrichten-ID>“).
+ */
+export async function sentMailPreview(db: Db, tenantId: number, id: string) {
+  const escape = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  if (id.startsWith("k")) {
+    const eventId = Number(id.slice(1));
+    const event = (await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.id, eventId))).limit(1))[0];
+    if (!event) throw new Error("Diese E-Mail gibt es nicht mehr.");
+    const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.id, event.recipientId))).limit(1))[0];
+    const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.id, event.campaignId))).limit(1))[0];
+    if (!recipient || !campaign) throw new Error("Empfänger oder Kampagne gibt es nicht mehr.");
+    const node = tree(campaign).nodes.find((item) => item.id === event.nodeId && item.type === "send") as Extract<EmailNode, { type: "send" }> | undefined;
+    const lead = recipient.leadId ? (await db.select().from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] : null;
+    if (!node) return { kind: "kampagne" as const, to: recipient.email, name: recipient.name, subject: event.subject ?? "", at: event.createdAt, campaignName: campaign.name, html: `<p style="font-family:sans-serif;color:#475569">Der Schritt dieser E-Mail wurde inzwischen aus der Kampagne entfernt – der Inhalt lässt sich nicht mehr nachbauen. Betreff damals: „${escape(event.subject ?? "")}“.</p>`, note: "Schritt existiert nicht mehr" };
+    const base = (process.env.APP_URL ?? "").replace(/\/+$/, "");
+    const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: extraFieldsOf(lead?.metadata) }, `${base}/api/mail/u/${recipient.token}`);
+    const rendered = renderNode(node, design(campaign), values, { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject: event.subject ?? undefined, preview: true });
+    return { kind: "kampagne" as const, to: recipient.email, name: recipient.name, subject: rendered.subject, at: event.createdAt, campaignName: campaign.name, html: rendered.html, note: "Nachgebaut aus dem Schritt und den Empfängerdaten – so sah die E-Mail beim Versand aus." };
+  }
+  const messageId = Number(id.slice(1));
+  const row = (await db.select().from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.id, messageId))).limit(1))[0];
+  if (!row) throw new Error("Diese Nachricht gibt es nicht mehr.");
+  const html = `<div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#101828;max-width:600px;margin:0 auto;padding:18px 16px;white-space:pre-wrap">${escape(row.text ?? "")}</div>`;
+  return { kind: (row.inboxMessageId ? "antwort" : "einzel") as "antwort" | "einzel", to: row.toAddress, name: null as string | null, subject: row.subject ?? "", at: row.createdAt, campaignName: null as string | null, html, note: row.status === "gesendet" ? null : `Status: ${row.status}` };
 }

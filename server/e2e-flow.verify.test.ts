@@ -1709,4 +1709,35 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(sent.map((event) => event.subject).sort()).toEqual(["Dachdecker: 12 Mitarbeiter, Hansen", "Photovoltaik: 5 Mitarbeiter, Koch"]);
   });
 
+  it("32. Gesendet mit Tracking je Mail, Übernahme in die Pipeline „E-Mail-Kampagne“ mit Stufe, Kontakte löschen, Glocke als Tagesverlauf", async () => {
+    // Gesendet: jede Kampagnen-Mail trägt ihre Reaktion; die Öffnung aus Test 24/31 wird der richtigen Mail zugeordnet
+    const sent = await owner.leadops.listSent({ kind: "kampagne" });
+    expect(sent.items.length).toBeGreaterThan(0); expect(sent.items.every((item) => item.tracking !== null)).toBe(true);
+    const mappingMail = sent.items.find((item) => item.to === "hansen@mapping-test.example")!; expect(mappingMail.lead?.publicId).toMatch(/^KALT-/); expect(mappingMail.tracking?.reaction).toBe("ohne");
+    const token = (await db.select({ token: emailCampaignRecipients.token }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.email, "hansen@mapping-test.example")))[0].token;
+    await (await import("./sales-outreach")).trackOpen(db, token);
+    const afterOpen = await owner.leadops.listSent({ kind: "kampagne", reaction: "geoeffnet" });
+    expect(afterOpen.items.some((item) => item.to === "hansen@mapping-test.example" && item.tracking?.openedAt)).toBe(true);
+    const preview = await owner.leadops.sentMailPreview({ id: mappingMail.id }); expect(preview.to).toBe("hansen@mapping-test.example"); expect(preview.subject).toContain("Dachdecker"); expect(preview.html).toContain("<!doctype html>"); expect(preview.campaignName).toBe("Mapping-Serie");
+    // Kontakte der E-Mail-Akquise: Upload ohne Pipeline → mit Stufe in die Pipeline „E-Mail-Kampagne“ übernehmen → einen löschen
+    const imported = await owner.leadops.importColdList({ listName: "Nur-Mail-Liste", toPipeline: false, rows: [{ firstName: "Nora", lastName: "Nur", email: "nora@nur-mail.example" }, { firstName: "Olaf", lastName: "Nur", email: "olaf@nur-mail.example" }], ownerUserIds: [] });
+    expect(imported.created).toBe(2);
+    const contacts = await owner.leadops.emailLeads({ listName: "Nur-Mail-Liste" }); expect(contacts.items).toHaveLength(2); expect(contacts.items.every((item) => item.inPipeline === false)).toBe(true);
+    const emailBoardBefore = (await owner.leadops.pipelineOverview({ source: "email" })).totals.leads;
+    const pushed = await owner.leadops.pushLeadsToPipeline({ leadIds: [contacts.items[0].id], stage: "kontaktiert" }); expect(pushed).toMatchObject({ moved: 1, stage: "kontaktiert" });
+    const moved = (await db.select().from(leads).where(eq(leads.id, contacts.items[0].id)))[0]; expect(moved.inPipeline).toBe(true); expect(moved.adPlatform).toBe("email"); expect(moved.pipelineStage).toBe("kontaktiert");
+    expect((await owner.leadops.pipelineOverview({ source: "email" })).totals.leads).toBe(emailBoardBefore + 1);
+    const deleted = await owner.leadops.deleteEmailLeads({ leadIds: [contacts.items[1].id] }); expect(deleted.deleted).toBe(1);
+    expect((await owner.leadops.emailLeads({ listName: "Nur-Mail-Liste" })).items).toHaveLength(1);
+    // Glocke: die Aktionen oben stehen im Tagesverlauf, gebündelt je Art
+    const feed = await owner.leadops.activityFeed({ days: 14 });
+    expect(feed.days[0].label).toBe("Heute");
+    const kinds = feed.days[0].groups.map((group) => group.kind);
+    expect(kinds).toEqual(expect.arrayContaining(["kontakt_neu", "pipeline_uebernommen", "email_gesendet", "kampagne"]));
+    const uploads = feed.days[0].groups.find((group) => group.kind === "kontakt_neu")!; expect(uploads.entries.some((entry) => entry.title.includes("Nur-Mail-Liste") && entry.count === 2)).toBe(true);
+    const mails = feed.days[0].groups.find((group) => group.kind === "email_gesendet")!; expect(mails.entries.some((entry) => entry.title.includes("Mapping-Serie") && entry.count === 2)).toBe(true);
+    expect(feed.days[0].summary).toMatch(/neue Kontakte/);
+    const since = await owner.leadops.activityFeed({ days: 1, since: new Date(Date.now() + 60_000) }); expect(since.newCount).toBe(0);
+  });
+
 });

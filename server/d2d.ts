@@ -12,6 +12,7 @@ import { createMember } from "./member-admin";
 import { scheduleOnboardingEmails } from "./email-onboarding";
 import { deliverLeadNow, triggerLeadAutomations, type Db } from "./lead-pipeline";
 import { normalizeRawPhone } from "./raw-data";
+import { logActivity } from "./activity";
 
 export const DEFAULT_CONSENT = "Ich bin einverstanden, dass meine Angaben an einen Fachbetrieb bzw. an Aroundhome weitergegeben werden, damit ich ein Angebot erhalte. Diese Einwilligung kann ich jederzeit widerrufen.";
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
@@ -177,13 +178,14 @@ export async function createCapture(db: Db, tenantId: number, userId: number | n
   const leadId = Number(leadInsert[0]?.insertId) || 0;
   await db.insert(leadStatusEvents).values({ tenantId, leadId, nextStatus: "genehmigt", actorUserId: userId, note: `Haustür-Erfassung durch ${rep.name} (Sub-ID ${rep.subId})${agency ? `, ${agency.name}` : ""}` });
   await db.update(d2dCaptures).set({ leadId }).where(eq(d2dCaptures.id, captureId));
+  await logActivity(db, tenantId, { kind: "lead_neu", title: `Haustür-Lead erfasst: ${[input.firstName?.trim(), input.lastName?.trim()].filter(Boolean).join(" ") || publicId}`, detail: `durch ${rep.name}${input.city ? ` · ${input.city}` : ""}`, leadId, actorUserId: userId, refType: "lead", refId: leadId });
   const automation = await triggerLeadAutomations(db, { tenantId, actorUserId: userId, leadId, triggerType: "lead_erstellt" });
   await triggerLeadAutomations(db, { tenantId, actorUserId: userId, leadId, triggerType: "status_geändert" });
   let lead = (await db.select().from(leads).where(eq(leads.id, leadId)).limit(1))[0];
   let deliveryNote: string | null = null;
   if (settings.buyerUserId && lead.status !== "zugewiesen") {
     const buyer = (await db.select({ id: users.id, name: users.name, company: users.company }).from(users).where(eq(users.id, settings.buyerUserId)).limit(1))[0];
-    if (buyer) { await db.insert(leadDeliveries).values({ tenantId, leadId, buyerName: buyer.company || buyer.name || "Käufer", unitPrice: "0.00", result: "angenommen", acceptedAt: new Date(), skipReason: null }); await db.update(leads).set({ status: "zugewiesen", assignedUserId: buyer.id, assignedAt: new Date(), metadata: { ...metadata, assignedBuyerUserId: buyer.id, d2d_direct_sale: true } }).where(eq(leads.id, leadId)); await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: "genehmigt", nextStatus: "zugewiesen", actorUserId: userId, note: `Direkt verkauft an ${buyer.company || buyer.name} (Haustür-Zuweisung, ohne Bestellung/Abrechnung/API)` }); lead = (await db.select().from(leads).where(eq(leads.id, leadId)).limit(1))[0]; deliveryNote = `Direkt verkauft an ${buyer.company || buyer.name}`; }
+    if (buyer) { await db.insert(leadDeliveries).values({ tenantId, leadId, buyerName: buyer.company || buyer.name || "Käufer", unitPrice: "0.00", result: "angenommen", acceptedAt: new Date(), skipReason: null }); await db.update(leads).set({ status: "zugewiesen", assignedUserId: buyer.id, assignedAt: new Date(), metadata: { ...metadata, assignedBuyerUserId: buyer.id, d2d_direct_sale: true } }).where(eq(leads.id, leadId)); await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: "genehmigt", nextStatus: "zugewiesen", actorUserId: userId, note: `Direkt verkauft an ${buyer.company || buyer.name} (Haustür-Zuweisung, ohne Bestellung/Abrechnung/API)` }); lead = (await db.select().from(leads).where(eq(leads.id, leadId)).limit(1))[0]; deliveryNote = `Direkt verkauft an ${buyer.company || buyer.name}`; await logActivity(db, tenantId, { kind: "lead_verkauft", title: `Haustür-Lead ${lead?.publicId ?? publicId} direkt an ${buyer.company || buyer.name} verkauft`, detail: "Haustür-Erfassung, ohne Bestellung", leadId, actorUserId: userId, refType: "lead", refId: leadId }); }
   }
   if (settings.orderId && lead.status !== "zugewiesen") {
     // Direkte Zuordnung zur hinterlegten Aroundhome-Bestellung, wenn keine Regel gegriffen hat

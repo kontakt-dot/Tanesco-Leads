@@ -18,6 +18,7 @@ import { evaluateOrderEligibility } from "./order-eligibility";
 import { conditionsMatch, selectNextChain, selectStopPosition, type FieldCondition } from "./routing";
 import { extractPartnerReference, handOverToBuyerEndpoints, notifySupplierReturn } from "./outbound-endpoints";
 import { suppliers } from "../drizzle/schema";
+import { logActivity } from "./activity";
 
 export type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 export type LeadRow = typeof leads.$inferSelect;
@@ -292,6 +293,7 @@ export async function deliverLeadNow(db: Db, input: { tenantId: number; actorUse
         if (target.order) { const delivered = target.order.deliveredCount + 1; await tx.update(orders).set({ deliveredCount: delivered, status: delivered >= target.order.quantity ? "erfüllt" : target.order.status }).where(eq(orders.id, target.order.id)); }
       });
       stopTotal.set(stop.id, (stopTotal.get(stop.id) ?? 0) + 1);
+      await logActivity(db, tenantId, { kind: "lead_verkauft", title: `Lead ${lead.publicId} an ${stop.buyerName} verkauft`, detail: `${Number(stop.unitPrice ?? 0).toFixed(2).replace(".", ",")} € · ${target.chain.name}${target.order ? ` · Bestellung ${target.order.orderNumber}` : ""}`, leadId: lead.id, actorUserId: input.actorUserId ?? null, refType: "leadDelivery", refId: deliveryId || null });
 
       // Übergabe: API-Calls des Käufer-Kontos des Stops (Benutzer → Integration), sonst dessen Partnerintegration, sonst „angeboten“ (manuell)
       let integration: IntegrationRow | undefined; let outcome: ExportOutcome | undefined; let handOverName = ""; let matchedRule: Awaited<ReturnType<typeof handOverToBuyerEndpoints>>["matchedRule"] = null;

@@ -1623,3 +1623,90 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .upload-undo:hover:not(:disabled){border-color:rgba(248,113,113,.6);color:#fca5a5}
 .upload-undo:disabled{opacity:.5}
 .upload-done{font-size:11px;color:#94a3b8}
+
+.email-leads-delete{height:32px;padding:0 12px;border-radius:8px;border:1px solid rgba(248,113,113,.45);background:transparent;color:#fca5a5;font-size:12px}
+.email-leads-delete:hover:not(:disabled){background:rgba(248,113,113,.12)}
+.email-leads-row-tools{width:34px;text-align:center}
+.email-leads-row-tools button{width:24px;height:24px;border-radius:6px;border:1px solid transparent;background:transparent;color:#64748b;font-size:12px}
+.email-leads-row-tools button:hover{border-color:rgba(248,113,113,.5);color:#fca5a5}
+
+.inbox-sent-row{cursor:pointer}
+.inbox-sent-row:hover{border-color:rgba(129,120,255,.4)}
+.inbox-sent-row.is-open{border-color:rgba(129,120,255,.55);background:rgba(129,120,255,.07)}
+.inbox-sent-preview-wrap{flex-basis:100%;cursor:default}
+.sent-preview{margin-top:8px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(10,12,20,.5);overflow:hidden}
+.sent-preview-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+.sent-preview-head strong{display:block;font-size:13px;color:#e2e8f0}
+.sent-preview-head small{display:block;margin-top:2px;font-size:11px;color:#94a3b8}
+.sent-preview-note{color:#64748b !important}
+.sent-preview-frame{display:block;width:100%;height:520px;border:0;background:#fff}
+
+.email-leads-table tr.is-clickable{cursor:pointer}
+.email-leads-table tr.is-clickable:hover td{background:rgba(129,120,255,.07)}
+
+/* Ordner „Gesendet“: Reaktion je Mail (geöffnet/geklickt/geantwortet mit Uhrzeit), Filter nach Reaktion, Kontakt verlinkt */
+.inbox-sent-reactions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-4px 0 12px;font-size:11px;color:#8d8fa9}
+.inbox-reaction-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:#b9b6d6;font-size:11px;font-weight:600;transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+.inbox-reaction-chip::before{content:"";width:6px;height:6px;border-radius:999px;background:currentColor;opacity:.8}
+.inbox-reaction-chip:hover{border-color:rgba(255,255,255,.22)}
+.inbox-reaction-chip.is-active{border-color:rgba(129,120,255,.7);background:rgba(129,120,255,.16);color:#e4e1ff}
+.inbox-reaction-chip.is-geoeffnet{color:#c7c2ff}.inbox-reaction-chip.is-geklickt{color:#bae6fd}.inbox-reaction-chip.is-geantwortet{color:#a7f3d0}.inbox-reaction-chip.is-ohne{color:#a5a1b8}.inbox-reaction-chip.is-bounce{color:#fecaca}.inbox-reaction-chip.is-abgemeldet{color:#fde68a}
+.inbox-reaction-reset{font-size:11px;color:#b8b3ff;text-decoration:underline;text-underline-offset:2px}
+.inbox-sent-contact{color:#d6d1ff;font-weight:600;text-decoration:underline;text-decoration-color:rgba(214,209,255,.4);text-underline-offset:2px}
+.inbox-sent-contact:hover{color:#fff;text-decoration-color:#fff}
+.inbox-sent-track{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.inbox-track-step{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:10.5px;font-style:normal;font-weight:600;color:#7f819c;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.12)}
+.inbox-track-step::before{content:"";width:6px;height:6px;border-radius:999px;background:currentColor;opacity:.55}
+.inbox-track-step.is-done{color:#c7c2ff;background:rgba(129,120,255,.14);border-style:solid;border-color:rgba(129,120,255,.3)}
+.inbox-track-step.is-done.is-reply{color:#a7f3d0;background:rgba(16,185,129,.14);border-color:rgba(16,185,129,.3)}
+.inbox-track-step.is-bad{color:#fecaca;background:rgba(248,113,113,.14);border-style:solid;border-color:rgba(248,113,113,.3)}
+.inbox-reaction.is-geoeffnet{background:rgba(129,120,255,.18);color:#c7c2ff}.inbox-reaction.is-geklickt{background:rgba(56,189,248,.18);color:#bae6fd}.inbox-reaction.is-geantwortet{background:rgba(16,185,129,.18);color:#a7f3d0}.inbox-reaction.is-ohne{background:rgba(148,163,184,.12);color:#a5a1b8}.inbox-reaction.is-bounce{background:rgba(248,113,113,.18);color:#fecaca}.inbox-reaction.is-abgemeldet{background:rgba(245,158,11,.18);color:#fde68a}
+.inbox-sent-row{flex-wrap:wrap}
+
+/* Vorlagen direkt unter den Kampagnen (kein eigener Reiter mehr) */
+.template-section .template-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 16px 12px}
+.template-section .template-head h2{font-size:16px;letter-spacing:-.3px;margin-top:4px}
+.template-section .template-head p{margin-top:4px;max-width:70ch}
+.template-section .template-head .eyebrow{display:inline-flex;align-items:center;gap:5px}
+
+/* Glocke: Verlauf der Plattform als Tagesverlauf (Zusammenfassung je Tag, aufklappbar bis zum Eintrag) */
+.activity-bell{position:relative;display:flex}
+.activity-bell>button{color:#a9abc2;position:relative}
+.notification.has-new i{position:absolute;right:-8px;top:-8px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;font-style:normal;line-height:1;color:#fff;background:#6d63ef;box-shadow:0 0 0 2px rgba(19,17,33,.9);animation:none}
+.activity-panel{position:absolute;right:0;top:calc(100% + 14px);z-index:60;width:min(470px,92vw);max-height:min(72vh,680px);overflow:auto;border:1px solid rgba(177,171,255,.22);border-radius:16px;background:#1e1b34;box-shadow:0 22px 55px rgba(4,2,16,.45);padding:0 0 8px;text-align:left}
+.activity-head{position:sticky;top:0;z-index:1;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px 10px;border-bottom:1px solid rgba(255,255,255,.07);background:#1e1b34}
+.activity-head strong{display:block;font-size:14px;color:#f1effe}
+.activity-head small{display:block;margin-top:2px;font-size:11px;color:#9ca0ba}
+.activity-head button{color:#a9abc2;padding:2px}
+.activity-head button svg{width:16px;height:16px}
+.activity-empty{padding:28px 18px;font-size:12px;color:#9ca0ba;text-align:center;line-height:1.5}
+.activity-days{list-style:none;margin:0;padding:6px 8px}
+.activity-day+.activity-day{margin-top:4px}
+.activity-day-head{display:grid;grid-template-columns:1fr auto;grid-template-areas:"label total" "summary summary";align-items:center;column-gap:10px;width:100%;padding:10px;border-radius:12px;text-align:left}
+.activity-day-head:hover{background:rgba(255,255,255,.04)}
+.activity-day.is-open .activity-day-head{background:rgba(129,120,255,.08)}
+.activity-day-label{grid-area:label;font-size:13px;font-weight:700;color:#f1effe}
+.activity-day-total{grid-area:total;justify-self:end;font-size:10.5px;color:#b8b3ff;font-weight:700;white-space:nowrap}
+.activity-day-summary{grid-area:summary;margin-top:3px;font-size:11.5px;color:#a8a9c0;line-height:1.45}
+.activity-groups{list-style:none;margin:2px 0 6px;padding:0 6px 0 10px;display:grid;gap:2px}
+.activity-group-head{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border-radius:9px;text-align:left}
+.activity-group-head:hover{background:rgba(255,255,255,.04)}
+.activity-group-head svg{width:15px;height:15px;color:#a8a1ff;flex:none}
+.activity-group-head span{font-size:12.5px;color:#e9e7f8;font-weight:600}
+.activity-group-head small{margin-left:auto;font-size:10.5px;color:#8d90ab;white-space:nowrap}
+.activity-group.is-open .activity-group-head{background:rgba(255,255,255,.035)}
+.activity-group.is-lead_verkauft .activity-group-head svg,.activity-group.is-bestellung .activity-group-head svg{color:#62d6a3}
+.activity-group.is-reklamation .activity-group-head svg,.activity-group.is-upload_rueckgaengig .activity-group-head svg{color:#fca5a5}
+.activity-group.is-anruf .activity-group-head svg,.activity-group.is-gespraech_abgehoert .activity-group-head svg,.activity-group.is-gespraech_bewertet .activity-group-head svg{color:#40d2e5}
+.activity-group.is-lead_neu .activity-group-head svg,.activity-group.is-kontakt_neu .activity-group-head svg{color:#f0c95a}
+.activity-entries{list-style:none;margin:2px 0 4px 15px;padding:0 0 0 14px;border-left:1px solid rgba(255,255,255,.08);display:grid;gap:2px}
+.activity-entry{display:grid;grid-template-columns:38px 1fr auto;gap:8px;align-items:start;padding:5px 6px;border-radius:8px}
+.activity-entry:hover{background:rgba(255,255,255,.03)}
+.activity-entry time{font-size:10.5px;color:#8d90ab;padding-top:2px;font-variant-numeric:tabular-nums}
+.activity-entry-title{display:block;font-size:12px;color:#dbd9ea;line-height:1.4}
+.activity-entry small{display:block;margin-top:1px;font-size:10.5px;color:#8d90ab;line-height:1.4}
+.activity-entry-actor{color:#9c97d6!important}
+.activity-entry-lead{font-family:"IBM Plex Mono",monospace;font-size:10px;color:#b6b1ff;padding:2px 6px;border-radius:6px;border:1px solid rgba(182,177,255,.3);white-space:nowrap}
+.activity-entry-lead:hover{background:rgba(129,120,255,.14)}
+.activity-more button{font-size:11px;color:#b8b3ff;padding:4px 6px;text-decoration:underline;text-underline-offset:2px}
+@media(max-width:760px){.activity-panel{position:fixed;right:8px;left:8px;top:64px;width:auto;max-height:calc(100vh - 80px)}}

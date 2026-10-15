@@ -95,7 +95,7 @@ export async function deliverMail(mail: { to: string; subject: string; html: str
   try {
     const result = await ready.transport.sendMail({ from: ready.from, replyTo: ready.replyTo, to: mail.to, subject: mail.subject, html: mail.html, text: mail.text ?? mail.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(), ...(mail.attachments?.length ? { attachments: mail.attachments.map((item) => ({ filename: item.filename, content: item.content, contentType: item.contentType })) } : {}) });
     return { ok: true, status: "gesendet", messageId: result.messageId };
-  } catch (error) { return { ok: false, status: "fehlgeschlagen", note: error instanceof Error ? error.message.slice(0, 220) : "Versand fehlgeschlagen" }; }
+  } catch (error) { if (process.env.MAIL_DEBUG) console.error("[MAIL_DEBUG]", error); return { ok: false, status: "fehlgeschlagen", note: error instanceof Error ? error.message.slice(0, 220) : "Versand fehlgeschlagen" }; }
 }
 
 export function smtpStatus() { return { configured: Boolean(process.env.SMTP_URL), from: process.env.SMTP_FROM ?? null, appUrl: process.env.APP_URL ?? null }; }

@@ -477,6 +477,13 @@
       "when": 1792158469908,
       "tag": "0067_list_imports",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "5",
+      "when": 1792244869908,
+      "tag": "0068_activity_log",
+      "breakpoints": true
     }
   ]
 }

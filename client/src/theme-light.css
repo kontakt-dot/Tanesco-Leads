@@ -874,6 +874,69 @@ html:not(.dark) .upload-numbers strong { color: #0f172a !important; }
 html:not(.dark) .upload-undo { border: 1px solid #e8ecf1 !important; color: #0f172a !important; }
 html:not(.dark) .upload-undo:hover:not(:disabled) { color: #8a5a5a !important; }
 html:not(.dark) .upload-done { color: #4b5568 !important; }
+html:not(.dark) .email-leads-delete { color: #8a5a5a !important; }
+html:not(.dark) .email-leads-row-tools button:hover { color: #8a5a5a !important; }
+html:not(.dark) .inbox-sent-row:hover { border-color: #d9dfe7 !important; }
+html:not(.dark) .inbox-sent-row.is-open { border-color: #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .sent-preview { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; }
+html:not(.dark) .sent-preview-head { border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .sent-preview-head strong { color: #0f172a !important; }
+html:not(.dark) .sent-preview-head small { color: #4b5568 !important; }
+html:not(.dark) .email-leads-table tr.is-clickable:hover td { background: #f8fafb !important; }
+html:not(.dark) .inbox-sent-reactions { color: #8a94a6 !important; }
+html:not(.dark) .inbox-reaction-chip { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .inbox-reaction-chip:hover { border-color: #e8ecf1 !important; }
+html:not(.dark) .inbox-reaction-chip.is-active { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .inbox-reaction-chip.is-geoeffnet { color: #4b5568 !important; }
+html:not(.dark) .inbox-reaction-chip.is-geklickt { color: #0f172a !important; }
+html:not(.dark) .inbox-reaction-chip.is-geantwortet { color: #5b8572 !important; }
+html:not(.dark) .inbox-reaction-chip.is-ohne { color: #4b5568 !important; }
+html:not(.dark) .inbox-reaction-chip.is-bounce { color: #0f172a !important; }
+html:not(.dark) .inbox-reaction-chip.is-abgemeldet { color: #8b7e4b !important; }
+html:not(.dark) .inbox-reaction-reset { color: #111318 !important; }
+html:not(.dark) .inbox-sent-contact { color: #0f172a !important; }
+html:not(.dark) .inbox-sent-contact:hover { color: #0f172a !important; }
+html:not(.dark) .inbox-track-step { color: #8a94a6 !important; background: #f8fafb !important; border: 1px dashed #e8ecf1 !important; }
+html:not(.dark) .inbox-track-step.is-done { color: #4b5568 !important; background: #f3f6f8 !important; border-color: #d9dfe7 !important; }
+html:not(.dark) .inbox-track-step.is-done.is-reply { color: #5b8572 !important; }
+html:not(.dark) .inbox-track-step.is-bad { color: #0f172a !important; }
+html:not(.dark) .inbox-reaction.is-geoeffnet { background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .inbox-reaction.is-geklickt { color: #0f172a !important; }
+html:not(.dark) .inbox-reaction.is-geantwortet { color: #5b8572 !important; }
+html:not(.dark) .inbox-reaction.is-ohne { color: #4b5568 !important; }
+html:not(.dark) .inbox-reaction.is-bounce { color: #0f172a !important; }
+html:not(.dark) .inbox-reaction.is-abgemeldet { color: #8b7e4b !important; }
+html:not(.dark) .activity-bell>button { color: #4b5568 !important; }
+html:not(.dark) .notification.has-new i { color: #0f172a !important; background: #111318 !important; box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .activity-panel { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 22px 55px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .activity-head { border-bottom: 1px solid #e8ecf1 !important; background: #ffffff !important; }
+html:not(.dark) .activity-head strong { color: #0f172a !important; }
+html:not(.dark) .activity-head small { color: #4b5568 !important; }
+html:not(.dark) .activity-head button { color: #4b5568 !important; }
+html:not(.dark) .activity-empty { color: #4b5568 !important; }
+html:not(.dark) .activity-day-head:hover { background: #f8fafb !important; }
+html:not(.dark) .activity-day.is-open .activity-day-head { background: #f8fafb !important; }
+html:not(.dark) .activity-day-label { color: #0f172a !important; }
+html:not(.dark) .activity-day-total { color: #111318 !important; }
+html:not(.dark) .activity-day-summary { color: #4b5568 !important; }
+html:not(.dark) .activity-group-head:hover { background: #f8fafb !important; }
+html:not(.dark) .activity-group-head svg { color: #111318 !important; }
+html:not(.dark) .activity-group-head span { color: #0f172a !important; }
+html:not(.dark) .activity-group-head small { color: #8a94a6 !important; }
+html:not(.dark) .activity-group.is-open .activity-group-head { background: #f8fafb !important; }
+html:not(.dark) .activity-group.is-lead_verkauft .activity-group-head svg, html:not(.dark) .activity-group.is-bestellung .activity-group-head svg { color: #357559 !important; }
+html:not(.dark) .activity-group.is-reklamation .activity-group-head svg, html:not(.dark) .activity-group.is-upload_rueckgaengig .activity-group-head svg { color: #8a5a5a !important; }
+html:not(.dark) .activity-group.is-anruf .activity-group-head svg, html:not(.dark) .activity-group.is-gespraech_abgehoert .activity-group-head svg, html:not(.dark) .activity-group.is-gespraech_bewertet .activity-group-head svg { color: #23737d !important; }
+html:not(.dark) .activity-group.is-lead_neu .activity-group-head svg, html:not(.dark) .activity-group.is-kontakt_neu .activity-group-head svg { color: #846e31 !important; }
+html:not(.dark) .activity-entries { border-left: 1px solid #e8ecf1 !important; }
+html:not(.dark) .activity-entry:hover { background: #f8fafb !important; }
+html:not(.dark) .activity-entry time { color: #8a94a6 !important; }
+html:not(.dark) .activity-entry-title { color: #0f172a !important; }
+html:not(.dark) .activity-entry small { color: #8a94a6 !important; }
+html:not(.dark) .activity-entry-actor { color: #8a94a6 !important; }
+html:not(.dark) .activity-entry-lead { color: #111318 !important; border: 1px solid #d9dfe7 !important; }
+html:not(.dark) .activity-entry-lead:hover { background: #f3f6f8 !important; }
+html:not(.dark) .activity-more button { color: #111318 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }

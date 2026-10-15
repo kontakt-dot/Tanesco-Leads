@@ -14,6 +14,7 @@ import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
 import { autoAssign, cardExtras, onStageChanged } from "./pipeline-extras";
 import { pipelineValueSummary } from "../shared/pipeline-extras";
+import { logActivity } from "./activity";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 export const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_manage_metadata", "pages_manage_ads", "leads_retrieval", "ads_read", "business_management"];
@@ -120,6 +121,7 @@ export async function importLeadgen(db: Db, change: LeadgenChange, options: { ra
   const leadId = Number(inserted[0]?.insertId) || 0;
   await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: null, nextStatus: "neu", actorUserId: null, note: `Meta Lead Ads: ${lead.campaign_name ?? "Kampagne"} › ${lead.adset_name ?? "Anzeigengruppe"} › ${lead.ad_name ?? "Anzeige"}${formName ? ` · Formular ${formName}` : ""}` });
   await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: null, note: "Aus Meta-Kampagne eingegangen" });
+  await logActivity(db, tenantId, { kind: "lead_neu", title: `Neuer Lead aus Meta Ads: ${[mapped.firstName, mapped.lastName].filter(Boolean).join(" ") || publicId}`, detail: `${lead.campaign_name ?? "Kampagne"}${mapped.city ? ` · ${mapped.city}` : ""}`, leadId, refType: "lead", refId: leadId });
   await db.update(metaConnections).set({ lastLeadAt: new Date() }).where(eq(metaConnections.id, connection.id));
   try { await triggerLeadAutomations(db, { tenantId, actorUserId: null, leadId, triggerType: "lead_erstellt" }); } catch { /* Automatik optional */ }
   await autoAssign(db, tenantId, leadId); // Verteilregeln (Region/Kategorie/Auslastung), wenn eingeschaltet
@@ -181,6 +183,7 @@ export async function moveStage(db: Db, tenantId: number, input: { publicId: str
   const from = isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef);
   await db.update(leads).set({ pipelineStage: input.stage, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
   await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: from, toStage: input.stage, actorUserId: input.actorUserId, note: input.note?.trim() || null });
+  if (from !== input.stage) await logActivity(db, tenantId, { kind: "pipeline_stufe", title: `${[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.publicId}: ${stagesDef.find((item) => item.key === from)?.label ?? from} → ${stagesDef.find((item) => item.key === input.stage)?.label ?? input.stage}`, detail: input.note?.trim().slice(0, 200) || null, leadId: lead.id, actorUserId: input.actorUserId, refType: "lead", refId: lead.id });
   if (input.stage === wonStage(stagesDef)) await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: input.actorUserId, note: "Vertriebspipeline: Lead ist Kunde geworden" });
   let series: string | null = null; if (from !== input.stage) { const result = await onStageChanged(db, tenantId, { leadId: lead.id, toStage: input.stage }).catch(() => null); if (result?.enrolled) series = result.campaignName ?? null; }
   return { success: true as const, from, to: input.stage, series };
@@ -198,6 +201,7 @@ export async function createTestLead(db: Db, tenantId: number, input: { campaign
   const leadId = Number(inserted[0]?.insertId) || 0;
   await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: null, nextStatus: "neu", actorUserId: null, note: `Meta Lead Ads (Test): ${input.campaignName}` });
   await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: null, note: "Testlead aus Meta-Kampagne" });
+  await logActivity(db, tenantId, { kind: "lead_neu", title: `Testlead angelegt: ${input.firstName} ${input.lastName}`, detail: input.campaignName, leadId, refType: "lead", refId: leadId });
   try { await triggerLeadAutomations(db, { tenantId, actorUserId: null, leadId, triggerType: "lead_erstellt" }); } catch { /* optional */ }
   await autoAssign(db, tenantId, leadId);
   return { leadId, publicId };

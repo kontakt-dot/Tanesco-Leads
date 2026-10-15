@@ -9,10 +9,12 @@ import { decideReply, describeAssessment, DEFAULT_REPLY_AI, matchesAiFilter, typ
 import { assessReply } from "./reply-ai";
 import { isStage } from "../shared/sales-pipeline";
 import { extractPhone } from "../shared/pipeline-extras";
+import { countReactions, trackingForSend, type SentReaction, type SentTracking } from "../shared/sent-tracking";
 import { addSuppression, isSuppressed, removeSuppressionByEmail } from "./pipeline-extras";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
 import { ensureSettings } from "./mail-settings";
+import { logActivity } from "./activity";
 
 const stripHtml = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 /** Antworttext ohne zitierte Vornachricht („Am … schrieb …“, „>“-Zeilen). */
@@ -74,7 +76,8 @@ export async function storeMessage(db: Db, tenantId: number, input: { messageId:
     await db.insert(pipelineNotes).values({ tenantId, leadId: noteLeadId, authorUserId: null, text: `KI: Antwort klingt interessiert (${assessment.confidence} %)${assessment.quote ? ` – „${assessment.quote}“` : ""}`, source: "text" }).catch(() => null);
   }
   if (!blocked && recipient && recipient.sentCount > 0 && !recipient.repliedAt) { await db.update(emailCampaignRecipients).set({ repliedAt: input.receivedAt }).where(eq(emailCampaignRecipients.id, recipient.id)); await db.insert(emailCampaignEvents).values({ tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: "geoeffnet", note: `Antwort im Posteingang: „${(input.subject ?? "").slice(0, 120)}“` }); replied = true;
-    const replyLeadId = recipient.leadId ?? lead?.id ?? null; if (replyLeadId) { const { onInboxReply } = await import("./pipeline-extras"); await onInboxReply(db, tenantId, { leadId: replyLeadId, subject: input.subject ?? null }).catch(() => null); } }
+    const replyLeadId = recipient.leadId ?? lead?.id ?? null; if (replyLeadId) { const { onInboxReply } = await import("./pipeline-extras"); await onInboxReply(db, tenantId, { leadId: replyLeadId, subject: input.subject ?? null }).catch(() => null); }
+    await logActivity(db, tenantId, { kind: "email_antwort", title: `Antwort von ${input.fromName?.trim() || input.fromEmail}: „${(input.subject ?? "(ohne Betreff)").slice(0, 100)}“`, detail: assessment ? `KI: ${assessment.kind} (${assessment.confidence} %)` : null, leadId: replyLeadId, refType: "inboxMessage", refId: Number(inserted[0]?.insertId) || null }); }
   return { id: Number(inserted[0]?.insertId) || 0, replied, leadId: recipient?.leadId ?? lead?.id ?? null, ai: assessment ? { kind: assessment.kind, confidence: assessment.confidence, action: decision.action } : null };
 }
 /** KI-Schalter aus den E-Mail-Einstellungen (Einstellungen → E-Mail-Versand → Antworten). */
@@ -181,11 +184,12 @@ export type SentKind = "kampagne" | "antwort" | "einzel";
 /**
  * Alles, was wir per E-Mail herausgeschickt haben – an einer Stelle:
  * Kampagnen-Mails aus den Serien (Verlauf der Empfänger), Antworten aus dem Posteingang und Einzel-E-Mails aus einer Karte.
- * Filter: Suche (Adresse, Betreff), Zeitraum, Kampagne und Art.
+ * Filter: Suche (Adresse, Betreff), Zeitraum, Kampagne, Art und Reaktion (geöffnet, geklickt, geantwortet …).
+ * Je Kampagnen-Mail steht dabei, was danach passiert ist (siehe shared/sent-tracking.ts) – und der Kontakt ist verlinkt.
  */
-export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; limit?: number } = {}) {
+export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; reaction?: SentReaction | null; limit?: number } = {}) {
   const limit = Math.min(500, Math.max(10, options.limit ?? 200));
-  const campaignRows = await db.select({ id: emailCampaignEvents.id, at: emailCampaignEvents.createdAt, subject: emailCampaignEvents.subject, note: emailCampaignEvents.note, campaignId: emailCampaignEvents.campaignId, campaignName: emailCampaigns.name, email: emailCampaignRecipients.email, name: emailCampaignRecipients.name, leadId: emailCampaignRecipients.leadId })
+  const campaignRows = await db.select({ id: emailCampaignEvents.id, at: emailCampaignEvents.createdAt, subject: emailCampaignEvents.subject, note: emailCampaignEvents.note, campaignId: emailCampaignEvents.campaignId, campaignName: emailCampaigns.name, recipientId: emailCampaignRecipients.id, email: emailCampaignRecipients.email, name: emailCampaignRecipients.name, leadId: emailCampaignRecipients.leadId, repliedAt: emailCampaignRecipients.repliedAt, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, bouncedAt: emailCampaignRecipients.bouncedAt })
     .from(emailCampaignEvents)
     .innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId))
     .innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignEvents.campaignId))
@@ -195,14 +199,26 @@ export async function listSent(db: Db, tenantId: number, options: { search?: str
     .from(outboundMessages).leftJoin(users, eq(users.id, outboundMessages.createdByUserId))
     .where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email")))
     .orderBy(desc(outboundMessages.createdAt)).limit(limit);
+  // Reaktionen je Mail: alle Ereignisse der betroffenen Empfänger holen und jeder gesendeten Mail ihr Zeitfenster zuordnen.
+  const recipientIds = Array.from(new Set(campaignRows.map((row) => row.recipientId)));
+  const events = recipientIds.length ? await db.select({ recipientId: emailCampaignEvents.recipientId, kind: emailCampaignEvents.kind, note: emailCampaignEvents.note, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.recipientId, recipientIds))) : [];
+  const byRecipient = new Map<number, typeof events>();
+  for (const event of events) byRecipient.set(event.recipientId, [...(byRecipient.get(event.recipientId) ?? []), event]);
+  const sendsOf = (recipientId: number) => (byRecipient.get(recipientId) ?? []).filter((event) => event.kind === "gesendet").map((event) => event.createdAt);
+  // Kontakt verlinken: öffentliche Lead-Nummer und Name zu den Lead-IDs.
+  const leadIds = Array.from(new Set([...campaignRows, ...singleRows].map((row) => row.leadId).filter((id): id is number => typeof id === "number")));
+  const leadRows = leadIds.length ? await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, leadIds))) : [];
+  const leadById = new Map(leadRows.map((row) => [row.id, row]));
+  const leadInfo = (leadId: number | null) => { const row = leadId ? leadById.get(leadId) : undefined; return row ? { publicId: row.publicId, name: [row.firstName, row.lastName].filter(Boolean).join(" ") || row.company || row.publicId } : null; };
   const items = [
-    ...campaignRows.map((row) => ({ id: `k${row.id}`, kind: "kampagne" as SentKind, at: row.at, to: row.email, name: row.name ?? null, subject: row.subject ?? row.note ?? "(ohne Betreff)", preview: row.campaignName, campaignId: row.campaignId as number | null, campaignName: row.campaignName as string | null, leadId: row.leadId as number | null, status: "gesendet", sender: null as string | null })),
-    ...singleRows.map((row) => ({ id: `e${row.id}`, kind: (row.inboxMessageId ? "antwort" : "einzel") as SentKind, at: row.at, to: row.to, name: null as string | null, subject: row.subject ?? "(ohne Betreff)", preview: (row.text ?? "").replace(/\s+/g, " ").slice(0, 160), campaignId: null as number | null, campaignName: null as string | null, leadId: row.leadId as number | null, status: row.status as string, sender: row.senderName ?? null })),
+    ...campaignRows.map((row) => ({ id: `k${row.id}`, kind: "kampagne" as SentKind, at: row.at, to: row.email, name: row.name ?? null, subject: row.subject ?? row.note ?? "(ohne Betreff)", preview: row.campaignName, campaignId: row.campaignId as number | null, campaignName: row.campaignName as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: "gesendet", sender: null as string | null, tracking: trackingForSend(row.at, byRecipient.get(row.recipientId) ?? [], sendsOf(row.recipientId), { openedAt: row.openedAt, clickedAt: row.clickedAt, repliedAt: row.repliedAt, bouncedAt: row.bouncedAt }) as SentTracking | null })),
+    ...singleRows.map((row) => ({ id: `e${row.id}`, kind: (row.inboxMessageId ? "antwort" : "einzel") as SentKind, at: row.at, to: row.to, name: leadInfo(row.leadId)?.name ?? null, subject: row.subject ?? "(ohne Betreff)", preview: (row.text ?? "").replace(/\s+/g, " ").slice(0, 160), campaignId: null as number | null, campaignName: null as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: row.status as string, sender: row.senderName ?? null, tracking: null as SentTracking | null })),
   ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   const search = (options.search ?? "").trim().toLowerCase();
   const filtered = items.filter((item) => {
     if (options.kind && item.kind !== options.kind) return false;
     if (options.campaignId && item.campaignId !== options.campaignId) return false;
+    if (options.reaction && item.tracking?.reaction !== options.reaction) return false;
     if (options.from && new Date(item.at) < options.from) return false;
     if (options.to && new Date(item.at) > options.to) return false;
     if (search && !`${item.to} ${item.name ?? ""} ${item.subject} ${item.campaignName ?? ""}`.toLowerCase().includes(search)) return false;
@@ -210,5 +226,5 @@ export async function listSent(db: Db, tenantId: number, options: { search?: str
   });
   const campaigns = Array.from(items.reduce((map, item) => { if (item.campaignId && item.campaignName) { const entry = map.get(item.campaignId) ?? { id: item.campaignId, name: item.campaignName, count: 0 }; entry.count += 1; map.set(item.campaignId, entry); } return map; }, new Map<number, { id: number; name: string; count: number }>()).values()).sort((a, b) => b.count - a.count);
   const counts = { alle: items.length, kampagne: items.filter((item) => item.kind === "kampagne").length, antwort: items.filter((item) => item.kind === "antwort").length, einzel: items.filter((item) => item.kind === "einzel").length };
-  return { items: filtered.slice(0, limit), counts, campaigns };
+  return { items: filtered.slice(0, limit), counts, reactions: countReactions(items), campaigns };
 }

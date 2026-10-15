@@ -1119,11 +1119,13 @@ describe("Kampagnen-Upload bleibt vorerst außerhalb der Pipeline (Chat-Build)",
     const kontakte = await call("leadops.emailLeads", { listName: "Nur E-Mail" });
     expect(kontakte.items).toHaveLength(1);
     expect(kontakte.items[0].inPipeline).toBe(false);
-    const owners = await call("leadops.pipelineOwners");
-    const uebernommen = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte.items[0].id], ownerUserIds: owners.map((owner: { userId: number }) => owner.userId) });
-    expect(uebernommen.moved).toBe(1);
+    const emailBoardVorher = await call("leadops.pipelineOverview", { source: "email" });
+    const uebernommen = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte.items[0].id] });
+    expect(uebernommen.moved).toBe(1); expect(uebernommen.stage).toBe("neu");
     const nachher = await call("leadops.pipelineOverview", { source: "kaltakquise" });
-    expect(nachher.totals.leads).toBe(vorher.totals.leads + 1);
+    expect(nachher.totals.leads).toBe(vorher.totals.leads); // Kaltakquise-Board unverändert …
+    const emailBoard = await call("leadops.pipelineOverview", { source: "email" });
+    expect(emailBoard.totals.leads).toBe(emailBoardVorher.totals.leads + 1); // … der Kontakt steht in der Pipeline „E-Mail-Kampagne“
     const nochmal = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte.items[0].id] });
     expect(nochmal.moved).toBe(0); // zweimal übernehmen ändert nichts
   });
@@ -1166,5 +1168,94 @@ describe("Upload-Verlauf und Rückgängig (Chat-Build)", () => {
     expect(zurueck.deleted).toBe(0); // der Kontakt gehörte zum ersten Upload
     const inhalt = await call("leadops.coldListContacts", { listName: "Zweit" });
     expect(inhalt.contacts).toHaveLength(1);
+  });
+});
+
+describe("Kontakte löschen in der E-Mail-Akquise (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Ausgewählte Kontakte löschen, Kunden bleiben", async () => {
+    await call("leadops.importColdList", { listName: "Löschprobe", toPipeline: false, rows: [
+      { firstName: "Ali", lastName: "Eins", email: "ali@eins.de" },
+      { firstName: "Bea", lastName: "Zwei", email: "bea@zwei.de" },
+    ] });
+    const liste = await call("leadops.emailLeads", { listName: "Löschprobe" });
+    expect(liste.items).toHaveLength(2);
+    const ergebnis = await call("leadops.deleteEmailLeads", { leadIds: liste.items.map((item: { id: number }) => item.id) });
+    expect(ergebnis.deleted).toBe(2);
+    const danach = await call("leadops.emailLeads", { listName: "Löschprobe" });
+    expect(danach.items).toHaveLength(0);
+  });
+});
+
+describe("Gesendet mit Tracking je Mail und Kontakt-Link (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Jede Kampagnen-Mail trägt Öffnung/Klick/Antwort mit Zeit, Filter nach Reaktion, Kontakt verlinkt", async () => {
+    const sent = await call("leadops.listSent", { kind: "kampagne" });
+    expect(sent.items.length).toBeGreaterThan(0);
+    expect(sent.items.every((item: { tracking: unknown }) => item.tracking !== null)).toBe(true);
+    expect(sent.reactions.geoeffnet + sent.reactions.geklickt + sent.reactions.geantwortet + sent.reactions.ohne + sent.reactions.bounce + sent.reactions.abgemeldet).toBe(sent.counts.kampagne);
+    const geoeffnet = sent.items.find((item: { tracking: { openedAt: Date | null } }) => item.tracking.openedAt);
+    expect(geoeffnet).toBeTruthy();
+    expect(geoeffnet.lead?.publicId).toMatch(/^KALT-/);
+    const nurGeoeffnet = await call("leadops.listSent", { reaction: "geoeffnet" });
+    expect(nurGeoeffnet.items.length).toBe(sent.reactions.geoeffnet);
+    expect(nurGeoeffnet.items.every((item: { tracking: { reaction: string } }) => item.tracking.reaction === "geoeffnet")).toBe(true);
+    const vorschau = await call("leadops.sentMailPreview", { id: geoeffnet.id });
+    expect(vorschau.html).toContain("<");
+    expect(vorschau.to).toBe(geoeffnet.to);
+  });
+});
+
+describe("Übernahme in die Pipeline „E-Mail-Kampagne“ mit Stufe (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Kontakte landen in der E-Mail-Pipeline in der gewählten Stufe – ohne Vertriebler-Verteilung", async () => {
+    await call("leadops.importColdList", { listName: "Stufenprobe", toPipeline: false, rows: [{ firstName: "Carla", lastName: "Drei", email: "carla@drei.de" }, { firstName: "Dirk", lastName: "Vier", email: "dirk@vier.de" }] });
+    const liste = await call("leadops.emailLeads", { listName: "Stufenprobe" });
+    const ergebnis = await call("leadops.pushLeadsToPipeline", { leadIds: liste.items.map((item: { id: number }) => item.id), stage: "kontaktiert" });
+    expect(ergebnis.moved).toBe(2); expect(ergebnis.stage).toBe("kontaktiert");
+    const leads = getStore().tables.leads.filter((row) => row.listName === "Stufenprobe");
+    expect(leads.every((row) => row.inPipeline === true && row.adPlatform === "email" && row.pipelineStage === "kontaktiert")).toBe(true);
+    const board = await call("leadops.pipelineOverview", { source: "email" });
+    expect(board.totals.leads).toBeGreaterThanOrEqual(2);
+    const nochmal = await call("leadops.pushLeadsToPipeline", { leadIds: liste.items.map((item: { id: number }) => item.id), stage: "neu" });
+    expect(nochmal.moved).toBe(0); expect(nochmal.already).toBe(2);
+  });
+});
+
+describe("Glocke: Tagesverlauf der Plattform (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Zeigt die letzten Tage zusammengefasst, zählt Neues seit dem letzten Öffnen und schreibt bei Aktionen mit", async () => {
+    const feed = await call("leadops.activityFeed", { days: 14 });
+    expect(feed.days.length).toBeGreaterThanOrEqual(3);
+    expect(feed.days[0].label).toBe("Heute");
+    expect(feed.days[0].summary).toMatch(/·/);
+    const gestern = feed.days.find((day: { label: string }) => day.label === "Gestern");
+    expect(gestern.groups.some((group: { kind: string }) => group.kind === "bestellung")).toBe(true);
+    const vorher = feed.total;
+    await call("leadops.importColdList", { listName: "Glockenprobe", toPipeline: true, rows: [{ firstName: "Emil", lastName: "Fünf", phone: "+49 69 55555", email: "emil@fuenf.de" }, { firstName: "Frieda", lastName: "Sechs", phone: "+49 69 66666" }] });
+    const danach = await call("leadops.activityFeed", { days: 14, since: new Date(Date.now() - 60_000) });
+    expect(danach.total).toBe(vorher + 1);
+    expect(danach.newCount).toBeGreaterThanOrEqual(1);
+    const heute = danach.days[0];
+    const kontakte = heute.groups.find((group: { kind: string }) => group.kind === "kontakt_neu");
+    expect(kontakte.entries[0].title).toContain("Glockenprobe");
+    expect(kontakte.entries[0].count).toBe(2);
+    const order = await call("leadops.createOrder", { buyerName: "Glocken GmbH", categoryId: getStore().tables.leadCategories[0].id, quantity: 10, unitPrice: 40, status: "offen" });
+    expect(order.orderNumber).toMatch(/^ORD-/);
+    const mitBestellung = await call("leadops.activityFeed", { days: 1 });
+    expect(mitBestellung.days[0].groups.find((group: { kind: string }) => group.kind === "bestellung").entries[0].title).toContain("Glocken GmbH");
+    const seit = await call("leadops.activityFeed", { days: 1, since: new Date(Date.now() + 60_000) });
+    expect(seit.newCount).toBe(0);
+  });
+
+  it("Gespräch abhören landet im Verlauf", async () => {
+    const callRow = getStore().tables.callRecords[0];
+    await call("leadops.markCallListened", { callId: callRow.id });
+    const feed = await call("leadops.activityFeed", { days: 1 });
+    expect(feed.days[0].groups.some((group: { kind: string }) => group.kind === "gespraech_abgehoert")).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ import { SimulationProvider, TwilioProvider, simulationFor, type NumberSearch, t
 
 export { DISPOSITIONS } from "../shared/dialer";
 import { DISPOSITIONS } from "../shared/dialer";
+import { annotateActivity, logActivity } from "./activity";
 export type DispositionKey = (typeof DISPOSITIONS)[number]["key"];
 const RETRY_RESULTS = new Set(["besetzt", "keine_antwort", "anrufbeantworter", "abgebrochen", "fehlgeschlagen", "nicht_erreicht", "wiedervorlage"]);
 const DEFAULT_WINDOW = { weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "19:00" };
@@ -383,6 +384,8 @@ export async function finishCall(db: Db, tenantId: number, callId: number, input
   if (call.leadId && input.status !== "beendet") await db.insert(leadStatusEvents).values({ tenantId, leadId: call.leadId, previousStatus: null, nextStatus: (await db.select({ status: leads.status }).from(leads).where(eq(leads.id, call.leadId)).limit(1))[0]?.status ?? "neu", actorUserId: call.agentUserId, note: `Anrufversuch (${call.mode}): ${input.status.replace("_", " ")}${input.note ? ` – ${input.note}` : ""}` });
   await handOffToEvaluation(db, tenantId, call.id);
   if (input.status === "beendet") await writeCallNote(db, tenantId, call.id, "ende").catch(() => null); // automatische Gesprächsnotiz (sofern eingeschaltet)
+  // Glocke: jeder Anruf ein Eintrag – das Ergebnis kommt später per setDisposition dazu
+  { const minutes = Math.round(((input.status === "beendet" ? (input.durationSeconds ?? talkSeconds) : null) ?? 0) / 60); const agent = call.agentUserId ? (await db.select({ name: users.name }).from(users).where(eq(users.id, call.agentUserId)).limit(1))[0]?.name ?? null : null; const statusText: Record<string, string> = { beendet: "Gespräch geführt", besetzt: "besetzt", keine_antwort: "keine Antwort", anrufbeantworter: "Anrufbeantworter", abgebrochen: "abgebrochen", fehlgeschlagen: "fehlgeschlagen" }; await logActivity(db, tenantId, { kind: "anruf", title: `Anruf an ${call.toNumber}: ${statusText[input.status] ?? input.status}${minutes ? ` (${minutes} Min.)` : ""}`, detail: agent ? `${agent} · ${call.mode}` : call.mode, leadId: call.leadId ?? null, actorUserId: call.agentUserId ?? null, refType: "dialerCall", refId: call.id }); }
   return (await db.select().from(dialerCalls).where(eq(dialerCalls.id, call.id)).limit(1))[0] ?? null;
 }
 
@@ -421,6 +424,8 @@ export async function setDisposition(db: Db, tenantId: number, userId: number, i
   if (!call) throw new Error("Anruf wurde nicht gefunden.");
   const definition = DISPOSITIONS.find((item) => item.key === input.disposition)!;
   await db.update(dialerCalls).set({ disposition: input.disposition, notes: input.notes?.trim() || call.notes }).where(eq(dialerCalls.id, call.id));
+  // Glocke: Ergebnis an den Anruf-Eintrag hängen (oder anlegen, falls der Anruf ohne Ende-Ereignis lief)
+  if (!(await annotateActivity(db, tenantId, { refType: "dialerCall", refId: call.id }, { detail: `Ergebnis: ${definition.label}${input.notes ? ` – ${input.notes.trim().slice(0, 120)}` : ""}`, leadId: call.leadId ?? null }))) await logActivity(db, tenantId, { kind: "anruf", title: `Anruf an ${call.toNumber}: ${definition.label}`, detail: input.notes?.trim().slice(0, 200) || null, leadId: call.leadId ?? null, actorUserId: userId, refType: "dialerCall", refId: call.id });
   // Rohdaten-Kontakt: erst jetzt entscheidet sich, ob daraus ein Lead wird
   if (call.rawContactId && !call.leadId) {
     if (definition.leadStatus === "genehmigt") { const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Anruf-Ergebnis: ${definition.label}`, categoryId: input.categoryId ?? null }); call.leadId = converted.leadId; await db.update(dialerCalls).set({ leadId: converted.leadId }).where(eq(dialerCalls.id, call.id)); if (call.callRecordId) await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.callRecordId)); }

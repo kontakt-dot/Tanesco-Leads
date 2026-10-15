@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { PIPELINE_STAGES, stageLabel } from "../../../shared/sales-pipeline";
+import { REACTION_LABEL, type SentReaction } from "../../../shared/sent-tracking";
 import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, ChevronLeft, Inbox, Mail, Megaphone, RefreshCw, Reply, Search, ShieldCheck, Sparkles, UserPlus, X } from "lucide-react";
 import { INBOX_AI_FILTERS, inboxAiFilterLabel, periodRange, REPLY_KIND_LABEL, type InboxAiFilter, type InboxPeriod, type ReplyAction, type ReplyKind } from "../../../shared/reply-ai";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -67,7 +68,7 @@ function periodText(period: InboxPeriod, range: { from: Date | null; to: Date | 
   if (range.from && range.to) return `${day(range.from)} bis ${day(new Date(range.to.getTime() - 1))}`; if (range.from) return `ab ${day(range.from)}`; if (range.to) return `bis ${day(new Date(range.to.getTime() - 1))}`; return "Eigener Zeitraum";
 }
 /** Posteingang: Antworten lesen, beantworten, Absender sperren oder als Lead in die Pipeline übernehmen. */
-export default function InboxPanel() {
+export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: string) => void } = {}) {
   const [filter, setFilter] = useState<Filter>("alle"); const [campaignId, setCampaignId] = useState<number | null>(null); const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState(""); const [replyText, setReplyText] = useState(""); const [leadForm, setLeadForm] = useState<LeadForm | null>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null); const now = useMemo(() => new Date(), []);
@@ -110,18 +111,17 @@ export default function InboxPanel() {
   const pipelineLink = (platform: string | null) => `/?page=Vertriebspipeline&quelle=${platform === "kaltakquise" ? "kaltakquise" : platform === "email" ? "email" : "ads"}`;
 
   const folderNav = <nav className="inbox-folders" aria-label="Ordner">{FOLDERS.map((folder) => <button key={folder.key} type="button" className={filter === folder.key ? "active" : ""} title={folder.hint} aria-pressed={filter === folder.key} onClick={() => { setFilter(folder.key); setSelectedId(null); }}>{folder.label}{counts && folder.key !== "archiv" && folder.key !== "gesendet" && (counts as Record<string, number>)[folder.key] > 0 ? <span className="inbox-count">{(counts as Record<string, number>)[folder.key]}</span> : null}</button>)}</nav>;
-  if (filter === "gesendet") return <div className="inbox-shell"><div className="inbox-toolbar">{folderNav}</div><SentMessages /></div>;
+  if (filter === "gesendet") return <div className="inbox-shell"><div className="inbox-toolbar">{folderNav}</div><SentMessages onOpenLead={onOpenLead} /></div>;
 
   return <div className={`inbox-shell ${selected ? "has-selection" : ""}`}>
     <div className="inbox-toolbar">
-      {folderNav}
+      <div className="inbox-folder-row">{folderNav}<Button size="sm" variant="outline" className="inbox-sync" disabled={sync.isPending} title="Postfach abrufen (IMAP) – neue Antworten laden und von der KI einordnen lassen" onClick={() => sync.mutate()}><RefreshCw className={sync.isPending ? "animate-spin" : ""} /> Aktualisieren</Button></div>
       <div className="inbox-toolbar-tools">
         <label className="inbox-sort" title="Reihenfolge der Liste"><ArrowDownUp className="h-4 w-4" aria-hidden="true" /><select aria-label="Sortierung" value={sort} onChange={(event) => setSort(event.target.value as InboxSort)}><option value="neu">Neueste zuerst</option><option value="alt">Älteste zuerst</option><option value="interesse">Einordnung: Interesse zuerst</option><option value="beschwerde">Einordnung: Beschwerde zuerst</option></select></label>
         <label className="inbox-ai-filter" title="Nur Nachrichten mit einer bestimmten KI-Einordnung zeigen"><Sparkles className="h-4 w-4" aria-hidden="true" /><select aria-label="KI-Einordnung" value={aiFilter ?? ""} onChange={(event) => { setAiFilter((event.target.value || null) as InboxAiFilter | null); setSelectedId(null); }}><option value="">KI: alle Antworten</option>{INBOX_AI_FILTERS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
         <label className="inbox-period" title="Nur Nachrichten aus einem Zeitraum zeigen"><CalendarDays className="h-4 w-4" aria-hidden="true" /><select aria-label="Zeitraum" value={period} onChange={(event) => { setPeriod(event.target.value as InboxPeriod); setSelectedId(null); }}><option value="alle">Gesamter Zeitraum</option><option value="heute">Heute</option><option value="gestern">Gestern</option><option value="7tage">Letzte 7 Tage</option><option value="30tage">Letzte 30 Tage</option><option value="eigener">Eigener Zeitraum …</option></select></label>
         {period === "eigener" && <span className="inbox-period-custom"><input type="date" aria-label="Von" value={customFrom} max={customTo || undefined} onChange={(event) => setCustomFrom(event.target.value)} /><span>bis</span><input type="date" aria-label="Bis" value={customTo} min={customFrom || undefined} onChange={(event) => setCustomTo(event.target.value)} /></span>}
         {(campaigns.length || campaignId) ? <label className="inbox-campaign-filter" title="Nur Antworten auf eine bestimmte Kampagne zeigen"><Megaphone className="h-4 w-4" aria-hidden="true" /><select aria-label="Nach Kampagne filtern" value={campaignId ?? ""} onChange={(event) => { setCampaignId(event.target.value ? Number(event.target.value) : null); setSelectedId(null); }}><option value="">Alle Kampagnen</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name} ({campaign.count})</option>)}{campaignId && !campaigns.some((campaign) => campaign.id === campaignId) ? <option value={campaignId}>Gewählte Kampagne</option> : null}</select></label> : null}
-        <Button size="sm" variant="outline" className="inbox-sync" disabled={sync.isPending} title="Postfach abrufen (IMAP) – neue Antworten laden und von der KI einordnen lassen" onClick={() => sync.mutate()}><RefreshCw className={sync.isPending ? "animate-spin" : ""} /> Aktualisieren</Button>
       </div>
     </div>
     {(activeCampaign || period !== "alle" || aiFilter) && <div className="inbox-active-filter">{aiFilter ? <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> : activeCampaign ? <Megaphone className="h-3.5 w-3.5" aria-hidden="true" /> : <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />}<span>{[aiFilter ? `KI-Einordnung: ${inboxAiFilterLabel(aiFilter)}` : null, activeCampaign ? `Nur Antworten auf „${activeCampaign.name}“` : null, period !== "alle" ? periodText(period, range) : null].filter(Boolean).join(" · ")}</span><button type="button" onClick={() => { setCampaignId(null); setPeriod("alle"); setCustomFrom(""); setCustomTo(""); setAiFilter(null); }}>Filter entfernen</button></div>}
@@ -192,17 +192,25 @@ export const InboxIcon = Mail;
 
 /**
  * Ordner „Gesendet“: alles, was wir per E-Mail herausgeschickt haben – Kampagnen-Mails aus den Serien,
- * Antworten aus dem Posteingang und Einzel-E-Mails aus einer Karte. Filter: Art, Kampagne, Zeitraum, Suche.
+ * Antworten aus dem Posteingang und Einzel-E-Mails aus einer Karte. Filter: Art, Reaktion, Kampagne, Zeitraum, Suche.
+ * Je Mail steht, an wen sie ging (Kontakt verlinkt) und was danach passiert ist: geöffnet, geklickt, geantwortet – mit Uhrzeit.
+ * Klick auf die Zeile zeigt die E-Mail so, wie sie rausging.
  */
-function SentMessages() {
+const whenShort = (value: Date | string) => { const date = new Date(value); const today = new Date(); const sameDay = date.toDateString() === today.toDateString(); return sameDay ? `heute ${date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}` : date.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
+const REACTION_FILTERS: SentReaction[] = ["geoeffnet", "geklickt", "geantwortet", "ohne", "bounce", "abgemeldet"];
+
+function SentMessages({ onOpenLead }: { onOpenLead?: (publicId: string) => void }) {
   const [kind, setKind] = useState<"alle" | "kampagne" | "antwort" | "einzel">("alle");
+  const [reaction, setReaction] = useState<SentReaction | null>(null);
   const [campaignId, setCampaignId] = useState<number | null>(null);
   const [period, setPeriod] = useState<"alle" | "heute" | "7tage" | "30tage">("alle");
   const [search, setSearch] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null); // Vorschau einer gesendeten E-Mail
   const range = (() => { const now = new Date(); const start = (days: number) => new Date(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - days * 86_400_000); return period === "heute" ? { from: start(0) } : period === "7tage" ? { from: start(6) } : period === "30tage" ? { from: start(29) } : {}; })();
-  const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, campaignId, search: search.trim() || null, from: range.from ?? null }, { retry: false });
+  const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, reaction, campaignId, search: search.trim() || null, from: range.from ?? null }, { retry: false });
   const items = sent.data?.items ?? [];
   const label: Record<string, string> = { kampagne: "Kampagne", antwort: "Antwort", einzel: "Einzel-E-Mail" };
+  const openLead = (publicId: string) => { if (onOpenLead) onOpenLead(publicId); else window.location.assign(`/?page=Vertriebspipeline&lead=${publicId}`); };
   return <div className="inbox-sent">
     <div className="inbox-sent-filters">
       <div className="dashboard-segments">{([["alle", `Alle${sent.data ? ` (${sent.data.counts.alle})` : ""}`], ["kampagne", `Kampagnen${sent.data ? ` (${sent.data.counts.kampagne})` : ""}`], ["antwort", `Antworten${sent.data ? ` (${sent.data.counts.antwort})` : ""}`], ["einzel", `Einzeln${sent.data ? ` (${sent.data.counts.einzel})` : ""}`]] as const).map(([key, text]) => <button key={key} type="button" className={kind === key ? "active" : ""} onClick={() => setKind(key)}>{text}</button>)}</div>
@@ -210,19 +218,44 @@ function SentMessages() {
       <select className="lead-action-select" aria-label="Zeitraum" value={period} onChange={(event) => setPeriod(event.target.value as typeof period)}><option value="alle">Gesamter Zeitraum</option><option value="heute">Heute</option><option value="7tage">Letzte 7 Tage</option><option value="30tage">Letzte 30 Tage</option></select>
       <input className="inbox-search" placeholder="Suchen: Adresse, Betreff, Kampagne" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
+    <div className="inbox-sent-reactions" role="group" aria-label="Nach Reaktion filtern"><span>Reaktion:</span>{REACTION_FILTERS.map((key) => <button key={key} type="button" className={`inbox-reaction-chip is-${key} ${reaction === key ? "is-active" : ""}`} onClick={() => setReaction(reaction === key ? null : key)}>{REACTION_LABEL[key]}{sent.data ? ` ${sent.data.reactions[key]}` : ""}</button>)}{reaction && <button type="button" className="inbox-reaction-reset" onClick={() => setReaction(null)}>alle</button>}</div>
     {sent.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
-      : !items.length ? <p className="py-10 text-center text-sm text-slate-500">Noch nichts gesendet{search || campaignId || kind !== "alle" || period !== "alle" ? " – oder keine Treffer für diese Filter" : ""}.</p>
-      : <ul className="inbox-sent-list">{items.map((item) => <li key={item.id} className="inbox-sent-row">
+      : !items.length ? <p className="py-10 text-center text-sm text-slate-500">Noch nichts gesendet{search || campaignId || kind !== "alle" || period !== "alle" || reaction ? " – oder keine Treffer für diese Filter" : ""}.</p>
+      : <ul className="inbox-sent-list">{items.map((item) => <li key={item.id} className={`inbox-sent-row ${openId === item.id ? "is-open" : ""}`} role="button" tabIndex={0} title="Klick zeigt die E-Mail, wie sie rausging" onClick={() => setOpenId(openId === item.id ? null : item.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpenId(openId === item.id ? null : item.id); } }}>
           <div className="inbox-sent-main">
             <strong>{item.subject}</strong>
-            <small>an {item.name ? `${item.name} · ` : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{item.sender ? ` · von ${item.sender}` : ""}</small>
+            <small>an {item.lead ? <button type="button" className="inbox-sent-contact" title="Kontakt öffnen" onClick={(event) => { event.stopPropagation(); openLead(item.lead!.publicId); }}>{item.lead.name}</button> : item.name ? <span>{item.name}</span> : null}{item.lead || item.name ? " · " : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{item.sender ? ` · von ${item.sender}` : ""}</small>
             {item.kind !== "kampagne" && item.preview ? <p className="inbox-sent-preview">{item.preview}</p> : null}
+            {item.tracking && <div className="inbox-sent-track" aria-label="Was mit dieser E-Mail passiert ist">
+              <i className={`inbox-track-step ${item.tracking.openedAt ? "is-done" : ""}`}>{item.tracking.openedAt ? `Geöffnet ${whenShort(item.tracking.openedAt)}` : "Nicht geöffnet"}</i>
+              <i className={`inbox-track-step ${item.tracking.clickedAt ? "is-done" : ""}`}>{item.tracking.clickedAt ? `Geklickt ${whenShort(item.tracking.clickedAt)}` : "Kein Klick"}</i>
+              <i className={`inbox-track-step ${item.tracking.repliedAt ? "is-done is-reply" : ""}`}>{item.tracking.repliedAt ? `Geantwortet ${whenShort(item.tracking.repliedAt)}` : "Keine Antwort"}</i>
+              {item.tracking.bouncedAt && <i className="inbox-track-step is-bad">Unzustellbar {whenShort(item.tracking.bouncedAt)}</i>}
+              {item.tracking.unsubscribedAt && <i className="inbox-track-step is-bad">Abgemeldet {whenShort(item.tracking.unsubscribedAt)}</i>}
+            </div>}
           </div>
           <div className="inbox-sent-meta">
             <i className={`inbox-tag is-${item.kind}`}>{label[item.kind] ?? item.kind}</i>
+            {item.tracking ? <i className={`inbox-tag inbox-reaction is-${item.tracking.reaction}`}>{REACTION_LABEL[item.tracking.reaction]}</i> : null}
             {item.status !== "gesendet" ? <i className="inbox-tag is-blocked">{item.status}</i> : null}
             <time>{new Date(item.at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time>
           </div>
+          {openId === item.id && <div className="inbox-sent-preview-wrap" onClick={(event) => event.stopPropagation()}><SentMailPreview id={item.id} onClose={() => setOpenId(null)} /></div>}
         </li>)}</ul>}
+  </div>;
+}
+
+/** Vorschau einer gesendeten E-Mail: Kampagnen-Mails werden aus dem Schritt und den Empfängerdaten nachgebaut, Einzel-Mails aus dem gespeicherten Text. */
+function SentMailPreview({ id, onClose }: { id: string; onClose: () => void }) {
+  const preview = trpc.leadops.sentMailPreview.useQuery({ id }, { retry: false });
+  if (preview.isLoading) return <p className="py-6 text-center text-sm text-slate-500">Vorschau wird geladen …</p>;
+  if (preview.error || !preview.data) return <p className="py-6 text-center text-sm text-rose-300">{preview.error?.message ?? "Vorschau nicht möglich."}</p>;
+  const mail = preview.data;
+  return <div className="sent-preview">
+    <div className="sent-preview-head">
+      <div><strong>{mail.subject || "(ohne Betreff)"}</strong><small>an {mail.name ? `${mail.name} · ` : ""}{mail.to} · {new Date(mail.at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}{mail.campaignName ? ` · ${mail.campaignName}` : ""}</small>{mail.note ? <small className="sent-preview-note">{mail.note}</small> : null}</div>
+      <button type="button" className="text-xs text-violet-200 hover:underline" onClick={onClose}>schließen</button>
+    </div>
+    <iframe title={`Gesendete E-Mail: ${mail.subject}`} className="sent-preview-frame" srcDoc={mail.html} sandbox="allow-same-origin" />
   </div>;
 }
