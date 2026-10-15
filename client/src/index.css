@@ -1738,3 +1738,17 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .inbox-compose{flex:none;margin:0 16px 14px;padding:10px 12px}
 .inbox-compose-text{min-height:64px;max-height:38vh}
 @media (max-width:900px){.inbox-read{height:auto;max-height:none;overflow:visible}.inbox-read-scroll{overflow:visible}}
+
+/* Antworten mit Anhang: Liste der gewählten Dateien im Antwortfeld */
+.inbox-attachments{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px;padding:0;list-style:none}
+.inbox-attachments li{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 8px;border-radius:999px;border:1px solid rgba(129,120,255,.3);background:rgba(129,120,255,.12);font-size:11.5px;color:#e5e1fd}
+.inbox-attachments li span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:220px}
+.inbox-attachments li small{color:#a5a1d7}
+.inbox-attachments li button{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:999px;color:#a5a1d7}
+.inbox-attachments li button:hover{background:rgba(255,255,255,.12);color:#fff}
+.inbox-compose-actions{flex-wrap:wrap}
+/* Signatur-Einstellungen mit Vorschau */
+.signature-grid{display:grid;gap:14px;grid-template-columns:minmax(0,1.3fr) minmax(280px,1fr)}
+@media (max-width:900px){.signature-grid{grid-template-columns:1fr}}
+.signature-preview{display:grid;gap:6px;align-content:start}
+.signature-preview-frame{display:block;width:100%;height:330px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#fff}

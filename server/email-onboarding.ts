@@ -88,12 +88,12 @@ export async function sendEvent(db: Db, tenantId: number, eventId: number, conte
 }
 
 /** Versand über die Mandanten-Einstellungen (Einstellungen → E-Mail-Versand), sonst SMTP_URL vom Hosting; ohne beides: simuliert. */
-export type MailAttachment = { filename: string; content: string; contentType?: string };
+export type MailAttachment = { filename: string; content: string; contentType?: string; encoding?: "base64" };
 export async function deliverMail(mail: { to: string; subject: string; html: string; text?: string; attachments?: MailAttachment[] }, options: { db?: Db | null; tenantId?: number | null } = {}): Promise<{ ok: boolean; status: "gesendet" | "simuliert" | "fehlgeschlagen"; messageId?: string; note?: string }> {
   const ready = await transportFor(options.db ?? null, options.tenantId ?? null).catch(() => null);
   if (!ready) return { ok: true, status: "simuliert", note: "Kein E-Mail-Versand eingerichtet (Einstellungen → E-Mail-Versand) – Versand simuliert" };
   try {
-    const result = await ready.transport.sendMail({ from: ready.from, replyTo: ready.replyTo, to: mail.to, subject: mail.subject, html: mail.html, text: mail.text ?? mail.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(), ...(mail.attachments?.length ? { attachments: mail.attachments.map((item) => ({ filename: item.filename, content: item.content, contentType: item.contentType })) } : {}) });
+    const result = await ready.transport.sendMail({ from: ready.from, replyTo: ready.replyTo, to: mail.to, subject: mail.subject, html: mail.html, text: mail.text ?? mail.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(), ...(mail.attachments?.length ? { attachments: mail.attachments.map((item) => ({ filename: item.filename, content: item.content, contentType: item.contentType, ...(item.encoding ? { encoding: item.encoding } : {}) })) } : {}) });
     return { ok: true, status: "gesendet", messageId: result.messageId };
   } catch (error) { if (process.env.MAIL_DEBUG) console.error("[MAIL_DEBUG]", error); return { ok: false, status: "fehlgeschlagen", note: error instanceof Error ? error.message.slice(0, 220) : "Versand fehlgeschlagen" }; }
 }

@@ -1794,4 +1794,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await db.select({ stage: leads.pipelineStage }).from(leads).where(eq(leads.id, kaltLead.id)))[0].stage).toBe("neu");
   });
 
+  it("36. Signatur für Antworten (Migration 0071) und Anhänge: Signatur speichern, Vorschau, Antwort mit Anhang wird mit Dateiname festgehalten, Grenzen greifen", async () => {
+    const settings = await owner.leadops.getMailSettings();
+    await owner.leadops.saveMailSettings({ provider: settings.provider as "smtp", fromName: settings.fromName ?? "Vertrieb Tanesco", fromEmail: settings.fromEmail ?? "vertrieb@tanesco-test.example", signature: { enabled: true, greeting: "Mit freundlichen Grüßen", name: "Thomas Kutzbach", phone: "+49 (0) 178 33 59 146", email: "kontakt@tanescodigital.de", website: "www.tanescodigital.de", showLogo: true, showCompany: true } });
+    const saved = (await owner.leadops.getMailSettings() as { signature?: { name?: string } }).signature; expect(saved?.name).toBe("Thomas Kutzbach");
+    const preview = await owner.leadops.mailSignaturePreview({ signature: { role: "Geschäftsführung" } });
+    expect(preview.html).toContain("Thomas Kutzbach"); expect(preview.html).toContain("Geschäftsführung"); expect(preview.html).toContain("tanesco-logo-mail.png"); expect(preview.text).toContain("Telefon: +49 (0) 178 33 59 146");
+    const incoming = await owner.leadops.storeInboxMessage({ fromEmail: "antwort@signatur-test.example", fromName: "Signatur Test", subject: "Angebot?", bodyText: "Können Sie mir ein Angebot schicken?" });
+    const answered = (await db.select().from(inboxMessages).where(eq(inboxMessages.id, incoming.id)))[0];
+    const result = await owner.leadops.replyInboxMessage({ messageId: answered.id, text: "Anbei das Angebot.", attachments: [{ filename: "Angebot.pdf", contentType: "application/pdf", contentBase64: Buffer.from("%PDF-1.4 test").toString("base64"), size: 13 }] });
+    expect(result.status).toBe("simuliert"); expect(result.attachments).toBe(1);
+    const stored = (await db.select().from(outboundMessages).where(and(eq(outboundMessages.inboxMessageId, answered.id), eq(outboundMessages.channel, "email"))).orderBy(desc(outboundMessages.id)).limit(1))[0];
+    expect(stored.attachments).toEqual([{ filename: "Angebot.pdf", size: 13, contentType: "application/pdf" }]);
+    expect((await owner.leadops.listSent({ kind: "antwort" })).items.some((item) => item.to === answered.fromEmail && (item as { attachments?: Array<{ filename: string }> }).attachments?.some((file) => file.filename === "Angebot.pdf"))).toBe(true);
+    await expect(owner.leadops.replyInboxMessage({ messageId: answered.id, text: "zu viel", attachments: Array.from({ length: 6 }, (_, i) => ({ filename: `f${i}.pdf`, contentType: "application/pdf", contentBase64: "QQ==", size: 1 })) })).rejects.toThrow();
+  });
+
 });

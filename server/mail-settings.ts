@@ -5,7 +5,9 @@
  */
 import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import dns from "node:dns/promises";
-import { emailCampaignEvents, emailCampaignRecipients, mailSettings } from "../drizzle/schema";
+import { emailCampaignEvents, emailCampaignRecipients, mailSettings, tenantSettings } from "../drizzle/schema";
+import { normalizeSignature, renderSignatureHtml, renderSignatureText, type MailSignature, type SignatureContext } from "../shared/email-signature";
+import { COMPANY_FOOTER, TANESCO_LOGO_PATH } from "../shared/email-design";
 import type { Db } from "./lead-pipeline";
 
 export type Provider = "gmail" | "brevo" | "brevo_api" | "mailgun" | "postmark" | "ses" | "smtp";
@@ -29,16 +31,25 @@ export async function getSettings(db: Db, tenantId: number) {
   const row = await ensureSettings(db, tenantId);
   return { ...row, password: mask(row.password), imapPassword: mask(row.imapPassword), hasPassword: Boolean(row.password), hasImapPassword: Boolean(row.imapPassword), envFallback: Boolean(process.env.SMTP_URL), replyAiAvailable: Boolean(process.env.ANTHROPIC_API_KEY), providers: PROVIDERS.map(({ key, label, host, port, secure, hint, dailyLimit }) => ({ key, label, host, port, secure, hint, dailyLimit })) };
 }
-export async function saveSettings(db: Db, tenantId: number, input: { provider: Provider; host?: string | null; port?: number | null; secure?: boolean; username?: string | null; password?: string | null; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; dailyLimit?: number | null; enabled?: boolean; imapEnabled?: boolean; imapHost?: string | null; imapPort?: number | null; imapUsername?: string | null; imapPassword?: string | null; replyAiEnabled?: boolean; replyAiAutoBlock?: boolean; replyAiInterest?: boolean; imapScope?: "bekannte" | "alle" }) {
+export async function saveSettings(db: Db, tenantId: number, input: { provider: Provider; host?: string | null; port?: number | null; secure?: boolean; username?: string | null; password?: string | null; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; dailyLimit?: number | null; enabled?: boolean; imapEnabled?: boolean; imapHost?: string | null; imapPort?: number | null; imapUsername?: string | null; imapPassword?: string | null; replyAiEnabled?: boolean; replyAiAutoBlock?: boolean; replyAiInterest?: boolean; imapScope?: "bekannte" | "alle"; signature?: Partial<MailSignature> | null }) {
   const row = await ensureSettings(db, tenantId); const preset = PROVIDERS.find((item) => item.key === input.provider) ?? PROVIDERS[5];
   const fromEmail = input.fromEmail?.trim().toLowerCase() || null; if (fromEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) throw new Error("Bitte eine gültige Absenderadresse angeben.");
   const keepPassword = !input.password || input.password === "••••••••"; const keepImap = !input.imapPassword || input.imapPassword === "••••••••";
-  await db.update(mailSettings).set({ provider: input.provider, host: input.host?.trim() || preset.host || null, port: input.port ?? preset.port, secure: input.secure ?? preset.secure, username: input.username?.trim() || null, ...(keepPassword ? {} : { password: input.password }), fromName: input.fromName?.trim() || null, fromEmail, replyTo: input.replyTo?.trim() || null, dailyLimit: input.dailyLimit ?? preset.dailyLimit, enabled: input.enabled ?? row.enabled, imapEnabled: input.imapEnabled ?? row.imapEnabled, imapHost: input.imapHost?.trim() || (input.provider === "gmail" ? "imap.gmail.com" : row.imapHost), imapPort: input.imapPort ?? row.imapPort ?? 993, imapUsername: input.imapUsername?.trim() || null, ...(keepImap ? {} : { imapPassword: input.imapPassword }), replyAiEnabled: input.replyAiEnabled ?? row.replyAiEnabled, replyAiAutoBlock: input.replyAiAutoBlock ?? row.replyAiAutoBlock, replyAiInterest: input.replyAiInterest ?? row.replyAiInterest, imapScope: input.imapScope ?? row.imapScope ?? "bekannte" }).where(eq(mailSettings.id, row.id));
+  await db.update(mailSettings).set({ provider: input.provider, host: input.host?.trim() || preset.host || null, port: input.port ?? preset.port, secure: input.secure ?? preset.secure, username: input.username?.trim() || null, ...(keepPassword ? {} : { password: input.password }), fromName: input.fromName?.trim() || null, fromEmail, replyTo: input.replyTo?.trim() || null, dailyLimit: input.dailyLimit ?? preset.dailyLimit, enabled: input.enabled ?? row.enabled, imapEnabled: input.imapEnabled ?? row.imapEnabled, imapHost: input.imapHost?.trim() || (input.provider === "gmail" ? "imap.gmail.com" : row.imapHost), imapPort: input.imapPort ?? row.imapPort ?? 993, imapUsername: input.imapUsername?.trim() || null, ...(keepImap ? {} : { imapPassword: input.imapPassword }), replyAiEnabled: input.replyAiEnabled ?? row.replyAiEnabled, replyAiAutoBlock: input.replyAiAutoBlock ?? row.replyAiAutoBlock, replyAiInterest: input.replyAiInterest ?? row.replyAiInterest, imapScope: input.imapScope ?? row.imapScope ?? "bekannte", ...(input.signature !== undefined ? { signature: input.signature ? normalizeSignature(input.signature) : null } : {}) }).where(eq(mailSettings.id, row.id));
   return { success: true as const };
 }
 /** Gemeinsame Form von Nodemailer-Transport und HTTP-Versand, damit der aufrufende Code beides gleich behandelt. */
-export type MailTransport = { verify: () => Promise<unknown>; sendMail: (mail: { from?: string; replyTo?: string; to: string; subject: string; html?: string; text?: string; attachments?: Array<{ filename: string; content: string; contentType?: string }> }) => Promise<{ messageId?: string }> };
+export type MailTransport = { verify: () => Promise<unknown>; sendMail: (mail: { from?: string; replyTo?: string; to: string; subject: string; html?: string; text?: string; attachments?: Array<{ filename: string; content: string; contentType?: string; encoding?: "base64" }> }) => Promise<{ messageId?: string }> };
 /** Transport aus den Mandanten-Einstellungen; Rückfall auf SMTP_URL (Hosting). null = kein Versand möglich (simulieren). */
+/** Signatur des Mandanten samt Kontext (Firmenblock aus Branding, Logo-Adresse) – für Antworten und Einzel-E-Mails. */
+export async function signatureFor(db: Db, tenantId: number, appUrl?: string | null): Promise<{ signature: MailSignature; context: SignatureContext; html: string; text: string }> {
+  const row = await ensureSettings(db, tenantId);
+  const signature = normalizeSignature((row.signature ?? null) as Partial<MailSignature> | null);
+  const settings = (await db.select({ footer: tenantSettings.companyFooter }).from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).limit(1))[0];
+  const base = (appUrl ?? process.env.APP_URL ?? "").replace(/\/+$/, "");
+  const context: SignatureContext = { companyFooter: settings?.footer ?? COMPANY_FOOTER, logoUrl: base ? `${base}${TANESCO_LOGO_PATH}` : null };
+  return { signature, context, html: renderSignatureHtml(signature, context), text: renderSignatureText(signature, context) };
+}
 export async function transportFor(db: Db | null, tenantId: number | null) {
   const nodemailer = await import("nodemailer");
   if (db && tenantId) {

@@ -79,3 +79,34 @@ describe("Gesendet: Reaktion je Mail (shared/sent-tracking)", () => {
     expect(countReactions([{ tracking: bounced }, { tracking: unsubscribed }, { tracking: null }])).toEqual({ bounce: 1, abgemeldet: 1, geantwortet: 0, geklickt: 0, geoeffnet: 0, ohne: 0 });
   });
 });
+
+describe("Signatur für Antworten (shared/email-signature)", () => {
+  const sig = { enabled: true, greeting: "Mit freundlichen Grüßen", name: "Thomas Kutzbach", role: "", phone: "+49 (0) 178 33 59 146", email: "kontakt@tanescodigital.de", website: "www.tanescodigital.de", showLogo: true, showCompany: true };
+  const context = { companyFooter: "Tanesco Digital GbR · Schultheißweg 44 · 55252 Wiesbaden", logoUrl: "https://app.example/brand/tanesco-logo-mail.png" };
+
+  it("HTML: Grußformel, Name kursiv, Logo, Firmenblock in Zeilen, Telefon, E-Mail- und Webseiten-Link", async () => {
+    const { renderSignatureHtml, renderSignatureText, companyLines, normalizeSignature } = await import("../shared/email-signature");
+    const html = renderSignatureHtml(sig, context);
+    expect(html).toContain("Mit freundlichen Grüßen"); expect(html).toContain("font-style:italic\">Thomas Kutzbach");
+    expect(html).toContain('src="https://app.example/brand/tanesco-logo-mail.png"');
+    expect(html).toContain("Tanesco Digital GbR"); expect(html).toContain("Schultheißweg 44"); expect(html).toContain("55252 Wiesbaden");
+    expect(html).toContain("Telefon: +49 (0) 178 33 59 146"); expect(html).toContain('href="mailto:kontakt@tanescodigital.de"'); expect(html).toContain('href="https://www.tanescodigital.de"');
+    expect(companyLines(context.companyFooter)).toEqual(["Tanesco Digital GbR", "Schultheißweg 44", "55252 Wiesbaden"]);
+    const text = renderSignatureText(sig, context);
+    expect(text.split("\n")).toEqual(["", "-- ", "Mit freundlichen Grüßen", "Thomas Kutzbach", "", "Tanesco Digital GbR", "Schultheißweg 44", "55252 Wiesbaden", "Telefon: +49 (0) 178 33 59 146", "E-Mail: kontakt@tanescodigital.de", "Webseite: www.tanescodigital.de"]);
+    expect(normalizeSignature({ name: "  X  " }).greeting).toBe("Mit freundlichen Grüßen"); expect(normalizeSignature({ name: "  X  " }).name).toBe("X");
+  });
+
+  it("ausgeschaltet oder leer → keine Signatur; ohne Logo/Firma bleiben nur die Kontaktzeilen; HTML wird entschärft", async () => {
+    const { renderSignatureHtml, renderSignatureText, checkAttachments } = await import("../shared/email-signature");
+    expect(renderSignatureHtml({ ...sig, enabled: false }, context)).toBe(""); expect(renderSignatureText({ ...sig, enabled: false }, context)).toBe("");
+    expect(renderSignatureHtml({ ...sig, greeting: "", name: "", phone: "", email: "", website: "", showCompany: false }, context)).toBe("");
+    const slim = renderSignatureHtml({ ...sig, showLogo: false, showCompany: false }, context);
+    expect(slim).not.toContain("<img"); expect(slim).not.toContain("Wiesbaden"); expect(slim).toContain("Telefon:");
+    expect(renderSignatureHtml({ ...sig, name: "<b>Böse</b>" }, context)).toContain("&lt;b&gt;Böse&lt;/b&gt;");
+    expect(checkAttachments([])).toBeNull();
+    expect(checkAttachments(Array.from({ length: 6 }, (_, i) => ({ filename: `f${i}.pdf`, contentType: "application/pdf", contentBase64: "", size: 10 })))).toMatch(/Höchstens 5/);
+    expect(checkAttachments([{ filename: "gross.pdf", contentType: "application/pdf", contentBase64: "", size: 8 * 1024 * 1024 }])).toMatch(/zu groß/);
+    expect(checkAttachments([{ filename: "a.pdf", contentType: "", contentBase64: "", size: 6 * 1024 * 1024 }, { filename: "b.pdf", contentType: "", contentBase64: "", size: 6 * 1024 * 1024 }, { filename: "c.pdf", contentType: "", contentBase64: "", size: 6 * 1024 * 1024 }])).toMatch(/zusammen/);
+  });
+});

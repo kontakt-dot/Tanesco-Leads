@@ -13,7 +13,8 @@ import { countReactions, trackingForSend, type SentReaction, type SentTracking }
 import { addSuppression, isSuppressed, removeSuppressionByEmail } from "./pipeline-extras";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
-import { ensureSettings } from "./mail-settings";
+import { ensureSettings, signatureFor } from "./mail-settings";
+import { checkAttachments, type MailAttachmentInput } from "../shared/email-signature";
 import { logActivity } from "./activity";
 
 const stripHtml = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
@@ -184,17 +185,20 @@ export async function createLeadFromMessage(db: Db, tenantId: number, input: { m
   return { leadId, publicId, created: true, linked };
 }
 /** Antwort aus dem Posteingang schicken (über den eingerichteten Versand). */
-export async function reply(db: Db, tenantId: number, input: { messageId: number; text: string; actorUserId?: number | null }) {
+export async function reply(db: Db, tenantId: number, input: { messageId: number; text: string; actorUserId?: number | null; attachments?: MailAttachmentInput[] | null; appUrl?: string | null }) {
   const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");
   const text = input.text.trim(); if (!text) throw new Error("Bitte einen Text eingeben.");
+  const files = input.attachments ?? []; const problem = checkAttachments(files); if (problem) throw new Error(problem);
   const subject = /^re:/i.test(message.subject ?? "") ? message.subject! : `Re: ${message.subject ?? ""}`.trim();
-  const html = `<div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#101828">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>")}</div>`;
-  const sent = await deliverMail({ to: message.fromEmail, subject, html, text }, { db, tenantId }); if (!sent.ok) throw new Error(sent.note ?? "Versand fehlgeschlagen");
+  // Signatur aus den E-Mail-Einstellungen unter den Text – als HTML und als reiner Text
+  const signature = await signatureFor(db, tenantId, input.appUrl ?? null);
+  const html = `<div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#101828">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>")}</div>${signature.html}`;
+  const sent = await deliverMail({ to: message.fromEmail, subject, html, text: `${text}${signature.text}`, attachments: files.map((file) => ({ filename: file.filename, content: file.contentBase64, contentType: file.contentType || undefined, encoding: "base64" as const })) }, { db, tenantId }); if (!sent.ok) throw new Error(sent.note ?? "Versand fehlgeschlagen");
   await db.update(inboxMessages).set({ isRead: true }).where(eq(inboxMessages.id, message.id));
   // Antwort im E-Mail-Verlauf festhalten – auch ohne Lead (wird beim Anlegen des Leads nachträglich verknüpft)
   const leadId = message.leadId ?? (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.email, message.fromEmail))).limit(1))[0]?.id ?? null;
-  await db.insert(outboundMessages).values({ tenantId, leadId, channel: "email", toAddress: message.fromEmail, subject: subject.slice(0, 320), text, status: sent.status === "gesendet" ? "gesendet" : "simuliert", provider: "posteingang", inboxMessageId: message.id, createdByUserId: input.actorUserId ?? null });
-  return { status: sent.status };
+  await db.insert(outboundMessages).values({ tenantId, leadId, channel: "email", toAddress: message.fromEmail, subject: subject.slice(0, 320), text, status: sent.status === "gesendet" ? "gesendet" : "simuliert", provider: "posteingang", inboxMessageId: message.id, attachments: files.length ? files.map((file) => ({ filename: file.filename, size: file.size, contentType: file.contentType })) : null, createdByUserId: input.actorUserId ?? null });
+  return { status: sent.status, attachments: files.length };
 }
 export { isNull };
 
@@ -214,7 +218,7 @@ export async function listSent(db: Db, tenantId: number, options: { search?: str
     .innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignEvents.campaignId))
     .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet")))
     .orderBy(desc(emailCampaignEvents.createdAt)).limit(limit);
-  const singleRows = await db.select({ id: outboundMessages.id, at: outboundMessages.createdAt, subject: outboundMessages.subject, text: outboundMessages.text, to: outboundMessages.toAddress, status: outboundMessages.status, inboxMessageId: outboundMessages.inboxMessageId, leadId: outboundMessages.leadId, senderName: users.name })
+  const singleRows = await db.select({ id: outboundMessages.id, at: outboundMessages.createdAt, subject: outboundMessages.subject, text: outboundMessages.text, to: outboundMessages.toAddress, status: outboundMessages.status, inboxMessageId: outboundMessages.inboxMessageId, leadId: outboundMessages.leadId, attachments: outboundMessages.attachments, senderName: users.name })
     .from(outboundMessages).leftJoin(users, eq(users.id, outboundMessages.createdByUserId))
     .where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email")))
     .orderBy(desc(outboundMessages.createdAt)).limit(limit);
@@ -230,8 +234,8 @@ export async function listSent(db: Db, tenantId: number, options: { search?: str
   const leadById = new Map(leadRows.map((row) => [row.id, row]));
   const leadInfo = (leadId: number | null) => { const row = leadId ? leadById.get(leadId) : undefined; return row ? { publicId: row.publicId, name: [row.firstName, row.lastName].filter(Boolean).join(" ") || row.company || row.publicId } : null; };
   const items = [
-    ...campaignRows.map((row) => ({ id: `k${row.id}`, kind: "kampagne" as SentKind, at: row.at, to: row.email, name: row.name ?? null, subject: row.subject ?? row.note ?? "(ohne Betreff)", preview: row.campaignName, campaignId: row.campaignId as number | null, campaignName: row.campaignName as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: "gesendet", sender: null as string | null, tracking: trackingForSend(row.at, byRecipient.get(row.recipientId) ?? [], sendsOf(row.recipientId), { openedAt: row.openedAt, clickedAt: row.clickedAt, repliedAt: row.repliedAt, bouncedAt: row.bouncedAt }) as SentTracking | null })),
-    ...singleRows.map((row) => ({ id: `e${row.id}`, kind: (row.inboxMessageId ? "antwort" : "einzel") as SentKind, at: row.at, to: row.to, name: leadInfo(row.leadId)?.name ?? null, subject: row.subject ?? "(ohne Betreff)", preview: (row.text ?? "").replace(/\s+/g, " ").slice(0, 160), campaignId: null as number | null, campaignName: null as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: row.status as string, sender: row.senderName ?? null, tracking: null as SentTracking | null })),
+    ...campaignRows.map((row) => ({ id: `k${row.id}`, kind: "kampagne" as SentKind, at: row.at, to: row.email, name: row.name ?? null, subject: row.subject ?? row.note ?? "(ohne Betreff)", preview: row.campaignName, campaignId: row.campaignId as number | null, campaignName: row.campaignName as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: "gesendet", sender: null as string | null, attachments: [] as Array<{ filename: string; size: number; contentType?: string }>, tracking: trackingForSend(row.at, byRecipient.get(row.recipientId) ?? [], sendsOf(row.recipientId), { openedAt: row.openedAt, clickedAt: row.clickedAt, repliedAt: row.repliedAt, bouncedAt: row.bouncedAt }) as SentTracking | null })),
+    ...singleRows.map((row) => ({ id: `e${row.id}`, kind: (row.inboxMessageId ? "antwort" : "einzel") as SentKind, at: row.at, to: row.to, name: leadInfo(row.leadId)?.name ?? null, subject: row.subject ?? "(ohne Betreff)", preview: (row.text ?? "").replace(/\s+/g, " ").slice(0, 160), campaignId: null as number | null, campaignName: null as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: row.status as string, sender: row.senderName ?? null, tracking: null as SentTracking | null, attachments: (Array.isArray(row.attachments) ? row.attachments : []) as Array<{ filename: string; size: number; contentType?: string }> })),
   ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   const search = (options.search ?? "").trim().toLowerCase();
   const filtered = items.filter((item) => {

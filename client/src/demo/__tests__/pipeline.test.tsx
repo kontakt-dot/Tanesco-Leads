@@ -1363,3 +1363,24 @@ describe("Jede Pipeline mit eigenen Stufen (Chat-Build)", () => {
     expect(getStore().tables.leads.find((row) => row.id === kaltLead.id)!.pipelineStage).toBe("neu");
   });
 });
+
+describe("Antworten mit Signatur und Anhang (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Signatur speichern, Vorschau zeigt Name, Firma und Logo; Antwort mit Anhang wird im Verlauf mit Dateiname festgehalten", async () => {
+    const settings = await call("leadops.getMailSettings");
+    expect(settings.signature).toMatchObject({ enabled: true, name: "Thomas Kutzbach" });
+    const vorschau = await call("leadops.mailSignaturePreview", { signature: { name: "Taner Tanesco", role: "Vertrieb" } });
+    expect(vorschau.html).toContain("Taner Tanesco"); expect(vorschau.html).toContain("Vertrieb"); expect(vorschau.html).toContain("Tanesco Digital GbR"); expect(vorschau.html).toContain("tanesco-logo-mail.png");
+    await call("leadops.saveMailSettings", { provider: settings.provider, fromName: settings.fromName, fromEmail: settings.fromEmail, enabled: true, imapEnabled: true, imapHost: settings.imapHost, imapUsername: settings.imapUsername, signature: { ...settings.signature, name: "Taner Tanesco", showLogo: false } });
+    const danach = await call("leadops.getMailSettings"); expect(danach.signature.name).toBe("Taner Tanesco"); expect(danach.signature.showLogo).toBe(false);
+    expect((await call("leadops.mailSignaturePreview", {})).html).not.toContain("<img");
+    const message = getStore().tables.inboxMessages[0];
+    const ergebnis = await call("leadops.replyInboxMessage", { messageId: message.id, text: "Anbei unser Angebot.", attachments: [{ filename: "Angebot.pdf", contentType: "application/pdf", contentBase64: "JVBERi0xLjQK", size: 12 }] });
+    expect(ergebnis.attachments).toBe(1);
+    const gesendet = await call("leadops.listSent", { kind: "antwort" });
+    const row = gesendet.items.find((item: { to: string; attachments?: Array<{ filename: string }> }) => item.to === message.fromEmail && item.attachments?.length);
+    expect(row.attachments[0].filename).toBe("Angebot.pdf");
+    await expect(call("leadops.replyInboxMessage", { messageId: message.id, text: "zu groß", attachments: [{ filename: "riesig.zip", contentType: "application/zip", contentBase64: "", size: 9 * 1024 * 1024 }] })).rejects.toThrow(/zu groß/);
+  });
+});

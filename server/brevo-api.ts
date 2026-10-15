@@ -19,7 +19,7 @@ export type BrevoMail = {
   subject: string;
   html?: string;
   text?: string;
-  attachments?: Array<{ filename: string; content: string; contentType?: string }>;
+  attachments?: Array<{ filename: string; content: string; contentType?: string; encoding?: "base64" }>;
 };
 
 /** „Name <adresse@example.de>“ → { name, email }; auch eine blanke Adresse wird akzeptiert. */
@@ -78,7 +78,7 @@ export function brevoTransport(apiKey: string, options: { fetchImpl?: FetchLike 
         ...(mail.html ? { htmlContent: mail.html } : {}),
         ...(mail.text ? { textContent: mail.text } : {}),
         ...(replyTo ? { replyTo } : {}),
-        ...(mail.attachments?.length ? { attachment: mail.attachments.map((item) => ({ name: item.filename, content: item.content })) } : {}),
+        ...(mail.attachments?.length ? { attachment: mail.attachments.map((item) => ({ name: item.filename, content: item.encoding === "base64" ? item.content : Buffer.from(item.content, "utf8").toString("base64") })) } : {}), // Brevo erwartet Base64
       };
       const result = await call("/smtp/email", key, { method: "POST", body: JSON.stringify(body), fetchImpl: options.fetchImpl });
       const messageId = result && typeof result === "object" && "messageId" in result ? String((result as { messageId: unknown }).messageId) : undefined;

@@ -498,6 +498,13 @@
       "when": 1792417669908,
       "tag": "0070_stage_configs_per_pipeline",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "5",
+      "when": 1792504069908,
+      "tag": "0071_signature_attachments",
+      "breakpoints": true
     }
   ]
 }

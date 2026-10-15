@@ -3,7 +3,8 @@ import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { PIPELINE_STAGES, stageLabel } from "../../../shared/sales-pipeline";
 import { REACTION_LABEL, type SentReaction } from "../../../shared/sent-tracking";
-import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, ChevronLeft, Inbox, Mail, Megaphone, RefreshCw, Reply, Search, ShieldCheck, Sparkles, Trash2, UserPlus, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, ChevronLeft, Inbox, Mail, Megaphone, Paperclip, RefreshCw, Reply, Search, ShieldCheck, Sparkles, Trash2, UserPlus, X } from "lucide-react";
+import { ATTACHMENT_LIMITS, checkAttachments, formatBytes } from "../../../shared/email-signature";
 import { INBOX_AI_FILTERS, inboxAiFilterLabel, periodRange, REPLY_KIND_LABEL, type InboxAiFilter, type InboxPeriod, type ReplyAction, type ReplyKind } from "../../../shared/reply-ai";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -87,7 +88,10 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
   const resolveCheck = trpc.leadops.resolveInboxCheck.useMutation({ onSuccess: () => { toast.success("Als in Ordnung markiert."); refresh(); }, onError: (error) => toast.error(error.message) });
   const markRead = trpc.leadops.markInboxRead.useMutation({ onSuccess: () => refresh() });
   const archive = trpc.leadops.archiveInboxMessage.useMutation({ onSuccess: (_result, input) => { toast.success(input.archived ? "Archiviert." : "Zurück im Posteingang."); setSelectedId(null); refresh(); }, onError: (error) => toast.error(error.message) });
-  const reply = trpc.leadops.replyInboxMessage.useMutation({ onSuccess: (result) => { toast.success(result.status === "gesendet" ? "Antwort gesendet." : "Antwort simuliert (kein Versand eingerichtet)."); setReplyText(""); refresh(); }, onError: (error) => toast.error(error.message) });
+  const reply = trpc.leadops.replyInboxMessage.useMutation({ onSuccess: (result) => { const extra = (result as { attachments?: number }).attachments; toast.success(`${result.status === "gesendet" ? "Antwort gesendet" : "Antwort simuliert (kein Versand eingerichtet)"}${extra ? ` – mit ${extra} Anhang${extra === 1 ? "" : "ängen"}` : ""}.`); setReplyText(""); setFiles([]); refresh(); }, onError: (error) => toast.error(error.message) });
+  const [files, setFiles] = useState<File[]>([]); const fileRef = useRef<HTMLInputElement>(null); // Anhänge für die Antwort
+  const addFiles = (list: FileList | null) => { if (!list) return; const next = [...files, ...Array.from(list)].filter((file, index, all) => all.findIndex((other) => other.name === file.name && other.size === file.size) === index); const problem = checkAttachments(next.map((file) => ({ filename: file.name, contentType: file.type, contentBase64: "", size: file.size }))); if (problem) { toast.error(problem); return; } setFiles(next); };
+  const readAsBase64 = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result ?? "").split(",")[1] ?? ""); reader.onerror = () => reject(new Error(`„${file.name}“ konnte nicht gelesen werden.`)); reader.readAsDataURL(file); });
   const createLead = trpc.leadops.createLeadFromInbox.useMutation({ onSuccess: (result) => { const mails = result.linked ? result.linked.incoming + result.linked.replies : 0; const thread = mails > 1 ? ` ${mails} E-Mails stehen im E-Mail-Verlauf der Karte.` : ""; toast.success(result.created ? `Lead ${result.publicId} angelegt – steht jetzt in der Pipeline.${thread}` : `Lead ${result.publicId} in die Pipeline übernommen.${thread}`); setLeadForm(null); refresh(); }, onError: (error) => toast.error(error.message) });
   const items = inbox.data?.items ?? []; const counts = inbox.data?.counts; const campaigns = inbox.data?.campaigns ?? [];
   const needle = query.trim().toLowerCase();
@@ -106,7 +110,7 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
   useEffect(() => { setLeadForm(null); setReplyText(""); }, [selectedId]);
   const openLeadForm = () => { if (!selected) return; const guessed = (selected.fromName ?? selected.fromEmail.split("@")[0]).replace(/[._]/g, " ").trim().split(/\s+/); setLeadForm({ pipeline: selected.lead?.platform === "kaltakquise" ? "kaltakquise" : selected.lead?.platform === "email" || selected.campaignName ? "email" : "ads", stage: stagesList[1]?.key ?? stagesList[0]?.key ?? "kontaktiert", ownerUserId: "", categoryId: "", firstName: guessed.length > 1 ? guessed[0] : "", lastName: guessed.length > 1 ? guessed.slice(1).join(" ") : guessed[0] ?? "", company: selected.fromEmail.split("@")[1]?.split(".")[0] ?? "", phone: selected.phoneHint ?? "" }); };
   const focusReply = () => { replyRef.current?.focus(); replyRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); };
-  const sendReply = () => { if (!selected || !replyText.trim() || reply.isPending) return; reply.mutate({ messageId: selected.id, text: replyText }); };
+  const sendReply = async () => { if (!selected || !replyText.trim() || reply.isPending) return; try { const attachments = await Promise.all(files.map(async (file) => ({ filename: file.name, contentType: file.type || "application/octet-stream", contentBase64: await readAsBase64(file), size: file.size }))); reply.mutate({ messageId: selected.id, text: replyText, attachments }); } catch (error) { toast.error(error instanceof Error ? error.message : "Anhang konnte nicht gelesen werden."); } };
   const activeCampaign = campaignId ? campaigns.find((campaign) => campaign.id === campaignId) : null;
   const folderLabel = FOLDERS.find((folder) => folder.key === filter)?.label ?? "Alle";
   const selectClass = "mt-1 h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100";
@@ -185,7 +189,8 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
           <footer className="inbox-compose">
             <div className="inbox-compose-head"><Reply className="h-4 w-4" aria-hidden="true" /><span>Antwort an <strong>{selected.fromName || selected.fromEmail}</strong></span><small>{selected.fromEmail}</small></div>
             <textarea ref={replyRef} className="inbox-compose-text" rows={4} placeholder="Antwort schreiben …" value={replyText} onChange={(event) => setReplyText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendReply(); }} />
-            <div className="inbox-compose-actions"><small>Strg + Enter sendet</small><Button size="sm" className="flux-button" disabled={!replyText.trim() || reply.isPending} onClick={sendReply}><Reply /> Senden</Button></div>
+            {files.length > 0 && <ul className="inbox-attachments">{files.map((file) => <li key={`${file.name}-${file.size}`}><Paperclip className="h-3.5 w-3.5" aria-hidden="true" /><span>{file.name}</span><small>{formatBytes(file.size)}</small><button type="button" aria-label={`${file.name} entfernen`} onClick={() => setFiles(files.filter((item) => item !== file))}><X className="h-3.5 w-3.5" /></button></li>)}</ul>}
+            <div className="inbox-compose-actions"><small>Strg + Enter sendet · Signatur aus den E-Mail-Einstellungen wird angehängt</small><div className="flex items-center gap-2"><input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { addFiles(event.target.files); event.target.value = ""; }} /><Button size="sm" variant="outline" type="button" title={`Dateien anhängen (max. ${ATTACHMENT_LIMITS.maxFiles}, je ${Math.round(ATTACHMENT_LIMITS.maxFileBytes / 1024 / 1024)} MB)`} onClick={() => fileRef.current?.click()}><Paperclip /> Anhang</Button><Button size="sm" className="flux-button" disabled={!replyText.trim() || reply.isPending} onClick={sendReply}><Reply /> {reply.isPending ? "Wird gesendet …" : "Senden"}</Button></div></div>
           </footer>
         </>}
       </section>
@@ -230,6 +235,7 @@ function SentMessages({ onOpenLead }: { onOpenLead?: (publicId: string) => void 
             <strong>{item.subject}</strong>
             <small>an {item.lead ? <button type="button" className="inbox-sent-contact" title="Kontakt öffnen" onClick={(event) => { event.stopPropagation(); openLead(item.lead!.publicId); }}>{item.lead.name}</button> : item.name ? <span>{item.name}</span> : null}{item.lead || item.name ? " · " : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{item.sender ? ` · von ${item.sender}` : ""}</small>
             {item.kind !== "kampagne" && item.preview ? <p className="inbox-sent-preview">{item.preview}</p> : null}
+            {(item as { attachments?: Array<{ filename: string; size: number }> }).attachments?.length ? <div className="inbox-sent-track">{(item as { attachments: Array<{ filename: string; size: number }> }).attachments.map((file) => <i key={file.filename} className="inbox-track-step is-done" title={formatBytes(file.size)}>📎 {file.filename}</i>)}</div> : null}
             {item.tracking && <div className="inbox-sent-track" aria-label="Was mit dieser E-Mail passiert ist">
               <i className={`inbox-track-step ${item.tracking.openedAt ? "is-done" : ""}`}>{item.tracking.openedAt ? `Geöffnet ${whenShort(item.tracking.openedAt)}` : "Nicht geöffnet"}</i>
               <i className={`inbox-track-step ${item.tracking.clickedAt ? "is-done" : ""}`}>{item.tracking.clickedAt ? `Geklickt ${whenShort(item.tracking.clickedAt)}` : "Kein Klick"}</i>

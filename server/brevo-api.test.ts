@@ -32,8 +32,9 @@ describe("Brevo über HTTP: senden", () => {
     const transport = brevoTransport("xkeysib-test", { fetchImpl });
     await expect(transport.sendMail({ from: "kaputt", to: "kunde@beispiel.de", subject: "x" })).rejects.toThrow(/Absenderadresse/);
     await expect(transport.sendMail({ from: "kontakt@tanescodigital.de", to: "kaputt", subject: "x" })).rejects.toThrow(/Empfängeradresse/);
-    const spy = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => { expect(JSON.parse(String(init?.body)).attachment).toEqual([{ name: "termin.ics", content: "QkVHSU4=" }]); return ok({ messageId: "<y@brevo>" }); }) as unknown as typeof fetch;
-    await brevoTransport("xkeysib-test", { fetchImpl: spy }).sendMail({ from: "kontakt@tanescodigital.de", to: "kunde@beispiel.de", subject: "Termin", attachments: [{ filename: "termin.ics", content: "QkVHSU4=" }] });
+    // Brevo will Base64: fertige Base64-Inhalte (encoding "base64") gehen unverändert durch, roher Text (z. B. die Termin-Datei) wird kodiert
+    const spy = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => { expect(JSON.parse(String(init?.body)).attachment).toEqual([{ name: "angebot.pdf", content: "QkVHSU4=" }, { name: "termin.ics", content: Buffer.from("BEGIN", "utf8").toString("base64") }]); return ok({ messageId: "<y@brevo>" }); }) as unknown as typeof fetch;
+    await brevoTransport("xkeysib-test", { fetchImpl: spy }).sendMail({ from: "kontakt@tanescodigital.de", to: "kunde@beispiel.de", subject: "Termin", attachments: [{ filename: "angebot.pdf", content: "QkVHSU4=", encoding: "base64" }, { filename: "termin.ics", content: "BEGIN" }] });
   });
 
   it("verify prüft den Schlüssel, weist den SMTP-Schlüssel mit Hinweis ab und reicht Fehler der Schnittstelle weiter", async () => {
