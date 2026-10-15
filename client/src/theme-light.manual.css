@@ -840,3 +840,10 @@ html:not(.dark) .lead-temp-reasons li::before { background: #98a2b3 !important; 
   html:not(.dark) .email-tab { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
   html:not(.dark) .email-tab.is-active { border-color: #bc001d !important; background: linear-gradient(135deg, rgba(188, 0, 29, .10), rgba(251, 44, 54, .05)) !important; color: #0f172a !important; }
 }
+
+/* sipgate-Prüfung im hellen Design */
+html:not(.dark) .sipgate-check { border-color: #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .sipgate-check-head { color: #475467 !important; }
+html:not(.dark) .sipgate-list li { background: #ffffff !important; border: 1px solid #eef1f5; }
+html:not(.dark) .sipgate-list li b { color: #101828 !important; }
+html:not(.dark) .sipgate-list li span { color: #667085 !important; }

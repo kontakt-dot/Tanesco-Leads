@@ -24,7 +24,7 @@ import { metaConnections } from "../drizzle/schema";
 import { deliverLeadNow, loadDeliverySettings, metadataOf, type Db } from "./lead-pipeline";
 import { intervalWindowOpen } from "./order-eligibility";
 import { purgeExpiredCalls } from "./call-qa";
-import { predictiveTick, releaseWrapUps } from "./dialer";
+import { predictiveTick, releaseWrapUps, reconcileSipgateRecordings, syncSipgateCalls } from "./dialer";
 
 export { intervalWindowOpen };
 
@@ -88,7 +88,7 @@ export function startDialerScheduler(intervalSeconds = Number(process.env.DIALER
   let running = false;
   const tick = async () => {
     if (running) return; running = true;
-    try { const db = await getDb(); if (!db) return; const appUrl = process.env.APP_URL ?? ""; const tenantIds = (await db.select({ id: tenants.id }).from(tenants)).map((row) => row.id); for (const tenantId of tenantIds) { await releaseWrapUps(db, tenantId); await predictiveTick(db, tenantId, appUrl); } }
+    try { const db = await getDb(); if (!db) return; const appUrl = process.env.APP_URL ?? ""; const tenantIds = (await db.select({ id: tenants.id }).from(tenants)).map((row) => row.id); for (const tenantId of tenantIds) { await releaseWrapUps(db, tenantId); await predictiveTick(db, tenantId, appUrl); await syncSipgateCalls(db, tenantId).catch((error) => console.error("[sipgate] Abgleich:", error instanceof Error ? error.message : error)); await reconcileSipgateRecordings(db, tenantId, appUrl).catch((error) => console.error("[sipgate] Aufzeichnungen:", error instanceof Error ? error.message : error)); } }
     catch (error) { console.error("[Dialer] Takt fehlgeschlagen:", error); } finally { running = false; }
   };
   dialerTimer = setInterval(tick, intervalSeconds * 1000); dialerTimer.unref?.();

@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { rememberedSipgateDevice } from "@/lib/sipgate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import AutoNoteSwitch from "@/components/AutoNoteSwitch";
@@ -101,7 +102,7 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
     try {
       const existing = await utils.leadops.currentDialerSession.fetch();
       if (existing?.currentCallId) { await end.mutateAsync({ callId: existing.currentCallId, durationSeconds: null }).catch(() => undefined); await updateSession.mutateAsync({ status: "bereit" }).catch(() => undefined); }
-      if (!existing || existing.mode !== "manuell" || existing.campaignId) await startSession.mutateAsync({ campaignId: null, mode: "manuell", connection: "browser", agentPhone: null });
+      if (!existing || existing.mode !== "manuell" || existing.campaignId) await startSession.mutateAsync({ campaignId: null, mode: "manuell", connection: "browser", agentPhone: null, agentDeviceId: rememberedSipgateDevice() });
       const instruction = await place.mutateAsync({ publicId: next.publicId });
       setActiveCallId(instruction.callId); handledRef.current = null; setCalls((value) => value + 1);
       await phone.connect(instruction.params).catch((connectError: Error) => toast.error(connectError.message));
@@ -133,7 +134,7 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
       await setCampaignStatus.mutateAsync({ id: saved.id, status: "aktiv" });
       const existing = await utils.leadops.currentDialerSession.fetch();
       if (existing?.currentCallId) await end.mutateAsync({ callId: existing.currentCallId, durationSeconds: null }).catch(() => undefined);
-      await startSession.mutateAsync({ campaignId: saved.id, mode: selected, connection: "browser", agentPhone: null });
+      await startSession.mutateAsync({ campaignId: saved.id, mode: selected, connection: "browser", agentPhone: null, agentDeviceId: rememberedSipgateDevice() });
       setCampaignId(saved.id); setDialMode(selected); setPhase("running"); idleTicksRef.current = 0;
       if (selected !== "predictive") await dialNext();
       else await tick.mutateAsync().catch(() => undefined);
@@ -194,7 +195,7 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
   const missingNumber = error ? /Rufnummer/i.test(error) : false;
   const modeLabel = dialMode === "einzel" ? "Einzelanruf" : DIAL_MODES.find((item) => item.key === dialMode)?.label ?? dialMode;
   const statusText = call ? CALL_STATUS_LABELS[call.status] ?? call.status : busy ? "Wählt …" : phase === "done" ? "Fertig" : dialMode === "predictive" ? (current?.status === "bereit" ? "Wählt für dich …" : "Bereit") : "Bereit";
-  const lineBadge = phone.simulated ? "Simulation (kein echtes Audio)" : phone.state === "bereit" ? "Softphone bereit" : phone.state === "im_gespraech" ? "Leitung aktiv" : phone.state === "fehler" ? `Softphone: ${phone.error}` : "Softphone lädt …";
+  const lineBadge = phone.provider === "sipgate" ? "sipgate – das Gespräch läuft über dein sipgate-Telefon" : phone.simulated ? "Simulation (kein echtes Audio)" : phone.state === "bereit" ? "Softphone bereit" : phone.state === "im_gespraech" ? "Leitung aktiv" : phone.state === "fehler" ? `Softphone: ${phone.error}` : "Softphone lädt …";
   const withPhone = queue.filter((item) => item.phone).length;
   const progress = dialMode === "einzel" ? null : campaignId ? `${queueStats.finished} / ${queueStats.total || withPhone} erledigt${queueStats.waiting ? ` · ${queueStats.waiting} Wiederholung` : ""}` : `${withPhone} Kontakte`;
   const numberLink = missingNumber && <> <a href="/?page=Telefonie&view=rufnummern" onClick={(event) => { event.preventDefault(); window.location.assign("/?page=Telefonie&view=rufnummern"); }}>Rufnummer kaufen (Telefonie → Rufnummern)</a></>;

@@ -505,6 +505,13 @@
       "when": 1792504069908,
       "tag": "0071_signature_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "5",
+      "when": 1792590000000,
+      "tag": "0072_sipgate",
+      "breakpoints": true
     }
   ]
 }

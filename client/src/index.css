@@ -1783,3 +1783,9 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .lead-temp-bar{height:6px;margin-top:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}.lead-temp-bar span{display:block;height:100%;border-radius:999px;background:#7dd3fc;transition:width .3s}
 .lead-temp-bar span.is-warm{background:#fbbf24}.lead-temp-bar span.is-heiss{background:linear-gradient(90deg,#fb7185,#f43f5e)}
 .lead-temp-reasons{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:11.5px;color:#c9c5f5}.lead-temp-reasons li{padding-left:12px;position:relative}.lead-temp-reasons li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;border-radius:999px;background:#8f93af}
+
+/* sipgate: Ergebnis von „Verbindung prüfen“ (Geräte, Rufnummern, Webhook-Stand) */
+.sipgate-check{display:grid;gap:10px;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)}
+.sipgate-check-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12px;color:#c9c5f5}
+.sipgate-check-problems{list-style:none;margin:0;padding:0;display:grid;gap:4px;font-size:12px;color:#fde68a}
+.sipgate-list{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px}.sipgate-list li{display:grid;gap:1px;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.03);font-size:12px}.sipgate-list li b{color:#fff;font-weight:600}.sipgate-list li span{color:#8f93af;font-size:11px}

@@ -12,12 +12,14 @@ import { autoNotesForCall, writeCallNote } from "./call-notes";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import { triggerLeadAutomations, type Db } from "./lead-pipeline";
 import { SimulationProvider, TwilioProvider, simulationFor, type NumberSearch, type TelephonyProvider, type TwilioCredentials } from "./telephony-provider";
+import { SipgateProvider, parseSipgateEvent, sameNumber, sipgateStatusOf, type SipgateCredentials, type SipgateEvent, type SipgateSystem } from "./sipgate-provider";
 
 export { DISPOSITIONS } from "../shared/dialer";
 import { DISPOSITIONS } from "../shared/dialer";
 import { annotateActivity, logActivity } from "./activity";
 export type DispositionKey = (typeof DISPOSITIONS)[number]["key"];
 const RETRY_RESULTS = new Set(["besetzt", "keine_antwort", "anrufbeantworter", "abgebrochen", "fehlgeschlagen", "nicht_erreicht", "wiedervorlage"]);
+const FINAL_STATUSES = new Set<string>(["beendet", "besetzt", "keine_antwort", "anrufbeantworter", "abgebrochen", "fehlgeschlagen"]);
 const DEFAULT_WINDOW = { weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "19:00" };
 
 export const normalizePhone = (value: string) => { const digits = value.replace(/[^\d+]/g, ""); if (digits.startsWith("+")) return digits; if (digits.startsWith("00")) return `+${digits.slice(2)}`; if (digits.startsWith("0")) return `+49${digits.slice(1)}`; return `+${digits}`; };
@@ -32,10 +34,18 @@ export async function ensureTelephonySettings(db: Db, tenantId: number): Promise
 }
 
 function credentialsOf(settings: TelephonySettings): TwilioCredentials | null { if (!settings.credentialsEncrypted) return null; try { return JSON.parse(decryptIntegrationSecret(settings.credentialsEncrypted)) as TwilioCredentials; } catch { return null; } }
+function sipgateCredentialsOf(settings: TelephonySettings): SipgateCredentials | null { if (!settings.sipgateEncrypted) return null; try { const parsed = JSON.parse(decryptIntegrationSecret(settings.sipgateEncrypted)) as SipgateCredentials; return parsed.tokenId && parsed.token ? parsed : null; } catch { return null; } }
+/** Tests können den Netzwerkzugriff des sipgate-Anbieters ersetzen (kein echter Aufruf gegen api.sipgate.com). */
+export const sipgateTestHooks: { fetchImpl?: typeof fetch } = {};
+function sipgateFor(settings: TelephonySettings, fetchImpl?: typeof fetch) {
+  const credentials = sipgateCredentialsOf(settings); if (!credentials) throw new Error("sipgate-Token fehlt (Telefonie → Einstellungen → sipgate: Token-ID und Token eintragen).");
+  return new SipgateProvider(credentials, { userId: settings.sipgateUserId, system: (settings.sipgateSystem as SipgateSystem | null) ?? null, deviceId: settings.sipgateDeviceId, smsId: settings.sipgateSmsId, fetchImpl: fetchImpl ?? sipgateTestHooks.fetchImpl });
+}
 
 export async function providerFor(db: Db, tenantId: number, fetchImpl?: typeof fetch): Promise<{ provider: TelephonyProvider; settings: TelephonySettings }> {
   const settings = await ensureTelephonySettings(db, tenantId);
   if (settings.provider === "twilio") { const credentials = credentialsOf(settings); if (!credentials?.accountSid || !credentials.authToken) throw new Error("Twilio-Zugangsdaten fehlen (Telefonie → Einstellungen)."); return { provider: new TwilioProvider(credentials, fetchImpl), settings }; }
+  if (settings.provider === "sipgate") return { provider: sipgateFor(settings, fetchImpl), settings };
   return { provider: simulationFor(tenantId), settings };
 }
 
@@ -44,14 +54,21 @@ export async function getTelephonySettings(db: Db, tenantId: number, appUrl: str
   const credentials = credentialsOf(settings);
   const numbers = await db.select().from(phoneNumbers).where(and(eq(phoneNumbers.tenantId, tenantId), eq(phoneNumbers.status, "aktiv"))).orderBy(asc(phoneNumbers.id));
   const base = appUrl.replace(/\/+$/, "");
-  return { ...settings, credentialsEncrypted: undefined, credentials: { accountSid: credentials?.accountSid ?? settings.accountSid ?? "", authToken: credentials?.authToken ? "••••••••" : "", apiKeySid: credentials?.apiKeySid ?? "", apiKeySecret: credentials?.apiKeySecret ? "••••••••" : "", twimlAppSid: credentials?.twimlAppSid ?? settings.twimlAppSid ?? "" }, bundleSids: { DE: "", AT: "", CH: "", ...((settings.bundleSids ?? {}) as Record<string, string>) }, callWindow: { ...DEFAULT_WINDOW, ...((settings.callWindow ?? {}) as Record<string, unknown>) }, numbers, webhooks: { voiceAgent: `${base}/api/telephony/voice/agent`, voiceInbound: `${base}/api/telephony/voice/inbound`, status: `${base}/api/telephony/status` }, dispositions: DISPOSITIONS };
+  return { ...settings, credentialsEncrypted: undefined, credentials: { accountSid: credentials?.accountSid ?? settings.accountSid ?? "", authToken: credentials?.authToken ? "••••••••" : "", apiKeySid: credentials?.apiKeySid ?? "", apiKeySecret: credentials?.apiKeySecret ? "••••••••" : "", twimlAppSid: credentials?.twimlAppSid ?? settings.twimlAppSid ?? "" }, bundleSids: { DE: "", AT: "", CH: "", ...((settings.bundleSids ?? {}) as Record<string, string>) }, callWindow: { ...DEFAULT_WINDOW, ...((settings.callWindow ?? {}) as Record<string, unknown>) }, numbers, webhooks: { voiceAgent: `${base}/api/telephony/voice/agent`, voiceInbound: `${base}/api/telephony/voice/inbound`, status: `${base}/api/telephony/status`, sipgateEvents: sipgateWebhookUrl(base, tenantId, settings.webhookSecret) }, dispositions: DISPOSITIONS,
+    sipgate: { tokenId: sipgateCredentialsOf(settings)?.tokenId ?? "", token: sipgateCredentialsOf(settings)?.token ? "••••••••" : "", userId: settings.sipgateUserId ?? "", system: (settings.sipgateSystem as SipgateSystem | null) ?? null, smsId: settings.sipgateSmsId ?? "s0", deviceId: settings.sipgateDeviceId ?? "", webhookAt: settings.sipgateWebhookAt ?? null } };
 }
+export const sipgateWebhookUrl = (base: string, tenantId: number, secret: string) => `${base}/api/telephony/sipgate/events?tenant=${tenantId}&secret=${secret}`;
 
-export async function saveTelephonySettings(db: Db, tenantId: number, input: { provider: "simulation" | "twilio"; credentials: { accountSid: string; authToken: string; apiKeySid: string; apiKeySecret: string; twimlAppSid: string }; addressSid: string; bundleSids: Record<string, string>; defaultNumberId: number | null; agentConnection: "browser" | "telefon"; autoCallNotes?: boolean; recordWithoutConsent?: boolean; announcement: string; consentMode: "ansage" | "agent_button" | "keine"; recordCalls: boolean; amdEnabled: boolean; maxAttempts: number; retryMinutes: number; wrapUpSeconds: number; pacingRatio: number; maxAbandonRate: number; callWindow: { weekdays: number[]; from: string; to: string } }) {
+export async function saveTelephonySettings(db: Db, tenantId: number, input: { provider: "simulation" | "twilio" | "sipgate"; credentials: { accountSid: string; authToken: string; apiKeySid: string; apiKeySecret: string; twimlAppSid: string }; sipgate?: { tokenId: string; token: string; smsId?: string | null; deviceId?: string | null } | null; addressSid: string; bundleSids: Record<string, string>; defaultNumberId: number | null; agentConnection: "browser" | "telefon" | "sipgate"; autoCallNotes?: boolean; recordWithoutConsent?: boolean; announcement: string; consentMode: "ansage" | "agent_button" | "keine"; recordCalls: boolean; amdEnabled: boolean; maxAttempts: number; retryMinutes: number; wrapUpSeconds: number; pacingRatio: number; maxAbandonRate: number; callWindow: { weekdays: number[]; from: string; to: string } }) {
   const settings = await ensureTelephonySettings(db, tenantId);
   const previous = credentialsOf(settings);
   const credentials: TwilioCredentials = { accountSid: input.credentials.accountSid.trim(), authToken: input.credentials.authToken === "••••••••" ? previous?.authToken ?? "" : input.credentials.authToken.trim(), apiKeySid: input.credentials.apiKeySid.trim() || undefined, apiKeySecret: input.credentials.apiKeySecret === "••••••••" ? previous?.apiKeySecret : input.credentials.apiKeySecret.trim() || undefined, twimlAppSid: input.credentials.twimlAppSid.trim() || undefined };
-  await db.update(telephonySettings).set({ provider: input.provider, autoCallNotes: input.autoCallNotes ?? settings.autoCallNotes, recordWithoutConsent: input.recordWithoutConsent ?? settings.recordWithoutConsent, accountSid: credentials.accountSid || null, credentialsEncrypted: credentials.accountSid || credentials.authToken ? encryptIntegrationSecret(JSON.stringify(credentials)) : null, twimlAppSid: credentials.twimlAppSid ?? null, addressSid: input.addressSid.trim() || null, bundleSids: input.bundleSids, defaultNumberId: input.defaultNumberId, agentConnection: input.agentConnection, announcement: input.announcement, consentMode: input.consentMode, recordCalls: input.recordCalls, amdEnabled: input.amdEnabled, maxAttempts: input.maxAttempts, retryMinutes: input.retryMinutes, wrapUpSeconds: input.wrapUpSeconds, pacingRatio: input.pacingRatio.toFixed(2), maxAbandonRate: input.maxAbandonRate.toFixed(2), callWindow: input.callWindow }).where(eq(telephonySettings.id, settings.id));
+  const previousSipgate = sipgateCredentialsOf(settings);
+  const sipgate: SipgateCredentials | null = input.sipgate && (input.sipgate.tokenId.trim() || input.sipgate.token.trim()) ? { tokenId: input.sipgate.tokenId.trim(), token: input.sipgate.token === "••••••••" ? previousSipgate?.token ?? "" : input.sipgate.token.trim() } : previousSipgate; // leere Felder = nichts ändern
+  const sipgateChanged = Boolean(sipgate && (sipgate.tokenId !== previousSipgate?.tokenId || sipgate.token !== previousSipgate?.token));
+  if (input.provider === "sipgate" && (!sipgate?.tokenId || !sipgate.token)) throw new Error("Für sipgate bitte Token-ID und Token eintragen (sipgate → Konto → Personal Access Token).");
+  await db.update(telephonySettings).set({ provider: input.provider, autoCallNotes: input.autoCallNotes ?? settings.autoCallNotes, recordWithoutConsent: input.recordWithoutConsent ?? settings.recordWithoutConsent, accountSid: credentials.accountSid || null, credentialsEncrypted: credentials.accountSid || credentials.authToken ? encryptIntegrationSecret(JSON.stringify(credentials)) : null,
+    sipgateEncrypted: sipgate?.tokenId && sipgate.token ? encryptIntegrationSecret(JSON.stringify(sipgate)) : null, sipgateSmsId: input.sipgate ? (input.sipgate.smsId?.trim() || "s0") : settings.sipgateSmsId, sipgateDeviceId: input.sipgate ? (input.sipgate.deviceId?.trim() || null) : settings.sipgateDeviceId, ...(sipgateChanged ? { sipgateUserId: null, sipgateSystem: null } : {}), twimlAppSid: credentials.twimlAppSid ?? null, addressSid: input.addressSid.trim() || null, bundleSids: input.bundleSids, defaultNumberId: input.defaultNumberId, agentConnection: input.agentConnection, announcement: input.announcement, consentMode: input.consentMode, recordCalls: input.recordCalls, amdEnabled: input.amdEnabled, maxAttempts: input.maxAttempts, retryMinutes: input.retryMinutes, wrapUpSeconds: input.wrapUpSeconds, pacingRatio: input.pacingRatio.toFixed(2), maxAbandonRate: input.maxAbandonRate.toFixed(2), callWindow: input.callWindow }).where(eq(telephonySettings.id, settings.id));
   return { success: true as const };
 }
 
@@ -145,9 +162,14 @@ export async function listQueue(db: Db, tenantId: number, campaignId: number, li
 
 /* ------------------------------------------------------------------ Agenten-Sitzungen */
 
-export async function startSession(db: Db, tenantId: number, userId: number, input: { campaignId: number | null; mode: "manuell" | "power" | "predictive"; connection: "browser" | "telefon"; agentPhone?: string | null }) {
+export async function startSession(db: Db, tenantId: number, userId: number, input: { campaignId: number | null; mode: "manuell" | "power" | "predictive"; connection: "browser" | "telefon" | "sipgate"; agentPhone?: string | null; agentDeviceId?: string | null }) {
   const existing = (await db.select().from(agentSessions).where(eq(agentSessions.userId, userId)).limit(1))[0];
-  const values = { tenantId, userId, campaignId: input.campaignId, mode: input.mode, status: "bereit" as const, connection: input.connection, agentPhone: input.agentPhone ? normalizePhone(input.agentPhone) : null, currentCallId: null, lastActivityAt: new Date(), startedAt: new Date(), endedAt: null };
+  const settings = await ensureTelephonySettings(db, tenantId);
+  if (settings.provider === "sipgate" && input.mode === "predictive") throw new Error("Der Predictive-Dialer geht mit sipgate nicht – sipgate kann keine Anrufe parallel aufbauen und durchstellen. Bitte „Manuell“ oder „Power-Dialer“ wählen.");
+  const connection = settings.provider === "sipgate" ? "sipgate" as const : input.connection === "sipgate" ? "browser" as const : input.connection;
+  const agentDeviceId = settings.provider === "sipgate" ? (input.agentDeviceId?.trim() || settings.sipgateDeviceId || null) : null;
+  if (settings.provider === "sipgate" && !agentDeviceId) throw new Error("Bitte dein sipgate-Gerät wählen (z. B. e0 – die sipgate-App oder dein Tischtelefon).");
+  const values = { tenantId, userId, campaignId: input.campaignId, mode: input.mode, status: "bereit" as const, connection, agentPhone: input.agentPhone ? normalizePhone(input.agentPhone) : null, agentDeviceId, currentCallId: null, lastActivityAt: new Date(), startedAt: new Date(), endedAt: null };
   if (existing) { await db.update(agentSessions).set(values).where(eq(agentSessions.id, existing.id)); return currentSession(db, tenantId, userId); }
   await db.insert(agentSessions).values(values);
   return currentSession(db, tenantId, userId);
@@ -190,7 +212,7 @@ async function callerNumber(db: Db, tenantId: number, settings: TelephonySetting
   return number;
 }
 
-export type ConnectInstruction = { callId: number; mode: "manuell" | "power" | "predictive"; connection: "browser" | "telefon" | "simulation"; params: Record<string, string> };
+export type ConnectInstruction = { callId: number; mode: "manuell" | "power" | "predictive"; connection: "browser" | "telefon" | "simulation" | "sipgate"; params: Record<string, string> };
 
 /** Baut den Anruf für einen Agenten auf (manuell oder nächster Eintrag der Wählliste). */
 async function createAgentCall(db: Db, tenantId: number, session: AgentSession, target: { leadId: number | null; rawContactId?: number | null; phone: string; queueItemId: number | null; campaign: DialerCampaign | null }, appUrl: string): Promise<ConnectInstruction> {
@@ -207,6 +229,16 @@ async function createAgentCall(db: Db, tenantId: number, session: AgentSession, 
     await db.update(dialerCalls).set({ providerCallSid: result.providerCallSid }).where(eq(dialerCalls.id, callId));
     await processSimulationEvents(db, tenantId);
     return { callId, mode: session.mode, connection: "simulation", params: { callId: String(callId) } };
+  }
+  if (provider.name === "sipgate") {
+    // sipgate: Click-to-Dial – erst klingelt das Gerät des Agenten, dann der Kunde. Status kommt per Webhook oder Abgleich (syncSipgateCalls).
+    const deviceId = session.agentDeviceId || settings.sipgateDeviceId; if (!deviceId) throw new Error("Kein sipgate-Gerät gewählt – bitte die Sitzung neu starten und dein Gerät wählen.");
+    // Angezeigte Rufnummer muss zum sipgate-Konto gehören: steht als Standard noch eine Twilio-/Simulationsnummer, nimmt die Software die erste sipgate-Nummer.
+    const sipgateNumber = number.provider === "sipgate" ? number : (await db.select().from(phoneNumbers).where(and(eq(phoneNumbers.tenantId, tenantId), eq(phoneNumbers.status, "aktiv"), eq(phoneNumbers.provider, "sipgate"))).orderBy(asc(phoneNumbers.id)).limit(1))[0] ?? number;
+    if (sipgateNumber.id !== number.id) await db.update(dialerCalls).set({ fromNumber: sipgateNumber.e164 }).where(eq(dialerCalls.id, callId));
+    const result = await provider.originateCall({ to: target.phone, from: sipgateNumber.e164, answerUrl: "", statusCallbackUrl: "", amd: false, reference: String(callId), deviceId, timeoutSeconds: 0 }) /* nicht warten – die callId holt der Abgleich oder der Webhook nach */.catch(async (error: Error) => { await finishCall(db, tenantId, callId, { status: "fehlgeschlagen", note: error.message.slice(0, 200) }); throw error; });
+    await db.update(dialerCalls).set({ providerCallSid: result.providerCallSid, providerSessionId: result.providerSessionId ?? null, status: result.providerCallSid.startsWith("session:") || result.providerCallSid.startsWith("pending:") ? "initiiert" : "klingelt" }).where(eq(dialerCalls.id, callId));
+    return { callId, mode: session.mode, connection: "sipgate", params: { callId: String(callId), device: deviceId } };
   }
   if (session.connection === "telefon") {
     if (!session.agentPhone) throw new Error("Für die Verbindung über Telefon fehlt die Rufnummer des Agenten.");
@@ -405,6 +437,11 @@ export async function endCall(db: Db, tenantId: number, userId: number, callId: 
   if (!call) throw new Error("Anruf wurde nicht gefunden.");
   const { provider, settings } = await providerFor(db, tenantId);
   if (provider.name === "simulation") { (provider as SimulationProvider).finishCall(call.providerCallSid ?? "", { durationSeconds: options.durationSeconds ?? undefined, withRecording: settings.recordCalls && call.status === "verbunden" }); await processSimulationEvents(db, tenantId); }
+  else if (provider.name === "sipgate") {
+    // sipgate: auflegen und den Anruf gleich abschließen – ein später eintreffendes hangup-Ereignis wird ignoriert (Anruf ist dann schon abgeschlossen).
+    if (call.providerCallSid && !FINAL_STATUSES.has(call.status)) await provider.hangupCall(call.providerCallSid).catch(() => undefined);
+    if (!FINAL_STATUSES.has(call.status)) await finishCall(db, tenantId, call.id, { status: call.status === "verbunden" ? "beendet" : "abgebrochen", durationSeconds: options.durationSeconds ?? null });
+  }
   else if (call.providerCallSid && !["beendet", "besetzt", "keine_antwort", "anrufbeantworter", "abgebrochen", "fehlgeschlagen"].includes(call.status)) await provider.hangupCall(call.providerCallSid).catch(() => undefined);
   void userId;
   return callDetail(db, tenantId, callId);
@@ -415,7 +452,7 @@ export async function markConsent(db: Db, tenantId: number, callId: number, appU
   if (!call) throw new Error("Anruf wurde nicht gefunden.");
   await db.update(dialerCalls).set({ consentAt: new Date() }).where(eq(dialerCalls.id, callId));
   const { provider, settings } = await providerFor(db, tenantId);
-  if (settings.recordCalls && settings.consentMode === "agent_button" && provider.name === "twilio" && call.providerCallSid && !call.recordingSid) { const recording = await provider.startRecording(call.providerCallSid, `${appUrl.replace(/\/+$/, "")}/api/telephony/recording?callId=${callId}`); await db.update(dialerCalls).set({ recordingSid: recording.recordingSid }).where(eq(dialerCalls.id, callId)); }
+  if (settings.recordCalls && settings.consentMode === "agent_button" && provider.name !== "simulation" && call.providerCallSid && !call.recordingSid) { const recording = await provider.startRecording(call.providerCallSid, `${appUrl.replace(/\/+$/, "")}/api/telephony/recording?callId=${callId}`, { announcement: false }); await db.update(dialerCalls).set({ recordingSid: recording.recordingSid }).where(eq(dialerCalls.id, callId)); }
   return { success: true as const };
 }
 
@@ -474,4 +511,165 @@ export async function releaseWrapUps(db: Db, tenantId: number, now = new Date())
   let released = 0;
   for (const session of sessions) { if (now.getTime() - session.lastActivityAt.getTime() >= settings.wrapUpSeconds * 1000) { await db.update(agentSessions).set({ status: "bereit", currentCallId: null, lastActivityAt: now }).where(eq(agentSessions.id, session.id)); released += 1; } }
   return { released };
+}
+
+/* ------------------------------------------------------------------ sipgate */
+const SIPGATE_OPEN = ["initiiert", "klingelt", "verbunden"] as const;
+const sipgateEventSeen = new Map<number, number>(); // Mandant → Zeitpunkt des letzten Webhook-Ereignisses
+const sipgateMisses = new Map<number, number>();    // Anruf-ID → wie oft er in Folge nicht mehr in der Liste der aktiven Anrufe war
+const sipgateReconciledAt = new Map<number, number>();
+const sipgateWebhooksActive = (settings: TelephonySettings, tenantId: number) => Boolean(settings.sipgateWebhookAt) || Date.now() - (sipgateEventSeen.get(tenantId) ?? 0) < 24 * 60 * 60_000;
+
+/** Verbindung prüfen: Token testen, System (classic/neo) und Benutzer-ID merken, Geräte, Rufnummern und den Stand der Webhooks zeigen. */
+export async function sipgateCheck(db: Db, tenantId: number, appUrl: string) {
+  const settings = await ensureTelephonySettings(db, tenantId);
+  const probe = sipgateFor(settings);
+  const info = await probe.userInfo();
+  const system = await probe.detectSystem();
+  await db.update(telephonySettings).set({ sipgateUserId: info.userId, sipgateSystem: system }).where(eq(telephonySettings.id, settings.id));
+  const provider = sipgateFor({ ...settings, sipgateUserId: info.userId, sipgateSystem: system });
+  const problems: string[] = [];
+  const devices = await provider.devices(info.userId).catch((error: Error) => { problems.push(`Geräte: ${error.message}`); return []; });
+  const numbers = await provider.numbers().catch((error: Error) => { problems.push(`Rufnummern: ${error.message}`); return []; });
+  const webhooks = await provider.webhookSettings().catch((error: Error) => { problems.push(`Webhooks: ${error.message}`); return null; });
+  const known = new Set((await db.select({ e164: phoneNumbers.e164 }).from(phoneNumbers).where(and(eq(phoneNumbers.tenantId, tenantId), eq(phoneNumbers.status, "aktiv")))).map((row) => row.e164));
+  const webhookUrl = sipgateWebhookUrl(appUrl.replace(/\/+$/, ""), tenantId, settings.webhookSecret);
+  return {
+    ok: true as const, userId: info.userId, masterSipId: info.masterSipId, system,
+    devices, numbers: numbers.map((number) => ({ ...number, imported: known.has(number.e164) })),
+    webhooks: webhooks ? { configured: webhooks.outgoingUrl === webhookUrl, outgoingUrl: webhooks.outgoingUrl, incomingUrl: webhooks.incomingUrl } : null,
+    webhookUrl, problems,
+  };
+}
+
+/** Rufnummern des sipgate-Kontos in die Software übernehmen (als Absender für Anrufe und SMS). */
+export async function sipgateImportNumbers(db: Db, tenantId: number) {
+  const settings = await ensureTelephonySettings(db, tenantId);
+  const provider = sipgateFor(settings);
+  const numbers = await provider.numbers();
+  const existing = await db.select().from(phoneNumbers).where(eq(phoneNumbers.tenantId, tenantId));
+  let imported = 0;
+  for (const number of numbers) {
+    const country = number.e164.startsWith("+43") ? "AT" : number.e164.startsWith("+41") ? "CH" : "DE";
+    const found = existing.find((row) => row.e164 === number.e164);
+    if (found) { if (found.status !== "aktiv" || found.provider !== "sipgate") await db.update(phoneNumbers).set({ status: "aktiv", releasedAt: null, provider: "sipgate", providerSid: number.id, friendlyName: number.localized, region: number.endpointAlias }).where(eq(phoneNumbers.id, found.id)); continue; }
+    await db.insert(phoneNumbers).values({ tenantId, provider: "sipgate", providerSid: number.id, e164: number.e164, country, numberType: number.type === "MOBILE" ? "mobil" : "lokal", friendlyName: number.localized, region: number.endpointAlias, monthlyPrice: null, currency: "EUR", status: "aktiv" });
+    imported += 1;
+  }
+  // Standard-Rufnummer: bei sipgate muss die angezeigte Nummer zum sipgate-Konto gehören – sonst nimmt sipgate den Anruf nicht an.
+  const currentDefault = settings.defaultNumberId ? (await db.select({ provider: phoneNumbers.provider, status: phoneNumbers.status }).from(phoneNumbers).where(eq(phoneNumbers.id, settings.defaultNumberId)).limit(1))[0] : undefined;
+  if (!currentDefault || currentDefault.provider !== "sipgate" || currentDefault.status !== "aktiv") { const firstNumber = (await db.select({ id: phoneNumbers.id }).from(phoneNumbers).where(and(eq(phoneNumbers.tenantId, tenantId), eq(phoneNumbers.status, "aktiv"), eq(phoneNumbers.provider, "sipgate"))).orderBy(asc(phoneNumbers.id)).limit(1))[0]; if (firstNumber) await db.update(telephonySettings).set({ defaultNumberId: firstNumber.id }).where(eq(telephonySettings.id, settings.id)); }
+  return { imported, total: numbers.length };
+}
+
+/** Geräte des sipgate-Benutzers (für die Auswahl beim Start der Dialer-Sitzung). */
+export async function sipgateDevices(db: Db, tenantId: number) {
+  const settings = await ensureTelephonySettings(db, tenantId);
+  if (settings.provider !== "sipgate") return [];
+  return sipgateFor(settings).devices(settings.sipgateUserId ?? "w0");
+}
+
+/** Webhook-Adresse der Software bei sipgate eintragen (Push-API: Ereignisse für ein- und ausgehende Anrufe). */
+export async function sipgateSetupWebhooks(db: Db, tenantId: number, appUrl: string) {
+  const settings = await ensureTelephonySettings(db, tenantId);
+  const url = sipgateWebhookUrl(appUrl.replace(/\/+$/, ""), tenantId, settings.webhookSecret);
+  if (!/^https:\/\//.test(url)) throw new Error("sipgate nimmt nur https-Adressen an – die Software muss öffentlich über https erreichbar sein (APP_URL).");
+  await sipgateFor(settings).saveWebhookSettings({ incomingUrl: url, outgoingUrl: url, log: true, whitelist: null });
+  await db.update(telephonySettings).set({ sipgateWebhookAt: new Date() }).where(eq(telephonySettings.id, settings.id));
+  return { url };
+}
+
+/** Aufzeichnung über sipgate starten, wenn die Einstellungen das vorsehen (Ansage oder „ohne Abfrage“); per Klick läuft über markConsent. */
+async function startSipgateRecordingIfWanted(db: Db, settings: TelephonySettings, call: DialerCall) {
+  if (!settings.recordCalls || call.recordingSid || !call.providerCallSid || /^(session|pending):/.test(call.providerCallSid)) return;
+  if (!(settings.recordWithoutConsent || settings.consentMode === "ansage")) return;
+  const provider = sipgateFor(settings);
+  const recording = await provider.startRecording(call.providerCallSid, "", { announcement: !settings.recordWithoutConsent && settings.consentMode === "ansage" }).catch((error: Error) => { console.error(`[sipgate] Aufzeichnung für Anruf ${call.id} nicht gestartet:`, error.message); return null; });
+  if (recording) await db.update(dialerCalls).set({ recordingSid: recording.recordingSid }).where(eq(dialerCalls.id, call.id));
+}
+
+/** Push-API-Ereignis von sipgate (newCall/answer/hangup) auf unseren Anruf abbilden. Antwort ist das XML für sipgate. */
+export async function handleSipgateEvent(db: Db, tenantId: number, body: Record<string, unknown>, base: string): Promise<{ xml: string; event: SipgateEvent; callId: number | null }> {
+  const { parseSipgateEvent: parse, sipgateResponseXml, sipgateEmptyXml } = await import("./sipgate-provider");
+  const event = parse(body);
+  const settings = await ensureTelephonySettings(db, tenantId);
+  sipgateEventSeen.set(tenantId, Date.now());
+  const eventUrl = sipgateWebhookUrl(base.replace(/\/+$/, ""), tenantId, settings.webhookSecret);
+  if (event.event === "newCall" && event.direction === "in") return { xml: sipgateEmptyXml(), event, callId: null }; // eingehende Anrufe laufen bei sipgate wie gewohnt
+  let call = event.callId ? (await db.select().from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), eq(dialerCalls.providerCallSid, event.callId))).limit(1))[0] ?? null : null;
+  if (!call) {
+    const candidates = await db.select().from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), eq(dialerCalls.provider, "sipgate"), inArray(dialerCalls.status, [...SIPGATE_OPEN]), gte(dialerCalls.startedAt, new Date(Date.now() - 30 * 60_000)))).orderBy(desc(dialerCalls.id)).limit(10);
+    call = candidates.find((row) => sameNumber(row.toNumber, event.to) || sameNumber(row.toNumber, event.answeringNumber)) ?? null;
+    if (call && event.callId) { await db.update(dialerCalls).set({ providerCallSid: event.callId }).where(eq(dialerCalls.id, call.id)); call = { ...call, providerCallSid: event.callId }; }
+  }
+  if (!call) return { xml: sipgateEmptyXml(), event, callId: null }; // nicht unser Anruf (z. B. direkt vom Telefon gewählt)
+  const xml = event.event === "newCall" ? sipgateResponseXml({ onAnswer: eventUrl, onHangup: eventUrl }) : sipgateEmptyXml();
+  if (FINAL_STATUSES.has(call.status)) return { xml, event, callId: call.id };
+  const status = sipgateStatusOf(event); if (!status) return { xml, event, callId: call.id };
+  await handleStatusEvent(db, { callId: call.id, status, durationSeconds: null });
+  if (status === "in-progress") await startSipgateRecordingIfWanted(db, settings, { ...call, providerCallSid: event.callId || call.providerCallSid });
+  return { xml, event, callId: call.id };
+}
+
+/**
+ * Abgleich ohne Webhooks (alle paar Sekunden): Welche unserer sipgate-Anrufe stehen in der Liste der aktiven Anrufe?
+ * Taucht ein Anruf auf, kennen wir seine callId; verschwindet er, ist er zu Ende. Ohne Push-API gilt „in der Liste“ als
+ * verbunden (sipgate meldet dann nicht, ob der Kunde schon abgenommen hat).
+ */
+export async function syncSipgateCalls(db: Db, tenantId: number, now = new Date()) {
+  const settings = await ensureTelephonySettings(db, tenantId);
+  if (settings.provider !== "sipgate") return { checked: 0 };
+  const open = await db.select().from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), eq(dialerCalls.provider, "sipgate"), inArray(dialerCalls.status, [...SIPGATE_OPEN]), gte(dialerCalls.startedAt, new Date(now.getTime() - 2 * 60 * 60_000))));
+  if (!open.length) return { checked: 0 };
+  const provider = sipgateFor(settings);
+  const active = await provider.activeCalls().catch(() => null); if (!active) return { checked: 0 };
+  const webhooks = sipgateWebhooksActive(settings, tenantId);
+  for (const call of open) {
+    const match = active.find((item) => (call.providerCallSid && item.callId === call.providerCallSid) || item.participants.some((number) => sameNumber(number, call.toNumber)));
+    if (match) {
+      sipgateMisses.delete(call.id);
+      const patch: Partial<typeof dialerCalls.$inferInsert> = {};
+      if (!call.providerCallSid || /^(session|pending):/.test(call.providerCallSid)) patch.providerCallSid = match.callId;
+      if (call.status === "initiiert") patch.status = "klingelt";
+      if (!webhooks && call.status !== "verbunden") { patch.status = "verbunden"; patch.answeredAt = now; patch.connectedAt = now; if (call.agentUserId) await db.update(agentSessions).set({ status: "im_gespraech", lastActivityAt: now }).where(eq(agentSessions.userId, call.agentUserId)); if (call.queueItemId) await db.update(dialerQueueItems).set({ status: "verbunden" }).where(eq(dialerQueueItems.id, call.queueItemId)); }
+      if (Object.keys(patch).length) await db.update(dialerCalls).set(patch).where(eq(dialerCalls.id, call.id));
+      if (patch.status === "verbunden" || patch.providerCallSid) await startSipgateRecordingIfWanted(db, settings, { ...call, ...patch, providerCallSid: patch.providerCallSid ?? call.providerCallSid } as DialerCall);
+      continue;
+    }
+    if (call.status === "initiiert") { if (now.getTime() - call.startedAt.getTime() > 90_000) await finishCall(db, tenantId, call.id, { status: "abgebrochen", note: "sipgate: dein Gerät hat nicht abgenommen oder der Anruf kam nicht zustande" }); continue; }
+    const misses = (sipgateMisses.get(call.id) ?? 0) + 1; sipgateMisses.set(call.id, misses);
+    if (misses >= 2) { sipgateMisses.delete(call.id); await finishCall(db, tenantId, call.id, { status: call.status === "verbunden" ? "beendet" : "keine_antwort" }); }
+  }
+  return { checked: open.length };
+}
+
+/** Fertige Aufzeichnungen aus dem sipgate-Verlauf nachtragen (jede Minute): Datei liegt bei sipgate, die Software reicht sie über eine eigene Adresse weiter. */
+export async function reconcileSipgateRecordings(db: Db, tenantId: number, appUrl: string, now = new Date()) {
+  const settings = await ensureTelephonySettings(db, tenantId);
+  if (settings.provider !== "sipgate") return { updated: 0 };
+  if (now.getTime() - (sipgateReconciledAt.get(tenantId) ?? 0) < 55_000) return { updated: 0 };
+  sipgateReconciledAt.set(tenantId, now.getTime());
+  const pending = (await db.select().from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), eq(dialerCalls.provider, "sipgate"), eq(dialerCalls.status, "beendet"), isNull(dialerCalls.recordingUrl), gte(dialerCalls.startedAt, new Date(now.getTime() - 3 * 60 * 60_000))))).filter((call) => call.recordingSid && call.endedAt && now.getTime() - call.endedAt.getTime() > 20_000);
+  if (!pending.length) return { updated: 0 };
+  const provider = sipgateFor(settings);
+  const since = new Date(Math.min(...pending.map((call) => call.startedAt.getTime())) - 2 * 60_000);
+  const entries = await provider.history({ since, until: new Date(now.getTime() + 60_000) }).catch((error: Error) => { console.error("[sipgate] Verlauf nicht lesbar:", error.message); return null; });
+  if (!entries) return { updated: 0 };
+  const base = appUrl.replace(/\/+$/, ""); let updated = 0;
+  for (const call of pending) {
+    const entry = entries.filter((item) => item.recordingUrl && sameNumber(item.target, call.toNumber) && Math.abs(item.createdAt.getTime() - call.startedAt.getTime()) < 10 * 60_000).sort((a, b) => Math.abs(a.createdAt.getTime() - call.startedAt.getTime()) - Math.abs(b.createdAt.getTime() - call.startedAt.getTime()))[0];
+    if (!entry?.recordingUrl) continue;
+    await db.update(dialerCalls).set({ providerRecordingUrl: entry.recordingUrl, ...(entry.durationSeconds && !call.talkSeconds ? { talkSeconds: entry.durationSeconds } : {}) }).where(eq(dialerCalls.id, call.id));
+    await handleRecordingEvent(db, { callId: call.id, recordingSid: call.recordingSid, recordingUrl: `${base}/api/telephony/sipgate/recording/${call.id}?secret=${settings.webhookSecret}`, durationSeconds: entry.durationSeconds });
+    updated += 1;
+  }
+  return { updated };
+}
+
+/** Aufzeichnung einer sipgate-Datei mit den Zugangsdaten holen (für Wiedergabe und Transkription über die eigene Adresse). */
+export async function sipgateRecordingResponse(db: Db, callId: number, secret: string) {
+  const call = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, callId)).limit(1))[0]; if (!call?.providerRecordingUrl) return null;
+  const settings = await ensureTelephonySettings(db, call.tenantId);
+  if (!secret || secret !== settings.webhookSecret) return null;
+  return sipgateFor(settings).fetchRecording(call.providerRecordingUrl);
 }

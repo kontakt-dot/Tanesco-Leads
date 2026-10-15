@@ -5,7 +5,7 @@ import type { Express, Request, Response } from "express";
 import { and, eq } from "drizzle-orm";
 import { agentSessions, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { getDb } from "./db";
-import { ensureTelephonySettings, handleAmdEvent, handleRecordingEvent, handleStatusEvent, providerFor } from "./dialer";
+import { ensureTelephonySettings, handleAmdEvent, handleRecordingEvent, handleSipgateEvent, handleStatusEvent, providerFor, sipgateRecordingResponse } from "./dialer";
 import { decryptIntegrationSecret } from "./integration-secrets";
 import { twiml, verifyTwilioSignature } from "./telephony-provider";
 
@@ -92,6 +92,25 @@ export function registerTelephonyRoutes(app: Express) {
     if (text(body.RecordingStatus) && text(body.RecordingStatus) !== "completed") return res.status(204).end();
     await handleRecordingEvent(db, { providerCallSid: text(body.CallSid) || null, callId: Number(body.callId) || null, recordingSid: text(body.RecordingSid) || null, recordingUrl: `${text(body.RecordingUrl)}${text(body.RecordingUrl).endsWith(".mp3") ? "" : ".mp3"}`, durationSeconds: body.RecordingDuration ? Number(body.RecordingDuration) : null });
     return res.status(204).end();
+  });
+  /** sipgate Push-API: newCall / answer / hangup für unsere Anrufe (Mandant und Geheimnis stehen in der Adresse). */
+  app.post("/api/telephony/sipgate/events", async (req: Request, res: Response) => {
+    const db = await getDb(); if (!db) return res.status(503).end();
+    const tenantId = Number(req.query.tenant) || 0; if (!tenantId) return res.status(403).end();
+    const settings = await ensureTelephonySettings(db, tenantId);
+    if (text(req.query.secret) !== settings.webhookSecret) return res.status(403).end();
+    const result = await handleSipgateEvent(db, tenantId, (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>, baseUrl(req)).catch((error) => { console.error("[sipgate] Ereignis fehlgeschlagen:", error instanceof Error ? error.message : error); return null; });
+    return res.status(200).type("application/xml").send(result?.xml ?? `<?xml version="1.0" encoding="UTF-8"?><Response />`);
+  });
+  /** Aufzeichnung eines sipgate-Anrufs: liegt bei sipgate, wird hier mit den Zugangsdaten geholt und durchgereicht (Wiedergabe, Transkription). */
+  app.get("/api/telephony/sipgate/recording/:callId", async (req: Request, res: Response) => {
+    const db = await getDb(); if (!db) return res.status(503).end();
+    const upstream = await sipgateRecordingResponse(db, Number(req.params.callId) || 0, text(req.query.secret)).catch(() => null);
+    if (!upstream) return res.status(404).end();
+    if (!upstream.ok) return res.status(502).end();
+    res.status(200).type(upstream.headers.get("content-type") ?? "audio/mpeg");
+    const length = upstream.headers.get("content-length"); if (length) res.setHeader("content-length", length);
+    res.send(Buffer.from(await upstream.arrayBuffer()));
   });
   void providerFor;
 }

@@ -10,18 +10,18 @@ import { nanoid } from "nanoid";
 export type NumberSearch = { country: "DE" | "AT" | "CH"; type: "lokal" | "mobil" | "national" | "kostenfrei"; contains?: string; region?: string; limit?: number };
 export type AvailableNumber = { e164: string; friendlyName: string; region: string | null; type: NumberSearch["type"]; monthlyPrice: number | null; currency: string; capabilities: { voice: boolean; sms: boolean } };
 export type PurchasedNumber = { providerSid: string; e164: string; friendlyName: string };
-export type OriginateInput = { to: string; from: string; answerUrl: string; statusCallbackUrl: string; amd: boolean; amdCallbackUrl?: string; timeoutSeconds?: number; reference: string };
-export type OriginateResult = { providerCallSid: string };
+export type OriginateInput = { to: string; from: string; answerUrl: string; statusCallbackUrl: string; amd: boolean; amdCallbackUrl?: string; timeoutSeconds?: number; reference: string; deviceId?: string | null };
+export type OriginateResult = { providerCallSid: string; providerSessionId?: string | null };
 
 export interface TelephonyProvider {
-  readonly name: "twilio" | "simulation";
+  readonly name: "twilio" | "simulation" | "sipgate";
   searchNumbers(search: NumberSearch): Promise<AvailableNumber[]>;
   purchaseNumber(e164: string, options: { friendlyName: string; voiceUrl: string; statusCallbackUrl: string; country: string; addressSid?: string | null; bundleSid?: string | null }): Promise<PurchasedNumber>;
   releaseNumber(providerSid: string): Promise<void>;
   originateCall(input: OriginateInput): Promise<OriginateResult>;
   hangupCall(providerCallSid: string): Promise<void>;
   redirectCall(providerCallSid: string, twimlUrl: string): Promise<void>;
-  startRecording(providerCallSid: string, callbackUrl: string): Promise<{ recordingSid: string }>;
+  startRecording(providerCallSid: string, callbackUrl: string, options?: { announcement?: boolean }): Promise<{ recordingSid: string }>;
   accessToken(identity: string, ttlSeconds?: number): Promise<string | null>;
   /** Textnachricht (SMS oder WhatsApp) senden; from/to in E.164. */
   sendMessage(input: MessageInput): Promise<MessageResult>;

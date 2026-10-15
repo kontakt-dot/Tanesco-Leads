@@ -15,7 +15,8 @@ import type { AddressInfo } from "node:net";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks } from "../drizzle/schema";
+import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
+import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
 import { intervalWindowOpen, runScheduledDeliveries } from "./delivery-scheduler";
@@ -1818,5 +1819,95 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.listSent({ kind: "antwort" })).items.some((item) => item.to === answered.fromEmail && (item as { attachments?: Array<{ filename: string }> }).attachments?.some((file) => file.filename === "Angebot.pdf"))).toBe(true);
     await expect(owner.leadops.replyInboxMessage({ messageId: answered.id, text: "zu viel", attachments: Array.from({ length: 6 }, (_, i) => ({ filename: `f${i}.pdf`, contentType: "application/pdf", contentBase64: "QQ==", size: 1 })) })).rejects.toThrow();
   });
+
+  it("37. sipgate als Telefonie-Anbieter (Migration 0072): Token speichern, Verbindung prüfen, Rufnummern übernehmen, Webhook eintragen, Anruf über das sipgate-Gerät mit Ereignissen, Aufzeichnung per Klick, Datei aus dem Verlauf", async () => {
+    const tenantId = S.tenantId as number;
+    // Nachgebaute sipgate-API: merkt sich die Aufrufe; „aktive Anrufe“ und „Verlauf“ lassen sich im Test umschalten.
+    const api: { calls: Array<{ method: string; path: string; body: unknown }>; active: Array<{ callId: string; participants: Array<{ phoneNumber: string }> }>; history: Array<Record<string, unknown>> } = { calls: [], active: [], history: [] };
+    sipgateTestHooks.fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const path = String(input).replace("https://api.sipgate.com/v2", ""); const method = init?.method ?? "GET";
+      api.calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      const json = (status: number, body?: unknown) => new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      if (path === "/authorization/userinfo") return json(200, { sub: "3376511w0", masterSipId: "3376511" });
+      if (path === "/channels") return json(404, { message: "nicht vorhanden" });
+      if (path === "/w0/devices") return json(200, { items: [{ id: "e0", alias: "sipgate App Taner", type: "REGISTER", online: true }, { id: "x0", alias: "Handy", type: "EXTERNAL" }] });
+      if (path === "/numbers") return json(200, { items: [{ id: "n1", number: "+496119851230", localized: "0611 9851230", type: "LANDLINE", endpointAlias: "Zentrale" }, { id: "n2", number: "+4917833591460", localized: "0178 33591460", type: "MOBILE" }] });
+      if (path === "/sessions/calls") return json(200, { sessionId: "sess-e2e" });
+      if (path === "/calls" && method === "GET") return json(200, { data: api.active });
+      if (/^\/calls\/[^/]+\/recording$/.test(path)) return json(204);
+      if (/^\/calls\/[^/]+$/.test(path) && method === "DELETE") { api.active = []; return json(204); }
+      if (path.startsWith("/history")) return json(200, { items: api.history });
+      if (path === "/settings/sipgateio") return method === "GET" ? json(200, { incomingUrl: "", outgoingUrl: "", log: false, whitelist: null }) : json(204);
+      if (path.startsWith("https://files.sipgate.example/")) return new Response("ID3-audio", { status: 200, headers: { "content-type": "audio/mpeg" } });
+      return json(404, { message: `unbekannt: ${path}` });
+    }) as unknown as typeof fetch;
+    try {
+      const before = await owner.leadops.getTelephonySettings();
+      await expect(owner.leadops.saveTelephonySettings({ ...before, provider: "sipgate", credentials: before.credentials, sipgate: { tokenId: "", token: "" }, addressSid: "", bundleSids: before.bundleSids, agentConnection: "sipgate", announcement: before.announcement ?? "", pacingRatio: Number(before.pacingRatio), maxAbandonRate: Number(before.maxAbandonRate), callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } } as Parameters<typeof owner.leadops.saveTelephonySettings>[0])).rejects.toThrow(/Token-ID und Token/);
+      await owner.leadops.saveTelephonySettings({ ...before, provider: "sipgate", credentials: before.credentials, sipgate: { tokenId: "token-e2e", token: "geheim-e2e", smsId: "s0", deviceId: "" }, addressSid: "", bundleSids: before.bundleSids, agentConnection: "sipgate", consentMode: "agent_button", recordCalls: true, announcement: before.announcement ?? "", pacingRatio: Number(before.pacingRatio), maxAbandonRate: Number(before.maxAbandonRate), callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } } as Parameters<typeof owner.leadops.saveTelephonySettings>[0]);
+      const saved = await owner.leadops.getTelephonySettings(); expect(saved.provider).toBe("sipgate"); expect(saved.sipgate.tokenId).toBe("token-e2e"); expect(saved.sipgate.token).toBe("••••••••"); expect(saved.webhooks.sipgateEvents).toContain("/api/telephony/sipgate/events?tenant=");
+      const row = (await db.select().from(telephonySettings).where(eq(telephonySettings.tenantId, tenantId)))[0]; expect(row.sipgateEncrypted).not.toContain("geheim-e2e"); // verschlüsselt abgelegt
+      // Verbindung prüfen: System, Benutzer, Geräte, Rufnummern, Webhook-Stand
+      const check = await owner.leadops.sipgateCheck();
+      expect(check).toMatchObject({ ok: true, userId: "w0", system: "classic", masterSipId: "3376511" }); expect(check.devices.map((device) => device.id)).toEqual(["e0", "x0"]); expect(check.numbers.map((number) => number.imported)).toEqual([false, false]); expect(check.webhooks?.configured).toBe(false);
+      // Rufnummern übernehmen – landen als sipgate-Nummern, die erste wird Standard
+      const imported = await owner.leadops.sipgateImportNumbers(); expect(imported).toEqual({ imported: 2, total: 2 });
+      expect((await owner.leadops.sipgateImportNumbers()).imported).toBe(0);
+      const numbers = await db.select().from(phoneNumbers).where(and(eq(phoneNumbers.tenantId, tenantId), eq(phoneNumbers.provider, "sipgate"))); expect(numbers.map((number) => number.e164).sort()).toEqual(["+4917833591460", "+496119851230"]);
+      await expect(owner.leadops.searchPhoneNumbers({ country: "DE", type: "lokal" })).rejects.toThrow(/direkt bei sipgate/);
+      // Webhook eintragen
+      const hook = await owner.leadops.sipgateSetupWebhooks(); expect(hook.url).toContain("/api/telephony/sipgate/events?tenant=");
+      expect(api.calls.at(-1)).toMatchObject({ method: "PUT", path: "/settings/sipgateio", body: { incomingUrl: hook.url, outgoingUrl: hook.url, log: true } });
+      expect((await owner.leadops.sipgateCheck()).webhooks?.configured).toBe(false); // der Nachbau liefert weiter eine leere Adresse – der Zeitstempel steht trotzdem
+      // Sitzung: Predictive geht nicht, ohne Gerät geht nicht, mit Gerät schon
+      await expect(owner.leadops.startDialerSession({ campaignId: null, mode: "predictive", connection: "sipgate", agentDeviceId: "e0" })).rejects.toThrow(/Predictive/);
+      await expect(owner.leadops.startDialerSession({ campaignId: null, mode: "manuell", connection: "browser" })).rejects.toThrow(/sipgate-Gerät/);
+      const session = await owner.leadops.startDialerSession({ campaignId: null, mode: "manuell", connection: "browser", agentDeviceId: "e0" }); expect(session?.connection).toBe("sipgate"); expect(session?.agentDeviceId).toBe("e0");
+      expect(await owner.leadops.sipgateDevices()).toHaveLength(2);
+      // Anruf: sipgate ruft Gerät e0, dann den Kunden; die callId kommt aus der Liste der aktiven Anrufe
+      api.active = [{ callId: "CALL-E2E", participants: [{ phoneNumber: "+49151999888" }] }];
+      const instruction = await owner.leadops.placeManualCall({ phone: "+49 151 999888" });
+      expect(instruction.connection).toBe("sipgate"); expect(instruction.params.device).toBe("e0");
+      expect(api.calls.find((call) => call.path === "/sessions/calls")?.body).toEqual({ deviceId: "e0", caller: "e0", callee: "+49151999888", callerId: "+496119851230" });
+      let call = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, instruction.callId)))[0]; expect(call.provider).toBe("sipgate"); expect(call.providerCallSid).toBe("CALL-E2E"); expect(call.providerSessionId).toBe("sess-e2e"); expect(call.status).toBe("klingelt");
+      // Ereignisse der Push-API: newCall (Antwort mit onAnswer/onHangup), answer → verbunden, Klick → Aufzeichnung, hangup → beendet
+      const base = "https://leads.e2e.example";
+      const newCall = await handleSipgateEvent(db, tenantId, { event: "newCall", callId: "CALL-E2E", direction: "out", from: "+496119851230", to: "+49151999888", "userId[]": ["w0"] }, base);
+      expect(newCall.callId).toBe(call.id); expect(newCall.xml).toContain(`onAnswer="${base}/api/telephony/sipgate/events?tenant=${tenantId}&amp;secret=`);
+      const incoming = await handleSipgateEvent(db, tenantId, { event: "newCall", callId: "CALL-IN", direction: "in", from: "+49301234567", to: "+496119851230" }, base); expect(incoming.callId).toBeNull(); // eingehende Anrufe gehen uns nichts an
+      await handleSipgateEvent(db, tenantId, { event: "answer", callId: "CALL-E2E", direction: "out", to: "+49151999888", answeringNumber: "+49151999888" }, base);
+      call = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, instruction.callId)))[0]; expect(call.status).toBe("verbunden"); expect(call.connectedAt).toBeTruthy(); expect(call.recordingSid).toBeNull(); // Klick-Modus: noch keine Aufzeichnung
+      expect((await owner.leadops.currentDialerSession())?.status).toBe("im_gespraech");
+      await owner.leadops.markCallConsent({ callId: call.id });
+      expect(api.calls.at(-1)).toMatchObject({ method: "PUT", path: "/calls/CALL-E2E/recording", body: { value: true, announcement: false } });
+      call = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, instruction.callId)))[0]; expect(call.recordingSid).toBe("sg-CALL-E2E");
+      await handleSipgateEvent(db, tenantId, { event: "hangup", callId: "CALL-E2E", direction: "out", to: "+49151999888", cause: "normalClearing" }, base);
+      call = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, instruction.callId)))[0]; expect(call.status).toBe("beendet"); expect(call.endedAt).toBeTruthy(); expect(call.recordingUrl).toBeNull();
+      await handleSipgateEvent(db, tenantId, { event: "hangup", callId: "CALL-E2E", direction: "out", to: "+49151999888", cause: "normalClearing" }, base); // doppelt → ignoriert
+      expect((await db.select().from(dialerCalls).where(eq(dialerCalls.id, instruction.callId)))[0].status).toBe("beendet");
+      // Aufzeichnung aus dem Verlauf nachtragen (erst nach 20 s – der Test stellt die Uhr vor) und über die eigene Adresse ausliefern
+      api.history = [{ id: "h-e2e", source: "+496119851230", target: "+49151999888", created: call.startedAt.toISOString(), duration: 125000, status: "PICKUP", direction: "OUTGOING", recordingUrl: "https://files.sipgate.example/rec/h-e2e.mp3" }];
+      const later = new Date(Date.now() + 60_000);
+      expect(await reconcileSipgateRecordings(db, tenantId, base, later)).toEqual({ updated: 1 });
+      call = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, instruction.callId)))[0];
+      expect(call.providerRecordingUrl).toBe("https://files.sipgate.example/rec/h-e2e.mp3"); expect(call.recordingUrl).toBe(`${base}/api/telephony/sipgate/recording/${call.id}?secret=${row.webhookSecret}`);
+      const audio = await sipgateRecordingResponse(db, call.id, row.webhookSecret); expect(audio?.ok).toBe(true); expect(await audio!.text()).toBe("ID3-audio");
+      expect(await sipgateRecordingResponse(db, call.id, "falsch")).toBeNull();
+      // Abgleich ohne Webhook: zweiter Anruf, der nur über die Liste der aktiven Anrufe erkannt und beendet wird
+      await owner.leadops.setCallDisposition({ callId: call.id, disposition: "interessiert", notes: "sipgate-Test" }).catch(() => undefined);
+      await owner.leadops.updateDialerSession({ status: "bereit" });
+      api.active = [];
+      const second = await owner.leadops.placeManualCall({ phone: "+49 151 777666" });
+      let other = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, second.callId)))[0]; expect(other.providerCallSid).toBe("session:sess-e2e"); expect(other.status).toBe("initiiert");
+      api.active = [{ callId: "CALL-2", participants: [{ phoneNumber: "+49151777666" }] }];
+      await syncSipgateCalls(db, tenantId); other = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, second.callId)))[0]; expect(other.providerCallSid).toBe("CALL-2"); expect(["klingelt", "verbunden"]).toContain(other.status);
+      api.active = [];
+      await syncSipgateCalls(db, tenantId); await syncSipgateCalls(db, tenantId); // zweimal nicht mehr in der Liste → zu Ende
+      other = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, second.callId)))[0]; expect(["beendet", "keine_antwort"]).toContain(other.status);
+      await owner.leadops.updateDialerSession({ status: "offline" });
+      // zurück auf Simulation, damit spätere Tests unberührt bleiben
+      await owner.leadops.saveTelephonySettings({ ...before, provider: "simulation", credentials: before.credentials, addressSid: "", bundleSids: before.bundleSids, agentConnection: "browser", announcement: before.announcement ?? "", pacingRatio: Number(before.pacingRatio), maxAbandonRate: Number(before.maxAbandonRate), callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } } as Parameters<typeof owner.leadops.saveTelephonySettings>[0]);
+    } finally { delete sipgateTestHooks.fetchImpl; }
+  }, 20000);
 
 });

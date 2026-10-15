@@ -1409,3 +1409,32 @@ describe("Antworten mit Signatur und Anhang (Chat-Build)", () => {
     await expect(call("leadops.replyInboxMessage", { messageId: message.id, text: "zu groß", attachments: [{ filename: "riesig.zip", contentType: "application/zip", contentBase64: "", size: 9 * 1024 * 1024 }] })).rejects.toThrow(/zu groß/);
   });
 });
+
+describe("sipgate als Telefonie-Anbieter (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+  it("Token speichern, Verbindung prüfen, Rufnummern übernehmen, Webhook eintragen, Sitzung mit sipgate-Gerät – Predictive geht nicht", async () => {
+    const before = await call("leadops.getTelephonySettings");
+    const base = { ...before, credentials: before.credentials, addressSid: "", bundleSids: before.bundleSids, announcement: before.announcement ?? "", pacingRatio: Number(before.pacingRatio), maxAbandonRate: Number(before.maxAbandonRate), callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } };
+    await expect(call("leadops.saveTelephonySettings", { ...base, provider: "sipgate", agentConnection: "sipgate", sipgate: { tokenId: "", token: "" } })).rejects.toThrow(/Token-ID und Token/);
+    await call("leadops.saveTelephonySettings", { ...base, provider: "sipgate", agentConnection: "sipgate", sipgate: { tokenId: "token-demo", token: "geheim", smsId: "s0", deviceId: "" } });
+    const saved = await call("leadops.getTelephonySettings");
+    expect(saved.provider).toBe("sipgate"); expect(saved.sipgate).toMatchObject({ tokenId: "token-demo", token: "••••••••", smsId: "s0" }); expect(saved.webhooks.sipgateEvents).toContain("/api/telephony/sipgate/events");
+    const check = await call("leadops.sipgateCheck");
+    expect(check).toMatchObject({ ok: true, userId: "w0", system: "classic" }); expect(check.devices.map((device: { id: string }) => device.id)).toEqual(["e0", "e1", "x0"]); expect(check.numbers.every((number: { imported: boolean }) => !number.imported)).toBe(true); expect(check.webhooks.configured).toBe(false);
+    expect(await call("leadops.sipgateDevices")).toHaveLength(3);
+    const imported = await call("leadops.sipgateImportNumbers"); expect(imported).toEqual({ imported: 2, total: 2 });
+    expect((await call("leadops.sipgateCheck")).numbers.every((number: { imported: boolean }) => number.imported)).toBe(true);
+    expect((await call("leadops.getTelephonySettings")).numbers.some((number: { provider: string; e164: string }) => number.provider === "sipgate" && number.e164 === "+496119851230")).toBe(true);
+    const hook = await call("leadops.sipgateSetupWebhooks"); expect(hook.url).toContain("/api/telephony/sipgate/events");
+    expect((await call("leadops.sipgateCheck")).webhooks.configured).toBe(true);
+    await expect(call("leadops.startDialerSession", { campaignId: null, mode: "predictive", connection: "sipgate", agentDeviceId: "e0" })).rejects.toThrow(/Predictive/);
+    await expect(call("leadops.startDialerSession", { campaignId: null, mode: "manuell", connection: "browser", agentPhone: null })).rejects.toThrow(/sipgate-Gerät/);
+    const session = await call("leadops.startDialerSession", { campaignId: null, mode: "manuell", connection: "browser", agentPhone: null, agentDeviceId: "e1" });
+    expect(session.connection).toBe("sipgate"); expect(session.agentDeviceId).toBe("e1");
+    expect((await call("leadops.softphoneToken")).provider).toBe("sipgate");
+    await call("leadops.updateDialerSession", { status: "offline" });
+    await call("leadops.saveTelephonySettings", { ...base, provider: "simulation", agentConnection: "browser" });
+    expect((await call("leadops.getTelephonySettings")).sipgate.tokenId).toBe("token-demo"); // Token bleibt gespeichert, auch wenn gerade simuliert wird
+  });
+});
+
