@@ -1,6 +1,6 @@
 /**
  * Dialer: manuell, Power (alle Nummern nacheinander) und Predictive (mehrere Anrufe gleichzeitig, Verbindung an freie Agenten).
- * Anrufe laufen über den Telefonie-Anbieter (Twilio oder Simulation); Ereignisse (klingelt, verbunden, beendet,
+ * Anrufe laufen über den Telefonie-Anbieter (sipgate oder Simulation); Ereignisse (klingelt, verbunden, beendet,
  * Anrufbeantworter, Aufzeichnung) kommen als Webhooks zurück und werden hier verarbeitet.
  */
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
@@ -11,7 +11,7 @@ import { ingestInternalCall } from "./call-qa";
 import { autoNotesForCall, writeCallNote } from "./call-notes";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import { triggerLeadAutomations, type Db } from "./lead-pipeline";
-import { SimulationProvider, TwilioProvider, simulationFor, type NumberSearch, type TelephonyProvider, type TwilioCredentials } from "./telephony-provider";
+import { SimulationProvider, simulationFor, type NumberSearch, type TelephonyProvider } from "./telephony-provider";
 import { SipgateProvider, parseSipgateEvent, sameNumber, sipgateStatusOf, type SipgateCredentials, type SipgateEvent, type SipgateSystem } from "./sipgate-provider";
 
 export { DISPOSITIONS } from "../shared/dialer";
@@ -33,7 +33,6 @@ export async function ensureTelephonySettings(db: Db, tenantId: number): Promise
   return (await db.select().from(telephonySettings).where(eq(telephonySettings.tenantId, tenantId)).limit(1))[0];
 }
 
-function credentialsOf(settings: TelephonySettings): TwilioCredentials | null { if (!settings.credentialsEncrypted) return null; try { return JSON.parse(decryptIntegrationSecret(settings.credentialsEncrypted)) as TwilioCredentials; } catch { return null; } }
 function sipgateCredentialsOf(settings: TelephonySettings): SipgateCredentials | null { if (!settings.sipgateEncrypted) return null; try { const parsed = JSON.parse(decryptIntegrationSecret(settings.sipgateEncrypted)) as SipgateCredentials; return parsed.tokenId && parsed.token ? parsed : null; } catch { return null; } }
 /** Tests können den Netzwerkzugriff des sipgate-Anbieters ersetzen (kein echter Aufruf gegen api.sipgate.com). */
 export const sipgateTestHooks: { fetchImpl?: typeof fetch } = {};
@@ -44,31 +43,29 @@ function sipgateFor(settings: TelephonySettings, fetchImpl?: typeof fetch) {
 
 export async function providerFor(db: Db, tenantId: number, fetchImpl?: typeof fetch): Promise<{ provider: TelephonyProvider; settings: TelephonySettings }> {
   const settings = await ensureTelephonySettings(db, tenantId);
-  if (settings.provider === "twilio") { const credentials = credentialsOf(settings); if (!credentials?.accountSid || !credentials.authToken) throw new Error("Twilio-Zugangsdaten fehlen (Telefonie → Einstellungen)."); return { provider: new TwilioProvider(credentials, fetchImpl), settings }; }
   if (settings.provider === "sipgate") return { provider: sipgateFor(settings, fetchImpl), settings };
   return { provider: simulationFor(tenantId), settings };
 }
 
 export async function getTelephonySettings(db: Db, tenantId: number, appUrl: string) {
   const settings = await ensureTelephonySettings(db, tenantId);
-  const credentials = credentialsOf(settings);
   const numbers = await db.select().from(phoneNumbers).where(and(eq(phoneNumbers.tenantId, tenantId), eq(phoneNumbers.status, "aktiv"))).orderBy(asc(phoneNumbers.id));
   const base = appUrl.replace(/\/+$/, "");
-  return { ...settings, credentialsEncrypted: undefined, credentials: { accountSid: credentials?.accountSid ?? settings.accountSid ?? "", authToken: credentials?.authToken ? "••••••••" : "", apiKeySid: credentials?.apiKeySid ?? "", apiKeySecret: credentials?.apiKeySecret ? "••••••••" : "", twimlAppSid: credentials?.twimlAppSid ?? settings.twimlAppSid ?? "" }, bundleSids: { DE: "", AT: "", CH: "", ...((settings.bundleSids ?? {}) as Record<string, string>) }, callWindow: { ...DEFAULT_WINDOW, ...((settings.callWindow ?? {}) as Record<string, unknown>) }, numbers, webhooks: { voiceAgent: `${base}/api/telephony/voice/agent`, voiceInbound: `${base}/api/telephony/voice/inbound`, status: `${base}/api/telephony/status`, sipgateEvents: sipgateWebhookUrl(base, tenantId, settings.webhookSecret) }, dispositions: DISPOSITIONS,
-    sipgate: { tokenId: sipgateCredentialsOf(settings)?.tokenId ?? "", token: sipgateCredentialsOf(settings)?.token ? "••••••••" : "", userId: settings.sipgateUserId ?? "", system: (settings.sipgateSystem as SipgateSystem | null) ?? null, smsId: settings.sipgateSmsId ?? "s0", deviceId: settings.sipgateDeviceId ?? "", webhookAt: settings.sipgateWebhookAt ?? null } };
+  const sipgate = sipgateCredentialsOf(settings);
+  return { ...settings, credentialsEncrypted: undefined, sipgateEncrypted: undefined, provider: settings.provider === "sipgate" ? "sipgate" as const : "simulation" as const, callWindow: { ...DEFAULT_WINDOW, ...((settings.callWindow ?? {}) as Record<string, unknown>) }, numbers, webhooks: { sipgateEvents: sipgateWebhookUrl(base, tenantId, settings.webhookSecret) }, dispositions: DISPOSITIONS,
+    sipgate: { tokenId: sipgate?.tokenId ?? "", token: sipgate?.token ? "••••••••" : "", userId: settings.sipgateUserId ?? "", system: (settings.sipgateSystem as SipgateSystem | null) ?? null, smsId: settings.sipgateSmsId ?? "s0", deviceId: settings.sipgateDeviceId ?? "", webhookAt: settings.sipgateWebhookAt ?? null } };
 }
 export const sipgateWebhookUrl = (base: string, tenantId: number, secret: string) => `${base}/api/telephony/sipgate/events?tenant=${tenantId}&secret=${secret}`;
 
-export async function saveTelephonySettings(db: Db, tenantId: number, input: { provider: "simulation" | "twilio" | "sipgate"; credentials: { accountSid: string; authToken: string; apiKeySid: string; apiKeySecret: string; twimlAppSid: string }; sipgate?: { tokenId: string; token: string; smsId?: string | null; deviceId?: string | null } | null; addressSid: string; bundleSids: Record<string, string>; defaultNumberId: number | null; agentConnection: "browser" | "telefon" | "sipgate"; autoCallNotes?: boolean; recordWithoutConsent?: boolean; announcement: string; consentMode: "ansage" | "agent_button" | "keine"; recordCalls: boolean; amdEnabled: boolean; maxAttempts: number; retryMinutes: number; wrapUpSeconds: number; pacingRatio: number; maxAbandonRate: number; callWindow: { weekdays: number[]; from: string; to: string } }) {
+export async function saveTelephonySettings(db: Db, tenantId: number, input: { provider: "simulation" | "sipgate"; sipgate?: { tokenId: string; token: string; smsId?: string | null; deviceId?: string | null } | null; defaultNumberId: number | null; agentConnection?: "browser" | "telefon" | "sipgate" | null; autoCallNotes?: boolean; recordWithoutConsent?: boolean; announcement: string; consentMode: "ansage" | "agent_button" | "keine"; recordCalls: boolean; amdEnabled: boolean; maxAttempts: number; retryMinutes: number; wrapUpSeconds: number; pacingRatio: number; maxAbandonRate: number; callWindow: { weekdays: number[]; from: string; to: string } }) {
   const settings = await ensureTelephonySettings(db, tenantId);
-  const previous = credentialsOf(settings);
-  const credentials: TwilioCredentials = { accountSid: input.credentials.accountSid.trim(), authToken: input.credentials.authToken === "••••••••" ? previous?.authToken ?? "" : input.credentials.authToken.trim(), apiKeySid: input.credentials.apiKeySid.trim() || undefined, apiKeySecret: input.credentials.apiKeySecret === "••••••••" ? previous?.apiKeySecret : input.credentials.apiKeySecret.trim() || undefined, twimlAppSid: input.credentials.twimlAppSid.trim() || undefined };
   const previousSipgate = sipgateCredentialsOf(settings);
   const sipgate: SipgateCredentials | null = input.sipgate && (input.sipgate.tokenId.trim() || input.sipgate.token.trim()) ? { tokenId: input.sipgate.tokenId.trim(), token: input.sipgate.token === "••••••••" ? previousSipgate?.token ?? "" : input.sipgate.token.trim() } : previousSipgate; // leere Felder = nichts ändern
   const sipgateChanged = Boolean(sipgate && (sipgate.tokenId !== previousSipgate?.tokenId || sipgate.token !== previousSipgate?.token));
   if (input.provider === "sipgate" && (!sipgate?.tokenId || !sipgate.token)) throw new Error("Für sipgate bitte Token-ID und Token eintragen (sipgate → Konto → Personal Access Token).");
-  await db.update(telephonySettings).set({ provider: input.provider, autoCallNotes: input.autoCallNotes ?? settings.autoCallNotes, recordWithoutConsent: input.recordWithoutConsent ?? settings.recordWithoutConsent, accountSid: credentials.accountSid || null, credentialsEncrypted: credentials.accountSid || credentials.authToken ? encryptIntegrationSecret(JSON.stringify(credentials)) : null,
-    sipgateEncrypted: sipgate?.tokenId && sipgate.token ? encryptIntegrationSecret(JSON.stringify(sipgate)) : null, sipgateSmsId: input.sipgate ? (input.sipgate.smsId?.trim() || "s0") : settings.sipgateSmsId, sipgateDeviceId: input.sipgate ? (input.sipgate.deviceId?.trim() || null) : settings.sipgateDeviceId, ...(sipgateChanged ? { sipgateUserId: null, sipgateSystem: null } : {}), twimlAppSid: credentials.twimlAppSid ?? null, addressSid: input.addressSid.trim() || null, bundleSids: input.bundleSids, defaultNumberId: input.defaultNumberId, agentConnection: input.agentConnection, announcement: input.announcement, consentMode: input.consentMode, recordCalls: input.recordCalls, amdEnabled: input.amdEnabled, maxAttempts: input.maxAttempts, retryMinutes: input.retryMinutes, wrapUpSeconds: input.wrapUpSeconds, pacingRatio: input.pacingRatio.toFixed(2), maxAbandonRate: input.maxAbandonRate.toFixed(2), callWindow: input.callWindow }).where(eq(telephonySettings.id, settings.id));
+  await db.update(telephonySettings).set({ provider: input.provider, autoCallNotes: input.autoCallNotes ?? settings.autoCallNotes, recordWithoutConsent: input.recordWithoutConsent ?? settings.recordWithoutConsent,
+    sipgateEncrypted: sipgate?.tokenId && sipgate.token ? encryptIntegrationSecret(JSON.stringify(sipgate)) : null, sipgateSmsId: input.sipgate ? (input.sipgate.smsId?.trim() || "s0") : settings.sipgateSmsId, sipgateDeviceId: input.sipgate ? (input.sipgate.deviceId?.trim() || null) : settings.sipgateDeviceId, ...(sipgateChanged ? { sipgateUserId: null, sipgateSystem: null } : {}),
+    defaultNumberId: input.defaultNumberId, agentConnection: input.provider === "sipgate" ? "sipgate" : "browser", announcement: input.announcement, consentMode: input.consentMode, recordCalls: input.recordCalls, amdEnabled: input.amdEnabled, maxAttempts: input.maxAttempts, retryMinutes: input.retryMinutes, wrapUpSeconds: input.wrapUpSeconds, pacingRatio: input.pacingRatio.toFixed(2), maxAbandonRate: input.maxAbandonRate.toFixed(2), callWindow: input.callWindow }).where(eq(telephonySettings.id, settings.id));
   return { success: true as const };
 }
 
@@ -85,11 +82,8 @@ export async function searchNumbers(db: Db, tenantId: number, search: NumberSear
 
 export async function purchaseNumber(db: Db, tenantId: number, input: { e164: string; country: "DE" | "AT" | "CH"; type: NumberSearch["type"]; friendlyName?: string; region?: string | null; monthlyPrice?: number | null; currency?: string }, appUrl: string) {
   const { provider, settings } = await providerFor(db, tenantId);
-  const bundles = (settings.bundleSids ?? {}) as Record<string, string>;
-  if (provider.name === "twilio" && !bundles[input.country]) throw new Error(`Für ${input.country} fehlt das regulatorische Bundle (Bundle-SID) in den Telefonie-Einstellungen. Ohne Bundle vergibt der Anbieter keine ${input.country}-Rufnummern.`);
-  if (provider.name === "twilio" && !settings.addressSid) throw new Error("Für den Kauf einer Rufnummer ist die Adresse (Address-SID) des Mandanten beim Anbieter nötig.");
   const base = appUrl.replace(/\/+$/, "");
-  const bought = await provider.purchaseNumber(input.e164, { friendlyName: input.friendlyName || `Tanesco ${input.country}`, voiceUrl: `${base}/api/telephony/voice/inbound?tenant=${tenantId}`, statusCallbackUrl: `${base}/api/telephony/status`, country: input.country, addressSid: settings.addressSid, bundleSid: bundles[input.country] });
+  const bought = await provider.purchaseNumber(input.e164, { friendlyName: input.friendlyName || `Tanesco ${input.country}`, voiceUrl: `${base}/api/telephony/voice/inbound?tenant=${tenantId}`, statusCallbackUrl: `${base}/api/telephony/status`, country: input.country, addressSid: null, bundleSid: null });
   const inserted = await db.insert(phoneNumbers).values({ tenantId, provider: provider.name, providerSid: bought.providerSid, e164: bought.e164, country: input.country, numberType: input.type, friendlyName: bought.friendlyName, region: input.region ?? null, monthlyPrice: input.monthlyPrice === null || input.monthlyPrice === undefined ? null : input.monthlyPrice.toFixed(2), currency: input.currency ?? "EUR" });
   const id = Number(inserted[0]?.insertId) || 0;
   if (!settings.defaultNumberId) await db.update(telephonySettings).set({ defaultNumberId: id }).where(eq(telephonySettings.id, settings.id));
@@ -223,7 +217,7 @@ async function createAgentCall(db: Db, tenantId: number, session: AgentSession, 
   const callId = Number(inserted[0]?.insertId) || 0;
   if (target.queueItemId) await db.update(dialerQueueItems).set({ status: "waehlt", attempts: sql`${dialerQueueItems.attempts} + 1`, lockedByUserId: session.userId, lastCallId: callId }).where(eq(dialerQueueItems.id, target.queueItemId));
   await db.update(agentSessions).set({ status: "waehlt", currentCallId: callId, lastActivityAt: new Date() }).where(eq(agentSessions.id, session.id));
-  const base = appUrl.replace(/\/+$/, "");
+  void appUrl;
   if (provider.name === "simulation") {
     const result = await provider.originateCall({ to: target.phone, from: number.e164, answerUrl: "", statusCallbackUrl: "", amd: settings.amdEnabled, reference: String(callId) });
     await db.update(dialerCalls).set({ providerCallSid: result.providerCallSid }).where(eq(dialerCalls.id, callId));
@@ -240,14 +234,7 @@ async function createAgentCall(db: Db, tenantId: number, session: AgentSession, 
     await db.update(dialerCalls).set({ providerCallSid: result.providerCallSid, providerSessionId: result.providerSessionId ?? null, status: result.providerCallSid.startsWith("session:") || result.providerCallSid.startsWith("pending:") ? "initiiert" : "klingelt" }).where(eq(dialerCalls.id, callId));
     return { callId, mode: session.mode, connection: "sipgate", params: { callId: String(callId), device: deviceId } };
   }
-  if (session.connection === "telefon") {
-    if (!session.agentPhone) throw new Error("Für die Verbindung über Telefon fehlt die Rufnummer des Agenten.");
-    const result = await provider.originateCall({ to: session.agentPhone, from: number.e164, answerUrl: `${base}/api/telephony/voice/agent?callId=${callId}&secret=${settings.webhookSecret}`, statusCallbackUrl: `${base}/api/telephony/status?leg=agent&callId=${callId}`, amd: false, reference: String(callId) });
-    await db.update(dialerCalls).set({ providerCallSid: result.providerCallSid }).where(eq(dialerCalls.id, callId));
-    return { callId, mode: session.mode, connection: "telefon", params: { callId: String(callId) } };
-  }
-  // Browser: das Softphone ruft die TwiML-App auf, der Server antwortet in /voice/agent mit dem Kundenwahlvorgang
-  return { callId, mode: session.mode, connection: "browser", params: { callId: String(callId), secret: settings.webhookSecret } };
+  throw new Error("Kein Telefonie-Anbieter eingerichtet – bitte unter Telefonie → Einstellungen sipgate einrichten (oder die Simulation wählen).");
 }
 
 export async function placeManualCall(db: Db, tenantId: number, userId: number, input: { publicId?: string | null; phone?: string | null }, appUrl: string) {
@@ -308,7 +295,7 @@ export async function predictiveTick(db: Db, tenantId: number, appUrl: string, n
       const callId = Number(inserted[0]?.insertId) || 0;
       await db.update(dialerQueueItems).set({ status: "waehlt", attempts: sql`${dialerQueueItems.attempts} + 1`, lastCallId: callId }).where(eq(dialerQueueItems.id, item.id));
       try {
-        const result = await provider.originateCall({ to: item.phone, from: number.e164, answerUrl: `${base}/api/telephony/voice/customer?callId=${callId}&secret=${settings.webhookSecret}`, statusCallbackUrl: `${base}/api/telephony/status?callId=${callId}`, amd: settings.amdEnabled, amdCallbackUrl: `${base}/api/telephony/amd?callId=${callId}`, reference: String(callId) });
+        const result = await provider.originateCall({ to: item.phone, from: number.e164, answerUrl: "", statusCallbackUrl: "", amd: settings.amdEnabled, reference: String(callId) });
         await db.update(dialerCalls).set({ providerCallSid: result.providerCallSid }).where(eq(dialerCalls.id, callId)); summary.dialed += 1;
       } catch (error) { await finishCall(db, tenantId, callId, { status: "fehlgeschlagen", note: error instanceof Error ? error.message : "Fehler" }); }
     }
@@ -321,17 +308,11 @@ async function connectWaitingCall(db: Db, tenantId: number, call: DialerCall, ag
   await db.update(dialerCalls).set({ agentUserId: agent.userId, status: "verbunden", connectedAt: new Date() }).where(eq(dialerCalls.id, call.id));
   await db.update(agentSessions).set({ status: "im_gespraech", currentCallId: call.id, lastActivityAt: new Date() }).where(eq(agentSessions.id, agent.id));
   if (call.queueItemId) await db.update(dialerQueueItems).set({ status: "verbunden", lockedByUserId: agent.userId }).where(eq(dialerQueueItems.id, call.queueItemId));
-  const { provider, settings } = await providerFor(db, tenantId);
-  if (provider.name === "twilio" && call.campaignId) {
-    // Agent in die Warteschlange der Kampagne holen (Browser-Client oder Telefon), der wartende Kunde wird verbunden
-    const target = agent.connection === "telefon" && agent.agentPhone ? agent.agentPhone : `client:agent-${tenantId}-${agent.userId}`;
-    await provider.originateCall({ to: target, from: call.fromNumber ?? "", answerUrl: `${base}/api/telephony/voice/agent-queue?callId=${call.id}&secret=${settings.webhookSecret}`, statusCallbackUrl: `${base}/api/telephony/status?leg=agent&callId=${call.id}`, amd: false, reference: `${call.id}-agent` });
-  }
+  void base; // Predictive läuft nur noch in der Simulation – der Kunde gilt mit der Zuteilung als verbunden
 }
 
 async function abandonCall(db: Db, tenantId: number, call: DialerCall, base: string) {
-  const { provider, settings } = await providerFor(db, tenantId);
-  if (call.providerCallSid && provider.name === "twilio") await provider.redirectCall(call.providerCallSid, `${base}/api/telephony/voice/abandon?secret=${settings.webhookSecret}`).catch(() => undefined);
+  void base;
   await finishCall(db, tenantId, call.id, { status: "abgebrochen", note: "Kein Agent frei – Anruf beendet, Wiedervorlage mit Vorrang." });
 }
 
@@ -357,7 +338,7 @@ export async function handleAmdEvent(db: Db, input: { providerCallSid?: string |
   const call = await findCall(db, input); if (!call) return null;
   const machine = /machine|fax/.test(input.answeredBy);
   await db.update(dialerCalls).set({ amdResult: input.answeredBy }).where(eq(dialerCalls.id, call.id));
-  if (machine) { const { provider } = await providerFor(db, call.tenantId); if (call.providerCallSid && provider.name === "twilio") await provider.hangupCall(call.providerCallSid).catch(() => undefined); return finishCall(db, call.tenantId, call.id, { status: "anrufbeantworter" }); }
+  if (machine) return finishCall(db, call.tenantId, call.id, { status: "anrufbeantworter" });
   if (call.mode === "predictive") { await db.update(dialerCalls).set({ status: "wartet", answeredAt: call.answeredAt ?? new Date() }).where(eq(dialerCalls.id, call.id)); await assignWaitingCall(db, call.tenantId, call.id); }
   return call;
 }
@@ -672,4 +653,53 @@ export async function sipgateRecordingResponse(db: Db, callId: number, secret: s
   const settings = await ensureTelephonySettings(db, call.tenantId);
   if (!secret || secret !== settings.webhookSecret) return null;
   return sipgateFor(settings).fetchRecording(call.providerRecordingUrl);
+}
+
+/* ------------------------------------------------------------------ Live-Bild für viele Agenten */
+/**
+ * Alles, was ein Teamleiter braucht, auf einen Blick: wer ist angemeldet, wer spricht gerade mit wem (und wie lange),
+ * was haben die Agenten heute geschafft, wie weit sind die Kampagnen – und die zuletzt beendeten Gespräche zum
+ * Reinhören (Aufzeichnung und Bewertung). Wird alle paar Sekunden abgefragt.
+ */
+export async function liveBoard(db: Db, tenantId: number, now = new Date()) {
+  const settings = await ensureTelephonySettings(db, tenantId);
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sessions = await listSessions(db, tenantId);
+  const today = await db.select({ call: dialerCalls, score: callRecords.score, verdict: callRecords.verdict, agent: users.name, firstName: leads.firstName, lastName: leads.lastName, publicId: leads.publicId, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company, campaign: dialerCampaigns.name })
+    .from(dialerCalls).leftJoin(callRecords, eq(callRecords.id, dialerCalls.callRecordId)).leftJoin(users, eq(users.id, dialerCalls.agentUserId)).leftJoin(leads, eq(leads.id, dialerCalls.leadId)).leftJoin(rawContacts, eq(rawContacts.id, dialerCalls.rawContactId)).leftJoin(dialerCampaigns, eq(dialerCampaigns.id, dialerCalls.campaignId))
+    .where(and(eq(dialerCalls.tenantId, tenantId), gte(dialerCalls.startedAt, startOfDay))).orderBy(desc(dialerCalls.startedAt)).limit(2000);
+  const nameOf = (row: (typeof today)[number]) => [row.firstName, row.lastName].filter(Boolean).join(" ") || [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || row.call.toNumber;
+  const statsFor = (userId: number) => {
+    const mine = today.filter((row) => row.call.agentUserId === userId);
+    const reached = mine.filter((row) => row.call.status === "beendet");
+    const scored = mine.filter((row) => typeof row.score === "number");
+    return { calls: mine.length, reached: reached.length, talkSeconds: mine.reduce((sum, row) => sum + (row.call.talkSeconds ?? 0), 0), appointments: mine.filter((row) => row.call.disposition === "verkauft").length, interested: mine.filter((row) => row.call.disposition === "interessiert").length, averageScore: scored.length ? Math.round(scored.reduce((sum, row) => sum + (row.score ?? 0), 0) / scored.length) : null };
+  };
+  const agents = await Promise.all(sessions.map(async (session) => {
+    const call = session.currentCallId ? today.find((row) => row.call.id === session.currentCallId) ?? null : null;
+    const since = session.lastActivityAt;
+    return {
+      userId: session.userId, name: session.agentName ?? "Agent", initials: (session.agentName ?? "A").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(), status: session.status, mode: session.mode, campaignId: session.campaignId, campaignName: session.campaignName, connection: session.connection, device: session.agentDeviceId ?? session.agentPhone ?? null, startedAt: session.startedAt, sinceSeconds: Math.max(0, Math.round((now.getTime() - since.getTime()) / 1000)),
+      call: call ? { id: call.call.id, status: call.call.status, toNumber: call.call.toNumber, contactName: nameOf(call), leadPublicId: call.publicId, startedAt: call.call.startedAt, connectedAt: call.call.connectedAt, seconds: Math.max(0, Math.round((now.getTime() - (call.call.connectedAt ?? call.call.startedAt).getTime()) / 1000)), recording: Boolean(call.call.recordingSid), campaignName: call.campaign } : null,
+      today: statsFor(session.userId),
+    };
+  }));
+  // Agenten, die heute telefoniert haben, aber gerade nicht angemeldet sind – damit die Tageszahlen vollständig bleiben
+  const offline = Array.from(new Map(today.filter((row) => row.call.agentUserId && !sessions.some((session) => session.userId === row.call.agentUserId)).map((row) => [row.call.agentUserId!, row.agent ?? "Agent"])).entries()).map(([userId, name]) => ({ userId, name, initials: name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(), status: "offline" as const, mode: null, campaignId: null, campaignName: null, connection: null, device: null, startedAt: null, sinceSeconds: 0, call: null, today: statsFor(userId) }));
+  const queueRows = await db.select({ campaignId: dialerQueueItems.campaignId, status: dialerQueueItems.status }).from(dialerQueueItems).where(eq(dialerQueueItems.tenantId, tenantId));
+  const campaignRows = await db.select().from(dialerCampaigns).where(and(eq(dialerCampaigns.tenantId, tenantId), inArray(dialerCampaigns.status, ["aktiv", "pausiert"])));
+  const campaigns = campaignRows.map((campaign) => { const items = queueRows.filter((row) => row.campaignId === campaign.id); const count = (status: string) => items.filter((row) => row.status === status).length; return { id: campaign.id, name: campaign.name, mode: campaign.mode, status: campaign.status, total: items.length, open: count("offen") + count("wiederholen"), dialing: count("waehlt") + count("verbunden"), done: count("erledigt") + count("ausgeschlossen"), agents: sessions.filter((session) => session.campaignId === campaign.id).length }; });
+  const recent = today.filter((row) => FINAL_STATUSES.has(row.call.status)).slice(0, 15).map((row) => ({ id: row.call.id, agentName: row.agent, contactName: nameOf(row), leadPublicId: row.publicId, toNumber: row.call.toNumber, status: row.call.status, endedAt: row.call.endedAt, talkSeconds: row.call.talkSeconds, disposition: row.call.disposition, recordingUrl: row.call.recordingUrl, recordingPending: Boolean(row.call.recordingSid && !row.call.recordingUrl), score: row.score, verdict: row.verdict, campaignName: row.campaign, summary: row.call.summary }));
+  const totals = { agents: sessions.length, talking: sessions.filter((session) => session.status === "im_gespraech").length, ready: sessions.filter((session) => session.status === "bereit").length, dialing: sessions.filter((session) => session.status === "waehlt").length, paused: sessions.filter((session) => session.status === "pause" || session.status === "nachbereitung").length, callsToday: today.length, reachedToday: today.filter((row) => row.call.status === "beendet").length, appointmentsToday: today.filter((row) => row.call.disposition === "verkauft").length, talkSecondsToday: today.reduce((sum, row) => sum + (row.call.talkSeconds ?? 0), 0) };
+  return { now, provider: settings.provider, agents: [...agents, ...offline], campaigns, recent, totals };
+}
+
+/** Teamleiter steuert einen Agenten: Pause, wieder bereit, abmelden (nicht während eines Gesprächs), Kampagne wechseln. */
+export async function superviseAgent(db: Db, tenantId: number, input: { userId: number; action: "pause" | "bereit" | "offline" | "kampagne"; campaignId?: number | null }) {
+  const session = (await db.select().from(agentSessions).where(and(eq(agentSessions.userId, input.userId), eq(agentSessions.tenantId, tenantId), isNull(agentSessions.endedAt))).limit(1))[0];
+  if (!session) throw new Error("Dieser Agent hat gerade keine Sitzung.");
+  if (input.action === "kampagne") { const campaign = input.campaignId ? (await db.select({ id: dialerCampaigns.id }).from(dialerCampaigns).where(and(eq(dialerCampaigns.tenantId, tenantId), eq(dialerCampaigns.id, input.campaignId))).limit(1))[0] : null; if (input.campaignId && !campaign) throw new Error("Kampagne nicht gefunden."); await db.update(agentSessions).set({ campaignId: campaign?.id ?? null, lastActivityAt: new Date() }).where(eq(agentSessions.id, session.id)); return { success: true as const }; }
+  if (session.status === "im_gespraech" || session.status === "waehlt") throw new Error("Der Agent telefoniert gerade – bitte warten, bis das Gespräch zu Ende ist.");
+  await db.update(agentSessions).set({ status: input.action === "offline" ? "offline" : input.action, lastActivityAt: new Date(), endedAt: input.action === "offline" ? new Date() : null, currentCallId: input.action === "bereit" ? null : session.currentCallId }).where(eq(agentSessions.id, session.id));
+  return { success: true as const };
 }

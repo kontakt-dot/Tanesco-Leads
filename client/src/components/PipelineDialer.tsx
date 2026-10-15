@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { rememberedSipgateDevice } from "@/lib/sipgate";
+import { rememberedSipgateDevice, rememberSipgateDevice } from "@/lib/sipgate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import AutoNoteSwitch from "@/components/AutoNoteSwitch";
@@ -38,7 +38,7 @@ const stamp = () => new Date().toLocaleString("de-DE", { day: "2-digit", month: 
 /**
  * Dialer direkt in der Vertriebspipeline: eine Karte anrufen (Einzelanruf) oder eine ganze Stufe als Wählliste –
  * manuell, Power oder Predictive, mit Ergebnis, automatischer Gesprächsnotiz (Schalter) und passender Stufe nach dem
- * Gespräch. Läuft über dieselbe Telefonie wie das Callcenter (Twilio oder Simulation); Stufen-Listen werden als
+ * Gespräch. Läuft über dieselbe Telefonie wie das Callcenter (sipgate oder Simulation); Stufen-Listen werden als
  * Kampagne „Pipeline: …“ angelegt (sichtbar unter Telefonie → Kampagnen, mit Wiederholung bei Besetzt/Keine Antwort).
  */
 export default function PipelineDialer({ queue, start, mode: initialMode, listLabel, stageDefs, onClose, onChanged }: { queue: DialTarget[]; start: number; mode: "einzel" | "setup"; listLabel?: string; stageDefs: StageDef[]; onClose: () => void; onChanged: () => void }) {
@@ -46,6 +46,10 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
   const phone = useSoftphone();
   const session = trpc.leadops.currentDialerSession.useQuery(undefined, { retry: false, refetchInterval: 2500 });
   const settings = trpc.leadops.getTelephonySettings.useQuery(undefined, { retry: false });
+  const sipgate = settings.data?.provider === "sipgate";
+  const devices = trpc.leadops.sipgateDevices.useQuery(undefined, { retry: false, enabled: Boolean(sipgate) });
+  const [deviceId, setDeviceId] = useState<string>(() => rememberedSipgateDevice() ?? "");
+  const chosenDevice = deviceId || settings.data?.sipgate?.deviceId || "";
   const startSession = trpc.leadops.startDialerSession.useMutation();
   const updateSession = trpc.leadops.updateDialerSession.useMutation();
   const place = trpc.leadops.placeManualCall.useMutation();
@@ -102,13 +106,13 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
     try {
       const existing = await utils.leadops.currentDialerSession.fetch();
       if (existing?.currentCallId) { await end.mutateAsync({ callId: existing.currentCallId, durationSeconds: null }).catch(() => undefined); await updateSession.mutateAsync({ status: "bereit" }).catch(() => undefined); }
-      if (!existing || existing.mode !== "manuell" || existing.campaignId) await startSession.mutateAsync({ campaignId: null, mode: "manuell", connection: "browser", agentPhone: null, agentDeviceId: rememberedSipgateDevice() });
+      if (!existing || existing.mode !== "manuell" || existing.campaignId) await startSession.mutateAsync({ campaignId: null, mode: "manuell", connection: sipgate ? "sipgate" : "browser", agentPhone: null, agentDeviceId: chosenDevice || null });
       const instruction = await place.mutateAsync({ publicId: next.publicId });
       setActiveCallId(instruction.callId); handledRef.current = null; setCalls((value) => value + 1);
       await phone.connect(instruction.params).catch((connectError: Error) => toast.error(connectError.message));
       await session.refetch();
     } catch (reason) { failWith(reason, "Anruf konnte nicht gestartet werden."); } finally { setBusy(false); }
-  }, [queue, utils, end, updateSession, startSession, place, phone, session]);
+  }, [queue, utils, end, updateSession, startSession, place, phone, session, sipgate, chosenDevice]);
 
   /** Kampagnen-Modi: nächsten fälligen Eintrag der Wählliste anrufen. */
   const dialNext = useCallback(async () => {
@@ -134,7 +138,7 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
       await setCampaignStatus.mutateAsync({ id: saved.id, status: "aktiv" });
       const existing = await utils.leadops.currentDialerSession.fetch();
       if (existing?.currentCallId) await end.mutateAsync({ callId: existing.currentCallId, durationSeconds: null }).catch(() => undefined);
-      await startSession.mutateAsync({ campaignId: saved.id, mode: selected, connection: "browser", agentPhone: null, agentDeviceId: rememberedSipgateDevice() });
+      await startSession.mutateAsync({ campaignId: saved.id, mode: selected, connection: sipgate ? "sipgate" : "browser", agentPhone: null, agentDeviceId: chosenDevice || null });
       setCampaignId(saved.id); setDialMode(selected); setPhase("running"); idleTicksRef.current = 0;
       if (selected !== "predictive") await dialNext();
       else await tick.mutateAsync().catch(() => undefined);
@@ -198,12 +202,13 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
   const lineBadge = phone.provider === "sipgate" ? "sipgate – das Gespräch läuft über dein sipgate-Telefon" : phone.simulated ? "Simulation (kein echtes Audio)" : phone.state === "bereit" ? "Softphone bereit" : phone.state === "im_gespraech" ? "Leitung aktiv" : phone.state === "fehler" ? `Softphone: ${phone.error}` : "Softphone lädt …";
   const withPhone = queue.filter((item) => item.phone).length;
   const progress = dialMode === "einzel" ? null : campaignId ? `${queueStats.finished} / ${queueStats.total || withPhone} erledigt${queueStats.waiting ? ` · ${queueStats.waiting} Wiederholung` : ""}` : `${withPhone} Kontakte`;
-  const numberLink = missingNumber && <> <a href="/?page=Telefonie&view=rufnummern" onClick={(event) => { event.preventDefault(); window.location.assign("/?page=Telefonie&view=rufnummern"); }}>Rufnummer kaufen (Telefonie → Rufnummern)</a></>;
+  const numberLink = missingNumber && <> <a href="/?page=Telefonie&view=rufnummern" onClick={(event) => { event.preventDefault(); window.location.assign("/?page=Telefonie&view=rufnummern"); }}>Rufnummer einrichten (Telefonie → Rufnummern)</a></>;
 
   if (phase === "setup") return <aside className="pipeline-dialer" role="dialog" aria-label="Dialer in der Pipeline">
     <header className="pipeline-dialer-head"><div className="pipeline-dialer-title"><Phone className="h-4 w-4" aria-hidden="true" /><strong>Dialer</strong><span>{listLabel ? `Stufe ${listLabel}` : "Wählliste"} · {withPhone} Kontakt{withPhone === 1 ? "" : "e"} mit Telefonnummer</span><small className="pipeline-dialer-line">{lineBadge}</small></div><div className="pipeline-dialer-tools"><AutoNoteSwitch enabled={effectiveAutoNotes} pending={autoNotes.isPending} onChange={switchAutoNotes} /><button type="button" className="pipeline-dialer-close" aria-label="Dialer schließen" onClick={onClose}><X className="h-4 w-4" /></button></div></header>
     <div className="pipeline-dialer-body pipeline-dialer-setup">
-      <div className="pipeline-dialer-modes" role="radiogroup" aria-label="Dialer-Modus">{DIAL_MODES.map((item) => <button key={item.key} type="button" role="radio" aria-checked={dialMode === item.key} className={`pipeline-dialer-mode ${dialMode === item.key ? "active" : ""}`} onClick={() => setDialMode(item.key)}><strong>{item.label}</strong><span>{item.hint}</span></button>)}</div>
+      {sipgate && <label className="pipeline-dialer-device">Mein sipgate-Gerät (klingelt zuerst)<select className="lead-action-select" value={chosenDevice} onChange={(event) => { setDeviceId(event.target.value); rememberSipgateDevice(event.target.value || null); }}><option value="">— bitte wählen —</option>{(devices.data ?? []).map((device) => <option key={device.id} value={device.id}>{device.alias} ({device.id})</option>)}</select></label>}
+      <div className="pipeline-dialer-modes" role="radiogroup" aria-label="Dialer-Modus">{DIAL_MODES.filter((item) => !(sipgate && item.key === "predictive")).map((item) => <button key={item.key} type="button" role="radio" aria-checked={dialMode === item.key} className={`pipeline-dialer-mode ${dialMode === item.key ? "active" : ""}`} onClick={() => setDialMode(item.key)}><strong>{item.label}</strong><span>{item.hint}</span></button>)}</div>
       <div className="pipeline-dialer-setup-actions"><p className="text-xs text-slate-400">Die Liste wird als Kampagne „Pipeline: {listLabel ?? "Auswahl"}“ angelegt (Telefonie → Kampagnen): Besetzt, Keine Antwort und Anrufbeantworter werden nach 4 Stunden erneut versucht, höchstens 3-mal. Ergebnisse, Notizen und Stufenwechsel landen direkt an den Karten.</p><Button className="flux-button" disabled={busy || !withPhone} onClick={() => { void startCampaign(dialMode === "einzel" ? "power" : dialMode); }}><Play /> {busy ? "Startet …" : `${DIAL_MODES.find((item) => item.key === dialMode)?.label ?? "Power"} starten`}</Button></div>
       {error && <p className="pipeline-dialer-error">{error}{numberLink}</p>}
     </div>

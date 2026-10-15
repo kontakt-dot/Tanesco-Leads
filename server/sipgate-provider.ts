@@ -103,7 +103,6 @@ export class SipgateProvider implements TelephonyProvider {
     }
   }
   async hangupCall(providerCallSid: string) { if (!/^(session|pending):/.test(providerCallSid)) await this.request("DELETE", `/calls/${encodeURIComponent(providerCallSid)}`); }
-  async redirectCall() { throw new Error("Weiterleiten über sipgate ist in der Software nicht vorgesehen."); }
   /** Aufzeichnung starten – mit `announcement` spielt sipgate seine eigene Ansage „Dieses Gespräch wird aufgezeichnet“. */
   async startRecording(providerCallSid: string, _callbackUrl: string, options: { announcement?: boolean } = {}) {
     if (/^(session|pending):/.test(providerCallSid)) throw new Error("Die sipgate-Anruf-ID ist noch nicht bekannt – die Aufzeichnung kann erst starten, wenn der Anruf verbunden ist.");

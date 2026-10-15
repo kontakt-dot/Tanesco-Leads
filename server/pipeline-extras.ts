@@ -171,11 +171,8 @@ export async function sendLeadMessage(db: Db, tenantId: number, input: MessageIn
     const phone = normalizePhone(lead.phone); if (!phone) throw new Error("Der Kontakt hat keine gültige Telefonnummer.");
     if (!text) throw new Error("Bitte einen Text eingeben."); if (text.length > SMS_LIMIT) throw new Error(`Die Nachricht ist zu lang (max. ${SMS_LIMIT} Zeichen).`);
     toAddress = phone;
-    if (input.channel === "whatsapp" && !input.campaignId) { // ohne WhatsApp-Business-Absender: Link öffnen, Nachricht ist vorausgefüllt
-      const sender = await smsSender(db, tenantId);
-      if (sender.provider.name === "twilio" && sender.from) { try { const result = await sender.provider.sendMessage({ channel: "whatsapp", from: sender.from, to: phone, body: text }); status = result.status; providerName = "twilio"; providerSid = result.providerMessageSid; } catch (caught) { status = "link"; error = caught instanceof Error ? caught.message.slice(0, 400) : "WhatsApp-Versand fehlgeschlagen"; } }
-      else status = "link";
-      if (status === "link") link = `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(text)}`;
+    if (input.channel === "whatsapp" && !input.campaignId) { // WhatsApp: Link öffnen, Nachricht ist vorausgefüllt (sipgate verschickt keine WhatsApp-Nachrichten)
+      status = "link"; link = `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(text)}`;
     } else {
       const sender = await smsSender(db, tenantId); providerName = sender.provider.name;
       if (!sender.from) { status = "fehlgeschlagen"; error = "Keine eigene Rufnummer vorhanden (Telefonie → Rufnummern)."; }

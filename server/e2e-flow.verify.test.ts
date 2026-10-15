@@ -1904,7 +1904,14 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       api.active = [];
       await syncSipgateCalls(db, tenantId); await syncSipgateCalls(db, tenantId); // zweimal nicht mehr in der Liste → zu Ende
       other = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, second.callId)))[0]; expect(["beendet", "keine_antwort"]).toContain(other.status);
+      // Live-Bild: der Agent steht mit Tageszahlen drin, der Teamleiter kann ihn steuern
+      const live = await owner.leadops.dialerLiveBoard();
+      const me = live.agents.find((agent) => agent.userId === ownerUserId); expect(me).toBeTruthy(); expect(me!.today.calls).toBeGreaterThanOrEqual(2); expect(me!.device).toBe("e0");
+      expect(live.totals.callsToday).toBeGreaterThanOrEqual(2); expect(live.recent.some((item) => item.id === call.id && item.recordingUrl)).toBe(true);
+      await owner.leadops.dialerSupervise({ userId: ownerUserId, action: "pause" }); expect((await owner.leadops.currentDialerSession())?.status).toBe("pause");
+      await owner.leadops.dialerSupervise({ userId: ownerUserId, action: "bereit" }); expect((await owner.leadops.currentDialerSession())?.status).toBe("bereit");
       await owner.leadops.updateDialerSession({ status: "offline" });
+      await expect(owner.leadops.dialerSupervise({ userId: ownerUserId, action: "pause" })).rejects.toThrow(/keine Sitzung/);
       // zurück auf Simulation, damit spätere Tests unberührt bleiben
       await owner.leadops.saveTelephonySettings({ ...before, provider: "simulation", credentials: before.credentials, addressSid: "", bundleSids: before.bundleSids, agentConnection: "browser", announcement: before.announcement ?? "", pacingRatio: Number(before.pacingRatio), maxAbandonRate: Number(before.maxAbandonRate), callWindow: { weekdays: [0, 1, 2, 3, 4, 5, 6], from: "00:00", to: "23:59" } } as Parameters<typeof owner.leadops.saveTelephonySettings>[0]);
     } finally { delete sipgateTestHooks.fetchImpl; }

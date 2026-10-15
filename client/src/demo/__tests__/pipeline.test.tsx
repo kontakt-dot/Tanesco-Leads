@@ -1432,6 +1432,11 @@ describe("sipgate als Telefonie-Anbieter (Chat-Build)", () => {
     const session = await call("leadops.startDialerSession", { campaignId: null, mode: "manuell", connection: "browser", agentPhone: null, agentDeviceId: "e1" });
     expect(session.connection).toBe("sipgate"); expect(session.agentDeviceId).toBe("e1");
     expect((await call("leadops.softphoneToken")).provider).toBe("sipgate");
+    // Live-Bild: der angemeldete Agent steht drin, Pause/Bereit per Teamleiter
+    const live = await call("leadops.dialerLiveBoard");
+    expect(live.provider).toBe("sipgate"); expect(live.agents.some((agent: { userId: number; device: string | null }) => agent.userId === session.userId && agent.device === "e1")).toBe(true); expect(typeof live.totals.callsToday).toBe("number"); expect(Array.isArray(live.recent)).toBe(true);
+    await call("leadops.dialerSupervise", { userId: session.userId, action: "pause" }); expect((await call("leadops.currentDialerSession")).status).toBe("pause");
+    await call("leadops.dialerSupervise", { userId: session.userId, action: "bereit" }); expect((await call("leadops.currentDialerSession")).status).toBe("bereit");
     await call("leadops.updateDialerSession", { status: "offline" });
     await call("leadops.saveTelephonySettings", { ...base, provider: "simulation", agentConnection: "browser" });
     expect((await call("leadops.getTelephonySettings")).sipgate.tokenId).toBe("token-demo"); // Token bleibt gespeichert, auch wenn gerade simuliert wird

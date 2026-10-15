@@ -1789,3 +1789,32 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .sipgate-check-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12px;color:#c9c5f5}
 .sipgate-check-problems{list-style:none;margin:0;padding:0;display:grid;gap:4px;font-size:12px;color:#fde68a}
 .sipgate-list{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px}.sipgate-list li{display:grid;gap:1px;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.03);font-size:12px}.sipgate-list li b{color:#fff;font-weight:600}.sipgate-list li span{color:#8f93af;font-size:11px}
+
+/* Live-Bild der Telefonie: Agenten-Karten, Kampagnen-Fortschritt, zuletzt beendete Gespräche zum Reinhören */
+.live-board{display:grid;gap:16px}
+.live-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;padding:12px}
+.live-dot-label{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#8f93af}
+.live-agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
+.live-agent{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;min-width:0;overflow:hidden;padding:12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.025)}
+.live-agent.is-im_gespraech{border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.07)}
+.live-agent.is-waehlt{border-color:rgba(96,165,250,.45)}
+.live-agent.is-pause{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.05)}
+.live-agent.is-offline{opacity:.6}
+.live-agent-head{display:flex;align-items:center;gap:10px;min-width:0}.live-agent-head>div{flex:1 1 0;min-width:0}.live-agent-head strong{display:block;font-size:14px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.live-agent-head small{display:block;font-size:11px;color:#8f93af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.live-agent-head .owner-dot,.live-agent-head .live-state{flex:none}
+.live-agent .owner-dot{width:34px;height:34px;font-size:12px}
+.live-state{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#c9c5f5;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.06)}
+.live-state.is-im_gespraech{background:rgba(52,211,153,.2);color:#a7f3d0}
+.live-call{display:grid;gap:2px;min-width:0;padding:9px 10px;border-radius:10px;background:rgba(0,0,0,.25);font-size:12px;color:#c9c5f5}.live-call b{color:#fff;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.live-call span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.live-call-flags{color:#8f93af;font-size:11px}
+.live-call.is-idle{color:#8f93af;font-style:italic;background:rgba(255,255,255,.03)}
+.live-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:0;min-width:0}.live-stats div{display:grid;gap:1px;text-align:center;min-width:0}.live-stats dt{font-size:10px;color:#8f93af;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.live-stats dd{margin:0;font-size:14px;font-weight:700;color:#fff}
+.live-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}.live-actions .lead-action-select{flex:1 1 120px;min-width:0;max-width:100%;height:32px;font-size:12px}
+.live-campaigns{display:grid;gap:8px}.live-campaign{display:grid;grid-template-columns:minmax(160px,1fr) 2fr auto;gap:12px;align-items:center;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.08)}.live-campaign strong{display:block;color:#fff;font-size:13px}.live-campaign small{color:#8f93af;font-size:11px}
+.live-progress{height:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}.live-progress span{display:block;height:100%;background:linear-gradient(90deg,#8278ff,#45d4df)}
+.live-recent{display:grid;gap:6px}.live-recent-row{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:9px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.02)}
+.live-recent-main{display:grid;gap:2px;min-width:0}.live-recent-main b{color:#fff;font-size:13px}.live-recent-main span{font-size:11px;color:#8f93af}.live-recent-note{font-size:11px;color:#c9c5f5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live-recent-side{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.live-listen{height:28px;padding:0 12px;border-radius:999px;border:1px solid rgba(129,120,255,.55);background:rgba(129,120,255,.18);color:#e6e3ff;font-size:12px;font-weight:600;cursor:pointer}.live-listen:hover{background:rgba(129,120,255,.3)}
+.live-audio{grid-column:1 / -1;width:100%;height:36px}
+.dash-pill.is-good{background:rgba(52,211,153,.2);color:#a7f3d0}.dash-pill.is-bad{background:rgba(248,113,113,.2);color:#fecaca}
+.pipeline-dialer-device{display:grid;gap:4px;font-size:12px;color:#c9c5f5;margin-bottom:10px}
+@media (max-width:640px){.live-campaign{grid-template-columns:1fr}.live-stats{grid-template-columns:repeat(3,1fr)}}

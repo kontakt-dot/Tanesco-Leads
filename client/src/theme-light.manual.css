@@ -847,3 +847,18 @@ html:not(.dark) .sipgate-check-head { color: #475467 !important; }
 html:not(.dark) .sipgate-list li { background: #ffffff !important; border: 1px solid #eef1f5; }
 html:not(.dark) .sipgate-list li b { color: #101828 !important; }
 html:not(.dark) .sipgate-list li span { color: #667085 !important; }
+
+/* Live-Bild im hellen Design */
+html:not(.dark) .live-agent { border-color: #e8ecf1 !important; background: #ffffff !important; }
+html:not(.dark) .live-agent.is-im_gespraech { border-color: #86efac !important; background: #f0fdf4 !important; }
+html:not(.dark) .live-agent.is-pause { border-color: #fcd34d !important; background: #fffbeb !important; }
+html:not(.dark) .live-agent-head strong, html:not(.dark) .live-call b, html:not(.dark) .live-stats dd, html:not(.dark) .live-campaign strong, html:not(.dark) .live-recent-main b { color: #101828 !important; }
+html:not(.dark) .live-agent-head small, html:not(.dark) .live-stats dt, html:not(.dark) .live-campaign small, html:not(.dark) .live-recent-main span, html:not(.dark) .live-call-flags, html:not(.dark) .live-dot-label { color: #667085 !important; }
+html:not(.dark) .live-call { background: #f4f6fa !important; color: #475467 !important; }
+html:not(.dark) .live-call.is-idle { background: #f8fafb !important; }
+html:not(.dark) .live-state { background: #f4f6fa !important; color: #344054 !important; }
+html:not(.dark) .live-state.is-im_gespraech { background: #dcfce7 !important; color: #166534 !important; }
+html:not(.dark) .live-campaign, html:not(.dark) .live-recent-row { border-color: #e8ecf1 !important; background: #ffffff !important; }
+html:not(.dark) .live-progress { background: #e9edf3 !important; }
+html:not(.dark) .live-listen { border-color: #bc001d !important; background: #fff1f2 !important; color: #be123c !important; }
+html:not(.dark) .live-recent-note { color: #475467 !important; }

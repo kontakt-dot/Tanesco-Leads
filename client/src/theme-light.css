@@ -966,6 +966,32 @@ html:not(.dark) .sipgate-check-problems { color: #8b7e4b !important; }
 html:not(.dark) .sipgate-list li { background: #f8fafb !important; }
 html:not(.dark) .sipgate-list li b { color: #0f172a !important; }
 html:not(.dark) .sipgate-list li span { color: #8a94a6 !important; }
+html:not(.dark) .live-dot-label { color: #8a94a6 !important; }
+html:not(.dark) .live-agent { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .live-agent-head strong { color: #0f172a !important; }
+html:not(.dark) .live-agent-head small { color: #8a94a6 !important; }
+html:not(.dark) .live-state { color: #4b5568 !important; background: #f8fafb !important; }
+html:not(.dark) .live-state.is-im_gespraech { color: #5b8572 !important; }
+html:not(.dark) .live-call { background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .live-call b { color: #0f172a !important; }
+html:not(.dark) .live-call-flags { color: #8a94a6 !important; }
+html:not(.dark) .live-call.is-idle { color: #8a94a6 !important; background: #f8fafb !important; }
+html:not(.dark) .live-stats dt { color: #8a94a6 !important; }
+html:not(.dark) .live-stats dd { color: #0f172a !important; }
+html:not(.dark) .live-campaign { border: 1px solid #e8ecf1 !important; }
+html:not(.dark) .live-campaign strong { color: #0f172a !important; }
+html:not(.dark) .live-campaign small { color: #8a94a6 !important; }
+html:not(.dark) .live-progress { background: #f8fafb !important; }
+html:not(.dark) .live-progress span { background: linear-gradient(135deg, #2a2e3a, #111318) !important; }
+html:not(.dark) .live-recent-row { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .live-recent-main b { color: #0f172a !important; }
+html:not(.dark) .live-recent-main span { color: #8a94a6 !important; }
+html:not(.dark) .live-recent-note { color: #4b5568 !important; }
+html:not(.dark) .live-listen { border: 1px solid #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .live-listen:hover { background: #f3f6f8 !important; }
+html:not(.dark) .dash-pill.is-good { color: #5b8572 !important; }
+html:not(.dark) .dash-pill.is-bad { color: #0f172a !important; }
+html:not(.dark) .pipeline-dialer-device { color: #4b5568 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2061,3 +2087,18 @@ html:not(.dark) .sipgate-check-head { color: #475467 !important; }
 html:not(.dark) .sipgate-list li { background: #ffffff !important; border: 1px solid #eef1f5; }
 html:not(.dark) .sipgate-list li b { color: #101828 !important; }
 html:not(.dark) .sipgate-list li span { color: #667085 !important; }
+
+/* Live-Bild im hellen Design */
+html:not(.dark) .live-agent { border-color: #e8ecf1 !important; background: #ffffff !important; }
+html:not(.dark) .live-agent.is-im_gespraech { border-color: #86efac !important; background: #f0fdf4 !important; }
+html:not(.dark) .live-agent.is-pause { border-color: #fcd34d !important; background: #fffbeb !important; }
+html:not(.dark) .live-agent-head strong, html:not(.dark) .live-call b, html:not(.dark) .live-stats dd, html:not(.dark) .live-campaign strong, html:not(.dark) .live-recent-main b { color: #101828 !important; }
+html:not(.dark) .live-agent-head small, html:not(.dark) .live-stats dt, html:not(.dark) .live-campaign small, html:not(.dark) .live-recent-main span, html:not(.dark) .live-call-flags, html:not(.dark) .live-dot-label { color: #667085 !important; }
+html:not(.dark) .live-call { background: #f4f6fa !important; color: #475467 !important; }
+html:not(.dark) .live-call.is-idle { background: #f8fafb !important; }
+html:not(.dark) .live-state { background: #f4f6fa !important; color: #344054 !important; }
+html:not(.dark) .live-state.is-im_gespraech { background: #dcfce7 !important; color: #166534 !important; }
+html:not(.dark) .live-campaign, html:not(.dark) .live-recent-row { border-color: #e8ecf1 !important; background: #ffffff !important; }
+html:not(.dark) .live-progress { background: #e9edf3 !important; }
+html:not(.dark) .live-listen { border-color: #bc001d !important; background: #fff1f2 !important; color: #be123c !important; }
+html:not(.dark) .live-recent-note { color: #475467 !important; }
