@@ -937,6 +937,18 @@ html:not(.dark) .activity-entry-actor { color: #8a94a6 !important; }
 html:not(.dark) .activity-entry-lead { color: #111318 !important; border: 1px solid #d9dfe7 !important; }
 html:not(.dark) .activity-entry-lead:hover { background: #f3f6f8 !important; }
 html:not(.dark) .activity-more button { color: #111318 !important; }
+html:not(.dark) .card-panel-head-actions button.is-danger:hover { color: #0f172a !important; }
+html:not(.dark) .pipeline-bulk .pipeline-bulk-delete { color: #8a5a5a !important; }
+html:not(.dark) .pipeline-bulk .pipeline-bulk-delete:hover:not(:disabled) { color: #0f172a !important; }
+html:not(.dark) .pipeline-card.is-open { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .pipeline-card.is-selected { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .source-card.is-active { background: #ffffff !important; box-shadow: inset 3px 0 0 0 rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .source-card.is-active svg { color: #8c3a3f !important; }
+html:not(.dark) .source-card.is-active small { color: #0f172a !important; }
+html:not(.dark) .inbox-clean-menu { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 18px 44px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .inbox-clean-menu button:hover { background: #f8fafb !important; }
+html:not(.dark) .inbox-clean-menu strong { color: #0f172a !important; }
+html:not(.dark) .inbox-clean-menu small { color: #4b5568 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -1995,3 +2007,15 @@ html:not(.dark) .placeholder-chip:hover{border-color:#bc001d !important;color:#b
 html:not(.dark) .placeholder-chip.is-list{border-color:#9fdcc1 !important;color:#0f7a4f !important;background:#eefaf4 !important}
 html:not(.dark) .placeholder-chip.is-list:hover{border-color:#0f7a4f !important;background:#dcf5ea !important}
 html:not(.dark) .list-mapping-table tr{border-bottom-color:#eeecf5 !important}
+
+/* Angeklickte Karten im Hellmodus im Website-Rot (statt Schwarz): aufgeklappte/ausgewählte Lead-Karte und die aktive Pipeline-Karte oben */
+html:not(.dark) .pipeline-card.is-open { border-color: #bc001d !important; box-shadow: 0 0 0 2px rgba(188, 0, 29, .18) !important; }
+html:not(.dark) .pipeline-card.is-selected { border-color: #bc001d !important; box-shadow: 0 0 0 2px rgba(188, 0, 29, .14) !important; }
+html:not(.dark) .source-card.is-active { border-color: #bc001d !important; background: linear-gradient(135deg, rgba(188, 0, 29, .10), rgba(251, 44, 54, .05)) !important; box-shadow: inset 3px 0 0 0 #bc001d !important; }
+html:not(.dark) .source-card.is-active svg { color: #bc001d !important; }
+html:not(.dark) .source-card.is-active strong { color: #0f172a !important; }
+html:not(.dark) .source-card.is-active small { color: #8a1a2b !important; }
+html:not(.dark) .source-card:hover { border-color: rgba(188, 0, 29, .45) !important; }
+html:not(.dark) .card-panel-head-actions button.is-danger:hover { color: #b91c1c !important; border-color: rgba(185, 28, 28, .5) !important; background: #fef2f2 !important; }
+html:not(.dark) .pipeline-bulk .pipeline-bulk-delete { border-color: rgba(185, 28, 28, .45) !important; color: #b91c1c !important; }
+html:not(.dark) .pipeline-bulk .pipeline-bulk-delete:hover:not(:disabled) { background: #fef2f2 !important; }

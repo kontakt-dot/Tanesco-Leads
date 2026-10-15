@@ -2,7 +2,7 @@
  * Posteingang: Mails per IMAP abholen (Antworten auf Kampagnen und alles andere), lesen, beantworten und als Lead
  * in die Vertriebspipeline übernehmen (Meta-Ads- oder Kaltakquise-Pipeline).
  */
-import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leads, mailSettings, outboundMessages, pipelineEvents, pipelineNotes, users } from "../drizzle/schema";
 import { decideReply, describeAssessment, DEFAULT_REPLY_AI, matchesAiFilter, type InboxAiFilter, type ReplyAiSettings } from "../shared/reply-ai";
@@ -26,7 +26,13 @@ export async function syncInbox(db: Db, tenantId: number) {
   const { ImapFlow } = await import("imapflow");
   const client = new ImapFlow({ host: row.imapHost, port: row.imapPort ?? 993, secure: (row.imapPort ?? 993) === 993, auth: { user: row.imapUsername, pass: row.imapPassword }, logger: false });
   const known = new Set((await db.select({ messageId: inboxMessages.messageId }).from(inboxMessages).where(eq(inboxMessages.tenantId, tenantId))).map((item) => item.messageId));
-  let scanned = 0; let added = 0; let replies = 0;
+  // „Nur bekannte Kontakte“ (Standard): Absender muss Kampagnen-Empfänger oder Lead sein – Rechnungen, Newsletter, Fremde bleiben draußen.
+  const onlyKnown = (row.imapScope ?? "bekannte") !== "alle";
+  const knownSenders = onlyKnown ? new Set([
+    ...(await db.select({ email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId))).map((item) => item.email.toLowerCase()),
+    ...(await db.select({ email: leads.email }).from(leads).where(and(eq(leads.tenantId, tenantId), isNotNull(leads.email)))).map((item) => (item.email ?? "").toLowerCase()).filter(Boolean),
+  ]) : null;
+  let scanned = 0; let added = 0; let replies = 0; let skipped = 0;
   try {
     await client.connect(); const lock = await client.getMailboxLock("INBOX");
     try {
@@ -34,6 +40,7 @@ export async function syncInbox(db: Db, tenantId: number) {
       for await (const message of client.fetch({ since }, { envelope: true, uid: true, source: { maxLength: 200_000 } })) {
         scanned += 1; const envelope = message.envelope; const messageId = envelope?.messageId ?? `uid-${message.uid}`; if (known.has(messageId)) continue;
         const from = envelope?.from?.[0]; if (!from?.address) continue; const fromEmail = from.address.toLowerCase(); if (fromEmail === (row.fromEmail ?? "").toLowerCase()) continue;
+        if (knownSenders && !knownSenders.has(fromEmail)) { skipped += 1; continue; }
         let bodyText = ""; try { const raw = message.source?.toString("utf8") ?? ""; const { simpleParser } = await import("mailparser"); const parsed = await simpleParser(raw); bodyText = parsed.text ?? (parsed.html ? stripHtml(String(parsed.html)) : ""); } catch { bodyText = ""; }
         const result = await storeMessage(db, tenantId, { messageId, imapUid: message.uid, fromEmail, fromName: from.name ?? null, subject: envelope?.subject ?? null, bodyText: replyExcerpt(bodyText), receivedAt: envelope?.date ?? new Date() });
         known.add(messageId); added += 1; if (result.replied) replies += 1;
@@ -42,7 +49,19 @@ export async function syncInbox(db: Db, tenantId: number) {
     await client.logout();
   } catch (error) { throw new Error(`Posteingang abholen fehlgeschlagen: ${error instanceof Error ? error.message.slice(0, 200) : "unbekannt"}`); }
   await db.update(mailSettings).set({ lastReplyCheckAt: new Date() }).where(eq(mailSettings.id, row.id));
-  return { scanned, added, replies };
+  return { scanned, added, replies, skipped };
+}
+
+/**
+ * Posteingang aufräumen: „fremde“ entfernt alle Mails, die zu keinem Kontakt gehören (kein Lead, kein Kampagnen-Empfänger) –
+ * z. B. Rechnungen und Newsletter, die vor dem Umzug auf ein eigenes Kampagnen-Postfach mitgeladen wurden. „alle“ leert den Posteingang komplett.
+ * Die Sperrliste bleibt unberührt; gesendete Antworten bleiben im Ordner „Gesendet“.
+ */
+export async function clearInbox(db: Db, tenantId: number, scope: "fremde" | "alle") {
+  const condition = scope === "alle" ? eq(inboxMessages.tenantId, tenantId) : and(eq(inboxMessages.tenantId, tenantId), isNull(inboxMessages.leadId), isNull(inboxMessages.campaignRecipientId));
+  const rows = await db.select({ id: inboxMessages.id }).from(inboxMessages).where(condition);
+  if (rows.length) await db.delete(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.id, rows.map((item) => item.id))));
+  return { deleted: rows.length, scope };
 }
 /** Eine Mail ablegen (auch ohne IMAP nutzbar, z. B. Test/Webhook) und automatisch verknüpfen. */
 export async function storeMessage(db: Db, tenantId: number, input: { messageId: string; imapUid?: number | null; fromEmail: string; fromName?: string | null; subject?: string | null; bodyText: string; receivedAt: Date }, deps: Parameters<typeof assessReply>[3] = {}) {

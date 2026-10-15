@@ -1710,3 +1710,25 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .activity-entry-lead:hover{background:rgba(129,120,255,.14)}
 .activity-more button{font-size:11px;color:#b8b3ff;padding:4px 6px;text-decoration:underline;text-underline-offset:2px}
 @media(max-width:760px){.activity-panel{position:fixed;right:8px;left:8px;top:64px;width:auto;max-height:calc(100vh - 80px)}}
+
+/* Löschen in der Vertriebspipeline: Knopf an der aufgeklappten Karte und in der Mehrfachauswahl */
+.card-panel-head-actions button.is-danger:hover{color:#fecaca;border-color:rgba(248,113,113,.6);background:rgba(248,113,113,.12)}
+.pipeline-bulk .pipeline-bulk-delete{margin-left:auto;border-color:rgba(248,113,113,.45);color:#fca5a5}
+.pipeline-bulk .pipeline-bulk-delete:hover:not(:disabled){background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.7);color:#fecaca}
+
+/* Angeklickte Karten im Website-Rot hervorheben (statt lila) – auch im Dunkelmodus: aufgeklappte/ausgewählte Lead-Karte und die aktive Pipeline-Karte oben */
+.pipeline-card.is-open{border-color:#fb2c36;box-shadow:0 0 0 2px rgba(251,44,54,.28)}
+.pipeline-card.is-selected{border-color:#fb2c36;box-shadow:0 0 0 2px rgba(251,44,54,.22)}
+.source-card.is-active{border-color:#fb2c36;background:rgba(251,44,54,.12);box-shadow:inset 3px 0 0 0 #fb2c36}
+.source-card.is-active svg{color:#ff6b74}
+.source-card.is-active strong{color:#fff}
+.source-card.is-active small{color:#ffc9cc}
+.source-card:hover{border-color:rgba(251,44,54,.5)}
+
+/* Posteingang aufräumen: Menü neben „Abrufen“ */
+.inbox-clean{position:relative;flex:0 0 auto}
+.inbox-clean-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;width:min(340px,90vw);padding:6px;border:1px solid rgba(177,171,255,.22);border-radius:12px;background:#1e1b34;box-shadow:0 18px 44px rgba(4,2,16,.45)}
+.inbox-clean-menu button{display:block;width:100%;padding:8px 10px;border-radius:9px;text-align:left}
+.inbox-clean-menu button:hover{background:rgba(255,255,255,.05)}
+.inbox-clean-menu strong{display:block;font-size:12.5px;color:#f1effe}
+.inbox-clean-menu small{display:block;margin-top:2px;font-size:11px;color:#9ca0ba;line-height:1.4}

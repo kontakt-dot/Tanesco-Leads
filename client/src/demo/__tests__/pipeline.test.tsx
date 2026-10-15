@@ -852,7 +852,8 @@ describe("Trennung Verkaufs-Leads/Vertriebskontakte, Sperrliste mit Unterlisten,
   });
 
   it("KI-Einordnung beim Abholen: Beschwerde automatisch gesperrt, unsichere Fälle unter „Prüfen“, Abwesenheit nur markiert; Zeitraum-Filter", async () => {
-    const settings = await call("leadops.getMailSettings"); expect(settings).toMatchObject({ imapEnabled: true, replyAiEnabled: true, replyAiAutoBlock: true, replyAiInterest: true, replyAiAvailable: true });
+    const settings = await call("leadops.getMailSettings"); expect(settings).toMatchObject({ imapEnabled: true, replyAiEnabled: true, replyAiAutoBlock: true, replyAiInterest: true, replyAiAvailable: true, imapScope: "bekannte" });
+    await call("leadops.saveMailSettings", { provider: settings.provider, fromName: settings.fromName, fromEmail: settings.fromEmail, enabled: true, imapEnabled: true, imapHost: settings.imapHost, imapUsername: settings.imapUsername, imapScope: "alle" }); // für diesen Test alles holen, auch Fremde
     const before = (await call("leadops.listInbox", { filter: "alle" })).items.length;
     const result = await call("leadops.syncInbox"); expect(result.added).toBe(3); expect(result.blocked).toBe(1); expect(result.flagged).toBe(1);
     expect((await call("leadops.syncInbox")).added).toBe(0); // zweites Abholen holt nichts doppelt
@@ -1257,5 +1258,75 @@ describe("Glocke: Tagesverlauf der Plattform (Chat-Build)", () => {
     await call("leadops.markCallListened", { callId: callRow.id });
     const feed = await call("leadops.activityFeed", { days: 1 });
     expect(feed.days[0].groups.some((group: { kind: string }) => group.kind === "gespraech_abgehoert")).toBe(true);
+  });
+});
+
+describe("Vertriebspipeline: Reiter „Kontakte“ und Karten löschen (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Kontakte je Pipeline als Liste – auch ohne E-Mail, mit Stufen-Filter", async () => {
+    const kalt = await call("leadops.emailLeads", { source: "kaltakquise", inPipeline: true, withoutEmail: true });
+    const board = await call("leadops.pipelineOverview", { source: "kaltakquise", from: new Date(2000, 0, 1) });
+    expect(kalt.total).toBe(board.totals.leads);
+    expect(kalt.items.some((item: { email: string | null; phone: string | null }) => !item.email && item.phone)).toBe(true);
+    expect(kalt.items.every((item: { adPlatform: string }) => item.adPlatform === "kaltakquise")).toBe(true);
+    const ads = await call("leadops.emailLeads", { source: "ads", inPipeline: true, withoutEmail: true });
+    expect(ads.items.every((item: { adPlatform: string | null }) => item.adPlatform !== "kaltakquise" && item.adPlatform !== "email")).toBe(true);
+    expect(ads.items.some((item: { adCampaignName: string | null }) => item.adCampaignName)).toBe(true);
+    const termin = await call("leadops.emailLeads", { source: "kaltakquise", inPipeline: true, withoutEmail: true, stage: "termin" });
+    expect(termin.items.every((item: { stage: string }) => item.stage === "termin")).toBe(true);
+    expect(termin.items.length).toBeGreaterThan(0);
+  });
+
+  it("Mehrere Karten auf einmal löschen – Verlauf, Aufgaben und Notizen gehen mit, Verkaufs-Leads bleiben", async () => {
+    const before = await call("leadops.emailLeads", { source: "kaltakquise", inPipeline: true, withoutEmail: true });
+    const victims = before.items.slice(0, 2).map((item: { publicId: string }) => item.publicId);
+    const notesBefore = getStore().tables.pipelineNotes.length;
+    const ids = getStore().tables.leads.filter((row) => victims.includes(row.publicId)).map((row) => row.id);
+    const ownNotes = getStore().tables.pipelineNotes.filter((row) => ids.includes(row.leadId)).length;
+    const ergebnis = await call("leadops.deletePipelineLeads", { publicIds: [...victims, "GIBTESNICHT"] });
+    expect(ergebnis).toEqual({ deleted: 2, skipped: 1 });
+    expect(getStore().tables.leads.some((row) => victims.includes(row.publicId))).toBe(false);
+    expect(getStore().tables.pipelineNotes.length).toBe(notesBefore - ownNotes);
+    const after = await call("leadops.emailLeads", { source: "kaltakquise", inPipeline: true, withoutEmail: true });
+    expect(after.total).toBe(before.total - 2);
+    const sale = getStore().tables.leads.find((row) => row.kind !== "vertrieb")!;
+    await expect(call("leadops.deletePipelineLeads", { publicIds: [sale.publicId] })).rejects.toThrow(/Verkaufs-Leads/);
+    const feed = await call("leadops.activityFeed", { days: 1 });
+    expect(feed.days[0].groups.some((group: { kind: string }) => group.kind === "sonstiges")).toBe(true);
+  });
+});
+
+describe("Posteingang: nur bekannte Kontakte holen, aufräumen, Absender übernehmen (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Standard „nur bekannte Kontakte“: Mails von Fremden werden beim Abholen übersprungen", async () => {
+    const result = await call("leadops.syncInbox");
+    expect(result.added).toBe(2); expect(result.skipped).toBe(1);
+    expect(getStore().tables.inboxMessages.some((row) => row.fromEmail === "kontakt@elektro-vogel.example")).toBe(false);
+  });
+
+  it("Aufräumen: erst nur Fremde (ohne Lead und Kampagne), dann alles – Sperrliste bleibt", async () => {
+    const alle = getStore().tables.inboxMessages.length;
+    const fremde = getStore().tables.inboxMessages.filter((row) => !row.leadId && !row.campaignRecipientId).length;
+    expect(fremde).toBeGreaterThan(0);
+    const sperrliste = (await call("leadops.listEmailSuppressions")).items.length;
+    const erst = await call("leadops.clearInbox", { scope: "fremde" });
+    expect(erst).toEqual({ deleted: fremde, scope: "fremde" });
+    expect(getStore().tables.inboxMessages.length).toBe(alle - fremde);
+    expect(getStore().tables.inboxMessages.every((row) => row.leadId || row.campaignRecipientId)).toBe(true);
+    const dann = await call("leadops.clearInbox", { scope: "alle" });
+    expect(dann.deleted).toBe(alle - fremde);
+    expect(getStore().tables.inboxMessages).toHaveLength(0);
+    expect((await call("leadops.listEmailSuppressions")).items.length).toBe(sperrliste);
+    expect((await call("leadops.activityFeed", { days: 1 })).days[0].groups.some((group: { kind: string }) => group.kind === "sonstiges")).toBe(true);
+  });
+
+  it("Absender aus den Einstellungen auf alle Kampagnen übernehmen", async () => {
+    const settings = await call("leadops.getMailSettings");
+    await call("leadops.saveMailSettings", { provider: settings.provider, fromName: "Vertrieb Tanesco", fromEmail: "vertrieb@tanescodigital.de", enabled: true, imapEnabled: true, imapHost: settings.imapHost, imapUsername: "vertrieb@tanescodigital.de" });
+    const result = await call("leadops.applySenderToCampaigns");
+    expect(result.fromEmail).toBe("vertrieb@tanescodigital.de"); expect(result.updated).toBe(getStore().tables.emailCampaigns.length);
+    expect(getStore().tables.emailCampaigns.every((row) => row.fromEmail === "vertrieb@tanescodigital.de" && row.fromName === "Vertrieb Tanesco")).toBe(true);
   });
 });

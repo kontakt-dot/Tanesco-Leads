@@ -268,6 +268,14 @@ export async function coldListContacts(db: Db, tenantId: number, input: { listNa
  * Die Fußzeile aus den Einstellungen (Anschrift, Webseite, Terminlink) auf bestehende Kampagnen übertragen.
  * Neue Kampagnen bekommen sie ohnehin; das hier ist für die, die es schon gibt. Der Rest des Designs bleibt unverändert.
  */
+/** Absender aus den E-Mail-Einstellungen auf alle Kampagnen übernehmen (z. B. nach Umzug auf ein eigenes Kampagnen-Postfach). */
+export async function applySenderToCampaigns(db: Db, tenantId: number, input: { fromName: string | null; fromEmail: string; onlyActive?: boolean }) {
+  const fromEmail = input.fromEmail.trim().toLowerCase(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) throw new Error("Bitte zuerst eine gültige Absenderadresse speichern.");
+  const rows = await db.select({ id: emailCampaigns.id, status: emailCampaigns.status }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+  const ids = rows.filter((row) => !input.onlyActive || row.status !== "beendet").map((row) => row.id);
+  if (ids.length) await db.update(emailCampaigns).set({ fromEmail, ...(input.fromName?.trim() ? { fromName: input.fromName.trim() } : {}) }).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, ids)));
+  return { updated: ids.length, fromEmail };
+}
 export async function applyFooterToCampaigns(db: Db, tenantId: number, options: { includeTemplates?: boolean } = {}) {
   const patch = await tenantDesign(db, tenantId);
   if (!patch.footerText) return { updated: 0, footerText: null as string | null };
@@ -285,7 +293,7 @@ export async function applyFooterToCampaigns(db: Db, tenantId: number, options: 
 
 
 /** Vertriebskontakte samt allem, was an ihnen hängt, löschen – eine Stelle für Liste löschen, Upload rückgängig und Kontakte löschen. */
-async function removeLeadsCascade(db: Db, tenantId: number, ids: number[]) {
+export async function removeLeadsCascade(db: Db, tenantId: number, ids: number[]) {
   if (!ids.length) return;
   await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, ids)));
   await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, ids)));
@@ -341,11 +349,15 @@ export type EmailLeadActivity = "gesendet" | "geoeffnet" | "geklickt" | "geantwo
  * Stufe und Vertriebler, den Kampagnen, in denen er steckt, und dem, was zuletzt passiert ist
  * (gesendet, geöffnet, geklickt, geantwortet, abgemeldet, Bounce). Mit Suche und Filtern wie auf der Leads-Seite.
  */
-export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivity | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number } = {}) {
+export type PipelineSource = "ads" | "kaltakquise" | "email";
+/** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board (meta-ads.pipelineOverview). */
+export const matchesSource = (adPlatform: string | null | undefined, source: PipelineSource | null | undefined) => !source ? true : source === "kaltakquise" ? adPlatform === "kaltakquise" : source === "email" ? adPlatform === "email" : adPlatform !== "kaltakquise" && adPlatform !== "email";
+
+export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivity | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null } = {}) {
   const limit = Math.min(1000, Math.max(10, options.limit ?? 200));
   const rows = await db.select({
     id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company,
-    email: leads.email, phone: leads.phone, city: leads.city, listName: leads.listName, stage: leads.pipelineStage, inPipeline: leads.inPipeline,
+    email: leads.email, phone: leads.phone, city: leads.city, postcode: leads.postcode, listName: leads.listName, stage: leads.pipelineStage, inPipeline: leads.inPipeline, adPlatform: leads.adPlatform, adCampaignName: leads.adCampaignName,
     createdAt: leads.createdAt, ownerUserId: leads.ownerUserId, ownerName: users.name, metadata: leads.metadata,
   }).from(leads).leftJoin(users, eq(users.id, leads.ownerUserId)).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
 
@@ -371,8 +383,8 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
     return { activity: "ohne", at: null };
   };
 
-  // Nur Kontakte mit E-Mail-Adresse – ohne die gibt es in der E-Mail-Akquise nichts zu sehen.
-  const items = rows.filter((lead) => Boolean(lead.email)).map((lead) => {
+  // E-Mail-Akquise: nur Kontakte mit E-Mail-Adresse. Reiter „Kontakte“ der Pipeline: alle Kontakte der gewählten Pipeline, auch ohne E-Mail.
+  const items = rows.filter((lead) => (options.withoutEmail ? true : Boolean(lead.email)) && matchesSource(lead.adPlatform, options.source ?? null) && (options.inPipeline === true ? lead.inPipeline !== false : options.inPipeline === false ? lead.inPipeline === false : true)).map((lead) => {
     const entries = byLead.get(`id:${lead.id}`) ?? (lead.email ? byLead.get(`mail:${lead.email.toLowerCase()}`) ?? [] : []);
     const { activity, at } = activityOf(entries);
     const campaigns = Array.from(new Map(entries.map((item) => [item.campaignId, { id: item.campaignId, name: item.campaignName }])).values());
@@ -388,7 +400,7 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
     if (options.stage && item.stage !== options.stage) return false;
     if (options.ownerUserId === "ohne" && item.ownerUserId) return false;
     if (typeof options.ownerUserId === "number" && item.ownerUserId !== options.ownerUserId) return false;
-    if (search && !`${item.firstName ?? ""} ${item.lastName ?? ""} ${item.company ?? ""} ${item.email ?? ""} ${item.phone ?? ""} ${item.city ?? ""} ${item.listName ?? ""}`.toLowerCase().includes(search)) return false;
+    if (search && !`${item.firstName ?? ""} ${item.lastName ?? ""} ${item.company ?? ""} ${item.email ?? ""} ${item.phone ?? ""} ${item.city ?? ""} ${item.postcode ?? ""} ${item.listName ?? ""} ${item.adCampaignName ?? ""}`.toLowerCase().includes(search)) return false;
     return true;
   });
   const counts = { alle: items.length } as Record<string, number>;

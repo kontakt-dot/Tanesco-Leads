@@ -12,7 +12,7 @@
 import express from "express";
 import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks } from "../drizzle/schema";
@@ -1738,6 +1738,41 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const mails = feed.days[0].groups.find((group) => group.kind === "email_gesendet")!; expect(mails.entries.some((entry) => entry.title.includes("Mapping-Serie") && entry.count === 2)).toBe(true);
     expect(feed.days[0].summary).toMatch(/neue Kontakte/);
     const since = await owner.leadops.activityFeed({ days: 1, since: new Date(Date.now() + 60_000) }); expect(since.newCount).toBe(0);
+  });
+
+  it("33. Vertriebspipeline: Reiter „Kontakte“ (alle Kontakte einer Pipeline, auch ohne E-Mail) und Karten löschen – einzeln und als Auswahl", async () => {
+    const imported = await owner.leadops.importColdList({ listName: "Löschliste", rows: [{ firstName: "Paul", lastName: "Ohne", phone: "+49 69 1111111" }, { firstName: "Petra", lastName: "Mit", email: "petra@loeschliste.example", phone: "+49 69 2222222" }, { firstName: "Pia", lastName: "Dritte", email: "pia@loeschliste.example" }], ownerUserIds: [] });
+    expect(imported.created).toBe(3);
+    const contacts = await owner.leadops.emailLeads({ source: "kaltakquise", inPipeline: true, withoutEmail: true, listName: "Löschliste" });
+    expect(contacts.items).toHaveLength(3); expect(contacts.items.some((item) => !item.email && item.phone === "+49 69 1111111")).toBe(true);
+    expect((await owner.leadops.emailLeads({ listName: "Löschliste" })).items).toHaveLength(2); // E-Mail-Akquise: nur mit E-Mail
+    expect((await owner.leadops.emailLeads({ source: "ads", inPipeline: true, withoutEmail: true, listName: "Löschliste" })).items).toHaveLength(0);
+    const single = await owner.leadops.deletePipelineLead({ publicId: contacts.items[0].publicId }); expect(single.success).toBe(true);
+    const bulk = await owner.leadops.deletePipelineLeads({ publicIds: [contacts.items[1].publicId, contacts.items[2].publicId, "GIBTESNICHT"] }); expect(bulk).toEqual({ deleted: 2, skipped: 1 });
+    expect((await owner.leadops.emailLeads({ source: "kaltakquise", inPipeline: true, withoutEmail: true, listName: "Löschliste" })).items).toHaveLength(0);
+    expect((await db.select().from(leads).where(eq(leads.listName, "Löschliste")))).toHaveLength(0);
+    const saleLead = (await db.select({ publicId: leads.publicId }).from(leads).where(ne(leads.kind, "vertrieb")).limit(1))[0];
+    await expect(owner.leadops.deletePipelineLeads({ publicIds: [saleLead.publicId] })).rejects.toThrow(/Verkaufs-Leads/);
+  });
+
+  it("34. Posteingang: Schalter „nur bekannte Kontakte“ (Migration 0069), Aufräumen nur Fremde / alles, Absender auf alle Kampagnen übernehmen", async () => {
+    const tenantId = S.tenantId as number;
+    const settings = await owner.leadops.getMailSettings(); expect((settings as { imapScope?: string }).imapScope).toBe("bekannte");
+    await owner.leadops.saveMailSettings({ provider: settings.provider as "smtp", fromName: "Vertrieb Tanesco", fromEmail: "vertrieb@tanesco-test.example", imapScope: "alle" });
+    expect((await owner.leadops.getMailSettings() as { imapScope?: string }).imapScope).toBe("alle");
+    await owner.leadops.saveMailSettings({ provider: settings.provider as "smtp", fromName: "Vertrieb Tanesco", fromEmail: "vertrieb@tanesco-test.example", imapScope: "bekannte" });
+    // Posteingang: eine fremde Mail (kein Lead, keine Kampagne) und die bekannten aus den Tests davor
+    await owner.leadops.storeInboxMessage({ fromEmail: "newsletter@fremd.example", fromName: "Newsletter", subject: "Angebot der Woche", bodyText: "Nur heute: alles reduziert." });
+    const all = await db.select().from(inboxMessages).where(eq(inboxMessages.tenantId, tenantId));
+    const strangers = all.filter((row) => !row.leadId && !row.campaignRecipientId); expect(strangers.length).toBeGreaterThan(0);
+    const cleaned = await owner.leadops.clearInbox({ scope: "fremde" }); expect(cleaned).toEqual({ deleted: strangers.length, scope: "fremde" });
+    const rest = await db.select().from(inboxMessages).where(eq(inboxMessages.tenantId, tenantId)); expect(rest.length).toBe(all.length - strangers.length); expect(rest.every((row) => row.leadId || row.campaignRecipientId)).toBe(true);
+    const wiped = await owner.leadops.clearInbox({ scope: "alle" }); expect(wiped.deleted).toBe(rest.length);
+    expect(await db.select().from(inboxMessages).where(eq(inboxMessages.tenantId, tenantId))).toHaveLength(0);
+    // Absender auf bestehende Kampagnen übernehmen
+    const applied = await owner.leadops.applySenderToCampaigns(); expect(applied.fromEmail).toBe("vertrieb@tanesco-test.example"); expect(applied.updated).toBeGreaterThan(0);
+    const campaigns = await db.select({ fromEmail: emailCampaigns.fromEmail, fromName: emailCampaigns.fromName }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+    expect(campaigns.every((row) => row.fromEmail === "vertrieb@tanesco-test.example" && row.fromName === "Vertrieb Tanesco")).toBe(true);
   });
 
 });
