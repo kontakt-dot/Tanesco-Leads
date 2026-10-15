@@ -1775,4 +1775,23 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(campaigns.every((row) => row.fromEmail === "vertrieb@tanesco-test.example" && row.fromName === "Vertrieb Tanesco")).toBe(true);
   });
 
+  it("35. Eigene Stufen je Pipeline (Migration 0070): Kaltakquise bekommt eigene Stufen, Meta Ads behält den Standard, Verschieben prüft je Pipeline, Zurücksetzen", async () => {
+    const standard = await owner.leadops.pipelineStages({ source: "alle" });
+    expect((await owner.leadops.pipelineStageSetup({ source: "kaltakquise" })).own).toBe(false);
+    const saved = await owner.leadops.savePipelineStages({ source: "kaltakquise", stages: [{ key: "neu", label: "Liste", hint: "", fixed: "entry" }, { key: "angerufen", label: "Angerufen", hint: "" }, { key: "kunde", label: "Kunde", hint: "", fixed: "won" }, { key: "verloren", label: "Verloren", hint: "", fixed: "lost" }] });
+    expect(saved.source).toBe("kaltakquise");
+    expect((await owner.leadops.pipelineStages({ source: "kaltakquise" })).map((stage) => stage.key)).toEqual(["neu", "angerufen", "kunde", "verloren"]);
+    expect((await owner.leadops.pipelineStages({ source: "ads" })).map((stage) => stage.key)).toEqual(standard.map((stage) => stage.key));
+    expect((await owner.leadops.pipelineOverview({ source: "kaltakquise" })).stageDefs.map((stage) => stage.label)).toEqual(["Liste", "Angerufen", "Kunde", "Verloren"]);
+    const kaltLead = (await db.select({ publicId: leads.publicId, id: leads.id }).from(leads).where(and(eq(leads.kind, "vertrieb"), eq(leads.adPlatform, "kaltakquise"))).limit(1))[0];
+    await owner.leadops.movePipelineStage({ publicId: kaltLead.publicId, stage: "angerufen" });
+    expect((await db.select({ stage: leads.pipelineStage }).from(leads).where(eq(leads.id, kaltLead.id)))[0].stage).toBe("angerufen");
+    await expect(owner.leadops.movePipelineStage({ publicId: kaltLead.publicId, stage: "termin" })).rejects.toThrow(/Unbekannte Stufe/);
+    const detail = await owner.leadops.pipelineLeadDetail({ publicId: kaltLead.publicId });
+    expect((detail as { source?: string }).source).toBe("kaltakquise"); expect((detail as { stages?: Array<{ key: string }> }).stages?.map((stage) => stage.key)).toContain("angerufen");
+    await owner.leadops.resetPipelineStages({ source: "kaltakquise" });
+    expect((await owner.leadops.pipelineStageSetup({ source: "kaltakquise" })).own).toBe(false);
+    expect((await db.select({ stage: leads.pipelineStage }).from(leads).where(eq(leads.id, kaltLead.id)))[0].stage).toBe("neu");
+  });
+
 });

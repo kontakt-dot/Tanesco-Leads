@@ -15,13 +15,16 @@ import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
 import { recipientValues, renderNode, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { buildIcs, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, fillMessage, followUpDue, formatAppointment, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource } from "../shared/pipeline-extras";
-import { entryStage, isStage, lostStage, PIPELINE_STAGES, stageLabel, wonStage, type StageDef } from "../shared/sales-pipeline";
+import { entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
 
 type LeadRow = typeof leads.$inferSelect;
 const metaOf = (lead: { metadata: unknown }) => (lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata) ? (lead.metadata as Record<string, unknown>) : {});
-const stagesOf = async (db: Db, tenantId: number): Promise<StageDef[]> => { const { pipelineStages } = await import("./meta-ads"); return pipelineStages(db, tenantId); };
+/** Stufen je Pipeline: wo ein Lead bekannt ist, gelten die Stufen seiner Pipeline; ohne Lead der Standard („alle“). */
+const stageSetsOf = async (db: Db, tenantId: number): Promise<StageSets> => { const { pipelineStageSets } = await import("./meta-ads"); return pipelineStageSets(db, tenantId); };
+const stagesOf = async (db: Db, tenantId: number, source?: PipelineSource | "alle" | null): Promise<StageDef[]> => (await stageSetsOf(db, tenantId))[source ?? "alle"];
+const stagesOfLead = async (db: Db, tenantId: number, lead: { adPlatform?: string | null }) => stagesForLead(await stageSetsOf(db, tenantId), lead);
 const leadByPublicId = async (db: Db, tenantId: number, publicId: string) => { const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, publicId))).limit(1))[0]; if (!lead) throw new Error("Lead nicht gefunden."); return lead; };
 const userName = async (db: Db, userId: number | null | undefined) => { if (!userId) return null; return (await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1))[0]?.name ?? null; };
 const leadName = (lead: Pick<LeadRow, "firstName" | "lastName" | "company" | "publicId">) => `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() || lead.company || lead.publicId;
@@ -98,7 +101,7 @@ export async function dueList(db: Db, tenantId: number, options: { ownerUserId?:
 
 /* ---------------------------------------------------------------- Termine & Angebotswert */
 export async function setAppointment(db: Db, tenantId: number, input: { publicId: string; appointmentAt: Date | null; note?: string | null; durationMinutes?: number | null; location?: string | null; sendInvitation?: boolean; moveToStage?: boolean; actorUserId: number | null; appUrl?: string }) {
-  const lead = await leadByPublicId(db, tenantId, input.publicId); const stages = await stagesOf(db, tenantId);
+  const lead = await leadByPublicId(db, tenantId, input.publicId); const stages = await stagesOfLead(db, tenantId, lead);
   await db.update(leads).set({ appointmentAt: input.appointmentAt, metadata: { ...metaOf(lead), appointmentNote: input.note?.trim() || null, appointmentLocation: input.location?.trim() || null, appointmentDuration: input.durationMinutes ?? 60, appointmentReminderSentAt: null } }).where(eq(leads.id, lead.id));
   if (!input.appointmentAt) { await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "termin_entfernt", actorUserId: input.actorUserId, note: "Termin entfernt" }); return { success: true as const, invitation: null as null | { status: string; note: string | null } }; }
   const when = formatAppointment(input.appointmentAt);
@@ -183,7 +186,7 @@ export async function sendLeadMessage(db: Db, tenantId: number, input: MessageIn
   const label = CHANNEL_LABELS[input.channel];
   await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: input.channel, actorUserId: input.actorUserId, note: `${label} ${status === "gesendet" ? "gesendet" : status === "simuliert" ? "simuliert (kein Versand eingerichtet)" : status === "link" ? "vorbereitet (Link geöffnet)" : "fehlgeschlagen"}${subject ? `: „${subject}“` : `: „${text.slice(0, 80)}${text.length > 80 ? "…" : ""}“`}`.slice(0, 400) });
   // erste Nachricht = Kontakt aufgenommen → aus der Eingangsstufe heraus
-  const stages = await stagesOf(db, tenantId); const current = isStage(lead.pipelineStage, stages) ? lead.pipelineStage : entryStage(stages);
+  const stages = await stagesOfLead(db, tenantId, lead); const current = isStage(lead.pipelineStage, stages) ? lead.pipelineStage : entryStage(stages);
   if (status !== "fehlgeschlagen" && current === entryStage(stages) && stages[1] && stages[1].fixed !== "lost") { const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: stages[1].key, note: `Erste Nachricht per ${label}`, actorUserId: input.actorUserId }); }
   if (status === "fehlgeschlagen") throw new Error(error ?? `${label} konnte nicht gesendet werden.`);
   return { id: Number(inserted[0]?.insertId) || 0, status, link, error, subject, text, to: toAddress };
@@ -274,7 +277,7 @@ export async function enrollInCampaign(db: Db, tenantId: number, input: { leadId
 /** Nach einem Stufenwechsel: Serie je Stufe (z. B. Angebot → Nachfass-Serie). */
 export async function onStageChanged(db: Db, tenantId: number, input: { leadId: number; toStage: string; appUrl?: string }) {
   const settings = await loadSettings(db, tenantId); const campaignId = settings.stageCampaigns[input.toStage]; if (!campaignId) return null;
-  const stages = await stagesOf(db, tenantId); return enrollInCampaign(db, tenantId, { leadId: input.leadId, campaignId, reason: `Stufe „${stageLabel(input.toStage, stages)}“`, appUrl: input.appUrl });
+  const platform = (await db.select({ adPlatform: leads.adPlatform }).from(leads).where(eq(leads.id, input.leadId)).limit(1))[0]; const stages = await stagesOfLead(db, tenantId, { adPlatform: platform?.adPlatform ?? null }); return enrollInCampaign(db, tenantId, { leadId: input.leadId, campaignId, reason: `Stufe „${stageLabel(input.toStage, stages)}“`, appUrl: input.appUrl });
 }
 /** Nach einem Anruf-Ergebnis: Serie je Ergebnis + Wiedervorlage/Aufgabe. */
 export async function onDisposition(db: Db, tenantId: number, input: { leadId: number; disposition: string; followUpMinutes?: number | null; actorUserId: number | null; appUrl?: string }) {
@@ -291,8 +294,8 @@ export async function onDisposition(db: Db, tenantId: number, input: { leadId: n
 /** Antwort im Posteingang: Karte auf die eingestellte Stufe (nur vorwärts, nie aus Kunde/Verloren). */
 export async function onInboxReply(db: Db, tenantId: number, input: { leadId: number; subject?: string | null }) {
   const settings = await loadSettings(db, tenantId); if (!settings.replyStage) return null;
-  const stages = await stagesOf(db, tenantId); if (!isStage(settings.replyStage, stages)) return null;
   const lead = (await db.select().from(leads).where(eq(leads.id, input.leadId)).limit(1))[0]; if (!lead) return null;
+  const stages = await stagesOfLead(db, tenantId, lead); if (!isStage(settings.replyStage, stages)) return null;
   const current = isStage(lead.pipelineStage, stages) ? lead.pipelineStage : entryStage(stages); const order = stages.map((stage) => stage.key);
   if (current === wonStage(stages) || current === lostStage(stages) || order.indexOf(settings.replyStage) <= order.indexOf(current)) return null;
   const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: settings.replyStage, note: `Antwort auf E-Mail-Serie: „${(input.subject ?? "").slice(0, 120)}“`, actorUserId: null });
@@ -353,7 +356,7 @@ export async function deleteLead(db: Db, tenantId: number, publicId: string) {
 /** Ausführliches Lead-Fenster: alle Infos zu einer Karte – Kontakt, Herkunft, Aufgaben, Termine, Nachrichten, Anrufe, Serien, Posteingang, Verlauf. */
 export async function leadDetail(db: Db, tenantId: number, publicId: string, now = new Date()) {
   const lead = await leadByPublicId(db, tenantId, publicId);
-  const stages = await stagesOf(db, tenantId);
+  const stages = await stagesOfLead(db, tenantId, lead);
   const [category, owner, noteRows] = await Promise.all([
     lead.categoryId ? (await db.select({ name: leadCategories.name, emoji: leadCategories.emoji, color: leadCategories.color, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1))[0] ?? null : null,
     userName(db, lead.ownerUserId),
@@ -373,7 +376,7 @@ export async function leadDetail(db: Db, tenantId: number, publicId: string, now
   return {
     publicId: lead.publicId, id: lead.id, name: leadName(lead), firstName: lead.firstName, lastName: lead.lastName, company: lead.company, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, salutation: typeof meta.salutation === "string" ? meta.salutation : null, notesFromImport: typeof meta.notes === "string" ? meta.notes : null,
     categoryId: lead.categoryId, categoryName: category?.name ?? null, categoryEmoji: category?.emoji ?? null, categoryColor: category?.color ?? null, categoryShortcode: category?.shortcode ?? null,
-    adPlatform: lead.adPlatform, adCampaignId: lead.adCampaignId, adCampaignName: lead.adCampaignName, adsetName: lead.adsetName, adName: lead.adName, adFormName: lead.adFormName, listName: lead.listName, supplierName: lead.supplierName,
+    source: pipelineSourceOf(lead.adPlatform), stages, adPlatform: lead.adPlatform, adCampaignId: lead.adCampaignId, adCampaignName: lead.adCampaignName, adsetName: lead.adsetName, adName: lead.adName, adFormName: lead.adFormName, listName: lead.listName, supplierName: lead.supplierName,
     pipelineStage: lead.pipelineStage, pipelineUpdatedAt: lead.pipelineUpdatedAt, ownerUserId: lead.ownerUserId, ownerName: owner, dealValue: lead.dealValue, followUpAt: lead.followUpAt, appointmentAt: lead.appointmentAt, appointment: meta.appointment ?? null, createdAt: lead.createdAt, updatedAt: lead.updatedAt, lastCallDisposition: typeof meta.lastCallDisposition === "string" ? meta.lastCallDisposition : null,
     stale: extra.stale, staleDays: extra.staleDays, lastActivityAt: extra.lastActivityAt, openTasks: extra.openTasks, noteCount: noteRows.length, fields: extraFieldsOf(lead.metadata),
     tasks, messages, history,
@@ -384,13 +387,14 @@ export async function leadDetail(db: Db, tenantId: number, publicId: string, now
 }
 /** Zeitplaner: eingeschlafene Karten in die Aufweck-Serie, Terminerinnerungen verschicken. */
 export async function processAutomations(db: Db, tenantId: number, options: { now?: Date; appUrl?: string } = {}) {
-  const now = options.now ?? new Date(); const settings = await loadSettings(db, tenantId); const stages = await stagesOf(db, tenantId); let enrolled = 0; let reminders = 0;
+  const now = options.now ?? new Date(); const settings = await loadSettings(db, tenantId); const sets = await stageSetsOf(db, tenantId); const stages = unionStages(sets); let enrolled = 0; let reminders = 0;
   if (settings.staleCampaignId && settings.staleDays > 0) {
-    const rows = await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.pipelineStage, stages.filter((stage) => stage.fixed !== "won" && stage.fixed !== "lost").map((stage) => stage.key))));
+    const openKeys = Array.from(new Set([sets.alle, sets.ads, sets.kaltakquise, sets.email].flatMap((list) => list.filter((stage) => stage.fixed !== "won" && stage.fixed !== "lost").map((stage) => stage.key))));
+    const rows = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.pipelineStage, openKeys)))).filter((row) => { const own = stagesForLead(sets, row); const def = own.find((stage) => stage.key === row.pipelineStage); return def && def.fixed !== "won" && def.fixed !== "lost"; });
     const candidates = rows.filter((row) => row.email && !(metaOf(row).staleEnrolledAt) && (row.adCampaignId || row.adPlatform));
     const activity = await lastActivityMap(db, tenantId, candidates.map((row) => row.id));
     for (const row of candidates) {
-      const info = staleInfo({ pipelineStage: row.pipelineStage, pipelineUpdatedAt: row.pipelineUpdatedAt, createdAt: row.createdAt, lastActivityAt: activity.get(row.id) ?? null }, now, settings.staleDays, stages); if (!info.stale) continue;
+      const info = staleInfo({ pipelineStage: row.pipelineStage, pipelineUpdatedAt: row.pipelineUpdatedAt, createdAt: row.createdAt, lastActivityAt: activity.get(row.id) ?? null }, now, settings.staleDays, stagesForLead(sets, row)); if (!info.stale) continue;
       const result = await enrollInCampaign(db, tenantId, { leadId: row.id, campaignId: settings.staleCampaignId, reason: `${info.days} Tage ohne Bewegung`, appUrl: options.appUrl });
       await db.update(leads).set({ metadata: { ...metaOf(row), staleEnrolledAt: now.toISOString(), staleEnrolledResult: result.reason } }).where(eq(leads.id, row.id)); if (result.enrolled) enrolled += 1;
     }
@@ -418,7 +422,7 @@ async function ownerCandidates(db: Db, tenantId: number, stages: StageDef[]) {
 /** Verteilregeln auf Leads anwenden (neue Leads automatisch oder per Knopf „Nach Regeln verteilen“). */
 export async function distributeByRules(db: Db, tenantId: number, input: { leadIds: number[]; actorUserId: number | null; force?: boolean }) {
   const settings = await loadSettings(db, tenantId); if (settings.distribution.mode === "aus" && !input.force) return { assigned: 0, skipped: input.leadIds.length, details: [] as Array<{ leadId: number; userId: number | null; reason: string }> };
-  const stages = await stagesOf(db, tenantId); const candidates = await ownerCandidates(db, tenantId, stages); const details: Array<{ leadId: number; userId: number | null; reason: string }> = []; let assigned = 0;
+  const stages = unionStages(await stageSetsOf(db, tenantId)); const candidates = await ownerCandidates(db, tenantId, stages); const details: Array<{ leadId: number; userId: number | null; reason: string }> = []; let assigned = 0;
   const rules = settings.distribution.mode === "aus" ? { ...settings.distribution, mode: "reihum" as const } : settings.distribution;
   for (const leadId of input.leadIds) {
     const lead = (await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"))).limit(1))[0]; if (!lead) continue;
@@ -434,7 +438,7 @@ export async function autoAssign(db: Db, tenantId: number, leadId: number) { try
 /** Team-Übersicht: Tagesziele und Zählung je Vertriebler (heute / Zeitraum), Umsatz aus gewonnenen Karten. */
 export async function teamOverview(db: Db, tenantId: number, options: { from?: Date; until?: Date; now?: Date } = {}) {
   const now = options.now ?? new Date(); const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()); const from = options.from ?? dayStart; const until = options.until ?? now;
-  const settings = await loadSettings(db, tenantId); const stages = await stagesOf(db, tenantId); const won = wonStage(stages);
+  const settings = await loadSettings(db, tenantId); const sets = await stageSetsOf(db, tenantId); const wonKeys = new Set([sets.alle, sets.ads, sets.kaltakquise, sets.email].map((list) => wonStage(list))); const lostKeys = new Set([sets.alle, sets.ads, sets.kaltakquise, sets.email].map((list) => lostStage(list)));
   const { pipelineOwners } = await import("./meta-ads"); const owners = await pipelineOwners(db, tenantId);
   const calls = await db.select({ agentUserId: dialerCalls.agentUserId, startedAt: dialerCalls.startedAt, talkSeconds: dialerCalls.talkSeconds, disposition: dialerCalls.disposition, status: dialerCalls.status }).from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), gte(dialerCalls.startedAt, from), lte(dialerCalls.startedAt, until)));
   const events = await db.select({ actorUserId: pipelineEvents.actorUserId, toStage: pipelineEvents.toStage, createdAt: pipelineEvents.createdAt, leadId: pipelineEvents.leadId }).from(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), gte(pipelineEvents.createdAt, from), lte(pipelineEvents.createdAt, until)));
@@ -443,18 +447,18 @@ export async function teamOverview(db: Db, tenantId: number, options: { from?: D
   const rows = owners.map((owner) => {
     const mine = calls.filter((call) => call.agentUserId === owner.userId); const reached = mine.filter((call) => call.status === "beendet" && (call.talkSeconds ?? 0) > 0);
     const appointments = events.filter((event) => event.actorUserId === owner.userId && (event.toStage === "termin_gesetzt" || /termin/.test(event.toStage))).length;
-    const deals = events.filter((event) => event.actorUserId === owner.userId && event.toStage === won).length;
-    const ownCards = cards.filter((card) => card.ownerUserId === owner.userId); const wonCards = ownCards.filter((card) => card.pipelineStage === won && (!card.pipelineUpdatedAt || card.pipelineUpdatedAt >= from) && (!card.pipelineUpdatedAt || card.pipelineUpdatedAt <= until));
-    const openCards = ownCards.filter((card) => card.pipelineStage !== won && card.pipelineStage !== lostStage(stages)); const myTasks = tasks.filter((task) => task.ownerUserId === owner.userId && !task.doneAt);
+    const deals = events.filter((event) => event.actorUserId === owner.userId && wonKeys.has(event.toStage)).length;
+    const ownCards = cards.filter((card) => card.ownerUserId === owner.userId); const wonCards = ownCards.filter((card) => wonKeys.has(card.pipelineStage ?? "") && (!card.pipelineUpdatedAt || card.pipelineUpdatedAt >= from) && (!card.pipelineUpdatedAt || card.pipelineUpdatedAt <= until));
+    const openCards = ownCards.filter((card) => !wonKeys.has(card.pipelineStage ?? "") && !lostKeys.has(card.pipelineStage ?? "")); const myTasks = tasks.filter((task) => task.ownerUserId === owner.userId && !task.doneAt);
     const target = settings.dailyTargets[String(owner.userId)] ?? { calls: 0, appointments: 0, deals: 0 };
     return { userId: owner.userId, name: owner.name, initials: owner.initials, calls: mine.length, reached: reached.length, talkMinutes: Math.round(mine.reduce((sum, call) => sum + (call.talkSeconds ?? 0), 0) / 60), appointments, deals, revenue: wonCards.reduce((sum, card) => sum + Number(card.dealValue ?? 0), 0), openCards: openCards.length, openValue: openCards.reduce((sum, card) => sum + Number(card.dealValue ?? 0), 0), overdueTasks: myTasks.filter((task) => task.dueAt < dayStart).length, todayTasks: myTasks.filter((task) => task.dueAt >= dayStart && task.dueAt < new Date(dayStart.getTime() + 86_400_000)).length, target };
   });
-  return { from, until, rows, settings, unassigned: cards.filter((card) => !card.ownerUserId && card.pipelineStage && card.pipelineStage !== won && card.pipelineStage !== lostStage(stages)).length };
+  return { from, until, rows, settings, unassigned: cards.filter((card) => !card.ownerUserId && card.pipelineStage && !wonKeys.has(card.pipelineStage) && !lostKeys.has(card.pipelineStage)).length };
 }
 
 /* ---------------------------------------------------------------- Mehrfachauswahl & Export */
 export async function bulkMove(db: Db, tenantId: number, input: { publicIds: string[]; stage: string; note?: string | null; actorUserId: number | null }) {
-  const stages = await stagesOf(db, tenantId); if (!isStage(input.stage, stages)) throw new Error("Unbekannte Stufe."); const { moveStage } = await import("./meta-ads"); let moved = 0;
+  const stages = unionStages(await stageSetsOf(db, tenantId)); if (!isStage(input.stage, stages)) throw new Error("Unbekannte Stufe."); const { moveStage } = await import("./meta-ads"); let moved = 0;
   for (const publicId of input.publicIds) { try { await moveStage(db, tenantId, { publicId, stage: input.stage, note: input.note ?? "Mehrfachauswahl", actorUserId: input.actorUserId }); moved += 1; } catch { /* nächste */ } }
   return { moved, stage: input.stage, label: stageLabel(input.stage, stages) };
 }

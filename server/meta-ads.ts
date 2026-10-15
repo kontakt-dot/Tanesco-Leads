@@ -9,7 +9,7 @@ import { extraFieldsOf } from "../shared/cold-list";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import crypto from "node:crypto";
 import { adInsights, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
-import { entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, PIPELINE_STAGES, summarizeCampaigns, wonStage, type PipelineStage, type StageDef } from "../shared/sales-pipeline";
+import { buildStageSets, entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, pipelineSourceOf, stagesForLead, summarizeCampaigns, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
 import { autoAssign, cardExtras, onStageChanged } from "./pipeline-extras";
@@ -166,7 +166,7 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const scoped = options.tagId ? scopedByOwner.filter((lead) => (tagsByLead.get(lead.id) ?? []).some((tag) => tag.id === options.tagId)) : scopedByOwner;
   const insightConditions = [eq(adInsights.tenantId, tenantId)]; if (options.from) insightConditions.push(gte(adInsights.day, options.from.toISOString().slice(0, 10))); if (options.until) insightConditions.push(lte(adInsights.day, options.until.toISOString().slice(0, 10)));
   const insights = await db.select().from(adInsights).where(and(...insightConditions));
-  const stagesDef = await pipelineStages(db, tenantId);
+  const stagesDef = await pipelineStages(db, tenantId, source === "alle" ? "alle" : source); // Stufen der gewählten Pipeline
   const campaigns = summarizeCampaigns(pipelineLeads, source === "kaltakquise" || source === "email" ? [] : insights, stagesDef);
   const notes = await noteCounts(db, tenantId, scoped.map((lead) => lead.id));
   const { extras, settings } = await cardExtras(db, tenantId, scoped.map((lead) => ({ ...lead, noteCount: notes.get(lead.id)?.count ?? 0 })), stagesDef);
@@ -179,7 +179,7 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
 }
 export async function moveStage(db: Db, tenantId: number, input: { publicId: string; stage: PipelineStage; note?: string | null; actorUserId: number | null }) {
   const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, input.publicId))).limit(1))[0]; if (!lead) throw new Error("Lead nicht gefunden.");
-  const stagesDef = await pipelineStages(db, tenantId); if (!isStage(input.stage, stagesDef)) throw new Error("Unbekannte Stufe.");
+  const stagesDef = stagesForLead(await pipelineStageSets(db, tenantId), lead); if (!isStage(input.stage, stagesDef)) throw new Error("Unbekannte Stufe.");
   const from = isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef);
   await db.update(leads).set({ pipelineStage: input.stage, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
   await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: from, toStage: input.stage, actorUserId: input.actorUserId, note: input.note?.trim() || null });
@@ -243,16 +243,39 @@ export async function addNote(db: Db, tenantId: number, input: { publicId: strin
 export async function deleteNote(db: Db, tenantId: number, id: number) { await db.delete(pipelineNotes).where(and(eq(pipelineNotes.id, id), eq(pipelineNotes.tenantId, tenantId))); return { success: true as const }; }
 export async function noteCounts(db: Db, tenantId: number, leadIds: number[]) { if (!leadIds.length) return new Map<number, { count: number; latest: string | null }>(); const rows = await db.select({ leadId: pipelineNotes.leadId, text: pipelineNotes.text, createdAt: pipelineNotes.createdAt }).from(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, leadIds))).orderBy(desc(pipelineNotes.createdAt)); const map = new Map<number, { count: number; latest: string | null }>(); for (const row of rows) { const entry = map.get(row.leadId) ?? { count: 0, latest: null }; entry.count += 1; if (!entry.latest) entry.latest = row.text.slice(0, 80); map.set(row.leadId, entry); } return map; }
 
-/** Stufen des Mandanten (oder Standard). */
-export async function pipelineStages(db: Db, tenantId: number): Promise<StageDef[]> {
-  const row = (await db.select().from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId)).limit(1))[0];
-  const stages = Array.isArray(row?.stages) ? normalizeStages(row!.stages as StageDef[]).stages : []; return stages.length ? stages : PIPELINE_STAGES;
+/**
+ * Stufen je Pipeline: jede der drei Pipelines (Meta Ads, Kaltakquise, E-Mail-Kampagne) kann eigene Stufen haben.
+ * „alle“ ist der gemeinsame Standard – er gilt für jede Pipeline ohne eigene Zeile (so bleiben bestehende Mandanten unverändert).
+ */
+export async function pipelineStageSets(db: Db, tenantId: number): Promise<StageSets> {
+  const rows = await db.select({ source: pipelineStageConfigs.source, stages: pipelineStageConfigs.stages }).from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId));
+  return buildStageSets(rows);
 }
-export async function savePipelineStages(db: Db, tenantId: number, input: Array<Partial<StageDef>>) {
+/** Stufen einer Pipeline (ohne Angabe: der Standard). */
+export async function pipelineStages(db: Db, tenantId: number, source?: PipelineSource | "alle" | null): Promise<StageDef[]> {
+  const sets = await pipelineStageSets(db, tenantId); return sets[source ?? "alle"];
+}
+/** Für die Einstellungen: Stufen der Pipeline plus ob sie eigene hat oder den Standard nutzt. */
+export async function pipelineStageSetup(db: Db, tenantId: number, source: PipelineSource | "alle") {
+  const rows = await db.select({ source: pipelineStageConfigs.source }).from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId));
+  const sets = buildStageSets(await db.select({ source: pipelineStageConfigs.source, stages: pipelineStageConfigs.stages }).from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId)));
+  return { source, stages: sets[source], own: source === "alle" ? rows.some((row) => row.source === "alle") : rows.some((row) => row.source === source), defaultStages: sets.alle, customized: rows.map((row) => row.source) };
+}
+export async function savePipelineStages(db: Db, tenantId: number, input: Array<Partial<StageDef>>, source: PipelineSource | "alle" = "alle") {
   const { stages, issues } = normalizeStages(input); if (issues.length) throw new Error(issues.join(" "));
-  const existing = (await db.select({ id: pipelineStageConfigs.id }).from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId)).limit(1))[0];
-  if (existing) await db.update(pipelineStageConfigs).set({ stages }).where(eq(pipelineStageConfigs.id, existing.id)); else await db.insert(pipelineStageConfigs).values({ tenantId, stages });
-  const keys = stages.map((stage) => stage.key); const orphans = await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
-  for (const lead of orphans) if (lead.stage && !keys.includes(lead.stage)) await db.update(leads).set({ pipelineStage: entryStage(stages) }).where(eq(leads.id, lead.id)); // Leads gelöschter Stufen zurück auf den Eingang
-  return { stages };
+  const existing = (await db.select({ id: pipelineStageConfigs.id }).from(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, source))).limit(1))[0];
+  if (existing) await db.update(pipelineStageConfigs).set({ stages }).where(eq(pipelineStageConfigs.id, existing.id)); else await db.insert(pipelineStageConfigs).values({ tenantId, source, stages });
+  // Leads gelöschter Stufen zurück auf den Eingang – nur in den Pipelines, für die dieser Satz gilt
+  const sets = await pipelineStageSets(db, tenantId);
+  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
+  for (const lead of rows) { const own = stagesForLead(sets, lead); if (lead.stage && !own.some((stage) => stage.key === lead.stage)) await db.update(leads).set({ pipelineStage: entryStage(own) }).where(eq(leads.id, lead.id)); }
+  return { stages, source };
+}
+/** Eigene Stufen einer Pipeline verwerfen – sie nutzt danach wieder den Standard. */
+export async function resetPipelineStages(db: Db, tenantId: number, source: PipelineSource) {
+  await db.delete(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, source)));
+  const sets = await pipelineStageSets(db, tenantId);
+  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
+  for (const lead of rows) { if (pipelineSourceOf(lead.adPlatform) !== source) continue; const own = sets[source]; if (lead.stage && !own.some((stage) => stage.key === lead.stage)) await db.update(leads).set({ pipelineStage: entryStage(own) }).where(eq(leads.id, lead.id)); }
+  return { stages: sets[source], source };
 }

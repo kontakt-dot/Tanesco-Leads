@@ -38,8 +38,10 @@ const masterOf = (lead: Detail): MasterData => ({ salutation: lead.salutation ??
 /** Link auf diese Lead-Seite (für „Neuer Tab“) – nur außerhalb der Chat-Vorschau, dort hat die Seite keine ladbare Adresse. */
 export const leadPageUrl = (publicId: string, source?: string | null) => { try { const params = new URLSearchParams(window.location.search); params.set("page", "Vertriebspipeline"); if (source) params.set("quelle", source); params.set("lead", publicId); return `${window.location.origin}${window.location.pathname}?${params.toString()}`; } catch { return null; } };
 
-export default function PipelineLeadPage({ publicId, stageDefs, owners, onClose, onChanged, onDial }: { publicId: string; stageDefs: StageDef[]; owners: Array<{ userId: number; name: string; initials?: string }>; onClose: () => void; onChanged: () => void; onDial: (queue: DialTarget[], start: number, mode: "einzel" | "setup", listLabel?: string) => void }) {
+export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDefs, owners, onClose, onChanged, onDial }: { publicId: string; stageDefs: StageDef[]; owners: Array<{ userId: number; name: string; initials?: string }>; onClose: () => void; onChanged: () => void; onDial: (queue: DialTarget[], start: number, mode: "einzel" | "setup", listLabel?: string) => void }) {
   const detail = trpc.leadops.pipelineLeadDetail.useQuery({ publicId }, { retry: false });
+  // Jede Pipeline hat eigene Stufen: die Lead-Seite nimmt die Stufen der Pipeline, zu der der Lead gehört (liefert der Server mit).
+  const stageDefs = (detail.data as { stages?: StageDef[] } | undefined)?.stages?.length ? (detail.data as { stages: StageDef[] }).stages : fallbackStageDefs;
   const categories = trpc.leadops.listCategories.useQuery(undefined, { retry: false });
   const thread = useEmailThread(publicId);
   const utils = trpc.useUtils();

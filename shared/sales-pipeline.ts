@@ -11,6 +11,23 @@ export const PIPELINE_STAGES: StageDef[] = [
   { key: "verloren", label: "Verloren", hint: "Kein Abschluss", fixed: "lost" },
 ];
 export const STAGE_ORDER: string[] = PIPELINE_STAGES.map((stage) => stage.key);
+/** Die drei Pipelines – jede kann eigene Stufen haben; „alle“ ist der gemeinsame Standard, der gilt, solange eine Pipeline keine eigenen Stufen hat. */
+export type PipelineSource = "ads" | "kaltakquise" | "email";
+export const PIPELINE_SOURCES: PipelineSource[] = ["ads", "kaltakquise", "email"];
+export const PIPELINE_SOURCE_LABEL: Record<PipelineSource, string> = { ads: "Meta Ads", kaltakquise: "Kaltakquise", email: "E-Mail-Kampagne" };
+/** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board. */
+export const pipelineSourceOf = (adPlatform: string | null | undefined): PipelineSource => adPlatform === "kaltakquise" ? "kaltakquise" : adPlatform === "email" ? "email" : "ads";
+export type StageSets = Record<PipelineSource | "alle", StageDef[]>;
+/** Stufen-Sätze aus gespeicherten Zeilen bauen: „alle“ ist der Standard, jede Pipeline ohne eigene Zeile nutzt ihn. */
+export function buildStageSets(rows: Array<{ source?: string | null; stages: unknown }>, fallback: StageDef[] = PIPELINE_STAGES): StageSets {
+  const parse = (row: { stages: unknown } | undefined) => { if (!row || !Array.isArray(row.stages)) return null; const stages = normalizeStages(row.stages as StageDef[]).stages; return stages.length ? stages : null; };
+  const base = parse(rows.find((row) => (row.source ?? "alle") === "alle")) ?? fallback;
+  const pick = (source: PipelineSource) => parse(rows.find((row) => row.source === source)) ?? base;
+  return { alle: base, ads: pick("ads"), kaltakquise: pick("kaltakquise"), email: pick("email") };
+}
+export const stagesForLead = (sets: StageSets, lead: { adPlatform?: string | null }) => sets[pipelineSourceOf(lead.adPlatform)];
+/** Alle Stufen aller Pipelines zusammen (für Einstellungen, die pipeline-übergreifend gelten) – gleiche Schlüssel nur einmal. */
+export const unionStages = (sets: StageSets): StageDef[] => { const seen = new Map<string, StageDef>(); for (const list of [sets.alle, sets.ads, sets.kaltakquise, sets.email]) for (const stage of list) if (!seen.has(stage.key)) seen.set(stage.key, stage); return Array.from(seen.values()); };
 export const isStage = (value: unknown, stages: StageDef[] = PIPELINE_STAGES): value is PipelineStage => typeof value === "string" && stages.some((stage) => stage.key === value);
 export const stageLabel = (key: string | null | undefined, stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.key === key)?.label ?? stages[0]?.label ?? "Neu";
 export const slugStage = (label: string) => `stufe_${label.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30) || "neu"}`;

@@ -1663,11 +1663,11 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .inbox-reaction.is-geoeffnet{background:rgba(129,120,255,.18);color:#c7c2ff}.inbox-reaction.is-geklickt{background:rgba(56,189,248,.18);color:#bae6fd}.inbox-reaction.is-geantwortet{background:rgba(16,185,129,.18);color:#a7f3d0}.inbox-reaction.is-ohne{background:rgba(148,163,184,.12);color:#a5a1b8}.inbox-reaction.is-bounce{background:rgba(248,113,113,.18);color:#fecaca}.inbox-reaction.is-abgemeldet{background:rgba(245,158,11,.18);color:#fde68a}
 .inbox-sent-row{flex-wrap:wrap}
 
-/* Vorlagen direkt unter den Kampagnen (kein eigener Reiter mehr) */
-.template-section .template-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 16px 12px}
-.template-section .template-head h2{font-size:16px;letter-spacing:-.3px;margin-top:4px}
-.template-section .template-head p{margin-top:4px;max-width:70ch}
-.template-section .template-head .eyebrow{display:inline-flex;align-items:center;gap:5px}
+/* Vorlagen als eigenes Fenster (Knopf „Vorlagen“ in der Kopfzeile der Kampagnen) */
+.template-dialog{width:min(1040px,94vw)!important;max-width:min(1040px,94vw)!important;max-height:86vh;overflow:auto}
+.template-dialog-table{margin:4px -24px -24px;padding:0 0 8px}
+.template-dialog-table .table-wrap{max-height:52vh;overflow:auto}
+.template-dialog .flux-table{min-width:760px}
 
 /* Glocke: Verlauf der Plattform als Tagesverlauf (Zusammenfassung je Tag, aufklappbar bis zum Eintrag) */
 .activity-bell{position:relative;display:flex}
@@ -1725,3 +1725,16 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .inbox-clean-menu button:hover{background:rgba(255,255,255,.05)}
 .inbox-clean-menu strong{display:block;font-size:12.5px;color:#f1effe}
 .inbox-clean-menu small{display:block;margin-top:2px;font-size:11px;color:#9ca0ba;line-height:1.4}
+
+/* Posteingang auf einen Blick: Lesefenster so hoch wie die Liste, Nachricht scrollt innen, Antwortfeld bleibt immer sichtbar */
+.inbox-read{height:max(480px,calc(100vh - 385px));max-height:max(480px,calc(100vh - 385px));overflow:hidden}
+.inbox-list{max-height:max(480px,calc(100vh - 385px))}
+.inbox-read-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+.inbox-read-head{padding:14px 20px 12px}
+.inbox-read-head h2{margin:10px 0 0;font-size:18px}
+.inbox-read-context{margin-top:8px}
+.inbox-read-actions{margin-top:10px}
+.inbox-body{flex:none;padding:14px 20px;font-size:14px;line-height:1.6}
+.inbox-compose{flex:none;margin:0 16px 14px;padding:10px 12px}
+.inbox-compose-text{min-height:64px;max-height:38vh}
+@media (max-width:900px){.inbox-read{height:auto;max-height:none;overflow:visible}.inbox-read-scroll{overflow:visible}}

@@ -38,7 +38,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const [owner, setOwner] = useState<number | "ohne" | null>(null);
   const data = trpc.leadops.emailLeads.useQuery({ search: search.trim() || null, listName, campaignId, activity, stage: stageFilter, ownerUserId: owner, ...(pipeline ? { source, inPipeline: true, withoutEmail: true } : {}) }, { retry: false });
   const owners = trpc.leadops.pipelineOwners.useQuery(undefined, { retry: false });
-  const stages = trpc.leadops.pipelineStages.useQuery(undefined, { retry: false });
+  const stages = trpc.leadops.pipelineStages.useQuery({ source: pipeline ? source : "email" }, { retry: false }); // Stufen der jeweiligen Pipeline (E-Mail-Akquise übernimmt in die Pipeline „E-Mail-Kampagne“)
   const stageDefs = stages.data ?? [];
   const refreshAll = () => { utils.leadops.emailLeads.invalidate(); utils.leadops.pipelineOverview.invalidate(); utils.leadops.listColdLists.invalidate(); utils.leadops.listImportHistory.invalidate(); onChanged?.(); };
   const push = trpc.leadops.pushLeadsToPipeline.useMutation({ onSuccess: (result) => {
@@ -63,7 +63,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const gefiltert = Boolean(search.trim() || listName || campaignId || activity || owner || stageFilter);
   const nameOf = (lead: { firstName: string | null; lastName: string | null; company: string | null; email: string | null; publicId: string }) => [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.email || lead.publicId;
   const herkunft = (lead: { listName: string | null; adCampaignName?: string | null; adPlatform?: string | null }) => lead.listName || (lead.adPlatform !== "kaltakquise" && lead.adPlatform !== "email" ? lead.adCampaignName : null) || "–";
-  const canPick = (lead: { inPipeline: boolean }) => pipeline || lead.inPipeline === false;
+  const canPick = (_lead: { inPipeline: boolean }) => true; // jede Zeile ist wählbar (Löschen geht immer; „übernehmen“ wirkt nur auf Kontakte, die noch nicht in der Pipeline sind)
   // Wie die Kampagnen-Spalte heißt, hängt von der Pipeline ab: in der Kaltakquise sind es die Kaltakquise-Kampagnen (E-Mail-Serien an die hochgeladenen Listen).
   const campaignWord = pipeline && source === "kaltakquise" ? "Kaltakquise-Kampagne" : pipeline ? "E-Mail-Kampagne" : "Kampagne";
   const campaignWordPlural = pipeline && source === "kaltakquise" ? "Alle Kaltakquise-Kampagnen" : pipeline ? "Alle E-Mail-Kampagnen" : "Alle Kampagnen";

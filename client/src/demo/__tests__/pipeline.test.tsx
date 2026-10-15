@@ -1330,3 +1330,36 @@ describe("Posteingang: nur bekannte Kontakte holen, aufräumen, Absender überne
     expect(getStore().tables.emailCampaigns.every((row) => row.fromEmail === "vertrieb@tanescodigital.de" && row.fromName === "Vertrieb Tanesco")).toBe(true);
   });
 });
+
+describe("Jede Pipeline mit eigenen Stufen (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Standard gilt für alle – eigene Stufen nur für die Kaltakquise, Meta Ads bleibt beim Standard, Zurücksetzen holt den Standard zurück", async () => {
+    const standard = await call("leadops.pipelineStages", { source: "alle" });
+    expect((await call("leadops.pipelineStages", { source: "kaltakquise" })).map((s: { key: string }) => s.key)).toEqual(standard.map((s: { key: string }) => s.key));
+    expect((await call("leadops.pipelineStageSetup", { source: "kaltakquise" })).own).toBe(false);
+    const eigene = [{ key: "neu", label: "Liste", hint: "", fixed: "entry" }, { key: "angerufen", label: "Angerufen", hint: "Erster Anruf" }, { key: "interessiert", label: "Interessiert", hint: "" }, { key: "kunde", label: "Kunde", hint: "", fixed: "won" }, { key: "verloren", label: "Verloren", hint: "", fixed: "lost" }];
+    const saved = await call("leadops.savePipelineStages", { stages: eigene, source: "kaltakquise" });
+    expect(saved.source).toBe("kaltakquise");
+    expect((await call("leadops.pipelineStages", { source: "kaltakquise" })).map((s: { label: string }) => s.label)).toEqual(["Liste", "Angerufen", "Interessiert", "Kunde", "Verloren"]);
+    expect((await call("leadops.pipelineStages", { source: "ads" })).map((s: { key: string }) => s.key)).toEqual(standard.map((s: { key: string }) => s.key));
+    expect((await call("leadops.pipelineStageSetup", { source: "kaltakquise" })).own).toBe(true);
+    // Board der Kaltakquise zeigt die eigenen Stufen, Meta Ads die Standard-Stufen; Karten in weggefallenen Stufen sind auf dem Eingang
+    const kalt = await call("leadops.pipelineOverview", { source: "kaltakquise", from: new Date(2000, 0, 1) });
+    expect(kalt.stageDefs.map((s: { label: string }) => s.label)).toEqual(["Liste", "Angerufen", "Interessiert", "Kunde", "Verloren"]);
+    expect(kalt.stages.every((stage: { key: string }) => ["neu", "angerufen", "interessiert", "kunde", "verloren"].includes(stage.key))).toBe(true);
+    const ads = await call("leadops.pipelineOverview", { source: "ads", from: new Date(2000, 0, 1) });
+    expect(ads.stageDefs.map((s: { key: string }) => s.key)).toEqual(standard.map((s: { key: string }) => s.key));
+    // Verschieben prüft gegen die Stufen der Pipeline des Leads
+    const kaltLead = getStore().tables.leads.find((row) => row.adPlatform === "kaltakquise" && row.kind === "vertrieb")!;
+    await call("leadops.movePipelineStage", { publicId: kaltLead.publicId, stage: "angerufen" });
+    expect(getStore().tables.leads.find((row) => row.id === kaltLead.id)!.pipelineStage).toBe("angerufen");
+    await expect(call("leadops.movePipelineStage", { publicId: kaltLead.publicId, stage: "termin" })).rejects.toThrow(/Unbekannte Stufe/);
+    const detail = await call("leadops.pipelineLeadDetail", { publicId: kaltLead.publicId });
+    expect(detail.source).toBe("kaltakquise"); expect(detail.stages.map((s: { key: string }) => s.key)).toContain("angerufen");
+    // Zurücksetzen → wieder Standard, Karte rutscht auf den Eingang
+    await call("leadops.resetPipelineStages", { source: "kaltakquise" });
+    expect((await call("leadops.pipelineStageSetup", { source: "kaltakquise" })).own).toBe(false);
+    expect(getStore().tables.leads.find((row) => row.id === kaltLead.id)!.pipelineStage).toBe("neu");
+  });
+});
