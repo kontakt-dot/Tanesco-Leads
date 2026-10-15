@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Bot, Cable, ChevronDown, ChevronsLeft, ChevronsRight, ClipboardList, CreditCard, DoorOpen, FileText, FileUp, Headphones, Layers3, LayoutDashboard, Loader2, Mail, MailPlus, Megaphone, Menu, MoreHorizontal, PackageCheck, PhoneCall, Route, Settings, Share2, ShieldQuestion, ShoppingBag, SlidersHorizontal, Sparkles, Tag, UserRoundCog, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import GlobalSearch from "@/components/GlobalSearch";
 import IntegrationPanel from "@/components/IntegrationPanel";
 import LeadOperationsTerminologyGuard from "@/components/LeadOperationsTerminologyGuard";
@@ -15,7 +16,7 @@ import LiveRouting from "@/components/LiveRouting";
 import LiveServiceDesk from "@/components/LiveServiceDesk";
 import OperationsWorkspace from "@/components/OperationsWorkspace";
 import SettingsWorkspace from "@/components/SettingsWorkspace";
-import { readNavigationPreferences, writeNavigationPreferences } from "@/lib/navigationPreferences";
+import { readNavigationPreferences, shouldAutoCollapseSidebar, writeNavigationPreferences } from "@/lib/navigationPreferences";
 import { searchTargetUrl } from "@/lib/searchNavigation";
 import ActivityBell from "@/components/ActivityBell";
 import { trpc } from "@/lib/trpc";
@@ -42,14 +43,16 @@ const navigationGroups: Array<{ label: string; pages: Page[] }> = [{ label: "ANA
 
 export default function FluxoraWorkspace() {
   const initialPage = new URLSearchParams(window.location.search).get("page"); const allowedPages = navigation.map((item) => item.page); const initialNavigation = readNavigationPreferences(window.localStorage, allowedPages);
-  const [page, setPage] = useState<Page>(() => navigation.some((item) => item.page === initialPage) || initialPage === "Einstellungen" || initialPage === "Statistik" ? initialPage as Page : "Dashboard"); const [sidebarOpen, setSidebarOpen] = useState(false); const [hiddenPages, setHiddenPages] = useState<Page[]>(() => initialNavigation.hiddenPages as Page[]); const [sidebarCollapsed, setSidebarCollapsed] = useState(initialNavigation.sidebarCollapsed); const [menuConfigOpen, setMenuConfigOpen] = useState(false); const [invitationToken, setInvitationToken] = useState(() => new URLSearchParams(window.location.search).get("invite")); const [invitationError, setInvitationError] = useState<string | null>(null); const [navigationLoaded, setNavigationLoaded] = useState(false);
+  const [page, setPage] = useState<Page>(() => navigation.some((item) => item.page === initialPage) || initialPage === "Einstellungen" || initialPage === "Statistik" ? initialPage as Page : "Dashboard"); const [sidebarOpen, setSidebarOpen] = useState(false); const [hiddenPages, setHiddenPages] = useState<Page[]>(() => initialNavigation.hiddenPages as Page[]); const [autoCollapsed] = useState(() => shouldAutoCollapseSidebar(initialNavigation, window.innerWidth)); const [sidebarCollapsed, setSidebarCollapsed] = useState(initialNavigation.sidebarCollapsed || autoCollapsed); const [menuConfigOpen, setMenuConfigOpen] = useState(false); const [invitationToken, setInvitationToken] = useState(() => new URLSearchParams(window.location.search).get("invite")); const [invitationError, setInvitationError] = useState<string | null>(null); const [navigationLoaded, setNavigationLoaded] = useState(false);
   const { user, logout } = useAuth(); const stopImpersonation = trpc.auth.stopImpersonation.useMutation({ onSuccess: (result) => { const stored = window.sessionStorage.getItem("tanesco.impersonationReturn"); window.sessionStorage.removeItem("tanesco.impersonationReturn"); const membershipId = result.membershipId ?? (stored ? Number(stored) : null); window.location.assign(membershipId ? `/?page=Benutzer&member=${membershipId}` : "/"); utils.invalidate(); } }); const [userMenuOpen, setUserMenuOpen] = useState(false); const [passwordDialogOpen, setPasswordDialogOpen] = useState(false); const userInitials = (user?.name ?? "TL").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const utils = trpc.useUtils(); const acceptInvitation = trpc.leadops.acceptInvitation.useMutation({ onSuccess: () => { setInvitationToken(null); utils.invalidate(); window.history.replaceState(null, "", "/?page=Dashboard"); }, onError: (error) => setInvitationError(error.message) }); const tenantSettings = trpc.leadops.getTenantSettings.useQuery(undefined, { retry: false, enabled: !invitationToken }); const saveNavigation = trpc.leadops.updateNavigationPreferences.useMutation();
   useEffect(() => { if (invitationToken && !acceptInvitation.isPending && !acceptInvitation.isSuccess && !invitationError) acceptInvitation.mutate({ token: invitationToken }); }, [acceptInvitation, invitationError, invitationToken]);
   useEffect(() => { const stored = tenantSettings.data?.settings?.navigationHiddenPages; if (Array.isArray(stored)) setHiddenPages(stored.filter((item): item is Page => typeof item === "string" && allowedPages.includes(item as Page)) as Page[]); if (tenantSettings.isFetched) setNavigationLoaded(true); }, [tenantSettings.data, tenantSettings.isFetched]);
   useEffect(() => { const onSidebar = (event: Event) => { const detail = (event as CustomEvent<{ collapsed?: boolean }>).detail; if (detail && typeof detail.collapsed === "boolean") setSidebarCollapsed(detail.collapsed); }; window.addEventListener("tanesco:sidebar", onSidebar); return () => window.removeEventListener("tanesco:sidebar", onSidebar); }, []);
-  useEffect(() => { writeNavigationPreferences(window.localStorage, { hiddenPages, sidebarCollapsed }); if (navigationLoaded) saveNavigation.mutate({ hiddenPages: hiddenPages.filter((item): item is Exclude<Page, "Einstellungen"> => item !== "Einstellungen") }); }, [hiddenPages, sidebarCollapsed, navigationLoaded]);
+  useEffect(() => { writeNavigationPreferences(window.localStorage, { hiddenPages, sidebarCollapsed, laptopChecked: true }); if (navigationLoaded) saveNavigation.mutate({ hiddenPages: hiddenPages.filter((item): item is Exclude<Page, "Einstellungen"> => item !== "Einstellungen") }); }, [hiddenPages, sidebarCollapsed, navigationLoaded]);
   useEffect(() => { const active = document.querySelector<HTMLElement>(".flux-sidebar nav .nav-item.active"); active?.scrollIntoView({ block: "nearest" }); }, [page]); // Seitenleiste scrollt zum gewählten Menüpunkt
+  // Laptop (bis 1480 px): beim ersten Besuch ist die Seitenleiste eingeklappt – einmal kurz sagen, wie sie wieder aufgeht.
+  useEffect(() => { if (autoCollapsed) toast.message("Seitenleiste eingeklappt, damit Pipeline und Tabellen auf den Bildschirm passen.", { description: "Mit dem Pfeil oben links klappst du sie jederzeit wieder aus – die Wahl wird gemerkt.", duration: 9000 }); }, [autoCollapsed]);
   useMobileTables(); // Tabellen auf dem Handy als Karten
   useEyebrowIcons(); // passendes Symbol an jeder Überschrift
   const tenantInfo = trpc.leadops.getTenantSettings.useQuery(undefined, { retry: false, staleTime: 60_000 }); // eigenes Logo (Branding)

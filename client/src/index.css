@@ -585,7 +585,7 @@ body:has(.side-drawer-backdrop),body:has(.app-confirm-backdrop){overflow:hidden}
 .funnel-label{font-size:12px;color:#e5e1fd}.funnel-label small{display:block;font-size:10px;color:#8f93af}
 .pipeline-board{display:grid;grid-template-columns:repeat(7,minmax(236px,1fr));gap:10px;overflow-x:auto;padding-bottom:6px}
 .pipeline-column{display:flex;flex-direction:column;min-width:0;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.02);padding:10px;max-height:720px}
-.pipeline-column header{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:#f1effe}
+.pipeline-column header{display:flex;align-items:center;justify-content:flex-start;gap:6px;font-size:12px;color:#f1effe}.pipeline-column header strong{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .pipeline-column header span{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.08);font-size:11px;font-weight:700}
 .pipeline-column.is-kunde header span{background:rgba(52,211,153,.25);color:#8ff0c6}.pipeline-column.is-verloren header span{background:rgba(248,113,113,.2);color:#fca5a5}
 .pipeline-hint{margin:2px 0 8px;font-size:10px;color:#8f93af}
@@ -1043,7 +1043,7 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
   .pipeline-column{flex:1 1 236px;min-width:236px;transition:flex-basis .2s ease,min-width .2s ease}
   .pipeline-column:has(.pipeline-card.is-open){flex:0 0 480px;min-width:480px}
   .pipeline-column:has(.pipeline-card.is-open) .pipeline-cards{max-height:none}
-  .pipeline-column{max-height:max(520px,calc(100vh - 236px))}
+  .pipeline-column{max-height:max(360px,calc(100vh - var(--board-top,236px) - 14px))} /* Oberkante wird im Board gemessen – Spalten scrollen innen, der Querbalken bleibt im Bild */
 }
 .lead-map-list-all{max-height:520px;overflow-y:auto;padding-right:4px}
 .lead-map-state.is-selected{stroke:#fbbf24;stroke-width:2}
@@ -1824,3 +1824,70 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .dash-pill.is-good{background:rgba(52,211,153,.2);color:#a7f3d0}.dash-pill.is-bad{background:rgba(248,113,113,.2);color:#fecaca}
 .pipeline-dialer-device{display:grid;gap:4px;font-size:12px;color:#c9c5f5;margin-bottom:10px}
 @media (max-width:640px){.live-campaign{grid-template-columns:1fr}.live-stats{grid-template-columns:repeat(3,1fr)}}
+/* Einstellungen: Zurück-Leiste über jedem geöffneten Bereich (Zurück · Brotkrumen · Bereich wechseln) */
+.settings-backbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0 0 14px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.025)}
+.settings-back{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px 0 8px;border-radius:9px;border:1px solid rgba(129,120,255,.4);background:rgba(129,120,255,.14);color:#e3e0ff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.settings-back:hover{background:rgba(129,120,255,.26)}
+.settings-crumb{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#8f93af;min-width:0}.settings-crumb strong{color:#f1f0ff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.settings-jump{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#8f93af}
+.settings-jump select{height:32px;max-width:220px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:rgba(15,17,23,.65);color:#f1f0ff;font-size:13px;padding:0 8px}
+@media (max-width:640px){.settings-jump{display:none}.settings-backbar{padding:6px 8px}.settings-back{height:30px;font-size:12px}}
+
+/* ---------- Pipeline: eingeklappte Spalten (schmaler Streifen, bleibt Ablageziel) ---------- */
+@media(min-width:761px){
+  .pipeline-column.is-folded{flex:0 0 46px;min-width:46px;padding:6px 4px;transition:none}
+  .pipeline-fold{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;flex:1;min-height:220px;padding:6px 0;border:0;border-radius:10px;background:transparent;color:#a5a1d7;cursor:pointer}
+  .pipeline-fold:hover{background:rgba(255,255,255,.05);color:#fff}
+  .pipeline-fold-count{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.08);font-size:11px;font-weight:700;color:#f1effe}
+  .pipeline-column.is-kunde .pipeline-fold-count{background:rgba(52,211,153,.25);color:#8ff0c6}.pipeline-column.is-verloren .pipeline-fold-count{background:rgba(248,113,113,.2);color:#fca5a5}
+  .pipeline-fold-label{writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600;color:#f1effe;white-space:nowrap;letter-spacing:.02em}
+  .pipeline-column.is-folded.is-over{background:rgba(125,113,255,.18)}
+  .pipeline-column-fold{display:inline-grid;place-items:center;flex:none;width:20px;height:20px;border:0;border-radius:6px;background:transparent;color:#6f739a;cursor:pointer;opacity:0;transition:opacity .15s}
+  .pipeline-column:hover .pipeline-column-fold,.pipeline-column-fold:focus-visible{opacity:1}
+  .pipeline-column-fold:hover{color:#fff;background:rgba(255,255,255,.08)}
+}
+/* ---------- 14-Zoll-Laptops (761–1480 px breit): Kopfbereiche kompakt, Board und Tabellen ohne Hin-und-her-Scrollen ---------- */
+@media(min-width:761px) and (max-width:1480px){
+  .workspace-top{height:58px;padding:0 20px}
+  .content-area{padding:20px 24px 40px}
+  .content-area.is-wide{padding:16px 20px 36px}
+  .page-intro{margin-bottom:12px;gap:14px}.page-intro h1{font-size:23px;margin:3px 0 4px;letter-spacing:-.6px}.page-intro p{font-size:12px}
+  .page-intro.compact>.flex.flex-wrap.gap-2>button,.page-intro.compact>.flex.flex-wrap.gap-2>a{height:34px;padding-inline:10px;font-size:12px}
+  .email-tabs{margin-bottom:10px}.email-tab{padding:8px 11px 9px;font-size:12.5px}
+  /* Vertriebspipeline */
+  .pipeline-menu{margin-bottom:4px}
+  .source-card{min-width:0;padding:6px 11px;gap:7px;align-items:center;border-radius:10px}.source-card svg{margin-top:0}.source-card small{display:none}.source-card strong{font-size:12.5px}
+  .dashboard-filters{padding:7px 12px;gap:6px 18px;margin-bottom:8px}
+  .dashboard-filter-group{gap:6px 10px}
+  .dashboard-segments{padding:2px;gap:3px}.dashboard-segments button{height:26px;padding:0 9px;font-size:11.5px}
+  .pipeline-quote{margin-top:8px;padding:5px 12px;gap:10px}.pipeline-quote p{font-size:12.5px}.pipeline-quote-mark{font-size:22px}.pipeline-quote small{display:none}.pipeline-quote>button{width:26px;height:26px}
+  .pipeline-toolbar{margin-top:8px}.pipeline-search{height:32px}
+  .pipeline-board{margin-top:8px}
+  .pipeline-column{flex:1 1 212px;min-width:180px;padding:8px} /* schrumpft bis 180 px, damit alle Stufen nebeneinander passen */
+  .pipeline-hint{display:none}
+  .pipeline-card-head{padding:8px 9px}.pipeline-card-title{font-size:12.5px}
+  .pipeline-column-fold{opacity:.7}
+  /* E-Mail-Kampagnen: Kennzahlen flacher, Liste passt in die Breite, „Bearbeiten“ bleibt rechts im Bild */
+  .metric-grid.pipeline-kpis{gap:8px;margin-bottom:10px}
+  .metric-grid.pipeline-kpis .metric-card{padding:10px 12px;border-radius:12px}
+  .metric-grid.pipeline-kpis .metric-card strong{font-size:20px;margin:6px 0 3px}
+  .metric-grid.pipeline-kpis .metric-card small{font-size:10.5px}
+  .operations-panel .table-wrap table.campaign-list{min-width:0}
+  .campaign-list th,.campaign-list td{padding-left:7px;padding-right:7px}
+  .campaign-list th:nth-child(5),.campaign-list td:nth-child(5){display:none}
+  .campaign-list td:nth-child(2) small{display:block;white-space:normal;max-width:130px}
+  .flux-table.campaign-list td.campaign-actions{min-width:0;position:sticky;right:0;z-index:2;background:#1a1730;box-shadow:-10px 0 14px -10px rgba(0,0,0,.6)}
+  .campaign-list td.campaign-actions .mt-1 button{padding-inline:6px}
+  /* Kontakte der E-Mail-Akquise / Pipeline-Kontakte: dichter, Name bleibt beim Schieben stehen */
+  .email-leads-table th,.email-leads-table td{padding:7px 7px}
+  .email-leads-table th:nth-child(2),.email-leads-table td:nth-child(2){position:sticky;left:0;z-index:1;background:#11131c;box-shadow:10px 0 14px -10px rgba(0,0,0,.6)}
+  .email-leads-table tr:hover td:nth-child(2){background:#171a27}
+  .email-leads-table tr.is-picked td:nth-child(2),.email-leads-table tr.is-picked:hover td:nth-child(2){background:#1a1a33}
+  /* Kampagne bearbeiten: Absender untereinander (linke Spalte ist schmal), Builder-Vorschau bleibt beim Scrollen stehen */
+  .campaign-sender-grid.campaign-sender-grid{grid-template-columns:minmax(0,1fr)}
+}
+/* Builder: Vorschau bleibt rechts stehen und passt in die Bildschirmhöhe – Bausteine links scrollen, ohne dass die Vorschau wegläuft */
+@media(min-width:1101px){
+  .builder-grid>section:last-child{position:sticky;top:12px}
+  .builder-preview{height:max(420px,calc(100vh - 150px))}
+}
