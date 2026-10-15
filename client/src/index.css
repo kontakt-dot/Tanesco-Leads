@@ -1716,14 +1716,7 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .pipeline-bulk .pipeline-bulk-delete{margin-left:auto;border-color:rgba(248,113,113,.45);color:#fca5a5}
 .pipeline-bulk .pipeline-bulk-delete:hover:not(:disabled){background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.7);color:#fecaca}
 
-/* Angeklickte Karten im Website-Rot hervorheben (statt lila) – auch im Dunkelmodus: aufgeklappte/ausgewählte Lead-Karte und die aktive Pipeline-Karte oben */
-.pipeline-card.is-open{border-color:#fb2c36;box-shadow:0 0 0 2px rgba(251,44,54,.28)}
-.pipeline-card.is-selected{border-color:#fb2c36;box-shadow:0 0 0 2px rgba(251,44,54,.22)}
-.source-card.is-active{border-color:#fb2c36;background:rgba(251,44,54,.12);box-shadow:inset 3px 0 0 0 #fb2c36}
-.source-card.is-active svg{color:#ff6b74}
-.source-card.is-active strong{color:#fff}
-.source-card.is-active small{color:#ffc9cc}
-.source-card:hover{border-color:rgba(251,44,54,.5)}
+/* Angeklickte Karten: im Dunkelmodus bleibt es beim Lila (Regeln weiter oben), im Hellmodus Website-Rot (theme-light.manual.css). */
 
 /* Posteingang aufräumen: Menü neben „Abrufen“ */
 .inbox-clean{position:relative;flex:0 0 auto}

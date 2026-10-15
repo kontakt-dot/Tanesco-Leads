@@ -940,11 +940,6 @@ html:not(.dark) .activity-more button { color: #111318 !important; }
 html:not(.dark) .card-panel-head-actions button.is-danger:hover { color: #0f172a !important; }
 html:not(.dark) .pipeline-bulk .pipeline-bulk-delete { color: #8a5a5a !important; }
 html:not(.dark) .pipeline-bulk .pipeline-bulk-delete:hover:not(:disabled) { color: #0f172a !important; }
-html:not(.dark) .pipeline-card.is-open { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
-html:not(.dark) .pipeline-card.is-selected { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
-html:not(.dark) .source-card.is-active { background: #ffffff !important; box-shadow: inset 3px 0 0 0 rgba(15, 23, 42, .05) !important; }
-html:not(.dark) .source-card.is-active svg { color: #8c3a3f !important; }
-html:not(.dark) .source-card.is-active small { color: #0f172a !important; }
 html:not(.dark) .inbox-clean-menu { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 18px 44px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .inbox-clean-menu button:hover { background: #f8fafb !important; }
 html:not(.dark) .inbox-clean-menu strong { color: #0f172a !important; }

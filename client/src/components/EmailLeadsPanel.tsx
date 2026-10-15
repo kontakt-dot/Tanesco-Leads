@@ -64,6 +64,9 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const nameOf = (lead: { firstName: string | null; lastName: string | null; company: string | null; email: string | null; publicId: string }) => [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.email || lead.publicId;
   const herkunft = (lead: { listName: string | null; adCampaignName?: string | null; adPlatform?: string | null }) => lead.listName || (lead.adPlatform !== "kaltakquise" && lead.adPlatform !== "email" ? lead.adCampaignName : null) || "–";
   const canPick = (lead: { inPipeline: boolean }) => pipeline || lead.inPipeline === false;
+  // Wie die Kampagnen-Spalte heißt, hängt von der Pipeline ab: in der Kaltakquise sind es die Kaltakquise-Kampagnen (E-Mail-Serien an die hochgeladenen Listen).
+  const campaignWord = pipeline && source === "kaltakquise" ? "Kaltakquise-Kampagne" : pipeline ? "E-Mail-Kampagne" : "Kampagne";
+  const campaignWordPlural = pipeline && source === "kaltakquise" ? "Alle Kaltakquise-Kampagnen" : pipeline ? "Alle E-Mail-Kampagnen" : "Alle Kampagnen";
 
   return <section className="surface-panel operations-panel p-5">
     <div className="panel-title"><div>
@@ -73,9 +76,9 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
     </div></div>
 
     <div className="email-leads-filters">
-      <input className="email-leads-search" placeholder={pipeline ? "Suchen: Name, Firma, Telefon, E-Mail, Ort, PLZ, Liste, Kampagne" : "Suchen: Name, Firma, E-Mail, Ort, Liste"} value={search} onChange={(event) => setSearch(event.target.value)} />
+      <input className="email-leads-search" placeholder={pipeline ? `Suchen: Name, Firma, Telefon, E-Mail, Ort, PLZ, Liste, ${campaignWord}` : "Suchen: Name, Firma, E-Mail, Ort, Liste"} value={search} onChange={(event) => setSearch(event.target.value)} />
       {(!pipeline || source !== "ads") && <select className="lead-action-select" aria-label="Liste" value={listName ?? ""} onChange={(event) => setListName(event.target.value || null)}><option value="">Alle Listen</option>{(data.data?.lists ?? []).map((name) => <option key={name} value={name}>{name}</option>)}</select>}
-      <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">{pipeline ? "Alle E-Mail-Kampagnen" : "Alle Kampagnen"}</option>{(data.data?.campaigns ?? []).map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select>
+      <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">{campaignWordPlural}</option>{(data.data?.campaigns ?? []).map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select>
       {pipeline && <select className="lead-action-select" aria-label="Stufe" value={stageFilter ?? ""} onChange={(event) => setStageFilter(event.target.value || null)}><option value="">Alle Stufen</option>{stageDefs.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select>}
       <select className="lead-action-select" aria-label="Vertriebler" value={owner === "ohne" ? "ohne" : owner ?? ""} onChange={(event) => setOwner(event.target.value === "ohne" ? "ohne" : event.target.value ? Number(event.target.value) : null)}><option value="">Alle Vertriebler</option>{(owners.data ?? []).map((item) => <option key={item.userId} value={item.userId}>{item.name}</option>)}<option value="ohne">Ohne Vertriebler</option></select>
       {gefiltert && <button type="button" className="email-leads-reset" onClick={resetAll}>Filter entfernen</button>}
@@ -106,7 +109,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
           </div>}
         </div>
         <div className="email-leads-scroll"><table className="email-leads-table">
-          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Name</th><th>Firma</th>{pipeline && <th>Telefon</th>}<th>E-Mail</th>{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{pipeline ? "E-Mail-Kampagne" : "Kampagne"}</th><th>Zuletzt</th><th>Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
+          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Name</th><th>Firma</th>{pipeline && <th>Telefon</th>}<th>E-Mail</th>{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{campaignWord}</th><th>Zuletzt</th><th>Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
           <tbody>{items.map((lead) => <tr key={lead.id} className={`${picked.includes(lead.id) ? "is-picked" : ""} ${onOpenLead ? "is-clickable" : ""}`} title="Klick öffnet die Lead-Seite" onClick={() => onOpenLead?.(lead.publicId)}>
             <td className="email-leads-check" onClick={(event) => event.stopPropagation()}>{canPick(lead) ? <input type="checkbox" aria-label={`${nameOf(lead)} auswählen`} checked={picked.includes(lead.id)} onChange={(event) => setPicked((value) => event.target.checked ? [...value, lead.id] : value.filter((id) => id !== lead.id))} /> : null}</td>
             <td>{onOpenLead ? <button type="button" className="email-leads-name" onClick={() => onOpenLead(lead.publicId)}>{nameOf(lead)}</button> : nameOf(lead)}</td>
