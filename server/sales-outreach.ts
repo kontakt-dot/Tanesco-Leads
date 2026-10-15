@@ -4,7 +4,7 @@
  */
 import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import crypto from "node:crypto";
-import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
+import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, recipientValues, renderNode, starterTree, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
@@ -53,6 +53,8 @@ export async function importColdList(db: Db, tenantId: number, input: { listName
       const metadata = (known.metadata && typeof known.metadata === "object" && !Array.isArray(known.metadata) ? known.metadata : {}) as Record<string, unknown>;
       const felder = { ...extraFieldsOf(metadata), ...(row.extra ?? {}) };
       await db.update(leads).set({
+        // Der Kontakt gehört ab jetzt zur zuletzt hochgeladenen Liste – sonst fehlt er in deren Zielgruppe.
+        listName,
         firstName: fillIfEmpty(known.firstName, row.firstName), lastName: fillIfEmpty(known.lastName, row.lastName ?? row.company), company: fillIfEmpty(known.company, row.company),
         phone: fillIfEmpty(known.phone, row.phone), email: fillIfEmpty(known.email, emailKey || null), postcode: fillIfEmpty(known.postcode, row.postcode), city: fillIfEmpty(known.city, row.city),
         metadata: { ...metadata, salutation: metadata.salutation ?? row.salutation ?? undefined, kaltakquise: { liste: listName }, ...(Object.keys(felder).length ? { felder } : {}) },
@@ -74,6 +76,8 @@ export async function importColdList(db: Db, tenantId: number, input: { listName
     if (input.ownerUserIds?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
     else for (const leadId of leadIds) await autoAssign(db, tenantId, leadId); // Verteilregeln, wenn eingeschaltet
   }
+  // Upload-Verlauf festhalten – damit man später sieht, was wann hochgeladen wurde, und es rückgängig machen kann.
+  await db.insert(listImports).values({ tenantId, listName, source: toPipeline ? "kaltakquise" : "kampagne", rowCount: input.rows.length, created, updated, duplicates, toPipeline, leadIds, actorUserId: input.actorUserId ?? null });
   return { created, duplicates, updated, tagId: tag.id, listName, leadIds, toPipeline };
 }
 export async function listColdLists(db: Db, tenantId: number) {
@@ -388,4 +392,45 @@ export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { lea
   if (input.ownerUserIds?.length) await distributeOwners(db, tenantId, { leadIds: offen, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
   else for (const leadId of offen) await autoAssign(db, tenantId, leadId);
   return { moved: offen.length, already: rows.length - offen.length };
+}
+
+/* ---------- Upload-Verlauf ---------- */
+/** Alle Uploads des Mandanten, neueste zuerst: Liste, Quelle, Anzahl, wer und wann – und ob der Upload schon zurückgenommen wurde. */
+export async function listImportHistory(db: Db, tenantId: number, limit = 50) {
+  const rows = await db.select({
+    id: listImports.id, listName: listImports.listName, source: listImports.source, rowCount: listImports.rowCount,
+    created: listImports.created, updated: listImports.updated, duplicates: listImports.duplicates, toPipeline: listImports.toPipeline,
+    leadIds: listImports.leadIds, undoneAt: listImports.undoneAt, createdAt: listImports.createdAt, actorName: users.name,
+  }).from(listImports).leftJoin(users, eq(users.id, listImports.actorUserId)).where(eq(listImports.tenantId, tenantId)).orderBy(desc(listImports.createdAt)).limit(Math.min(200, Math.max(5, limit)));
+  const ids = rows.flatMap((row) => Array.isArray(row.leadIds) ? (row.leadIds as number[]) : []);
+  const vorhanden = ids.length ? new Set((await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, Array.from(new Set(ids)))))).map((row) => row.id)) : new Set<number>();
+  return rows.map((row) => { const eigene = Array.isArray(row.leadIds) ? (row.leadIds as number[]) : []; const { leadIds, ...rest } = row; return { ...rest, stillThere: eigene.filter((id) => vorhanden.has(id)).length }; });
+}
+/**
+ * Einen Upload rückgängig machen: Es werden nur die Kontakte gelöscht, die bei genau diesem Upload neu entstanden sind.
+ * Kontakte, die dabei nur aktualisiert wurden, bleiben – sie gab es ja vorher schon. Kunden bleiben ebenfalls erhalten.
+ */
+export async function undoListImport(db: Db, tenantId: number, importId: number) {
+  const row = (await db.select().from(listImports).where(and(eq(listImports.tenantId, tenantId), eq(listImports.id, importId))).limit(1))[0];
+  if (!row) throw new Error("Diesen Upload gibt es nicht mehr.");
+  if (row.undoneAt) throw new Error("Dieser Upload wurde bereits zurückgenommen.");
+  const ids = Array.isArray(row.leadIds) ? (row.leadIds as number[]) : [];
+  const rows = ids.length ? await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids))) : [];
+  const keep = rows.filter((item) => item.stage === "kunde").map((item) => item.id);
+  const weg = rows.filter((item) => !keep.includes(item.id)).map((item) => item.id);
+  if (weg.length) {
+    await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, weg)));
+    await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, weg)));
+    await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, weg)));
+    await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, weg)));
+    await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, weg)));
+    await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), inArray(dialerQueueItems.leadId, weg)));
+    await db.delete(leadStatusEvents).where(and(eq(leadStatusEvents.tenantId, tenantId), inArray(leadStatusEvents.leadId, weg)));
+    await db.delete(leadTagAssignments).where(inArray(leadTagAssignments.leadId, weg));
+    await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, weg)));
+    await db.update(dialerCalls).set({ leadId: null }).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.leadId, weg)));
+    await db.delete(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, weg)));
+  }
+  await db.update(listImports).set({ undoneAt: new Date() }).where(eq(listImports.id, row.id));
+  return { deleted: weg.length, keptCustomers: keep.length, listName: row.listName };
 }

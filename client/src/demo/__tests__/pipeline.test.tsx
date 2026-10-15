@@ -1128,3 +1128,43 @@ describe("Kampagnen-Upload bleibt vorerst außerhalb der Pipeline (Chat-Build)",
     expect(nochmal.moved).toBe(0); // zweimal übernehmen ändert nichts
   });
 });
+
+describe("Upload-Verlauf und Rückgängig (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+
+  it("Jeder Upload steht im Verlauf und lässt sich zurücknehmen", async () => {
+    const vorher = await call("leadops.listImportHistory", {});
+    await call("leadops.importColdList", { listName: "Probelauf", rows: [
+      { firstName: "Tim", lastName: "Keller", email: "tim@keller-pv.de" },
+      { firstName: "Ute", lastName: "Mohr", email: "ute@mohr-dach.de" },
+    ] });
+    const verlauf = await call("leadops.listImportHistory", {});
+    expect(verlauf.length).toBe(vorher.length + 1);
+    const eintrag = verlauf[0];
+    expect(eintrag.listName).toBe("Probelauf");
+    expect(eintrag.created).toBe(2);
+    expect(eintrag.stillThere).toBe(2);
+    expect(eintrag.undoneAt).toBeFalsy();
+
+    const zurueck = await call("leadops.undoListImport", { id: eintrag.id });
+    expect(zurueck.deleted).toBe(2);
+    const inhalt = await call("leadops.coldListContacts", { listName: "Probelauf" });
+    expect(inhalt.contacts).toHaveLength(0);
+    const danach = await call("leadops.listImportHistory", {});
+    expect(danach[0].undoneAt).toBeTruthy();
+    expect(danach[0].stillThere).toBe(0);
+    await expect(call("leadops.undoListImport", { id: eintrag.id })).rejects.toThrow(); // kein zweites Mal
+  });
+  it("Kontakte, die beim Upload nur aktualisiert wurden, bleiben beim Rückgängig erhalten", async () => {
+    await call("leadops.importColdList", { listName: "Erst", rows: [{ firstName: "Ben", lastName: "Alt", email: "ben@alt.de" }] });
+    await call("leadops.importColdList", { listName: "Zweit", rows: [{ firstName: "Ben", lastName: "Alt", email: "ben@alt.de", city: "Mainz" }] });
+    const verlauf = await call("leadops.listImportHistory", {});
+    const zweiter = verlauf.find((row: { listName: string }) => row.listName === "Zweit");
+    expect(zweiter.created).toBe(0);
+    expect(zweiter.updated).toBe(1);
+    const zurueck = await call("leadops.undoListImport", { id: zweiter.id });
+    expect(zurueck.deleted).toBe(0); // der Kontakt gehörte zum ersten Upload
+    const inhalt = await call("leadops.coldListContacts", { listName: "Zweit" });
+    expect(inhalt.contacts).toHaveLength(1);
+  });
+});

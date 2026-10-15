@@ -1610,3 +1610,16 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .source-card.is-active small{color:#c7c2ff}
 .section-tabs{margin-top:4px}
 @media (max-width:640px){.source-card{flex:1 1 100%;min-width:0}.source-card small{display:none}}
+
+.upload-history{display:grid;gap:6px;margin-top:12px}
+.upload-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:9px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.02)}
+.upload-row.is-undone{opacity:.55}
+.upload-main{flex:1;min-width:190px}
+.upload-main strong{display:block;font-size:13px;color:#e2e8f0}
+.upload-main small{display:block;margin-top:2px;font-size:11px;color:#94a3b8}
+.upload-numbers{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:#94a3b8}
+.upload-numbers strong{color:#e2e8f0;font-size:12px}
+.upload-undo{padding:5px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#cbd5e1;font-size:11px}
+.upload-undo:hover:not(:disabled){border-color:rgba(248,113,113,.6);color:#fca5a5}
+.upload-undo:disabled{opacity:.5}
+.upload-done{font-size:11px;color:#94a3b8}
