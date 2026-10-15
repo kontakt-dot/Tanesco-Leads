@@ -949,6 +949,14 @@ html:not(.dark) .inbox-attachments li small { color: #4b5568 !important; }
 html:not(.dark) .inbox-attachments li button { color: #4b5568 !important; }
 html:not(.dark) .inbox-attachments li button:hover { background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .signature-preview-frame { border: 1px solid #e8ecf1 !important; }
+html:not(.dark) .lead-temp { border: 1px solid #e8ecf1 !important; color: #4b5568 !important; background: #f8fafb !important; }
+html:not(.dark) .lead-temp.is-heiss { color: #0f172a !important; background: #ffffff !important; }
+html:not(.dark) .lead-temp.is-warm { color: #8b7e4b !important; }
+html:not(.dark) .lead-temp.is-kalt { color: #0f172a !important; }
+html:not(.dark) .lead-temp-head strong { color: #0f172a !important; }
+html:not(.dark) .lead-temp-bar { background: #f8fafb !important; }
+html:not(.dark) .lead-temp-bar span.is-heiss { background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; }
+html:not(.dark) .lead-temp-reasons { color: #4b5568 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2019,3 +2027,13 @@ html:not(.dark) .source-card:hover { border-color: rgba(188, 0, 29, .45) !import
 html:not(.dark) .card-panel-head-actions button.is-danger:hover { color: #b91c1c !important; border-color: rgba(185, 28, 28, .5) !important; background: #fef2f2 !important; }
 html:not(.dark) .pipeline-bulk .pipeline-bulk-delete { border-color: rgba(185, 28, 28, .45) !important; color: #b91c1c !important; }
 html:not(.dark) .pipeline-bulk .pipeline-bulk-delete:hover:not(:disabled) { background: #fef2f2 !important; }
+
+/* Heiße Phasen im hellen Design */
+html:not(.dark) .lead-temp { border-color: #d9dde6 !important; color: #475467 !important; background: #f4f6fa !important; }
+html:not(.dark) .lead-temp.is-heiss { border-color: #fda4af !important; color: #be123c !important; background: #fff1f2 !important; }
+html:not(.dark) .lead-temp.is-warm { border-color: #fcd34d !important; color: #b45309 !important; background: #fffbeb !important; }
+html:not(.dark) .lead-temp.is-kalt { border-color: #bae6fd !important; color: #0369a1 !important; background: #f0f9ff !important; }
+html:not(.dark) .lead-temp-head strong { color: #101828 !important; }
+html:not(.dark) .lead-temp-bar { background: #e9edf3 !important; }
+html:not(.dark) .lead-temp-reasons { color: #475467 !important; }
+html:not(.dark) .lead-temp-reasons li::before { background: #98a2b3 !important; }

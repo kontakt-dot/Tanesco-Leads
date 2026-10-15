@@ -10,12 +10,13 @@ import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
 import { deliverMail } from "./email-onboarding";
-import { distributeOwners } from "./meta-ads";
+import { distributeOwners, pipelineStages } from "./meta-ads";
 import { bumpActivity, logActivity } from "./activity";
 import type { Db } from "./lead-pipeline";
 
 /* ---------- Kaltakquise-Listen ---------- */
 import { extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
+import { PIPELINE_SOURCE_LABEL, pipelineSourceOf } from "../shared/sales-pipeline";
 export { parseColdList };
 /** Tag holen oder anlegen (Name wird auf 80 Zeichen gekürzt). */
 async function tagByName(db: Db, tenantId: number, name: string, color: string) {
@@ -418,18 +419,29 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
  * Sie erscheinen dort in der Eingangsstufe; die Zuteilung an Vertriebler läuft wie beim Listen-Upload
  * (reihum auf mehrere, alles an einen, oder gar nicht und später von Hand).
  */
-export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { leadIds: number[]; stage?: string | null; actorUserId?: number | null }) {
+export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { leadIds: number[]; stage?: string | null; target?: "email" | "kaltakquise" | null; actorUserId?: number | null }) {
   const ids = Array.from(new Set(input.leadIds)).slice(0, 2000);
   if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
-  // Kontakte aus der E-Mail-Akquise landen in der Pipeline „E-Mail-Kampagne“ – in der gewählten Stufe, ohne Vertriebler-Verteilung.
-  const stage = (input.stage ?? "neu").trim() || "neu";
-  const rows = await db.select({ id: leads.id, inPipeline: leads.inPipeline, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
-  const offen = rows.filter((row) => !row.inPipeline).map((row) => row.id);
-  if (!offen.length) return { moved: 0, already: rows.length, stage };
-  await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: stage, pipelineUpdatedAt: new Date() }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, offen)));
-  for (const leadId of offen) await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: stage, actorUserId: input.actorUserId ?? null, note: "Aus der E-Mail-Akquise in die Pipeline übernommen" });
-  await logActivity(db, tenantId, { kind: "pipeline_uebernommen", title: `${offen.length} ${offen.length === 1 ? "Kontakt" : "Kontakte"} aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen`, detail: `Stufe „${stage}“`, count: offen.length, leadId: offen.length === 1 ? offen[0] : null, actorUserId: input.actorUserId ?? null });
-  return { moved: offen.length, already: rows.length - offen.length, stage };
+  // Kontakte aus der E-Mail-Akquise landen in der gewählten Pipeline („E-Mail-Kampagne“ oder „Kaltakquise“) – in der gewählten Stufe,
+  // ohne Vertriebler-Verteilung. Das gilt auch für Kontakte, die schon in einer anderen Pipeline stehen: sie werden verschoben.
+  const target: "email" | "kaltakquise" = input.target === "kaltakquise" ? "kaltakquise" : "email";
+  const targetName = PIPELINE_SOURCE_LABEL[target];
+  const stageDefs = await pipelineStages(db, tenantId, target);
+  const wanted = (input.stage ?? "neu").trim() || "neu";
+  const stage = stageDefs.some((item) => item.key === wanted) ? wanted : (stageDefs[0]?.key ?? "neu"); // unbekannte Stufe → erste Stufe der Ziel-Pipeline
+  const rows = await db.select({ id: leads.id, inPipeline: leads.inPipeline, stage: leads.pipelineStage, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
+  const neu = rows.filter((row) => !row.inPipeline);                                        // noch in keiner Pipeline
+  const verschoben = rows.filter((row) => row.inPipeline && row.adPlatform !== target);     // aus einer anderen Pipeline
+  const umgestuft = rows.filter((row) => row.inPipeline && row.adPlatform === target && row.stage !== stage); // schon in der Ziel-Pipeline, andere Stufe
+  const unveraendert = rows.length - neu.length - verschoben.length - umgestuft.length;
+  const platformName = (platform: string | null) => PIPELINE_SOURCE_LABEL[pipelineSourceOf(platform)];
+  const touched = [...neu, ...verschoben, ...umgestuft];
+  if (touched.length) await db.update(leads).set({ inPipeline: true, adPlatform: target, pipelineStage: stage, pipelineUpdatedAt: new Date() }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, touched.map((row) => row.id))));
+  for (const row of neu) await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: stage, actorUserId: input.actorUserId ?? null, note: `Aus der E-Mail-Akquise in die Pipeline „${targetName}“ übernommen` });
+  for (const row of verschoben) await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId: input.actorUserId ?? null, note: `Aus der Pipeline „${platformName(row.adPlatform)}“ in die Pipeline „${targetName}“ verschoben` });
+  for (const row of umgestuft) await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId: input.actorUserId ?? null, note: "Stufe über die Kontakte der E-Mail-Akquise gesetzt" });
+  if (touched.length) await logActivity(db, tenantId, { kind: "pipeline_uebernommen", title: `${touched.length} ${touched.length === 1 ? "Kontakt" : "Kontakte"} in die Pipeline „${targetName}“ übernommen${verschoben.length ? ` (${verschoben.length} aus anderen Pipelines verschoben)` : ""}`, detail: `Stufe „${stageDefs.find((item) => item.key === stage)?.label ?? stage}“`, count: touched.length, leadId: touched.length === 1 ? touched[0].id : null, actorUserId: input.actorUserId ?? null });
+  return { moved: neu.length, switched: verschoben.length, restaged: umgestuft.length, already: unveraendert, stage, target, targetName };
 }
 
 /* ---------- Upload-Verlauf ---------- */

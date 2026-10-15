@@ -65,6 +65,84 @@ export function staleInfo(lead: { pipelineStage: string | null; pipelineUpdatedA
   return { days, stale: !closed && staleDays > 0 && days >= staleDays, lastActivityAt: new Date(last) };
 }
 
+/* ---------------------------------------------------------------- Heiße Phasen (Lead-Temperatur) */
+/**
+ * Wie „heiß“ ist eine Karte? Aus dem, was wir über den Kontakt wissen, entsteht eine Punktzahl von 0 bis 100:
+ * Kontaktdaten (Telefon, E-Mail, Firma), die Stufe in der Pipeline, wie frisch die letzte Bewegung ist, Angebotswert,
+ * ein Termin, die Reaktion auf unsere E-Mails (geöffnet, geklickt, geantwortet – oder abgemeldet/unzustellbar) und das
+ * letzte Anruf-Ergebnis. Ab 60 Punkten ist die Karte „Heiß“, ab 30 „Warm“, darunter „Kalt“. Kunde und Verloren
+ * bekommen keine Temperatur mehr. Jede Regel steht als Satz in `reasons`, damit die Einschätzung nachvollziehbar bleibt.
+ */
+export type Temperature = "heiss" | "warm" | "kalt";
+export const TEMPERATURE_LABEL: Record<Temperature, string> = { heiss: "Heiß", warm: "Warm", kalt: "Kalt" };
+export const TEMPERATURE_HOT_FROM = 60;
+export const TEMPERATURE_WARM_FROM = 30;
+export type MailReaction = { opened?: boolean; clicked?: boolean; replied?: boolean; bounced?: boolean; unsubscribed?: boolean } | null | undefined;
+export type ScoreInput = {
+  phone?: string | null; email?: string | null; company?: string | null;
+  pipelineStage: string | null; stages: StageDef[];
+  dealValue?: number | string | null; appointmentAt?: Date | string | null;
+  createdAt: Date | string; lastActivityAt?: Date | string | null; stale?: boolean; staleDays?: number;
+  noteCount?: number; openTasks?: number;
+  mail?: MailReaction; lastCallDisposition?: string | null;
+};
+export type LeadScore = { score: number; temperature: Temperature; label: string; reasons: string[]; closed: boolean };
+const CALL_POINTS: Record<string, [number, string]> = {
+  verkauft: [20, "Letzter Anruf: Verkauft / Termin"], interessiert: [15, "Letzter Anruf: Interessiert, Angebot gewünscht"], wiedervorlage: [6, "Letzter Anruf: Wiedervorlage vereinbart"],
+  nicht_erreicht: [0, "Letzter Anruf: nicht erreicht"], kein_interesse: [-25, "Letzter Anruf: kein Interesse"], falsche_nummer: [-15, "Letzter Anruf: falsche Nummer"], nicht_anrufen: [-30, "Letzter Anruf: nicht mehr anrufen"],
+};
+export function temperatureOf(score: number): Temperature { return score >= TEMPERATURE_HOT_FROM ? "heiss" : score >= TEMPERATURE_WARM_FROM ? "warm" : "kalt"; }
+export function leadScore(input: ScoreInput, now = new Date()): LeadScore {
+  const stages = input.stages; const won = wonStage(stages); const lost = lostStage(stages);
+  if (input.pipelineStage === won) return { score: 100, temperature: "heiss", label: "Kunde", reasons: ["Kunde geworden"], closed: true };
+  if (input.pipelineStage === lost) return { score: 0, temperature: "kalt", label: "Verloren", reasons: ["Als verloren markiert"], closed: true };
+  let score = 0; const reasons: string[] = [];
+  const add = (points: number, reason: string) => { if (!points) { reasons.push(reason); return; } score += points; reasons.push(`${reason} (${points > 0 ? "+" : "−"}${Math.abs(points)})`); };
+  // Kontaktdaten: Ohne Telefon kommt man selten weiter – deshalb zählt es am meisten.
+  const kontakt = (input.phone ? 8 : 0) + (input.email ? 5 : 0) + (input.company ? 3 : 0);
+  const vorhanden = [input.phone ? "Telefon" : "", input.email ? "E-Mail" : "", input.company ? "Firma" : ""].filter(Boolean);
+  if (kontakt) add(kontakt, vorhanden.length === 3 ? "Telefon, E-Mail und Firma bekannt" : `${vorhanden.join(" und ")} bekannt`); else reasons.push("Weder Telefon noch E-Mail bekannt");
+  // Stufe: je weiter rechts im Board, desto heißer (Eingang 0, letzte offene Stufe 30 Punkte).
+  const open = stages.filter((stage) => stage.fixed !== "won" && stage.fixed !== "lost");
+  const index = Math.max(0, open.findIndex((stage) => stage.key === input.pipelineStage));
+  const stageDef = open[index] ?? open[0];
+  const stagePoints = open.length <= 1 ? 0 : Math.round((index / (open.length - 1)) * 30);
+  if (stageDef) add(stagePoints, `Stufe „${stageDef.label}“`);
+  // Bewegung: frische Karten sind wärmer, eingeschlafene kühlen ab.
+  const last = input.lastActivityAt ?? input.createdAt; const days = daysBetween(last, now);
+  if (input.stale) add(-10, `Seit ${days} Tagen eingeschlafen`);
+  else if (days <= 1) add(14, "Heute oder gestern bewegt");
+  else if (days <= 3) add(8, `Vor ${days} Tagen bewegt`);
+  else if (days <= 7) add(4, `Vor ${days} Tagen bewegt`);
+  else reasons.push(`Seit ${days} Tagen keine Bewegung`);
+  // Angebotswert und Termin
+  const value = Number(input.dealValue ?? 0) || 0; if (value > 0) add(10, `Angebot über ${euro(value)}`);
+  if (input.appointmentAt) { const at = new Date(input.appointmentAt); if (at >= startOfDay(now)) add(20, `Termin am ${at.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}`); else if (daysBetween(at, now) <= 30) add(8, `Termin war am ${at.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}`); }
+  // E-Mail-Reaktion: die stärkste Reaktion zählt; Abmeldung oder Bounce ziehen ab.
+  const mail = input.mail;
+  if (mail?.unsubscribed) add(-15, "Von unseren E-Mails abgemeldet");
+  else if (mail?.bounced) add(-10, "E-Mail unzustellbar");
+  else if (mail?.replied) add(18, "Hat auf eine E-Mail geantwortet");
+  else if (mail?.clicked) add(12, "Hat einen Link in unserer E-Mail geklickt");
+  else if (mail?.opened) add(6, "Hat unsere E-Mail geöffnet");
+  // Anruf-Ergebnis
+  const call = input.lastCallDisposition ? CALL_POINTS[input.lastCallDisposition] : null; if (call) add(call[0], call[1]);
+  // Fleiß: Notizen und geplante nächste Schritte
+  if ((input.noteCount ?? 0) > 0) add(3, `${input.noteCount} ${input.noteCount === 1 ? "Notiz" : "Notizen"}`);
+  if ((input.openTasks ?? 0) > 0) add(3, "Nächster Schritt ist geplant");
+  score = Math.max(0, Math.min(100, score));
+  const temperature = temperatureOf(score);
+  return { score, temperature, label: TEMPERATURE_LABEL[temperature], reasons, closed: false };
+}
+/** E-Mail-Reaktion eines Kontakts aus seinen Serien-Einträgen (und Antworten im Posteingang) zusammenfassen. */
+export function mailReactionOf(rows: Array<{ openedAt?: Date | string | null; clickedAt?: Date | string | null; repliedAt?: Date | string | null; bouncedAt?: Date | string | null; status?: string | null }>, replied = false): MailReaction {
+  if (!rows.length && !replied) return null;
+  return {
+    opened: rows.some((row) => row.openedAt), clicked: rows.some((row) => row.clickedAt), replied: replied || rows.some((row) => row.repliedAt),
+    bounced: rows.some((row) => row.bouncedAt || row.status === "bounce"), unsubscribed: rows.some((row) => row.status === "abgemeldet" || row.status === "beschwerde"),
+  };
+}
+
 /* ---------------------------------------------------------------- Einstellungen (Automatik, Verteilung, Ziele) */
 export type DistributionRule = { id: string; userId: number; postcodePrefixes: string[]; categoryIds: number[]; maxOpen: number | null };
 export type DistributionRules = { mode: "aus" | "reihum" | "regeln"; rules: DistributionRule[]; fallback: "reihum" | "ohne" };
@@ -147,13 +225,13 @@ export const parseMoney = (value: string | number | null | undefined) => { if (v
 export const euro = (value: number | string | null | undefined) => { const number = Number(value ?? 0) || 0; return number.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }); };
 
 /* ---------------------------------------------------------------- CSV-Export */
-export type CsvLead = { publicId: string; name: string; company?: string | null; email?: string | null; phone?: string | null; postcode?: string | null; city?: string | null; categoryName?: string | null; pipelineStage: string | null; ownerName?: string | null; adCampaignName?: string | null; adPlatform?: string | null; createdAt: Date | string; pipelineUpdatedAt?: Date | string | null; dealValue?: number | string | null; followUpAt?: Date | string | null; appointmentAt?: Date | string | null; latestNote?: string | null };
+export type CsvLead = { publicId: string; name: string; company?: string | null; email?: string | null; phone?: string | null; postcode?: string | null; city?: string | null; categoryName?: string | null; pipelineStage: string | null; ownerName?: string | null; adCampaignName?: string | null; adPlatform?: string | null; createdAt: Date | string; pipelineUpdatedAt?: Date | string | null; dealValue?: number | string | null; followUpAt?: Date | string | null; appointmentAt?: Date | string | null; latestNote?: string | null; score?: number | null; scoreLabel?: string | null };
 const csvCell = (value: unknown) => { const text = value === null || value === undefined ? "" : value instanceof Date ? value.toLocaleString("de-DE") : String(value); return /[;"\n\r]/.test(text) ? `"${text.replace(/"/g, "\"\"")}"` : text; };
 export function pipelineCsv(leads: CsvLead[], stages: StageDef[]) {
-  const header = ["Lead-ID", "Name", "Firma", "E-Mail", "Telefon", "PLZ", "Ort", "Kategorie", "Stufe", "Vertriebler", "Quelle", "Kampagne/Liste", "Eingang", "Letzte Änderung", "Angebotswert (EUR)", "Wiedervorlage", "Termin", "Letzte Notiz"];
+  const header = ["Lead-ID", "Name", "Firma", "E-Mail", "Telefon", "PLZ", "Ort", "Kategorie", "Stufe", "Einschätzung", "Punkte", "Vertriebler", "Quelle", "Kampagne/Liste", "Eingang", "Letzte Änderung", "Angebotswert (EUR)", "Wiedervorlage", "Termin", "Letzte Notiz"];
   const label = (key: string | null) => stages.find((stage) => stage.key === key)?.label ?? stages[0]?.label ?? "Neu";
   const date = (value: Date | string | null | undefined) => value ? new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
-  const rows = leads.map((lead) => [lead.publicId, lead.name, lead.company ?? "", lead.email ?? "", lead.phone ?? "", lead.postcode ?? "", lead.city ?? "", lead.categoryName ?? "", label(lead.pipelineStage), lead.ownerName ?? "", lead.adPlatform === "kaltakquise" ? "Kaltakquise" : lead.adPlatform === "email" ? "E-Mail" : lead.adPlatform === "posteingang" ? "Posteingang" : lead.adPlatform ? "Meta Ads" : "", lead.adCampaignName ?? "", date(lead.createdAt), date(lead.pipelineUpdatedAt), lead.dealValue ? String(Number(lead.dealValue)).replace(".", ",") : "", date(lead.followUpAt), date(lead.appointmentAt), (lead.latestNote ?? "").replace(/\s+/g, " ").slice(0, 200)].map(csvCell).join(";"));
+  const rows = leads.map((lead) => [lead.publicId, lead.name, lead.company ?? "", lead.email ?? "", lead.phone ?? "", lead.postcode ?? "", lead.city ?? "", lead.categoryName ?? "", label(lead.pipelineStage), lead.scoreLabel ?? "", lead.score === null || lead.score === undefined ? "" : String(lead.score), lead.ownerName ?? "", lead.adPlatform === "kaltakquise" ? "Kaltakquise" : lead.adPlatform === "email" ? "E-Mail" : lead.adPlatform === "posteingang" ? "Posteingang" : lead.adPlatform ? "Meta Ads" : "", lead.adCampaignName ?? "", date(lead.createdAt), date(lead.pipelineUpdatedAt), lead.dealValue ? String(Number(lead.dealValue)).replace(".", ",") : "", date(lead.followUpAt), date(lead.appointmentAt), (lead.latestNote ?? "").replace(/\s+/g, " ").slice(0, 200)].map(csvCell).join(";"));
   return `\uFEFF${header.join(";")}\n${rows.join("\n")}${rows.length ? "\n" : ""}`;
 }
 

@@ -603,10 +603,11 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
   beforeAll(() => resetStore());
   const coldLead = async (name: string) => { const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); return overview.stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.name.includes(name)); };
 
-  it("zeigt eingeschlafene Karten, Angebotswerte und Aufgaben an den Karten und rechnet den Pipeline-Wert (ohne Punkte)", async () => {
+  it("zeigt eingeschlafene Karten, Angebotswerte, Aufgaben und die Temperatur an den Karten und rechnet den Pipeline-Wert", async () => {
     const overview = await call("leadops.pipelineOverview", { source: "alle", limitPerStage: 1000 });
     const leads = overview.stages.flatMap((stage: any) => stage.leads);
-    expect(leads.every((lead: any) => !("score" in lead) && !("scoreLabel" in lead))).toBe(true); // Scoring wurde entfernt
+    expect(leads.every((lead: any) => typeof lead.score === "number" && ["heiss", "warm", "kalt"].includes(lead.temperature) && Array.isArray(lead.scoreReasons))).toBe(true); // heiße Phasen: jede Karte hat Punkte und Temperatur
+    expect(overview.hotCount).toBe(leads.filter((lead: any) => lead.temperature === "heiss" && lead.scoreLabel !== "Kunde").length);
     expect(overview.staleCount).toBeGreaterThan(0); expect(overview.staleDays).toBe(5); expect(leads.filter((lead: any) => lead.stale).length).toBe(overview.staleCount);
     expect(leads.filter((lead: any) => lead.dealValue).length).toBeGreaterThanOrEqual(10); expect(overview.value.openValue).toBeGreaterThan(0); expect(overview.value.wonValue).toBeGreaterThan(0); expect(overview.value.byOwner.length).toBeGreaterThanOrEqual(2);
     expect(leads.filter((lead: any) => lead.openTasks > 0 && lead.nextTask).length).toBeGreaterThanOrEqual(4); expect(overview.dueToday).toBeGreaterThanOrEqual(3);
@@ -640,7 +641,7 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(getStore().tables.outboundMessages.some((message) => message.leadId === row.id && message.templateKey === "termin_einladung")).toBe(true);
     const value = await call("leadops.setPipelineDealValue", { publicId: lead.publicId, dealValue: 12500.5 }); expect(value.dealValue).toBe(12500.5);
     const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const card = overview.stages.find((stage: any) => stage.key === "termin").leads.find((item: any) => item.publicId === lead.publicId);
-    expect(card.dealValue).toBe(12500.5); expect(card.appointmentAt).toBeTruthy(); expect("score" in card).toBe(false);
+    expect(card.dealValue).toBe(12500.5); expect(card.appointmentAt).toBeTruthy(); expect(card.score).toBeGreaterThanOrEqual(60); expect(card.temperature).toBe("heiss"); expect(card.scoreReasons.some((reason: string) => reason.startsWith("Termin am"))).toBe(true); expect(card.scoreReasons.some((reason: string) => reason.includes("Angebot über"))).toBe(true);
     await call("leadops.setPipelineAppointment", { publicId: lead.publicId, appointmentAt: null });
     expect(getStore().tables.leads.find((item) => item.publicId === lead.publicId)!.appointmentAt).toBeNull();
   });
@@ -709,7 +710,7 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
   it("verschiebt mehrere Karten auf einmal und exportiert die Pipeline als CSV", async () => {
     const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const ids = overview.stages.find((stage: any) => stage.key === "neu").leads.slice(0, 2).map((lead: any) => lead.publicId); expect(ids.length).toBe(2);
     const moved = await call("leadops.bulkMovePipelineStage", { publicIds: ids, stage: "qualifiziert" }); expect(moved).toMatchObject({ moved: 2, label: "Qualifiziert" });
-    const csv = await call("leadops.exportPipelineCsv", { source: "kaltakquise" }); expect(csv.fileName).toMatch(/^vertriebspipeline-kaltakquise-/); expect(csv.csv.split("\n")[0]).toContain("Lead-ID;Name;Firma"); expect(csv.rows).toBeGreaterThanOrEqual(8);
+    const csv = await call("leadops.exportPipelineCsv", { source: "kaltakquise" }); expect(csv.fileName).toMatch(/^vertriebspipeline-kaltakquise-/); expect(csv.csv.split("\n")[0]).toContain("Lead-ID;Name;Firma"); expect(csv.csv.split("\n")[0]).toContain("Einschätzung;Punkte"); expect(csv.rows).toBeGreaterThanOrEqual(8);
   });
 
   it("führt A/B-Betreff, Versandfenster, Link-Bedingung, Vorlagen und Sperrliste in den E-Mail-Kampagnen", async () => {
@@ -909,11 +910,11 @@ describe("Trennung Verkaufs-Leads/Vertriebskontakte, Sperrliste mit Unterlisten,
     await expect(call("leadops.pipelineLeadDetail", { publicId: card.publicId })).rejects.toThrow();
   });
 
-  it("öffnet das ausführliche Lead-Fenster mit allen Bereichen und neuen Kürzeln (ohne Punkte)", async () => {
+  it("öffnet das ausführliche Lead-Fenster mit allen Bereichen, neuen Kürzeln und der Einschätzung (heiße Phasen)", async () => {
     const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const card = overview.stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.name.includes("Yilmaz"));
     const detail = await call("leadops.pipelineLeadDetail", { publicId: card.publicId });
     expect(detail).toMatchObject({ publicId: card.publicId, adPlatform: "kaltakquise", categoryName: "Photovoltaik", categoryEmoji: "☀️", categoryColor: "#eab308" });
-    expect(Array.isArray(detail.history) && detail.history.length).toBeTruthy(); expect(Array.isArray(detail.tasks)).toBe(true); expect(Array.isArray(detail.calls)).toBe(true); expect(Array.isArray(detail.campaigns)).toBe(true); expect(Array.isArray(detail.inbox)).toBe(true); expect("score" in detail).toBe(false); // Scoring entfernt
+    expect(Array.isArray(detail.history) && detail.history.length).toBeTruthy(); expect(Array.isArray(detail.tasks)).toBe(true); expect(Array.isArray(detail.calls)).toBe(true); expect(Array.isArray(detail.campaigns)).toBe(true); expect(Array.isArray(detail.inbox)).toBe(true); expect(typeof detail.score).toBe("number"); expect(["heiss", "warm", "kalt"]).toContain(detail.temperature); expect(detail.scoreReasons.length).toBeGreaterThan(0); // heiße Phasen: Einschätzung mit Begründung
     await expect(call("leadops.pipelineLeadDetail", { publicId: getStore().tables.leads.find((row) => row.kind !== "vertrieb")!.publicId })).rejects.toThrow(/Lead zum Verkauf/);
     const categories = await call("leadops.listCategories"); const byCode = Object.fromEntries(categories.map((row: any) => [row.shortcode, row]));
     expect(byCode["WTG"]).toMatchObject({ name: "Wintergärten", emoji: "🌿", color: "#22c55e" }); expect(byCode["ERS"]).toMatchObject({ name: "Elektrorollstühle", emoji: "♿" }); expect(byCode["HÖR"]).toMatchObject({ name: "Hörgeräte", emoji: "🦻" }); expect(byCode["TRL"]).toMatchObject({ name: "Treppenlifte", emoji: "🛗" });
@@ -1221,8 +1222,32 @@ describe("Übernahme in die Pipeline „E-Mail-Kampagne“ mit Stufe (Chat-Build
     expect(leads.every((row) => row.inPipeline === true && row.adPlatform === "email" && row.pipelineStage === "kontaktiert")).toBe(true);
     const board = await call("leadops.pipelineOverview", { source: "email" });
     expect(board.totals.leads).toBeGreaterThanOrEqual(2);
-    const nochmal = await call("leadops.pushLeadsToPipeline", { leadIds: liste.items.map((item: { id: number }) => item.id), stage: "neu" });
-    expect(nochmal.moved).toBe(0); expect(nochmal.already).toBe(2);
+    const nochmal = await call("leadops.pushLeadsToPipeline", { leadIds: liste.items.map((item: { id: number }) => item.id), stage: "kontaktiert" });
+    expect(nochmal.moved).toBe(0); expect(nochmal.already).toBe(2); expect(nochmal.targetName).toBe("E-Mail-Kampagne");
+    // andere Stufe → nur umgestuft
+    const umgestuft = await call("leadops.pushLeadsToPipeline", { leadIds: [liste.items[0].id], stage: "qualifiziert" });
+    expect(umgestuft).toMatchObject({ moved: 0, switched: 0, restaged: 1, already: 0, stage: "qualifiziert" });
+  });
+  it("Kontakte, die schon in der Kaltakquise stehen, lassen sich in die E-Mail-Kampagne verschieben – und zurück in die Kaltakquise", async () => {
+    // Upload direkt in die Pipeline (Kaltakquise) – so wie es vor dem Reiter „Kontakte“ immer war
+    await call("leadops.importColdList", { listName: "Kalt-Liste", toPipeline: true, rows: [{ firstName: "Emil", lastName: "Fünf", email: "emil@fuenf.de", phone: "+49 170 5555555" }] });
+    const kontakte = await call("leadops.emailLeads", { listName: "Kalt-Liste" });
+    expect(kontakte.items[0].inPipeline).toBe(true); expect(kontakte.items[0].adPlatform).toBe("kaltakquise");
+    const emailBefore = (await call("leadops.pipelineOverview", { source: "email" })).totals.leads; const kaltBefore = (await call("leadops.pipelineOverview", { source: "kaltakquise" })).totals.leads;
+    const verschoben = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte.items[0].id], stage: "kontaktiert" });
+    expect(verschoben).toMatchObject({ moved: 0, switched: 1, restaged: 0, already: 0, stage: "kontaktiert", target: "email", targetName: "E-Mail-Kampagne" });
+    const lead = getStore().tables.leads.find((row) => row.id === kontakte.items[0].id)!;
+    expect(lead.adPlatform).toBe("email"); expect(lead.pipelineStage).toBe("kontaktiert"); expect(lead.inPipeline).toBe(true);
+    expect((await call("leadops.pipelineOverview", { source: "email" })).totals.leads).toBe(emailBefore + 1); expect((await call("leadops.pipelineOverview", { source: "kaltakquise" })).totals.leads).toBe(kaltBefore - 1);
+    const verlauf = getStore().tables.pipelineEvents.filter((row) => row.leadId === lead.id).map((row) => String(row.note ?? ""));
+    expect(verlauf).toContain("Aus der Pipeline „Kaltakquise“ in die Pipeline „E-Mail-Kampagne“ verschoben");
+    // Ziel-Pipeline wählbar: zurück in die Kaltakquise, unbekannte Stufe fällt auf die erste Stufe der Ziel-Pipeline
+    const zurueck = await call("leadops.pushLeadsToPipeline", { leadIds: [lead.id], stage: "gibt-es-nicht", target: "kaltakquise" });
+    expect(zurueck).toMatchObject({ switched: 1, target: "kaltakquise", targetName: "Kaltakquise", stage: "neu" });
+    expect(getStore().tables.leads.find((row) => row.id === lead.id)!.adPlatform).toBe("kaltakquise");
+    // Kontakte-Reiter der E-Mail-Akquise zeigt, in welcher Pipeline der Kontakt steht (adPlatform) – Glocke hat den Umzug
+    const feed = await call("leadops.activityFeed", { days: 1 });
+    expect(JSON.stringify(feed)).toContain("aus anderen Pipelines verschoben");
   });
 });
 

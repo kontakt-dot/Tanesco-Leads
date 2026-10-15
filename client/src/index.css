@@ -1752,3 +1752,13 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 @media (max-width:900px){.signature-grid{grid-template-columns:1fr}}
 .signature-preview{display:grid;gap:6px;align-content:start}
 .signature-preview-frame{display:block;width:100%;height:330px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#fff}
+
+/* Heiße Phasen: Temperatur-Chip an Karte und Lead-Seite, Einschätzung mit Balken */
+.lead-temp{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 7px;border-radius:999px;font-size:10px;font-weight:700;border:1px solid rgba(255,255,255,.12);color:#c9c5f5;background:rgba(255,255,255,.05);white-space:nowrap}
+.lead-temp.is-heiss{border-color:rgba(251,113,133,.55);color:#fecdd3;background:rgba(244,63,94,.18)}
+.lead-temp.is-warm{border-color:rgba(251,191,36,.45);color:#fde68a;background:rgba(251,191,36,.12)}
+.lead-temp.is-kalt{border-color:rgba(125,211,252,.35);color:#bae6fd;background:rgba(56,189,248,.1)}
+.lead-temp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}.lead-temp-head strong{font-size:13px;color:#fff}
+.lead-temp-bar{height:6px;margin-top:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}.lead-temp-bar span{display:block;height:100%;border-radius:999px;background:#7dd3fc;transition:width .3s}
+.lead-temp-bar span.is-warm{background:#fbbf24}.lead-temp-bar span.is-heiss{background:linear-gradient(90deg,#fb7185,#f43f5e)}
+.lead-temp-reasons{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:11.5px;color:#c9c5f5}.lead-temp-reasons li{padding-left:12px;position:relative}.lead-temp-reasons li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;border-radius:999px;background:#8f93af}

@@ -2,13 +2,14 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
-import { stageLabel } from "../../../shared/sales-pipeline";
+import { PIPELINE_SOURCE_LABEL, pipelineSourceOf, stageLabel } from "../../../shared/sales-pipeline";
 
 /**
  * Kontakt-Übersicht als Tabelle – in zwei Rollen:
  * • E-Mail-Akquise (Standard): die eigene Lead-Liste der E-Mail-Kampagnen. Je Kontakt steht, woher er kommt (Liste),
  *   wann er angelegt wurde, in welchen Kampagnen er steckt, was zuletzt passiert ist (gesendet, geöffnet, geklickt,
- *   geantwortet, abgemeldet, Bounce), seine Stufe und wer ihn betreut. Ankreuzen → mit Stufe in die Pipeline übernehmen oder löschen.
+ *   geantwortet, abgemeldet, Bounce), seine Stufe und wer ihn betreut. Ankreuzen → in eine Pipeline („E-Mail-Kampagne“ oder
+ *   „Kaltakquise“) mit Stufe übernehmen – auch Kontakte, die schon in einer anderen Pipeline stehen, werden verschoben – oder löschen.
  * • Vertriebspipeline (mode="pipeline"): alle Kontakte der gewählten Pipeline (Meta Ads, Kaltakquise oder E-Mail-Kampagne),
  *   auch ohne E-Mail-Adresse – mit Telefon und Ort, Stufe setzen, zuteilen und löschen für die Auswahl.
  * Gefiltert wird wie auf der Leads-Seite.
@@ -29,7 +30,8 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const utils = trpc.useUtils();
   const pipeline = mode === "pipeline";
   const [picked, setPicked] = useState<number[]>([]);
-  const [stage, setStage] = useState("neu"); // Stufe, in der übernommene Kontakte in der Pipeline „E-Mail-Kampagne“ landen
+  const [target, setTarget] = useState<"email" | "kaltakquise">("email"); // Ziel-Pipeline beim Übernehmen
+  const [stage, setStage] = useState("neu"); // Stufe, in der übernommene Kontakte in der Ziel-Pipeline landen
   const [search, setSearch] = useState("");
   const [listName, setListName] = useState<string | null>(null);
   const [campaignId, setCampaignId] = useState<number | null>(null);
@@ -38,11 +40,17 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const [owner, setOwner] = useState<number | "ohne" | null>(null);
   const data = trpc.leadops.emailLeads.useQuery({ search: search.trim() || null, listName, campaignId, activity, stage: stageFilter, ownerUserId: owner, ...(pipeline ? { source, inPipeline: true, withoutEmail: true } : {}) }, { retry: false });
   const owners = trpc.leadops.pipelineOwners.useQuery(undefined, { retry: false });
-  const stages = trpc.leadops.pipelineStages.useQuery({ source: pipeline ? source : "email" }, { retry: false }); // Stufen der jeweiligen Pipeline (E-Mail-Akquise übernimmt in die Pipeline „E-Mail-Kampagne“)
+  const stages = trpc.leadops.pipelineStages.useQuery({ source: pipeline ? source : target }, { retry: false }); // Stufen der jeweiligen Pipeline (E-Mail-Akquise: Stufen der gewählten Ziel-Pipeline)
   const stageDefs = stages.data ?? [];
   const refreshAll = () => { utils.leadops.emailLeads.invalidate(); utils.leadops.pipelineOverview.invalidate(); utils.leadops.listColdLists.invalidate(); utils.leadops.listImportHistory.invalidate(); onChanged?.(); };
   const push = trpc.leadops.pushLeadsToPipeline.useMutation({ onSuccess: (result) => {
-    toast.success(result.moved ? `${result.moved} ${result.moved === 1 ? "Kontakt" : "Kontakte"} in die Pipeline „E-Mail-Kampagne“ übernommen, Stufe „${stageLabel(result.stage, stageDefs)}“${result.already ? ` – ${result.already} waren schon drin` : ""}.` : "Diese Kontakte sind schon in der Pipeline.");
+    // Rückmeldung in einem Satz: wie viele neu übernommen, aus einer anderen Pipeline verschoben, nur umgestuft – und was unverändert blieb.
+    const teile: string[] = [];
+    if (result.moved) teile.push(`${result.moved} neu übernommen`);
+    if (result.switched) teile.push(`${result.switched} aus einer anderen Pipeline verschoben`);
+    if (result.restaged) teile.push(`${result.restaged} in die Stufe gesetzt`);
+    const summe = result.moved + result.switched + result.restaged;
+    toast.success(summe ? `${summe} ${summe === 1 ? "Kontakt" : "Kontakte"} in der Pipeline „${result.targetName}“, Stufe „${stageLabel(result.stage, stageDefs)}“ (${teile.join(", ")})${result.already ? ` – ${result.already} standen dort schon so` : ""}.` : `Diese Kontakte stehen schon in der Pipeline „${result.targetName}“ in dieser Stufe.`);
     setPicked([]); refreshAll();
   }, onError: (error) => toast.error(error.message) });
   const removeLeads = trpc.leadops.deleteEmailLeads.useMutation({ onSuccess: (result) => {
@@ -63,7 +71,8 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const gefiltert = Boolean(search.trim() || listName || campaignId || activity || owner || stageFilter);
   const nameOf = (lead: { firstName: string | null; lastName: string | null; company: string | null; email: string | null; publicId: string }) => [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.email || lead.publicId;
   const herkunft = (lead: { listName: string | null; adCampaignName?: string | null; adPlatform?: string | null }) => lead.listName || (lead.adPlatform !== "kaltakquise" && lead.adPlatform !== "email" ? lead.adCampaignName : null) || "–";
-  const canPick = (_lead: { inPipeline: boolean }) => true; // jede Zeile ist wählbar (Löschen geht immer; „übernehmen“ wirkt nur auf Kontakte, die noch nicht in der Pipeline sind)
+  const canPick = (_lead: { inPipeline: boolean }) => true; // jede Zeile ist wählbar – übernehmen verschiebt auch Kontakte, die schon in einer anderen Pipeline stehen
+  const pipelineName = (lead: { adPlatform?: string | null }) => PIPELINE_SOURCE_LABEL[pipelineSourceOf(lead.adPlatform ?? null)];
   // Wie die Kampagnen-Spalte heißt, hängt von der Pipeline ab: in der Kaltakquise sind es die Kaltakquise-Kampagnen (E-Mail-Serien an die hochgeladenen Listen).
   const campaignWord = pipeline && source === "kaltakquise" ? "Kaltakquise-Kampagne" : pipeline ? "E-Mail-Kampagne" : "Kampagne";
   const campaignWordPlural = pipeline && source === "kaltakquise" ? "Alle Kaltakquise-Kampagnen" : pipeline ? "Alle E-Mail-Kampagnen" : "Alle Kampagnen";
@@ -101,8 +110,9 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
               <select className="lead-action-select" aria-label="Ausgewählte zuteilen an" value="" disabled={bulkAssign.isPending} onChange={(event) => { if (event.target.value) bulkAssign.mutate({ publicIds: pickedRows.map((lead) => lead.publicId), ownerUserId: event.target.value === "ohne" ? null : Number(event.target.value) }); }}><option value="">Zuteilen an …</option>{(owners.data ?? []).map((item) => <option key={item.userId} value={item.userId}>{item.name.split(" ")[0]}</option>)}<option value="ohne">Zuteilung entfernen</option></select>
               <button type="button" className="email-leads-delete" disabled={removeCards.isPending} onClick={async () => { if (await confirmAction(`${picked.length} ${picked.length === 1 ? "Kontakt" : "Kontakte"} aus der Pipeline löschen? Verlauf, Aufgaben und Notizen gehen mit. Das lässt sich nicht rückgängig machen.`, { danger: true })) removeCards.mutate({ publicIds: pickedRows.map((lead) => lead.publicId) }); }}>{removeCards.isPending ? "Wird gelöscht …" : "Löschen"}</button>
             </> : <>
-              <select className="lead-action-select" aria-label="Stufe in der Pipeline" value={stage} onChange={(event) => setStage(event.target.value)}>{stageDefs.map((item) => <option key={item.key} value={item.key}>Stufe: {item.label}</option>)}</select>
-              <button type="button" className="email-leads-push" disabled={push.isPending || !picked.some((id) => offen.includes(id))} title={picked.some((id) => offen.includes(id)) ? "" : "Alle ausgewählten Kontakte sind schon in der Pipeline"} onClick={() => push.mutate({ leadIds: picked.filter((id) => offen.includes(id)), stage })}>{push.isPending ? "Wird übernommen …" : "In die Vertriebspipeline übernehmen"}</button>
+              <select className="lead-action-select" aria-label="Ziel-Pipeline" value={target} onChange={(event) => { setTarget(event.target.value === "kaltakquise" ? "kaltakquise" : "email"); setStage("neu"); }}><option value="email">Pipeline: E-Mail-Kampagne</option><option value="kaltakquise">Pipeline: Kaltakquise</option></select>
+              <select className="lead-action-select" aria-label="Stufe in der Pipeline" value={stageDefs.some((item) => item.key === stage) ? stage : (stageDefs[0]?.key ?? "neu")} onChange={(event) => setStage(event.target.value)}>{stageDefs.map((item) => <option key={item.key} value={item.key}>Stufe: {item.label}</option>)}</select>
+              <button type="button" className="email-leads-push" disabled={push.isPending} title={pickedRows.every((lead) => lead.inPipeline !== false) ? "Die ausgewählten Kontakte stehen schon in einer Pipeline – sie werden in die gewählte Pipeline und Stufe verschoben" : ""} onClick={() => push.mutate({ leadIds: picked, stage: stageDefs.some((item) => item.key === stage) ? stage : (stageDefs[0]?.key ?? "neu"), target })}>{push.isPending ? "Wird übernommen …" : "In die Vertriebspipeline übernehmen"}</button>
               <button type="button" className="email-leads-delete" disabled={removeLeads.isPending} onClick={async () => { if (await confirmAction(`${picked.length} ${picked.length === 1 ? "Kontakt" : "Kontakte"} löschen? Kunden bleiben erhalten. Das lässt sich nicht rückgängig machen.`, { danger: true })) removeLeads.mutate({ leadIds: picked }); }}>{removeLeads.isPending ? "Wird gelöscht …" : "Löschen"}</button>
             </>}
             <button type="button" className="email-leads-reset" onClick={() => setPicked([])}>Auswahl aufheben</button>
@@ -124,7 +134,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
             <td>{lead.stage ? stageLabel(lead.stage, stageDefs) : "–"}</td>
             <td>{lead.ownerName || <span className="text-slate-500">offen</span>}</td>
             <td>{stamp(lead.createdAt)}</td>
-            {!pipeline && <td>{lead.inPipeline === false ? <span className="email-leads-state">nur E-Mail</span> : <span className="email-leads-state is-geoeffnet">in der Pipeline</span>}</td>}
+            {!pipeline && <td>{lead.inPipeline === false ? <span className="email-leads-state">nur E-Mail</span> : <span className="email-leads-state is-geoeffnet" title="Steht in dieser Pipeline">{pipelineName(lead)}</span>}</td>}
             <td className="email-leads-row-tools" onClick={(event) => event.stopPropagation()}><button type="button" title="Kontakt löschen" aria-label="Kontakt löschen" onClick={async () => { if (await confirmAction(`${nameOf(lead)} löschen?${pipeline ? " Verlauf, Aufgaben und Notizen gehen mit." : " Kunden bleiben erhalten."}`, { danger: true })) { if (pipeline) removeCards.mutate({ publicIds: [lead.publicId] }); else removeLeads.mutate({ leadIds: [lead.id] }); } }}>✕</button></td>
           </tr>)}</tbody>
         </table></div>

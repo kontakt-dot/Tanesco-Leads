@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIcs, dueBucket, fillMessage, followUpDue, groupByDue, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, weekDays } from "../shared/pipeline-extras";
+import { buildIcs, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, moveNodeInTree, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
 import { companyFooterText, DEFAULT_DESIGN, linkifyFooter, renderEmailHtml } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
@@ -44,7 +44,7 @@ describe("Angebotswerte & Umsatz", () => {
   });
   it("exportiert die Pipeline als CSV mit deutschen Spalten", () => {
     const csv = pipelineCsv([{ publicId: "META-1", name: "Max; Muster", company: "Muster GmbH", email: "max@beispiel.de", phone: "+49 160 1", postcode: "60311", city: "Frankfurt", categoryName: "Photovoltaik", pipelineStage: "angebot", ownerName: "Taner", adCampaignName: "PV Herbst", adPlatform: "facebook", createdAt: now, pipelineUpdatedAt: now, dealValue: 12500.5, followUpAt: null, appointmentAt: null, latestNote: "Angebot verschickt\nRückruf" }], PIPELINE_STAGES);
-    const lines = csv.split("\n"); expect(lines[0]).toContain("Lead-ID;Name;Firma"); expect(lines[1]).toContain("\"Max; Muster\""); expect(lines[1]).toContain("Angebot;Taner;Meta Ads;PV Herbst"); expect(lines[1]).toContain("12500,5"); expect(lines[1]).toContain("Angebot verschickt Rückruf");
+    const lines = csv.split("\n"); expect(lines[0]).toContain("Lead-ID;Name;Firma"); expect(lines[1]).toContain("\"Max; Muster\""); expect(lines[0]).toContain("Stufe;Einschätzung;Punkte;Vertriebler"); expect(lines[1]).toContain("Angebot;;;Taner;Meta Ads;PV Herbst"); expect(lines[1]).toContain("12500,5"); expect(lines[1]).toContain("Angebot verschickt Rückruf");
   });
 });
 
@@ -225,3 +225,34 @@ describe("Schritte im Ablauf verschieben", () => {
     expect(moveNodeInTree(tree, "gibtsnicht", null, "next")).toBe(tree);
   });
 });
+
+describe("Heiße Phasen (Lead-Temperatur)", () => {
+  const now = new Date("2026-10-15T10:00:00Z");
+  const base = { pipelineStage: "neu", stages: PIPELINE_STAGES, createdAt: now, lastActivityAt: now };
+  it("frischer Kontakt mit allen Daten ist gerade warm (30 Punkte), ohne Daten und ohne Bewegung kalt", () => {
+    const voll = leadScore({ ...base, phone: "+49 160 1", email: "max@beispiel.de", company: "Muster GmbH" }, now);
+    expect(voll.score).toBe(16 + 14); expect(voll.temperature).toBe("warm"); expect(voll.reasons[0]).toContain("Telefon, E-Mail und Firma bekannt");
+    const leer = leadScore({ ...base, createdAt: new Date("2026-09-01T10:00:00Z"), lastActivityAt: new Date("2026-09-01T10:00:00Z") }, now);
+    expect(leer.score).toBe(0); expect(leer.temperature).toBe("kalt"); expect(leer.reasons).toContain("Weder Telefon noch E-Mail bekannt");
+  });
+  it("Termin, Antwort und gute Stufe machen die Karte heiß – Absagen kühlen ab", () => {
+    const heiss = leadScore({ ...base, pipelineStage: "termin", phone: "+49 160 1", email: "max@beispiel.de", appointmentAt: new Date("2026-10-20T09:00:00Z"), mail: { opened: true, clicked: true, replied: true }, dealValue: 12500 }, now);
+    expect(heiss.temperature).toBe("heiss"); expect(heiss.score).toBeGreaterThanOrEqual(60); expect(heiss.reasons.some((reason) => reason.startsWith("Termin am 20.10."))).toBe(true); expect(heiss.reasons.some((reason) => reason.includes("geantwortet"))).toBe(true);
+    const abgesagt = leadScore({ ...base, pipelineStage: "termin", phone: "+49 160 1", email: "max@beispiel.de", appointmentAt: new Date("2026-10-20T09:00:00Z"), mail: { unsubscribed: true }, lastCallDisposition: "kein_interesse" }, now);
+    expect(abgesagt.score).toBeLessThan(heiss.score - 40); expect(abgesagt.reasons).toContain("Von unseren E-Mails abgemeldet (−15)"); expect(abgesagt.reasons).toContain("Letzter Anruf: kein Interesse (−25)");
+    const eingeschlafen = leadScore({ ...base, phone: "+49 160 1", lastActivityAt: new Date("2026-10-01T10:00:00Z"), stale: true, staleDays: 5 }, now);
+    expect(eingeschlafen.score).toBe(0); expect(eingeschlafen.reasons).toContain("Seit 14 Tagen eingeschlafen (−10)");
+  });
+  it("Kunde und Verloren haben keine Temperatur mehr; Schwellen 60/30", () => {
+    expect(leadScore({ ...base, pipelineStage: "kunde" }, now)).toMatchObject({ score: 100, label: "Kunde", closed: true });
+    expect(leadScore({ ...base, pipelineStage: "verloren" }, now)).toMatchObject({ score: 0, label: "Verloren", closed: true });
+    expect(temperatureOf(60)).toBe("heiss"); expect(temperatureOf(59)).toBe("warm"); expect(temperatureOf(30)).toBe("warm"); expect(temperatureOf(29)).toBe("kalt");
+  });
+  it("fasst die E-Mail-Reaktion aus Serien-Einträgen und Posteingang zusammen", () => {
+    expect(mailReactionOf([])).toBeNull();
+    expect(mailReactionOf([{ openedAt: now, clickedAt: null, repliedAt: null, status: "aktiv" }, { openedAt: null, status: "bounce" }])).toMatchObject({ opened: true, clicked: false, replied: false, bounced: true, unsubscribed: false });
+    expect(mailReactionOf([], true)).toMatchObject({ replied: true, opened: false });
+    expect(mailReactionOf([{ status: "abgemeldet" }])).toMatchObject({ unsubscribed: true });
+  });
+});
+

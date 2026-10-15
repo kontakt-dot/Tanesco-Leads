@@ -14,7 +14,7 @@ import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipi
 import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
 import { recipientValues, renderNode, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
-import { buildIcs, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, fillMessage, followUpDue, formatAppointment, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource } from "../shared/pipeline-extras";
+import { buildIcs, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, fillMessage, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
 import { entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
@@ -310,15 +310,20 @@ export async function lastActivityMap(db: Db, tenantId: number, leadIds: number[
   for (const row of await db.select({ leadId: outboundMessages.leadId, createdAt: outboundMessages.createdAt }).from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, leadIds)))) { if (row.leadId != null) bump(row.leadId, row.createdAt); }
   return map;
 }
-/** Zusatzdaten je Karte für die Pipeline-Übersicht: Aufgaben, Aktivität, eingeschlafen. */
+/** Zusatzdaten je Karte für die Pipeline-Übersicht: Aufgaben, Aktivität, eingeschlafen – und die Temperatur („heiße Phasen“). */
 export async function cardExtras(db: Db, tenantId: number, rows: Array<{ id: number; phone: string | null; email: string | null; company: string | null; pipelineStage: string | null; pipelineUpdatedAt: Date | null; createdAt: Date; ownerUserId: number | null; followUpAt: Date | null; appointmentAt: Date | null; dealValue: string | null; metadata: unknown; noteCount: number }>, stages: StageDef[], now = new Date()) {
   const settings = await loadSettings(db, tenantId); const ids = rows.map((row) => row.id); const activity = await lastActivityMap(db, tenantId, ids);
   const openTasks = ids.length ? await db.select({ leadId: pipelineTasks.leadId, dueAt: pipelineTasks.dueAt, title: pipelineTasks.title, kind: pipelineTasks.kind }).from(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, ids), isNull(pipelineTasks.doneAt))).orderBy(asc(pipelineTasks.dueAt)) : [];
-  const out = new Map<number, { openTasks: number; nextTask: { title: string; dueAt: Date; kind: string } | null; lastActivityAt: Date; staleDays: number; stale: boolean }>();
+  // E-Mail-Reaktion je Kontakt: Serien-Einträge (geöffnet/geklickt/geantwortet/Bounce/abgemeldet) plus Antworten im Posteingang.
+  const recipients = ids.length ? await db.select({ leadId: emailCampaignRecipients.leadId, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, bouncedAt: emailCampaignRecipients.bouncedAt, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, ids))) : [];
+  const replies = ids.length ? new Set((await db.select({ leadId: inboxMessages.leadId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, ids), eq(inboxMessages.blocked, false)))).map((row) => row.leadId)) : new Set<number | null>();
+  const out = new Map<number, { openTasks: number; nextTask: { title: string; dueAt: Date; kind: string } | null; lastActivityAt: Date; staleDays: number; stale: boolean; score: number; temperature: Temperature; scoreLabel: string; scoreReasons: string[] }>();
   for (const row of rows) {
     const tasks = openTasks.filter((task) => task.leadId === row.id);
     const last = activity.get(row.id) ?? row.pipelineUpdatedAt ?? row.createdAt; const stale = staleInfo({ pipelineStage: row.pipelineStage, pipelineUpdatedAt: row.pipelineUpdatedAt, createdAt: row.createdAt, lastActivityAt: last }, now, settings.staleDays, stages);
-    out.set(row.id, { openTasks: tasks.length, nextTask: tasks[0] ? { title: tasks[0].title, dueAt: tasks[0].dueAt, kind: tasks[0].kind } : null, lastActivityAt: last, staleDays: stale.days, stale: stale.stale });
+    const meta = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? (row.metadata as { lastCallDisposition?: unknown }) : {};
+    const scored = leadScore({ phone: row.phone, email: row.email, company: row.company, pipelineStage: row.pipelineStage, stages, dealValue: row.dealValue, appointmentAt: row.appointmentAt, createdAt: row.createdAt, lastActivityAt: last, stale: stale.stale, staleDays: settings.staleDays, noteCount: row.noteCount, openTasks: tasks.length, mail: mailReactionOf(recipients.filter((item) => item.leadId === row.id), replies.has(row.id)), lastCallDisposition: typeof meta.lastCallDisposition === "string" ? meta.lastCallDisposition : null }, now);
+    out.set(row.id, { openTasks: tasks.length, nextTask: tasks[0] ? { title: tasks[0].title, dueAt: tasks[0].dueAt, kind: tasks[0].kind } : null, lastActivityAt: last, staleDays: stale.days, stale: stale.stale, score: scored.score, temperature: scored.temperature, scoreLabel: scored.label, scoreReasons: scored.reasons });
   }
   return { extras: out, settings };
 }
@@ -379,6 +384,7 @@ export async function leadDetail(db: Db, tenantId: number, publicId: string, now
     source: pipelineSourceOf(lead.adPlatform), stages, adPlatform: lead.adPlatform, adCampaignId: lead.adCampaignId, adCampaignName: lead.adCampaignName, adsetName: lead.adsetName, adName: lead.adName, adFormName: lead.adFormName, listName: lead.listName, supplierName: lead.supplierName,
     pipelineStage: lead.pipelineStage, pipelineUpdatedAt: lead.pipelineUpdatedAt, ownerUserId: lead.ownerUserId, ownerName: owner, dealValue: lead.dealValue, followUpAt: lead.followUpAt, appointmentAt: lead.appointmentAt, appointment: meta.appointment ?? null, createdAt: lead.createdAt, updatedAt: lead.updatedAt, lastCallDisposition: typeof meta.lastCallDisposition === "string" ? meta.lastCallDisposition : null,
     stale: extra.stale, staleDays: extra.staleDays, lastActivityAt: extra.lastActivityAt, openTasks: extra.openTasks, noteCount: noteRows.length, fields: extraFieldsOf(lead.metadata),
+    score: extra.score, temperature: extra.temperature, scoreLabel: extra.scoreLabel, scoreReasons: extra.scoreReasons,
     tasks, messages, history,
     calls: calls.map(({ call, agent }) => ({ id: call.id, startedAt: call.startedAt, status: call.status, durationSeconds: call.durationSeconds, talkSeconds: call.talkSeconds, disposition: call.disposition, notes: call.notes, summary: call.summary, agent: agent?.split(" ")[0] ?? null, toNumber: call.toNumber })),
     campaigns: recipients.map(({ recipient, campaignName, campaignStatus }) => ({ id: recipient.id, campaignId: recipient.campaignId, campaignName, campaignStatus, status: recipient.status, sentCount: recipient.sentCount, lastSentAt: recipient.lastSentAt, openedAt: recipient.openedAt, clickedAt: recipient.clickedAt, repliedAt: recipient.repliedAt, variant: recipient.variant })),

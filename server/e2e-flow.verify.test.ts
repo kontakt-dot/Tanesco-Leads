@@ -1477,7 +1477,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.setPipelineDealValue({ publicId: zwei.publicId, dealValue: 8000 }); await owner.leadops.movePipelineStage({ publicId: zwei.publicId, stage: "kunde" });
     await db.update(leads).set({ pipelineUpdatedAt: new Date(Date.now() - 9 * 86_400_000), createdAt: new Date(Date.now() - 12 * 86_400_000) }).where(eq(leads.id, drei.id)); await db.delete(pipelineEvents).where(eq(pipelineEvents.leadId, drei.id)); await db.delete(outboundMessages).where(eq(outboundMessages.leadId, drei.id));
     const overview = await owner.leadops.pipelineOverview({ source: "kaltakquise", campaignId: "liste-erweiterungen" }); const cards = overview.stages.flatMap((stage) => stage.leads);
-    expect(cards.find((card) => card.publicId === eins.publicId)).toMatchObject({ dealValue: 12500.5, stale: false }); expect(cards.find((card) => card.publicId === eins.publicId)).not.toHaveProperty("score");
+    expect(cards.find((card) => card.publicId === eins.publicId)).toMatchObject({ dealValue: 12500.5, stale: false }); { const karte = cards.find((card) => card.publicId === eins.publicId)!; expect(typeof karte.score).toBe("number"); expect(["heiss", "warm", "kalt"]).toContain(karte.temperature); expect(karte.scoreReasons.some((reason: string) => reason.includes("Angebot über"))).toBe(true); }
     expect(cards.find((card) => card.publicId === drei.publicId)).toMatchObject({ stale: true, openTasks: 1 }); expect(cards.find((card) => card.publicId === drei.publicId)?.staleDays).toBeGreaterThanOrEqual(8); expect(overview.staleCount).toBe(1);
     expect(overview.value).toMatchObject({ openValue: 12500.5, wonValue: 8000, wonCount: 1, closeRateEuro: 100 }); expect(overview.value.weighted).toBe(Math.round(12500.5 * 0.7)); // Stufe „Termin“ = 70 %
     // eingeschlafene Karte → Aufweck-Serie (nur mit E-Mail; Drei hat keine → nicht aufgenommen, aber markiert)
@@ -1519,7 +1519,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.setEmailCampaignTemplate({ id: fromTemplate.id, isTemplate: true }); expect((await owner.leadops.getEmailCampaign({ id: fromTemplate.id })).isTemplate).toBe(true);
     // 9) Mehrfachauswahl verschieben, CSV-Export, Suche über Punkte
     const bulk = await owner.leadops.bulkMovePipelineStage({ publicIds: [frankfurt.publicId, berlin.publicId], stage: "qualifiziert" }); expect(bulk).toMatchObject({ moved: 2, label: "Qualifiziert" });
-    const csv = await owner.leadops.exportPipelineCsv({ source: "kaltakquise", campaignId: "liste-erweiterungen" }); expect(csv.rows).toBe(5); expect(csv.csv.split("\n")[0]).toContain("Lead-ID;Name;Firma;E-Mail;Telefon"); expect(csv.csv).toContain("12500,5"); expect(csv.csv).toContain("Qualifiziert");
+    const csv = await owner.leadops.exportPipelineCsv({ source: "kaltakquise", campaignId: "liste-erweiterungen" }); expect(csv.rows).toBe(5); expect(csv.csv.split("\n")[0]).toContain("Lead-ID;Name;Firma;E-Mail;Telefon"); expect(csv.csv.split("\n")[0]).toContain("Einschätzung;Punkte"); expect(csv.csv).toContain("12500,5"); expect(csv.csv).toContain("Qualifiziert");
     await owner.leadops.savePipelineSettings({ ...settings, distribution: { mode: "aus", rules: [], fallback: "reihum" }, stageCampaigns: {}, dispositionCampaigns: {}, staleCampaignId: null });
   });
 
@@ -1592,7 +1592,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const entry = (await owner.leadops.listEmailSuppressions()).items.find((row) => row.email === "erika@eins-test.example"); expect(entry).toMatchObject({ reason: "abgemeldet" }); expect(entry?.source).toContain("Antwort");
     expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)))[0].status).toBe("abgemeldet");
     // Lead-Fenster: alle Bereiche
-    const detail = await owner.leadops.pipelineLeadDetail({ publicId: prospects[0].publicId }); expect(detail.publicId).toBe(prospects[0].publicId); expect(Array.isArray(detail.history) && Array.isArray(detail.tasks) && Array.isArray(detail.calls) && Array.isArray(detail.campaigns) && Array.isArray(detail.inbox) && Array.isArray(detail.messages)).toBe(true); expect(detail).not.toHaveProperty("score");
+    const detail = await owner.leadops.pipelineLeadDetail({ publicId: prospects[0].publicId }); expect(detail.publicId).toBe(prospects[0].publicId); expect(Array.isArray(detail.history) && Array.isArray(detail.tasks) && Array.isArray(detail.calls) && Array.isArray(detail.campaigns) && Array.isArray(detail.inbox) && Array.isArray(detail.messages)).toBe(true); expect(typeof detail.score).toBe("number"); expect(["heiss", "warm", "kalt"]).toContain(detail.temperature); expect(detail.scoreReasons.length).toBeGreaterThan(0); // heiße Phasen: Einschätzung mit Gründen
     await expect(owner.leadops.pipelineLeadDetail({ publicId: sales[0].publicId })).rejects.toThrow(/nicht gefunden/);
     // Lead-Seite: Stammdaten bearbeiten (Verlauf „Kontaktdaten“), Kategorie wechseln, Vertriebskontakt löschen – Verkaufs-Lead bleibt geschützt
     const categoriesAll = await owner.leadops.listCategories(); const otherCategory = categoriesAll.find((row) => row.id !== detail.categoryId) ?? categoriesAll[0];
@@ -1724,9 +1724,18 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(imported.created).toBe(2);
     const contacts = await owner.leadops.emailLeads({ listName: "Nur-Mail-Liste" }); expect(contacts.items).toHaveLength(2); expect(contacts.items.every((item) => item.inPipeline === false)).toBe(true);
     const emailBoardBefore = (await owner.leadops.pipelineOverview({ source: "email" })).totals.leads;
-    const pushed = await owner.leadops.pushLeadsToPipeline({ leadIds: [contacts.items[0].id], stage: "kontaktiert" }); expect(pushed).toMatchObject({ moved: 1, stage: "kontaktiert" });
+    const pushed = await owner.leadops.pushLeadsToPipeline({ leadIds: [contacts.items[0].id], stage: "kontaktiert" }); expect(pushed).toMatchObject({ moved: 1, switched: 0, restaged: 0, already: 0, stage: "kontaktiert", target: "email", targetName: "E-Mail-Kampagne" });
     const moved = (await db.select().from(leads).where(eq(leads.id, contacts.items[0].id)))[0]; expect(moved.inPipeline).toBe(true); expect(moved.adPlatform).toBe("email"); expect(moved.pipelineStage).toBe("kontaktiert");
     expect((await owner.leadops.pipelineOverview({ source: "email" })).totals.leads).toBe(emailBoardBefore + 1);
+    // Kontakt, der schon in einer anderen Pipeline steht (Kaltakquise), wird in die E-Mail-Kampagne verschoben – vorher war der Knopf dann einfach aus
+    const coldImport = await owner.leadops.importColdList({ listName: "Schon-Kalt-Liste", toPipeline: true, rows: [{ firstName: "Paula", lastName: "Kalt", email: "paula@schon-kalt.example", phone: "+49 170 9999999" }], ownerUserIds: [] }); expect(coldImport.created).toBe(1);
+    const coldContact = (await owner.leadops.emailLeads({ listName: "Schon-Kalt-Liste" })).items[0]; expect(coldContact.inPipeline).toBe(true); expect(coldContact.adPlatform).toBe("kaltakquise");
+    const switched = await owner.leadops.pushLeadsToPipeline({ leadIds: [coldContact.id], stage: "qualifiziert" }); expect(switched).toMatchObject({ moved: 0, switched: 1, restaged: 0, already: 0, stage: "qualifiziert", target: "email" });
+    const switchedRow = (await db.select().from(leads).where(eq(leads.id, coldContact.id)))[0]; expect(switchedRow.adPlatform).toBe("email"); expect(switchedRow.pipelineStage).toBe("qualifiziert");
+    expect((await owner.leadops.pipelineHistory({ publicId: switchedRow.publicId })).some((event) => event.note === "Aus der Pipeline „Kaltakquise“ in die Pipeline „E-Mail-Kampagne“ verschoben")).toBe(true);
+    const restaged = await owner.leadops.pushLeadsToPipeline({ leadIds: [coldContact.id], stage: "termin" }); expect(restaged).toMatchObject({ moved: 0, switched: 0, restaged: 1, already: 0 });
+    const back = await owner.leadops.pushLeadsToPipeline({ leadIds: [coldContact.id], stage: "unbekannt", target: "kaltakquise" }); expect(back).toMatchObject({ switched: 1, target: "kaltakquise", targetName: "Kaltakquise", stage: "neu" });
+    expect((await db.select().from(leads).where(eq(leads.id, coldContact.id)))[0].adPlatform).toBe("kaltakquise");
     const deleted = await owner.leadops.deleteEmailLeads({ leadIds: [contacts.items[1].id] }); expect(deleted.deleted).toBe(1);
     expect((await owner.leadops.emailLeads({ listName: "Nur-Mail-Liste" })).items).toHaveLength(1);
     // Glocke: die Aktionen oben stehen im Tagesverlauf, gebündelt je Art
