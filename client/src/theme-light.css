@@ -1203,6 +1203,10 @@ html:not(.dark) .territory-chip { border: 1px solid #e8ecf1 !important; backgrou
 html:not(.dark) .territory-chip i { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .territory-chip small { color: #4b5568 !important; }
 html:not(.dark) .territory-toggle { color: #4b5568 !important; }
+html:not(.dark) .territory-levels .dashboard-segments button small { background: #f8fafb !important; }
+html:not(.dark) .territory-levels .dashboard-segments button.active small { background: #f3f6f8 !important; }
+html:not(.dark) .territory-level-note { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .territory-table b.is-hotter, html:not(.dark) .territory-plz-list span.is-hotter { color: #111318 !important; }
 html:not(.dark) .territory-state { fill: #0f172a !important; stroke: #0f172a !important; }
 html:not(.dark) .territory-tooltip { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #0f172a !important; box-shadow: 0 10px 30px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .territory-tooltip strong { color: #0f172a !important; }
@@ -2624,3 +2628,7 @@ html:not(.dark) .territory-ai-head span, html:not(.dark) .territory-ai-busy { co
 html:not(.dark) .territory-ai-head small, html:not(.dark) .territory-ai-area small { color: #64748b !important; }
 html:not(.dark) .territory-ai-area em, html:not(.dark) .territory-ai-notes em { color: #b45309 !important; }
 html:not(.dark) .territory-ai-check { accent-color: #bc001d !important; }
+html:not(.dark) .territory-level-note { background: #f8fafc !important; border-color: #e8ecf1 !important; color: #334155 !important; }
+html:not(.dark) .territory-levels .dashboard-segments button small { background: rgba(15, 23, 42, .08) !important; }
+html:not(.dark) .territory-levels .dashboard-segments button.active small { background: rgba(255, 255, 255, .25) !important; }
+html:not(.dark) .territory-table b.is-hotter, html:not(.dark) .territory-plz-list span.is-hotter { color: #7e22ce !important; }
