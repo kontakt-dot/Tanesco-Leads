@@ -298,9 +298,10 @@ export async function simulateCall(db: Db, tenantId: number, input: { transcript
   return { callId, ...result };
 }
 
-export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; limit?: number } = {}) {
+export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; limit?: number } = {}) {
   const conditions = [eq(callRecords.tenantId, tenantId)];
   if (filter.decision) conditions.push(eq(callRecords.decision, filter.decision as CallRecord["decision"]));
+  if (filter.agentName) conditions.push(eq(callRecords.agentName, filter.agentName));
   if (filter.status) conditions.push(eq(callRecords.status, filter.status as CallRecord["status"]));
   if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign));
   const rows = await db.select({ call: callRecords, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).where(and(...conditions)).orderBy(desc(callRecords.createdAt)).limit(filter.limit ?? 200);

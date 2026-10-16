@@ -1922,4 +1922,41 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     } finally { delete sipgateTestHooks.fetchImpl; }
   }, 20000);
 
+  it("38. Auswertung je Agent (Gespräche → Agenten) und Rohdaten je Kategorie („was wurde daraus“)", async () => {
+    // Agenten: alle Dialer-Anrufe der bisherigen Tests (Rohdaten-Liste, Kaltakquise, sipgate) – der Inhaber hat sie geführt
+    const all = await owner.leadops.dialerAgentReport({ period: "alle" });
+    expect(all.agents.length).toBeGreaterThan(0);
+    const me = all.agents.find((agent) => agent.userId === ownerUserId)!;
+    expect(me).toBeTruthy();
+    expect(me.calls).toBeGreaterThanOrEqual(3); expect(me.reached).toBeGreaterThanOrEqual(2); expect(me.reachRate).not.toBeNull();
+    expect(me.appointments).toBeGreaterThanOrEqual(1); // Test 18: „verkauft“
+    expect(me.interested).toBeGreaterThanOrEqual(1); // Test 18: „interessiert“
+    expect(me.averageScore).not.toBeNull(); expect(me.evaluated).toBeGreaterThanOrEqual(2); expect(me.approved).toBeGreaterThanOrEqual(1);
+    expect(all.totals.calls).toBe(all.agents.reduce((sum, agent) => sum + agent.calls, 0));
+    expect(all.agents[0].appointments).toBeGreaterThanOrEqual(all.agents[all.agents.length - 1].appointments); // nach Terminen sortiert
+    const today = await owner.leadops.dialerAgentReport({ period: "heute" });
+    expect(today.totals.calls).toBeLessThanOrEqual(all.totals.calls); expect(today.totals.calls).toBeGreaterThan(0);
+    const messe = all.campaigns.find((campaign) => campaign.name === "Messe abtelefonieren")!;
+    expect(messe).toBeTruthy();
+    const perCampaign = await owner.leadops.dialerAgentReport({ period: "alle", campaignId: messe.id });
+    expect(perCampaign.totals.calls).toBe(3); expect(perCampaign.totals.appointments).toBe(1); expect(perCampaign.totals.interested).toBe(1);
+    // Gesprächsliste nach Agent filtern
+    const mine = await owner.leadops.listCalls({ agentName: me.name });
+    expect(mine.length).toBeGreaterThan(0); expect(mine.every((call) => call.agentName === me.name)).toBe(true);
+    expect((await owner.leadops.listCalls({ agentName: "Gibt es nicht" })).length).toBe(0);
+    await expect(invitee.leadops.dialerAgentReport({})).rejects.toThrow("vorbehalten");
+
+    // Rohdaten je Kategorie: Test 18 hat aus der WP-Liste drei Leads gemacht (zwei verkauft/zugewiesen), zwei Kontakte wurden erreicht, ein Termin
+    const report = await owner.leadops.rawCategoryReport({});
+    const wp = report.categories.find((row) => row.categoryId === S.wp.id)!;
+    expect(wp).toBeTruthy();
+    expect(wp.total).toBeGreaterThanOrEqual(3); expect(wp.leads).toBeGreaterThanOrEqual(3); expect(wp.leadVerkauft).toBeGreaterThanOrEqual(2);
+    expect(wp.angerufen).toBeGreaterThanOrEqual(2); expect(wp.erreicht).toBeGreaterThanOrEqual(2); expect(wp.termine).toBeGreaterThanOrEqual(1); expect(wp.interessiert).toBeGreaterThanOrEqual(1);
+    expect(wp.leadRate).not.toBeNull(); expect(wp.saleRate).not.toBeNull();
+    expect(report.totals.total).toBe(report.categories.reduce((sum, row) => sum + row.total, 0));
+    expect(report.totals.leads).toBe(report.categories.reduce((sum, row) => sum + row.leads, 0));
+    expect((await owner.leadops.rawCategoryReport({ batchId: 999_999 })).categories).toEqual([]);
+    await expect(invitee.leadops.rawCategoryReport({})).rejects.toThrow("vorbehalten");
+  });
+
 });

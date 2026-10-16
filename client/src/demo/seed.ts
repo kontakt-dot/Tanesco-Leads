@@ -493,6 +493,61 @@ export function buildSeed(): Store {
     insert(store, "pipelineNotes", { tenantId: tenant.id, leadId: item.lead.id, authorUserId: item.agent?.id ?? null, text, source: "gespraech", dialerCallId: call.id, createdAt: endedAt });
     insert(store, "leadStatusEvents", { tenantId: tenant.id, leadId: item.lead.id, previousStatus: null, nextStatus: item.lead.status, note: text.slice(0, 2000), actorUserId: item.agent?.id ?? null, occurredAt: endedAt });
   });
+  // Rohdaten-Auswertung („was wurde daraus“) + Agenten-Auswertung: eine zweite Liste, die drei Agenten in den letzten zwei Wochen abtelefoniert haben –
+  // je Kontakt ein Ergebnis, einige wurden Leads (davon zwei verkauft), einige verworfen, zwei doppelt.
+  const lena = store.tables.users.find((row) => row.email === "l.vogt@tanesco.digital");
+  const workedBatch = insert(store, "rawBatches", { tenantId: tenant.id, name: "Handwerk Rhein-Main 10-2026.csv", categoryId: pv.id, categoryIds: [pv.id, wp.id, fen.id], supplierId: null, sourceName: "Branchenbuch", mapping: { firstName: "Vorname", lastName: "Nachname", company: "Firma", phone: "Telefon", email: "E-Mail", postcode: "PLZ", city: "Ort", category: "Sparte" }, rowCount: 18, createdByUserId: owner.id, createdAt: at(14, 8, 30) });
+  // [Vorname, Nachname, Firma, PLZ, Ort, Kategorie, Agent, Tage her, Ergebnis, Gesprächssekunden, Bewertung, was aus dem Lead wurde]
+  type Worked = [string, string, string, string, string, Row, Row | undefined, number, string | null, number, number | null, "verkauft" | "offen" | "reklamiert" | null];
+  const worked: Worked[] = [
+    ["Jonas", "Becker", "Becker Dach GmbH", "60311", "Frankfurt", pv, taner, 12, "verkauft", 241, 82, "verkauft"],
+    ["Miriam", "Schulz", "Schulz Elektrotechnik", "65185", "Wiesbaden", pv, taner, 11, "interessiert", 168, 71, "offen"],
+    ["Tim", "Krüger", "Krüger Haustechnik", "63065", "Offenbach", wp, francesco, 11, "verkauft", 203, 77, "verkauft"],
+    ["Hanna", "Neumann", "Neumann Fensterbau", "64283", "Darmstadt", fen, lena, 10, "interessiert", 142, 66, "offen"],
+    ["Lukas", "Schmitt", "Schmitt Solar", "61348", "Bad Homburg", pv, francesco, 10, "wiedervorlage", 58, null, null],
+    ["Nadine", "Hoffmann", "Hoffmann Bedachungen", "65428", "Rüsselsheim", pv, taner, 9, "kein_interesse", 44, 31, null],
+    ["Ömer", "Kaya", "Kaya Heizungsbau", "60486", "Frankfurt", wp, lena, 9, "nicht_erreicht", 0, null, null],
+    ["Sven", "Brandt", "Brandt Fenster & Türen", "63450", "Hanau", fen, francesco, 8, "interessiert", 133, 68, "reklamiert"],
+    ["Katrin", "Lorenz", "Lorenz Energie", "65462", "Ginsheim", pv, taner, 8, "verkauft", 276, 88, "verkauft"],
+    ["David", "Wolf", "Wolf Dachdeckerei", "60599", "Frankfurt", pv, lena, 7, "wiedervorlage", 71, null, null],
+    ["Elif", "Demir", "Demir Wärmetechnik", "64293", "Darmstadt", wp, francesco, 7, "kein_interesse", 39, 28, null],
+    ["Paul", "Richter", "Richter Montagen", "65719", "Hofheim", fen, taner, 6, "nicht_erreicht", 0, null, null],
+    ["Lea", "Koch", "Koch Solartechnik", "61169", "Friedberg", pv, lena, 5, "interessiert", 151, 64, "offen"],
+    ["Florian", "Lange", "Lange Haustechnik", "63303", "Dreieich", wp, taner, 4, "wiedervorlage", 63, null, null],
+    ["Sophie", "Krause", "Krause Dach", "60594", "Frankfurt", pv, francesco, 3, "falsche_nummer", 0, null, null],
+    ["Marco", "Vogel", "Vogel Fensterwerk", "64347", "Griesheim", fen, lena, 3, "kein_interesse", 52, 35, null],
+    ["Anja", "Peters", "Peters Energieberatung", "65929", "Frankfurt", pv, taner, 2, "interessiert", 189, 73, "offen"],
+    ["Ralf", "Schäfer", "Schäfer Heizung", "63225", "Langen", wp, francesco, 2, "nicht_erreicht", 0, null, null],
+  ];
+  const workedDisposition: Record<string, string> = { verkauft: "Verkauft / Termin", interessiert: "Interessiert – Angebot gewünscht", wiedervorlage: "Wiedervorlage", nicht_erreicht: "Nicht erreicht", kein_interesse: "Kein Interesse", falsche_nummer: "Falsche Nummer" };
+  worked.forEach(([firstName, lastName, company, postcode, city, category, agent, daysAgo, disposition, talk, score, leadOutcome], index) => {
+    const becameLead = leadOutcome !== null;
+    const discarded = disposition === "kein_interesse" || disposition === "falsche_nummer";
+    const phone = `+496990${String(1000 + index * 37).slice(-4)}${String(index + 10)}`;
+    const contact = insert(store, "rawContacts", { tenantId: tenant.id, batchId: workedBatch.id, categoryId: category.id, firstName, lastName, company, phone, email: `${firstName.toLowerCase().replace(/ö/g, "oe")}@${company.toLowerCase().replace(/[^a-z]/g, "")}.example`, postcode, city, country: "DE", data: { Sparte: category.shortcode }, status: becameLead ? "konvertiert" : discarded ? "verworfen" : "in_liste", leadId: null, duplicateOfLeadId: null, note: discarded ? `Anruf-Ergebnis: ${workedDisposition[disposition ?? ""] ?? disposition}` : null, createdAt: at(14, 8, 30), updatedAt: at(daysAgo, 11) });
+    const startedAt = at(daysAgo, 9 + (index % 7), 5 + (index * 7) % 50); const reached = talk > 0; const connectedAt = reached ? new Date(startedAt.getTime() + 7_000) : null; const endedAt = new Date(startedAt.getTime() + (reached ? talk * 1000 + 7_000 : 22_000));
+    let leadId: number | null = null;
+    if (becameLead) {
+      const lead = insert(store, "leads", { tenantId: tenant.id, publicId: randomId(8).toUpperCase(), categoryId: category.id, firstName, lastName, email: null, phone, postcode, city, country: "DE", company, supplierId: null, supplierName: "Callcenter (Rohdaten)", assignedUserId: leadOutcome === "verkauft" ? memberUsers[index % 3]?.userId ?? null : null, status: leadOutcome === "verkauft" ? "zugewiesen" : leadOutcome === "reklamiert" ? "reklamiert" : "genehmigt", cost: "0.00", metadata: { source: "rohdaten", rawBatch: workedBatch.name }, assignedAt: leadOutcome === "verkauft" ? new Date(endedAt.getTime() + 3_600_000) : null, createdAt: endedAt, updatedAt: endedAt });
+      leadId = lead.id;
+      update(store, "rawContacts", (row) => row.id === contact.id, { leadId: lead.id });
+      insert(store, "leadStatusEvents", { tenantId: tenant.id, leadId: lead.id, previousStatus: null, nextStatus: "genehmigt", note: `Aus Rohdaten übernommen – Anruf-Ergebnis: ${workedDisposition[disposition ?? ""] ?? disposition}`, actorUserId: agent?.id ?? null, occurredAt: endedAt });
+    }
+    let callRecordId: number | null = null;
+    if (reached) {
+      const record = insert(store, "callRecords", { tenantId: tenant.id, provider: "dialer", externalCallId: `dialer-worked-${index + 1}`, leadId, rawContactId: contact.id, phone, agentName: agent?.name ?? null, campaign: "Kaltakquise: Handwerk Rhein-Main", direction: "ausgehend", startedAt, durationSeconds: talk, recordingUrl: `https://simulation.local/recordings/worked-${index + 1}.mp3`, consent: true, consentSource: "Agent hat Einwilligung bestätigt", status: score === null ? "transkribiert" : "bewertet", transcript: null, score, verdict: score === null ? null : score >= 70 ? "verkaufbar" : score >= 40 ? "nachfassen" : "nicht_verkaufbar", criteriaScores: [], summary: becameLead ? `${company}: Interesse an Kundenanfragen (${category.name}), ${disposition === "verkauft" ? "Termin vereinbart" : "Angebot gewünscht"}.` : disposition === "kein_interesse" ? `${company}: aktuell kein Bedarf.` : `${company}: Rückruf gewünscht.`, redFlags: [], nextStep: disposition === "verkauft" ? "Termin vorbereiten." : disposition === "interessiert" ? "Angebot senden." : null, decision: score === null ? "offen" : score >= 70 ? "freigegeben" : score >= 40 ? "pruefen" : "zurueckgewiesen", decidedBy: score === null ? null : "automatisch", reviewedByUserId: null, reviewedAt: null, reviewNote: null, error: null, payload: null, createdAt: endedAt, updatedAt: endedAt });
+      callRecordId = record.id;
+    }
+    insert(store, "dialerCalls", { tenantId: tenant.id, campaignId: null, queueItemId: null, leadId, rawContactId: contact.id, agentUserId: agent?.id ?? null, mode: "power", provider: "simulation", providerCallSid: `CAworked${index + 1}`, fromNumber: "+4969900000", toNumber: phone, status: reached ? "beendet" : disposition === "falsche_nummer" ? "fehlgeschlagen" : "keine_antwort", amdResult: reached ? "human" : null, startedAt, answeredAt: connectedAt, connectedAt, endedAt, durationSeconds: Math.round((endedAt.getTime() - startedAt.getTime()) / 1000), talkSeconds: reached ? talk : 0, recordingSid: null, recordingUrl: reached ? `https://simulation.local/recordings/worked-${index + 1}.mp3` : null, consentAt: connectedAt, disposition, notes: null, autoNotes: true, summary: null, summarySource: null, summaryAt: null, callRecordId, costCents: null, createdAt: startedAt, updatedAt: endedAt });
+    if (disposition === "nicht_erreicht" && index % 2 === 0) { // zweiter Versuch, wieder nicht erreicht
+      const retryAt = at(Math.max(0, daysAgo - 1), 15, 10 + index);
+      insert(store, "dialerCalls", { tenantId: tenant.id, campaignId: null, queueItemId: null, leadId: null, rawContactId: contact.id, agentUserId: agent?.id ?? null, mode: "power", provider: "simulation", providerCallSid: `CAworked${index + 1}b`, fromNumber: "+4969900000", toNumber: phone, status: "anrufbeantworter", amdResult: "machine", startedAt: retryAt, answeredAt: null, connectedAt: null, endedAt: new Date(retryAt.getTime() + 25_000), durationSeconds: 25, talkSeconds: 0, recordingSid: null, recordingUrl: null, consentAt: null, disposition: "nicht_erreicht", notes: null, autoNotes: true, summary: null, summarySource: null, summaryAt: null, callRecordId: null, costCents: null, createdAt: retryAt, updatedAt: retryAt });
+    }
+  });
+  // zwei Dubletten in derselben Liste (schon als Lead vorhanden)
+  [["Peter", "Hansen", "Hansen Bedachungen", "60311", "Frankfurt"], ["Sabine", "Koch", "Koch Solartechnik", "65183", "Wiesbaden"]].forEach(([firstName, lastName, company, postcode, city], index) => insert(store, "rawContacts", { tenantId: tenant.id, batchId: workedBatch.id, categoryId: pv.id, firstName, lastName, company, phone: coldLeads[index]?.phone ?? null, email: null, postcode, city, country: "DE", data: { Sparte: "PV" }, status: "duplikat", leadId: null, duplicateOfLeadId: coldLeads[index]?.id ?? null, note: "Bereits als Vertriebskontakt vorhanden", createdAt: at(14, 8, 30), updatedAt: at(14, 8, 30) }));
+  update(store, "rawBatches", (row) => row.id === workedBatch.id, { rowCount: worked.length + 2 });
+
   // Live-Bild: eine Power-Kampagne mit Wählliste, Taner gerade im Gespräch, Francesco bereit – und drei heute beendete Gespräche zum Reinhören
   const liveCampaign = insert(store, "dialerCampaigns", { tenantId: tenant.id, name: "Dachdecker Hessen – Nachfassen", mode: "power", status: "aktiv", leadFilter: { categoryIds: [], statuses: [], leadsEnabled: true }, callerNumberId: null, maxAttempts: 3, retryMinutes: 240, wrapUpSeconds: 20, pacingRatio: null, callWindow: null, script: "Guten Tag, hier {{agent}} von Tanesco Digital. Wir hatten Ihnen letzte Woche Unterlagen zu Kundenanfragen geschickt – passt es gerade für zwei Minuten?", autoNotes: true, createdByUserId: owner.id, createdAt: at(1, 9), updatedAt: at(0, 8) });
   const liveLeads = coldLeads.slice(0, 8).filter((lead) => lead.phone);

@@ -1891,3 +1891,34 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
   .builder-grid>section:last-child{position:sticky;top:12px}
   .builder-preview{height:max(420px,calc(100vh - 150px))}
 }
+
+/* ---------- Gespräche: Agenten-Auswertung ---------- */
+.agent-totals{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.agent-total{display:grid;gap:2px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02)}
+.agent-total strong{font-size:20px;line-height:1.1;color:#fff}.agent-total small{font-size:11px;color:#8f93af}
+.agent-best{display:flex;flex-wrap:wrap;gap:6px}
+.agent-best-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid rgba(129,120,255,.3);background:rgba(129,120,255,.1);font-size:12px}
+.agent-best-chip small{color:#a5a1d7;font-size:11px}.agent-best-chip b{color:#fff;font-weight:600}.agent-best-chip em{font-style:normal;color:#c9c5f5}
+.operations-panel .table-wrap table.agent-table{min-width:0}.agent-table th,.agent-table td{padding-left:8px;padding-right:8px}.agent-table td.num{white-space:nowrap}.agent-table td small{display:block;color:#8f93af;font-size:10.5px;font-weight:400}
+.agent-rank{color:#8f93af;font-weight:700}
+.agent-name{display:inline-flex;align-items:center;gap:8px}.agent-name strong{display:block;color:#fff}.agent-name small{display:block;font-size:10.5px;color:#8f93af}
+.agent-avatar{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:999px;background:linear-gradient(135deg,#8278ff,#45d4df);color:#0b0c1e;font-size:11px;font-weight:800;flex:none}
+.agent-bar{display:block;width:70px;height:4px;margin-top:3px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}.agent-bar span{display:block;height:100%;border-radius:999px}
+@media(max-width:1100px){.agent-totals{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:640px){.agent-totals{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* ---------- Rohdaten: Was wurde daraus – je Kategorie ---------- */
+.operations-panel .table-wrap table.raw-report{min-width:0}.raw-report th,.raw-report td{padding-left:8px;padding-right:8px}.raw-report td.num{white-space:nowrap}.raw-report td small{display:block;color:#8f93af;font-size:10.5px;font-weight:400}
+.raw-report-total td{border-top:2px solid rgba(255,255,255,.14);background:rgba(255,255,255,.025)}
+.raw-flow-cell{min-width:120px}
+.raw-flow{position:relative;display:block;width:110px;height:10px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06)}
+.raw-flow span{position:absolute;left:0;top:0;height:100%;border-radius:999px}
+.raw-flow .is-total,.raw-flow-legend .is-total{background:rgba(255,255,255,.1)}.raw-flow .is-called,.raw-flow-legend .is-called{background:#6f7ad6}.raw-flow .is-reached,.raw-flow-legend .is-reached{background:#45d4df}.raw-flow .is-lead,.raw-flow-legend .is-lead{background:#a78bfa}.raw-flow .is-sold,.raw-flow-legend .is-sold{background:#34d399}
+.raw-flow-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0;padding:10px 16px 12px;font-size:11px;color:#8f93af}.raw-flow-legend span{display:inline-flex;align-items:center;gap:5px}.raw-flow-legend i{display:inline-block;width:10px;height:10px;border-radius:3px}
+/* 14-Zoll: beide Auswertungstabellen passen ohne Querscrollen – Kopfzeilen dürfen umbrechen, Nebenspalten weichen */
+@media(min-width:761px) and (max-width:1480px){
+  .agent-table th,.raw-report th,.agent-table td,.raw-report td{padding-left:6px;padding-right:6px}
+  .agent-table th:nth-child(8),.agent-table td:nth-child(8),.agent-table th:nth-child(12),.agent-table td:nth-child(12){display:none} /* Wiedervorlage und „Zuletzt“ weichen */
+  .agent-bar{width:56px}
+  .raw-report th:nth-child(4),.raw-report td:nth-child(4),.raw-report th:nth-child(9),.raw-report td:nth-child(9){display:none}
+  .raw-flow-cell{min-width:96px}.raw-flow{width:88px}
+}

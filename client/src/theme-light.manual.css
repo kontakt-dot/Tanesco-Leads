@@ -885,3 +885,18 @@ html:not(.dark) .flux-table.campaign-list td.campaign-actions { background: #fff
 html:not(.dark) .email-leads-table th:nth-child(2), html:not(.dark) .email-leads-table td:nth-child(2) { background: #ffffff !important; box-shadow: 10px 0 14px -10px rgba(16, 24, 40, .12) !important; }
 html:not(.dark) .email-leads-table tr:hover td:nth-child(2) { background: #f7f8fa !important; }
 html:not(.dark) .email-leads-table tr.is-picked td:nth-child(2), html:not(.dark) .email-leads-table tr.is-picked:hover td:nth-child(2) { background: #f5f3ff !important; }
+html:not(.dark) .agent-total { border-color: #e8ecf1 !important; background: #ffffff !important; }
+html:not(.dark) .agent-total strong { color: #101828 !important; }
+html:not(.dark) .agent-total small, html:not(.dark) .agent-table td small, html:not(.dark) .raw-report td small, html:not(.dark) .agent-rank, html:not(.dark) .agent-name small, html:not(.dark) .raw-flow-legend { color: #667085 !important; }
+html:not(.dark) .agent-best-chip { border-color: #f3c0c4 !important; background: #fff1f2 !important; }
+html:not(.dark) .agent-best-chip small { color: #9f1239 !important; }
+html:not(.dark) .agent-best-chip b { color: #101828 !important; }
+html:not(.dark) .agent-best-chip em { color: #475467 !important; }
+html:not(.dark) .agent-name strong { color: #101828 !important; }
+html:not(.dark) .agent-avatar { background: linear-gradient(135deg, #bc001d, #fb2c36) !important; color: #ffffff !important; }
+html:not(.dark) .agent-bar, html:not(.dark) .raw-flow, html:not(.dark) .raw-flow .is-total, html:not(.dark) .raw-flow-legend .is-total { background: #e9edf3 !important; }
+html:not(.dark) .raw-report-total td { border-top-color: #d0d5dd !important; background: #f8fafb !important; }
+html:not(.dark) .agent-table .text-emerald-200, html:not(.dark) .raw-report .text-emerald-200 { color: #15803d !important; }
+html:not(.dark) .agent-table .text-amber-200 { color: #b45309 !important; }
+html:not(.dark) .agent-table .text-red-200 { color: #b91c1c !important; }
+html:not(.dark) .raw-report .text-violet-200 { color: #6d28d9 !important; }

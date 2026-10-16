@@ -253,7 +253,7 @@ describe("Rohdaten im Chat-Build", () => {
   it("lädt eine Liste hoch, erkennt Doppel, telefoniert sie ab und macht qualifizierte Kontakte zu Leads", async () => {
     resetStore();
     const before = await call("leadops.listRawBatches");
-    expect(before.length).toBe(1); expect(before[0].counts.duplikat).toBe(1);
+    expect(before.length).toBe(2); expect(before.find((batch: any) => batch.name.startsWith("Messe")).counts.duplikat).toBe(1); // Messe-Liste + abtelefonierte Liste „Handwerk Rhein-Main“
     const cat = (await call("leadops.listCategories"))[0];
     const leadsBefore = getStore().tables.leads.length;
     const created = await call("leadops.createRawBatch", { name: "Test-Liste", categoryId: cat.id, rows: [{ firstName: "Rita", lastName: "Roh", phone: "+49 30 4455667", city: "Berlin", data: { Dach: "Sattel" } }, { firstName: "Alexander", lastName: "Weber", phone: "+49 151 1000000" }, { firstName: "Leer", lastName: "Ohne" }] });
@@ -281,7 +281,7 @@ describe("Rohdaten im Chat-Build", () => {
     expect(lead.status).not.toBe("neu"); expect(lead.metadata).toMatchObject({ Dach: "Sattel", rawBatch: "Test-Liste" });
     expect(getStore().tables.dialerCalls.find((row) => row.id === next.instruction.callId)!.leadId).toBe(lead.id);
     // manuelle Übernahme und Verwerfen
-    const seeded = before[0];
+    const seeded = before.find((batch: any) => batch.name.startsWith("Messe")); // die Messe-Liste hat noch offene Kontakte
     const open = (await call("leadops.listRawContacts", { batchId: seeded.id, status: "neu" }))[0];
     const manual = await call("leadops.convertRawContact", { id: open.id, initialStatus: "neu" });
     expect(manual.publicId).toBeTruthy();
@@ -1443,3 +1443,44 @@ describe("sipgate als Telefonie-Anbieter (Chat-Build)", () => {
   });
 });
 
+
+describe("Agenten-Auswertung und Rohdaten je Kategorie (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+  it("Gespräche → Agenten: drei Agenten mit Anrufen, Erreicht-Quote, Terminen und Ø Punkten; Zeitraum und Kampagne filtern; Liste nach Agent", async () => {
+    const report = await call("leadops.dialerAgentReport", { period: "30" });
+    const names = report.agents.map((agent: any) => agent.name);
+    expect(names).toEqual(expect.arrayContaining(["Taner Tanesco", "Francesco Rossi", "Lena Vogt"]));
+    const taner = report.agents.find((agent: any) => agent.name === "Taner Tanesco");
+    expect(taner.calls).toBeGreaterThanOrEqual(8); expect(taner.appointments).toBeGreaterThanOrEqual(3); expect(taner.averageScore).toBeGreaterThan(60); expect(taner.reachRate).not.toBeNull();
+    expect(report.agents[0].name).toBe("Taner Tanesco"); // meiste Termine zuerst
+    const lena = report.agents.find((agent: any) => agent.name === "Lena Vogt");
+    expect(lena.notReached).toBeGreaterThanOrEqual(1); expect(lena.interested).toBeGreaterThanOrEqual(2);
+    expect(report.totals.calls).toBe(report.agents.reduce((sum: number, agent: any) => sum + agent.calls, 0));
+    expect(report.totals.appointments).toBeGreaterThanOrEqual(4);
+    const today = await call("leadops.dialerAgentReport", { period: "heute" });
+    expect(today.totals.calls).toBeLessThan(report.totals.calls); // nur die Gespräche von heute
+    const live = report.campaigns.find((campaign: any) => campaign.name === "Dachdecker Hessen – Nachfassen");
+    const perCampaign = await call("leadops.dialerAgentReport", { period: "alle", campaignId: live.id });
+    expect(perCampaign.totals.calls).toBe(4); // drei beendete + das laufende Gespräch
+    expect(perCampaign.agents.some((agent: any) => agent.name === "Lena Vogt")).toBe(false);
+    const calls = await call("leadops.listCalls", { agentName: "Francesco Rossi" });
+    expect(calls.length).toBeGreaterThanOrEqual(4); expect(calls.every((row: any) => row.agentName === "Francesco Rossi")).toBe(true);
+  });
+  it("Rohdaten: je Kategorie Kontakte → angerufen → erreicht → Ergebnisse → Leads → verkauft, auch nur für eine Liste", async () => {
+    const report = await call("leadops.rawCategoryReport", {});
+    const pv = report.categories.find((row: any) => row.shortcode === "PV");
+    expect(pv.total).toBeGreaterThanOrEqual(13); expect(pv.angerufen).toBeGreaterThanOrEqual(8); expect(pv.erreicht).toBeGreaterThanOrEqual(6);
+    expect(pv.termine).toBe(2); expect(pv.leads).toBe(5); expect(pv.leadVerkauft).toBe(2); expect(pv.leadRate).not.toBeNull(); expect(pv.saleRate).toBe(40);
+    const fen = report.categories.find((row: any) => row.shortcode === "FEN");
+    expect(fen).toMatchObject({ total: 4, leads: 2, leadReklamiert: 1, keinInteresse: 1, nichtErreicht: 1 });
+    expect(report.totals.total).toBe(report.categories.reduce((sum: number, row: any) => sum + row.total, 0));
+    expect(report.totals.duplikat).toBeGreaterThanOrEqual(3);
+    const batches = await call("leadops.listRawBatches");
+    const worked = batches.find((batch: any) => batch.name === "Handwerk Rhein-Main 10-2026.csv");
+    expect(worked.counts).toMatchObject({ total: 20, konvertiert: 8, duplikat: 2 });
+    const only = await call("leadops.rawCategoryReport", { batchId: worked.id });
+    expect(only.totals.total).toBe(20); expect(only.totals.leads).toBe(8); expect(only.totals.leadVerkauft).toBe(3); expect(only.totals.termine).toBe(3);
+    const messe = batches.find((batch: any) => batch.name === "Messe Hannover 09-2026.xlsx");
+    expect((await call("leadops.rawCategoryReport", { batchId: messe.id })).totals.angerufen).toBe(0);
+  });
+});

@@ -694,6 +694,70 @@ export async function liveBoard(db: Db, tenantId: number, now = new Date()) {
   return { now, provider: settings.provider, agents: [...agents, ...offline], campaigns, recent, totals };
 }
 
+/**
+ * Auswertung je Agent („wer macht was“): Anrufe, Erreicht-Quote, Gesprächszeit, Ergebnisse (Termine, Interessiert,
+ * Wiedervorlagen, kein Interesse), KI-Bewertung (Ø Punkte, Freigaben, Zurückweisungen) – für einen Zeitraum und
+ * wahlweise eine Kampagne. Grundlage sind die Dialer-Anrufe; Gespräche ohne Dialer (Test, Import) zählen über den
+ * Agentennamen dazu. Reihenfolge: Termine, dann Interessiert, dann Ø Punkte.
+ */
+export type AgentReportPeriod = "heute" | "7" | "30" | "alle";
+export async function agentReport(db: Db, tenantId: number, input: { period?: AgentReportPeriod; campaignId?: number | null; now?: Date } = {}) {
+  const now = input.now ?? new Date();
+  const period: AgentReportPeriod = input.period ?? "30";
+  const from = period === "heute" ? new Date(now.getFullYear(), now.getMonth(), now.getDate()) : period === "7" ? new Date(now.getTime() - 7 * 86_400_000) : period === "30" ? new Date(now.getTime() - 30 * 86_400_000) : null;
+  const where = [eq(dialerCalls.tenantId, tenantId)];
+  if (from) where.push(gte(dialerCalls.startedAt, from));
+  if (input.campaignId) where.push(eq(dialerCalls.campaignId, input.campaignId));
+  const rows = await db.select({ call: dialerCalls, score: callRecords.score, verdict: callRecords.verdict, decision: callRecords.decision, agent: users.name })
+    .from(dialerCalls).leftJoin(callRecords, eq(callRecords.id, dialerCalls.callRecordId)).leftJoin(users, eq(users.id, dialerCalls.agentUserId))
+    .where(and(...where)).orderBy(desc(dialerCalls.startedAt)).limit(20_000);
+  // Gespräche ohne Dialer-Anruf (Test, Import): nur über den Namen zuordenbar, ohne Kampagnenfilter
+  const looseWhere = [eq(callRecords.tenantId, tenantId), isNull(dialerCalls.id)];
+  if (from) looseWhere.push(gte(callRecords.createdAt, from));
+  const loose = input.campaignId ? [] : await db.select({ record: callRecords }).from(callRecords).leftJoin(dialerCalls, eq(dialerCalls.callRecordId, callRecords.id)).where(and(...looseWhere)).limit(5000);
+
+  type Bucket = { userId: number | null; name: string; calls: number; reached: number; talkSeconds: number; dispositions: Record<string, number>; evaluated: number; scoreSum: number; approved: number; review: number; rejected: number; verkaufbar: number; nachfassen: number; nichtVerkaufbar: number; lastCallAt: Date | null };
+  const buckets = new Map<string, Bucket>();
+  const bucketFor = (userId: number | null, name: string) => { const key = userId ? `u${userId}` : `n:${name}`; let bucket = buckets.get(key); if (!bucket) { bucket = { userId, name, calls: 0, reached: 0, talkSeconds: 0, dispositions: {}, evaluated: 0, scoreSum: 0, approved: 0, review: 0, rejected: 0, verkaufbar: 0, nachfassen: 0, nichtVerkaufbar: 0, lastCallAt: null }; buckets.set(key, bucket); } return bucket; };
+  const countRecord = (bucket: Bucket, record: { score: number | null; verdict: string | null; decision: string | null }) => {
+    if (typeof record.score === "number") { bucket.evaluated += 1; bucket.scoreSum += record.score; }
+    if (record.decision === "freigegeben") bucket.approved += 1; else if (record.decision === "pruefen") bucket.review += 1; else if (record.decision === "zurueckgewiesen") bucket.rejected += 1;
+    if (record.verdict === "verkaufbar") bucket.verkaufbar += 1; else if (record.verdict === "nachfassen") bucket.nachfassen += 1; else if (record.verdict === "nicht_verkaufbar") bucket.nichtVerkaufbar += 1;
+  };
+  for (const row of rows) {
+    const bucket = bucketFor(row.call.agentUserId ?? null, row.agent ?? "Ohne Agent");
+    bucket.calls += 1;
+    if (row.call.status === "beendet") bucket.reached += 1;
+    bucket.talkSeconds += row.call.talkSeconds ?? 0;
+    if (row.call.disposition) bucket.dispositions[row.call.disposition] = (bucket.dispositions[row.call.disposition] ?? 0) + 1;
+    if (!bucket.lastCallAt || row.call.startedAt > bucket.lastCallAt) bucket.lastCallAt = row.call.startedAt;
+    countRecord(bucket, { score: row.score, verdict: row.verdict, decision: row.decision });
+  }
+  for (const { record } of loose) {
+    const named = Array.from(buckets.values()).find((bucket) => bucket.name === (record.agentName ?? ""));
+    const bucket = named ?? bucketFor(null, record.agentName ?? "Ohne Agent");
+    bucket.calls += 1; bucket.reached += 1; bucket.talkSeconds += record.durationSeconds ?? 0;
+    if (!bucket.lastCallAt || (record.startedAt && record.startedAt > bucket.lastCallAt)) bucket.lastCallAt = record.startedAt ?? bucket.lastCallAt;
+    countRecord(bucket, { score: record.score, verdict: record.verdict, decision: record.decision });
+  }
+  const pct = (part: number, total: number) => total ? Math.round((part / total) * 100) : null;
+  const agents = Array.from(buckets.values()).map((bucket) => {
+    const appointments = bucket.dispositions.verkauft ?? 0; const interested = bucket.dispositions.interessiert ?? 0;
+    return {
+      userId: bucket.userId, name: bucket.name, initials: bucket.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+      calls: bucket.calls, reached: bucket.reached, reachRate: pct(bucket.reached, bucket.calls), talkSeconds: bucket.talkSeconds, averageTalkSeconds: bucket.reached ? Math.round(bucket.talkSeconds / bucket.reached) : null,
+      appointments, interested, followUps: bucket.dispositions.wiedervorlage ?? 0, noInterest: bucket.dispositions.kein_interesse ?? 0, notReached: bucket.dispositions.nicht_erreicht ?? 0, wrongNumber: bucket.dispositions.falsche_nummer ?? 0, doNotCall: bucket.dispositions.nicht_anrufen ?? 0,
+      successRate: pct(appointments + interested, bucket.reached), evaluated: bucket.evaluated, averageScore: bucket.evaluated ? Math.round(bucket.scoreSum / bucket.evaluated) : null,
+      approved: bucket.approved, review: bucket.review, rejected: bucket.rejected, verkaufbar: bucket.verkaufbar, nachfassen: bucket.nachfassen, nichtVerkaufbar: bucket.nichtVerkaufbar, lastCallAt: bucket.lastCallAt,
+    };
+  }).sort((a, b) => b.appointments - a.appointments || b.interested - a.interested || (b.averageScore ?? -1) - (a.averageScore ?? -1) || b.calls - a.calls);
+  const sum = (key: "calls" | "reached" | "talkSeconds" | "appointments" | "interested" | "evaluated" | "approved" | "rejected" | "review") => agents.reduce((acc, agent) => acc + agent[key], 0);
+  const scored = agents.filter((agent) => agent.averageScore !== null);
+  const totals = { agents: agents.length, calls: sum("calls"), reached: sum("reached"), reachRate: pct(sum("reached"), sum("calls")), talkSeconds: sum("talkSeconds"), appointments: sum("appointments"), interested: sum("interested"), successRate: pct(sum("appointments") + sum("interested"), sum("reached")), evaluated: sum("evaluated"), approved: sum("approved"), review: sum("review"), rejected: sum("rejected"), averageScore: scored.length ? Math.round(scored.reduce((acc, agent) => acc + (agent.averageScore ?? 0) * agent.evaluated, 0) / Math.max(1, sum("evaluated"))) : null };
+  const campaignRows = await db.select({ id: dialerCampaigns.id, name: dialerCampaigns.name }).from(dialerCampaigns).where(eq(dialerCampaigns.tenantId, tenantId)).orderBy(asc(dialerCampaigns.name));
+  return { period, from, now, agents, totals, campaigns: campaignRows };
+}
+
 /** Teamleiter steuert einen Agenten: Pause, wieder bereit, abmelden (nicht während eines Gesprächs), Kampagne wechseln. */
 export async function superviseAgent(db: Db, tenantId: number, input: { userId: number; action: "pause" | "bereit" | "offline" | "kampagne"; campaignId?: number | null }) {
   const session = (await db.select().from(agentSessions).where(and(eq(agentSessions.userId, input.userId), eq(agentSessions.tenantId, tenantId), isNull(agentSessions.endedAt))).limit(1))[0];

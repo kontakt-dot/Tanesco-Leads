@@ -6,7 +6,7 @@
  */
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { leadCategories, leadStatusEvents, leads, rawBatches, rawContacts, suppliers, users, type RawContact } from "../drizzle/schema";
+import { dialerCalls, leadCategories, leadStatusEvents, leads, rawBatches, rawContacts, suppliers, users, type RawContact } from "../drizzle/schema";
 import { triggerLeadAutomations, type Db } from "./lead-pipeline";
 
 export type RawRowInput = { firstName?: string | null; lastName?: string | null; company?: string | null; phone?: string | null; email?: string | null; postcode?: string | null; city?: string | null; country?: string | null; category?: string | null; data?: Record<string, unknown> };
@@ -23,6 +23,45 @@ export async function listBatches(db: Db, tenantId: number) {
   const counts = await db.select({ batchId: rawContacts.batchId, status: rawContacts.status, count: sql<number>`COUNT(*)` }).from(rawContacts).where(eq(rawContacts.tenantId, tenantId)).groupBy(rawContacts.batchId, rawContacts.status);
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
   return batches.map(({ batch, category, shortcode, supplier, creator }) => { const own = counts.filter((row) => row.batchId === batch.id); const of = (status: RawContact["status"]) => Number(own.find((row) => row.status === status)?.count ?? 0); const ids = batchCategoryIds(batch); return { ...batch, categoryIds: ids, categories: ids.map((id) => categories.find((item) => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item)), categoryName: category, categoryShortcode: shortcode, supplierName: supplier, createdBy: creator, counts: { total: own.reduce((sum, row) => sum + Number(row.count), 0), neu: of("neu"), in_liste: of("in_liste"), konvertiert: of("konvertiert"), verworfen: of("verworfen"), duplikat: of("duplikat") } }; });
+}
+
+/**
+ * Was wurde aus den Rohdaten – je Kategorie (und wahlweise nur für eine Liste): wie viele Kontakte, wie viele davon
+ * angerufen/erreicht, welche Anruf-Ergebnisse, wie viele wurden Lead – und was aus den Leads wurde (offen, verkauft,
+ * reklamiert, aussortiert). Kontakte ohne eigene Kategorie zählen zur Standard-Kategorie ihrer Liste.
+ */
+export async function categoryReport(db: Db, tenantId: number, filter: { batchId?: number | null } = {}) {
+  const where = [eq(rawContacts.tenantId, tenantId)];
+  if (filter.batchId) where.push(eq(rawContacts.batchId, filter.batchId));
+  const contacts = await db.select({ id: rawContacts.id, batchId: rawContacts.batchId, categoryId: rawContacts.categoryId, status: rawContacts.status, leadId: rawContacts.leadId, leadStatus: leads.status, leadCategoryId: leads.categoryId }).from(rawContacts).leftJoin(leads, eq(leads.id, rawContacts.leadId)).where(and(...where));
+  const batches = await db.select({ id: rawBatches.id, categoryId: rawBatches.categoryId }).from(rawBatches).where(eq(rawBatches.tenantId, tenantId));
+  const categories = await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
+  const callRows = contacts.length ? await db.select({ rawContactId: dialerCalls.rawContactId, status: dialerCalls.status, disposition: dialerCalls.disposition }).from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.rawContactId, contacts.map((contact) => contact.id)))) : [];
+  const callsByContact = new Map<number, Array<{ status: string; disposition: string | null }>>();
+  for (const row of callRows) { if (!row.rawContactId) continue; const list = callsByContact.get(row.rawContactId) ?? []; list.push({ status: row.status, disposition: row.disposition }); callsByContact.set(row.rawContactId, list); }
+  const categoryOf = (contact: (typeof contacts)[number]) => contact.leadCategoryId ?? contact.categoryId ?? batches.find((batch) => batch.id === contact.batchId)?.categoryId ?? 0;
+  type Row = { categoryId: number; name: string; shortcode: string | null; total: number; neu: number; inListe: number; verworfen: number; duplikat: number; angerufen: number; erreicht: number; anrufe: number; termine: number; interessiert: number; wiedervorlage: number; keinInteresse: number; nichtErreicht: number; leads: number; leadOffen: number; leadVerkauft: number; leadReklamiert: number; leadAussortiert: number };
+  const rows = new Map<number, Row>();
+  for (const contact of contacts) {
+    const categoryId = categoryOf(contact);
+    let row = rows.get(categoryId);
+    if (!row) { const category = categories.find((item) => item.id === categoryId); row = { categoryId, name: category?.name ?? "Ohne Kategorie", shortcode: category?.shortcode ?? null, total: 0, neu: 0, inListe: 0, verworfen: 0, duplikat: 0, angerufen: 0, erreicht: 0, anrufe: 0, termine: 0, interessiert: 0, wiedervorlage: 0, keinInteresse: 0, nichtErreicht: 0, leads: 0, leadOffen: 0, leadVerkauft: 0, leadReklamiert: 0, leadAussortiert: 0 }; rows.set(categoryId, row); }
+    row.total += 1;
+    if (contact.status === "neu") row.neu += 1; else if (contact.status === "in_liste") row.inListe += 1; else if (contact.status === "verworfen") row.verworfen += 1; else if (contact.status === "duplikat") row.duplikat += 1;
+    const calls = callsByContact.get(contact.id) ?? [];
+    if (calls.length) { row.angerufen += 1; row.anrufe += calls.length; if (calls.some((call) => call.status === "beendet")) row.erreicht += 1; }
+    for (const call of calls) { if (call.disposition === "verkauft") row.termine += 1; else if (call.disposition === "interessiert") row.interessiert += 1; else if (call.disposition === "wiedervorlage") row.wiedervorlage += 1; else if (call.disposition === "kein_interesse") row.keinInteresse += 1; else if (call.disposition === "nicht_erreicht") row.nichtErreicht += 1; }
+    if (contact.status === "konvertiert" || contact.leadId) {
+      row.leads += 1;
+      const status = contact.leadStatus;
+      if (status === "zugewiesen") row.leadVerkauft += 1; else if (status === "reklamiert") row.leadReklamiert += 1; else if (status === "fehlerhaft" || status === "deaktiviert") row.leadAussortiert += 1; else row.leadOffen += 1;
+    }
+  }
+  const pct = (part: number, total: number) => total ? Math.round((part / total) * 100) : null;
+  const list = Array.from(rows.values()).map((row) => ({ ...row, leadRate: pct(row.leads, row.total), reachRate: pct(row.erreicht, row.angerufen), saleRate: pct(row.leadVerkauft, row.leads) })).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "de"));
+  const sum = (key: keyof Row) => list.reduce((acc, row) => acc + (typeof row[key] === "number" ? (row[key] as number) : 0), 0);
+  const totals = { total: sum("total"), neu: sum("neu"), inListe: sum("inListe"), verworfen: sum("verworfen"), duplikat: sum("duplikat"), angerufen: sum("angerufen"), erreicht: sum("erreicht"), anrufe: sum("anrufe"), termine: sum("termine"), interessiert: sum("interessiert"), wiedervorlage: sum("wiedervorlage"), keinInteresse: sum("keinInteresse"), nichtErreicht: sum("nichtErreicht"), leads: sum("leads"), leadOffen: sum("leadOffen"), leadVerkauft: sum("leadVerkauft"), leadReklamiert: sum("leadReklamiert"), leadAussortiert: sum("leadAussortiert"), leadRate: pct(sum("leads"), sum("total")), reachRate: pct(sum("erreicht"), sum("angerufen")), saleRate: pct(sum("leadVerkauft"), sum("leads")) };
+  return { batchId: filter.batchId ?? null, categories: list, totals };
 }
 
 /** Legt eine Liste an und prüft jeden Kontakt auf Doppel (Telefon/E-Mail) gegen bestehende Leads und Rohdaten. */
