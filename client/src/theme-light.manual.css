@@ -1123,3 +1123,4 @@ html:not(.dark) .territory-level-note { background: #f8fafc !important; border-c
 html:not(.dark) .territory-levels .dashboard-segments button small { background: rgba(15, 23, 42, .08) !important; }
 html:not(.dark) .territory-levels .dashboard-segments button.active small { background: rgba(255, 255, 255, .25) !important; }
 html:not(.dark) .territory-table b.is-hotter, html:not(.dark) .territory-plz-list span.is-hotter { color: #7e22ce !important; }
+html:not(.dark) .territory-levels-hint, html:not(.dark) .territory-plz-place { color: #64748b !important; }
