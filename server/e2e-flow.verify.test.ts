@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
+import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
@@ -1386,9 +1386,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const inboxLead = await owner.leadops.createLeadFromInbox({ messageId: (await owner.leadops.storeInboxMessage({ fromEmail: "neu@firma-test.example", fromName: "Nina Neu", subject: "Interesse", bodyText: "Bitte Infos." })).id, pipeline: "email", stage: "qualifiziert" }); expect(inboxLead.created).toBe(true);
     expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.find((stage) => stage.key === "qualifiziert")!.leads.find((lead) => lead.publicId === inboxLead.publicId)).toMatchObject({ adPlatform: "email", adCampaignName: "Posteingang" });
     // Stufen bearbeiten: neue Stufe „Nachfassen“ vor „Verloren“, „Angebot“ entfernen → Leads aus „Angebot“ rutschen auf „Neu“; Notiz an einer Karte
-    const defaults = await owner.leadops.pipelineStages(); expect(defaults.map((stage) => stage.key)).toEqual(["neu", "kontaktiert", "qualifiziert", "termin", "angebot", "kunde", "verloren"]);
+    const defaults = await owner.leadops.pipelineStages(); expect(defaults.map((stage) => stage.key)).toEqual(["neu", "in_bearbeitung", "kontaktiert", "qualifiziert", "termin", "angebot", "kunde", "verloren"]);
     const edited = await owner.leadops.savePipelineStages({ stages: [...defaults.filter((stage) => stage.key !== "angebot").map((stage) => stage.key === "termin" ? { ...stage, label: "Vor-Ort-Termin" } : stage), { label: "Nachfassen", hint: "Später erneut melden" }] });
-    expect(edited.stages.map((stage) => stage.key)).toEqual(["neu", "kontaktiert", "qualifiziert", "termin", "kunde", "stufe_nachfassen", "verloren"]); expect(edited.stages.find((stage) => stage.key === "termin")?.label).toBe("Vor-Ort-Termin");
+    expect(edited.stages.map((stage) => stage.key)).toEqual(["neu", "in_bearbeitung", "kontaktiert", "qualifiziert", "termin", "kunde", "stufe_nachfassen", "verloren"]); expect(edited.stages.find((stage) => stage.key === "termin")?.label).toBe("Vor-Ort-Termin");
     await expect(owner.leadops.savePipelineStages({ stages: edited.stages.filter((stage) => stage.key !== "kunde") })).rejects.toThrow("Kunde");
     const customOverview = await owner.leadops.pipelineOverview({ source: "ads" }); expect(customOverview.stageDefs.map((stage) => stage.label)).toContain("Nachfassen"); expect(customOverview.stages.some((stage) => stage.key === "angebot")).toBe(false);
     await expect(owner.leadops.movePipelineStage({ publicId: inboxLead.publicId, stage: "angebot" })).rejects.toThrow("Unbekannte Stufe");
@@ -1480,7 +1480,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const overview = await owner.leadops.pipelineOverview({ source: "kaltakquise", campaignId: "liste-erweiterungen" }); const cards = overview.stages.flatMap((stage) => stage.leads);
     expect(cards.find((card) => card.publicId === eins.publicId)).toMatchObject({ dealValue: 12500.5, stale: false }); { const karte = cards.find((card) => card.publicId === eins.publicId)!; expect(typeof karte.score).toBe("number"); expect(["heiss", "warm", "kalt"]).toContain(karte.temperature); expect(karte.scoreReasons.some((reason: string) => reason.includes("Angebot über"))).toBe(true); }
     expect(cards.find((card) => card.publicId === drei.publicId)).toMatchObject({ stale: true, openTasks: 1 }); expect(cards.find((card) => card.publicId === drei.publicId)?.staleDays).toBeGreaterThanOrEqual(8); expect(overview.staleCount).toBe(1);
-    expect(overview.value).toMatchObject({ openValue: 12500.5, wonValue: 8000, wonCount: 1, closeRateEuro: 100 }); expect(overview.value.weighted).toBe(Math.round(12500.5 * 0.7)); // Stufe „Termin“ = 70 %
+    expect(overview.value).toMatchObject({ openValue: 12500.5, wonValue: 8000, wonCount: 1, closeRateEuro: 100 }); expect(overview.value.weighted).toBe(Math.round(12500.5 * 0.74)); // Stufe „Termin“ = 74 % (5. von 6 offenen Stufen, seit „In Bearbeitung“)
     // eingeschlafene Karte → Aufweck-Serie (nur mit E-Mail; Drei hat keine → nicht aufgenommen, aber markiert)
     const woke = await owner.leadops.runPipelineAutomations(); expect(woke.enrolled).toBe(0); expect(JSON.stringify((await leadRow(drei.publicId)).metadata ?? {})).not.toContain("staleEnrolledAt"); // ohne E-Mail: nichts zu tun
     await db.update(leads).set({ email: "dora@drei-test.example" }).where(eq(leads.id, drei.id)); expect((await owner.leadops.runPipelineAutomations()).enrolled).toBe(1); expect(JSON.stringify((await leadRow(drei.publicId)).metadata)).toContain("staleEnrolledAt"); expect((await owner.leadops.runPipelineAutomations()).enrolled).toBe(0);
@@ -1958,5 +1958,72 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.rawCategoryReport({ batchId: 999_999 })).categories).toEqual([]);
     await expect(invitee.leadops.rawCategoryReport({})).rejects.toThrow("vorbehalten");
   });
+
+  it("39. Anrufzähler an der Karte (Migration 0074), Stufe „In Bearbeitung“, Vertriebler anlegen (Taner/Francesco), Listen-Upload prozentual verteilen", async () => {
+    // Vertriebler: Standard-Duo auf Knopfdruck, eigener ohne Login, umbenennen, pausieren
+    const ensured = await owner.leadops.ensureDefaultSalesReps();
+    expect(ensured.created).toEqual(["Taner", "Francesco"]);
+    expect((await owner.leadops.ensureDefaultSalesReps()).created).toEqual([]); // kein zweites Mal
+    const reps = await owner.leadops.listSalesReps();
+    const taner = reps.find((rep) => rep.firstName === "Taner")!; const francesco = reps.find((rep) => rep.firstName === "Francesco")!;
+    expect(taner).toMatchObject({ active: true, hasLogin: false, openCards: 0 }); expect(francesco.active).toBe(true);
+    expect((await owner.leadops.pipelineOwners()).map((o) => o.name)).toEqual(expect.arrayContaining(["Taner", "Francesco"]));
+    const lisa = await owner.leadops.createSalesRep({ name: "Lisa Neu" }); expect(lisa).toMatchObject({ created: true, hasLogin: false });
+    await expect(owner.leadops.createSalesRep({ name: "lisa neu" })).rejects.toThrow("gibt es schon");
+    await expect(owner.leadops.createSalesRep({ name: "Kurz", email: "kurz@example.de", password: "123" })).rejects.toThrow("8 Zeichen");
+    const withLogin = await owner.leadops.createSalesRep({ name: "Paul Login", email: "paul.login@example.de", password: "geheim-12345" }); expect(withLogin.hasLogin).toBe(true);
+    await owner.leadops.updateSalesRep({ userId: lisa.userId, name: "Lisa Neumann", active: false });
+    const after = await owner.leadops.listSalesReps(); expect(after.find((rep) => rep.userId === lisa.userId)).toMatchObject({ name: "Lisa Neumann", active: false });
+    expect((await owner.leadops.pipelineOwners()).some((o) => o.userId === lisa.userId)).toBe(false); // pausiert bekommt nichts
+    await expect(invitee.leadops.listSalesReps()).rejects.toThrow("vorbehalten");
+
+    // Listen-Upload: 70 % Taner, 30 % Francesco → 7 / 3, abwechselnd zugeteilt
+    const rows = Array.from({ length: 10 }, (_, index) => ({ firstName: `Kontakt${index}`, lastName: "Verteilt", company: `Firma ${index}`, phone: `+49 69 7700${String(100 + index)}` }));
+    const imported = await owner.leadops.importColdList({ listName: "Verteil-Liste", rows, ownerShares: [{ userId: taner.userId, value: 70 }, { userId: francesco.userId, value: 30 }], shareMode: "prozent" });
+    expect(imported.created).toBe(10);
+    const listed = await owner.leadops.emailLeads({ listName: "Verteil-Liste", withoutEmail: true, source: "kaltakquise", limit: 50 });
+    expect(listed.items.length).toBe(10);
+    expect(listed.items.filter((item) => item.ownerUserId === taner.userId).length).toBe(7); expect(listed.items.filter((item) => item.ownerUserId === francesco.userId).length).toBe(3);
+    const byCount = await owner.leadops.importColdList({ listName: "Verteil-Liste 2", rows: rows.map((row) => ({ ...row, phone: row.phone.replace("7700", "7701") })), ownerShares: [{ userId: taner.userId, value: 4 }], shareMode: "anzahl" });
+    expect(byCount.created).toBe(10);
+    const second = await owner.leadops.emailLeads({ listName: "Verteil-Liste 2", withoutEmail: true, source: "kaltakquise", limit: 50 });
+    expect(second.items.filter((item) => item.ownerUserId === taner.userId).length).toBe(4); expect(second.items.filter((item) => !item.ownerUserId).length).toBe(6);
+
+    // Anrufzähler: erster Versuch → In Bearbeitung, erreicht → Kontaktiert, Rückruf → Aufgabe; alles im Verlauf
+    const card = listed.items[0];
+    expect(card.stage ?? "neu").toBe("neu"); expect(card.calls.count).toBe(0);
+    const first = await owner.leadops.logCallAttempt({ publicId: card.publicId, result: "nicht_erreicht", note: "Niemand ran" });
+    expect(first).toMatchObject({ count: 1, reached: 0, moved: "in_bearbeitung" });
+    const second2 = await owner.leadops.logCallAttempt({ publicId: card.publicId, result: "mailbox", followUpAt: new Date(Date.now() + 3_600_000) });
+    expect(second2).toMatchObject({ count: 2, moved: null });
+    const third = await owner.leadops.logCallAttempt({ publicId: card.publicId, result: "erreicht", note: "Interesse, Angebot gewünscht" });
+    expect(third).toMatchObject({ count: 3, reached: 1, moved: "kontaktiert" });
+    const attempts = await owner.leadops.callAttempts({ publicId: card.publicId });
+    expect(attempts).toMatchObject({ count: 3, reached: 1, lastResult: "erreicht" }); expect(attempts.attempts.map((item) => item.result)).toEqual(["erreicht", "mailbox", "nicht_erreicht"]);
+    expect(attempts.attempts[0].by).toBeTruthy(); expect(attempts.attempts[0].fromDialer).toBe(false);
+    const overview = await owner.leadops.pipelineOverview({ source: "kaltakquise" });
+    const onBoard = overview.stages.find((stage) => stage.key === "kontaktiert")!.leads.find((lead) => lead.publicId === card.publicId)!;
+    expect(onBoard.calls).toMatchObject({ count: 3, reached: 1, lastResult: "erreicht" });
+    expect(overview.stageDefs.map((stage) => stage.key)).toContain("in_bearbeitung");
+    const history = await owner.leadops.pipelineHistory({ publicId: card.publicId });
+    expect(history.some((event) => event.toStage === "anruf" && /Anruf 3: erreicht/.test(event.note ?? ""))).toBe(true);
+    expect(history.some((event) => event.toStage === "in_bearbeitung")).toBe(true);
+    const tasks = await owner.leadops.listPipelineTasks({ publicId: card.publicId });
+    expect(tasks.some((task) => task.kind === "anruf" && /anrufen/i.test(task.title))).toBe(true);
+    await expect(owner.leadops.logCallAttempt({ publicId: card.publicId, result: "unbekannt" as never })).rejects.toThrow();
+
+    // Dialer-Anruf an einer Karte zählt automatisch (Simulation: Endziffer 4 → Mensch)
+    const dialed = listed.items[1];
+    await owner.leadops.updatePipelineLead({ publicId: dialed.publicId, phone: "+49 170 9988774" });
+    await owner.leadops.startDialerSession({ campaignId: null, mode: "manuell", connection: "browser" });
+    const instruction = await owner.leadops.placeManualCall({ publicId: dialed.publicId });
+    await owner.leadops.endDialerCall({ callId: instruction.callId, durationSeconds: 45 });
+    await owner.leadops.setCallDisposition({ callId: instruction.callId, disposition: "wiedervorlage" });
+    await owner.leadops.updateDialerSession({ status: "offline" });
+    const dialedAttempts = await owner.leadops.callAttempts({ publicId: dialed.publicId });
+    expect(dialedAttempts.count).toBe(1); expect(dialedAttempts.attempts[0]).toMatchObject({ fromDialer: true, result: "rueckruf" });
+    // Migration 0074 hat vorhandene Dialer-Anrufe der Vortests übernommen? (Hooks laufen seit dem Anruf, Backfill greift bei der Migration) – mindestens dieser eine Eintrag hängt am Dialer-Anruf
+    expect((await db.select({ id: leadCallAttempts.id }).from(leadCallAttempts).where(eq(leadCallAttempts.dialerCallId, instruction.callId))).length).toBe(1);
+  }, 20000);
 
 });

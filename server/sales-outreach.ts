@@ -14,6 +14,7 @@ import { distributeOwners, pipelineStages } from "./meta-ads";
 import { bumpActivity, logActivity } from "./activity";
 import { signatureFor } from "./mail-settings";
 import type { Db } from "./lead-pipeline";
+import type { OwnerShare, ShareMode } from "../shared/pipeline-extras";
 
 /* ---------- Kaltakquise-Listen ---------- */
 import { extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
@@ -29,7 +30,7 @@ async function tagByName(db: Db, tenantId: number, name: string, color: string) 
 /** Nur setzen, was wirklich dazukommt – vorhandene Angaben am Kontakt werden nie mit leeren Werten überschrieben. */
 const fillIfEmpty = <T>(current: T | null | undefined, next: T | null | undefined) => (current ?? null) || (next ?? null);
 
-export async function importColdList(db: Db, tenantId: number, input: { listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null; toPipeline?: boolean }) {
+export async function importColdList(db: Db, tenantId: number, input: { listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; ownerShares?: OwnerShare[] | null; shareMode?: ShareMode | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null; toPipeline?: boolean }) {
   const listName = input.listName.trim(); if (!listName) throw new Error("Bitte einen Listennamen angeben."); if (!input.rows.length) throw new Error("Die Liste enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig).");
   // Kategorie ist freiwillig: ohne Angabe die erste aktive nehmen, sonst ohne Kategorie anlegen.
   const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id ?? null;
@@ -76,7 +77,8 @@ export async function importColdList(db: Db, tenantId: number, input: { listName
     if (toPipeline) await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: null, note: `Aus Kaltakquise-Liste „${listName}“` });
   }
   if (toPipeline) {
-    if (input.ownerUserIds?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
+    if (input.ownerShares?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: [], shares: input.ownerShares, mode: input.shareMode ?? "prozent", actorUserId: input.actorUserId ?? null }); // Verteilung aus dem Upload: Prozent oder feste Anzahl je Vertriebler
+    else if (input.ownerUserIds?.length && leadIds.length) await distributeOwners(db, tenantId, { leadIds, userIds: input.ownerUserIds, actorUserId: input.actorUserId ?? null });
     else for (const leadId of leadIds) await autoAssign(db, tenantId, leadId); // Verteilregeln, wenn eingeschaltet
   }
   // Upload-Verlauf festhalten – damit man später sieht, was wann hochgeladen wurde, und es rückgängig machen kann.
@@ -414,7 +416,9 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
   // Oben steht, was gerade zählt: zuerst die mit Reaktion (stärkste zuerst), danach der Rest nach Anlage-Datum.
   const rang: Record<EmailLeadActivity, number> = { geantwortet: 6, geklickt: 5, geoeffnet: 4, gesendet: 3, bounce: 2, abgemeldet: 1, ohne: 0 };
   const sortiert = filtered.sort((a, b) => rang[b.activity] - rang[a.activity] || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime());
-  return { items: sortiert.slice(0, limit), total: filtered.length, counts, lists, campaigns };
+  // Anrufzähler je Kontakt (Spalte „Anrufe“ im Reiter Kontakte)
+  const page = sortiert.slice(0, limit); const { callCountsMap } = await import("./pipeline-extras"); const callMap = await callCountsMap(db, tenantId, page.map((item) => item.id));
+  return { items: page.map((item) => ({ ...item, calls: callMap.get(item.id) ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } })), total: filtered.length, counts, lists, campaigns };
 }
 
 /**

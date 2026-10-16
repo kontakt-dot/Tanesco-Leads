@@ -285,3 +285,56 @@ export function extractPhone(text: string | null | undefined): string | null {
   return null;
 }
 export const SMS_LIMIT = 480;
+
+/* ---------------------------------------------------------------- Anrufzähler */
+/** Ergebnis eines Anrufversuchs – so wie der Vertriebler es nach dem Auflegen anklickt. */
+export type CallResult = "erreicht" | "nicht_erreicht" | "besetzt" | "mailbox" | "rueckruf" | "falsche_nummer";
+export const CALL_RESULTS: Array<{ key: CallResult; label: string; short: string; reached: boolean }> = [
+  { key: "erreicht", label: "Erreicht – gesprochen", short: "erreicht", reached: true },
+  { key: "nicht_erreicht", label: "Nicht erreicht", short: "nicht erreicht", reached: false },
+  { key: "besetzt", label: "Besetzt", short: "besetzt", reached: false },
+  { key: "mailbox", label: "Mailbox", short: "Mailbox", reached: false },
+  { key: "rueckruf", label: "Rückruf vereinbart", short: "Rückruf", reached: true },
+  { key: "falsche_nummer", label: "Falsche Nummer", short: "falsche Nummer", reached: false },
+];
+export const callResultLabel = (key: string | null | undefined) => CALL_RESULTS.find((item) => item.key === key)?.short ?? "–";
+export const isCallResult = (value: unknown): value is CallResult => CALL_RESULTS.some((item) => item.key === value);
+/** Dialer-Anruf → Ergebnis für den Zähler: beendet = erreicht, besetzt, Anrufbeantworter = Mailbox, sonst nicht erreicht. */
+export const callResultOfDialer = (status: string, disposition?: string | null): CallResult => disposition === "falsche_nummer" ? "falsche_nummer" : disposition === "wiedervorlage" && status === "beendet" ? "rueckruf" : status === "beendet" ? "erreicht" : status === "besetzt" ? "besetzt" : status === "anrufbeantworter" ? "mailbox" : "nicht_erreicht";
+/** Kurztext für die Karte: „3 Anrufe · zuletzt Do 14:10 · nicht erreicht“. */
+export function callCounterText(calls: { count: number; lastAt: Date | string | null; lastResult: string | null } | null | undefined, now = new Date()): string | null {
+  if (!calls || !calls.count) return null;
+  const last = calls.lastAt ? new Date(calls.lastAt) : null;
+  const when = last ? (last.toDateString() === now.toDateString() ? `heute ${last.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}` : last.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" })) : null;
+  return [`${calls.count} ${calls.count === 1 ? "Anruf" : "Anrufe"}`, when ? `zuletzt ${when}` : null, calls.lastResult ? callResultLabel(calls.lastResult) : null].filter(Boolean).join(" · ");
+}
+
+/* ---------------------------------------------------------------- Listen-Upload: Verteilung auf Vertriebler */
+export type ShareMode = "gleich" | "prozent" | "anzahl";
+export type OwnerShare = { userId: number; value: number };
+/**
+ * Verteilt `total` Kontakte auf Vertriebler: gleichmäßig, nach Prozent (Anteile müssen nicht genau 100 ergeben – sie werden gewichtet)
+ * oder nach fester Anzahl (Rest bleibt ohne Zuteilung). Größte Reste bekommen die übrigen Kontakte, damit die Summe stimmt.
+ */
+export function splitShares(total: number, shares: OwnerShare[], mode: ShareMode): Array<{ userId: number; count: number }> {
+  const clean = shares.filter((share) => share.userId > 0 && Number.isFinite(share.value) && share.value >= 0);
+  if (!clean.length || total <= 0) return [];
+  if (mode === "anzahl") { let left = total; return clean.map((share) => { const count = Math.min(left, Math.max(0, Math.round(share.value))); left -= count; return { userId: share.userId, count }; }); }
+  const weights = mode === "gleich" ? clean.map(() => 1) : clean.map((share) => share.value);
+  const sum = weights.reduce((acc, weight) => acc + weight, 0); if (!sum) return clean.map((share) => ({ userId: share.userId, count: 0 }));
+  const exact = weights.map((weight) => (total * weight) / sum); const counts = exact.map((value) => Math.floor(value));
+  let rest = total - counts.reduce((acc, value) => acc + value, 0);
+  const order = exact.map((value, index) => ({ index, frac: value - Math.floor(value) })).sort((a, b) => b.frac - a.frac || a.index - b.index);
+  for (const item of order) { if (rest <= 0) break; counts[item.index] += 1; rest -= 1; }
+  return clean.map((share, index) => ({ userId: share.userId, count: counts[index] }));
+}
+/** Reihenfolge der Zuteilung: die Vertriebler wechseln sich gewichtet ab (wer noch den größten Anteil offen hat, ist dran) – nicht erst alle für A, dann alle für B. */
+export function ownerSequence(total: number, shares: OwnerShare[], mode: ShareMode): Array<number | null> {
+  const counts = splitShares(total, shares, mode); const left = counts.map((item) => ({ userId: item.userId, left: item.count, quota: item.count }));
+  const out: Array<number | null> = [];
+  for (let index = 0; index < total; index += 1) {
+    const candidates = left.filter((item) => item.left > 0); if (!candidates.length) { out.push(null); continue; }
+    const pick = candidates.sort((a, b) => b.left / b.quota - a.left / a.quota || b.left - a.left)[0]; pick.left -= 1; out.push(pick.userId);
+  }
+  return out;
+}

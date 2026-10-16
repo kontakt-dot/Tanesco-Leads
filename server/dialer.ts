@@ -396,6 +396,7 @@ export async function finishCall(db: Db, tenantId: number, callId: number, input
   if (call.agentUserId) await db.update(agentSessions).set({ status: input.status === "beendet" ? "nachbereitung" : "bereit", currentCallId: input.status === "beendet" ? call.id : null, lastActivityAt: now }).where(and(eq(agentSessions.userId, call.agentUserId), eq(agentSessions.currentCallId, call.id)));
   if (call.leadId && input.status !== "beendet") await db.insert(leadStatusEvents).values({ tenantId, leadId: call.leadId, previousStatus: null, nextStatus: (await db.select({ status: leads.status }).from(leads).where(eq(leads.id, call.leadId)).limit(1))[0]?.status ?? "neu", actorUserId: call.agentUserId, note: `Anrufversuch (${call.mode}): ${input.status.replace("_", " ")}${input.note ? ` – ${input.note}` : ""}` });
   await handOffToEvaluation(db, tenantId, call.id);
+  if (call.leadId && FINAL_STATUSES.has(input.status)) { const { recordDialerAttempt } = await import("./pipeline-extras"); await recordDialerAttempt(db, tenantId, { id: call.id, leadId: call.leadId, agentUserId: call.agentUserId, status: input.status, disposition: call.disposition, startedAt: call.startedAt }).catch(() => null); } // Anrufzähler der Karte
   if (input.status === "beendet") await writeCallNote(db, tenantId, call.id, "ende").catch(() => null); // automatische Gesprächsnotiz (sofern eingeschaltet)
   // Glocke: jeder Anruf ein Eintrag – das Ergebnis kommt später per setDisposition dazu
   { const minutes = Math.round(((input.status === "beendet" ? (input.durationSeconds ?? talkSeconds) : null) ?? 0) / 60); const agent = call.agentUserId ? (await db.select({ name: users.name }).from(users).where(eq(users.id, call.agentUserId)).limit(1))[0]?.name ?? null : null; const statusText: Record<string, string> = { beendet: "Gespräch geführt", besetzt: "besetzt", keine_antwort: "keine Antwort", anrufbeantworter: "Anrufbeantworter", abgebrochen: "abgebrochen", fehlgeschlagen: "fehlgeschlagen" }; await logActivity(db, tenantId, { kind: "anruf", title: `Anruf an ${call.toNumber}: ${statusText[input.status] ?? input.status}${minutes ? ` (${minutes} Min.)` : ""}`, detail: agent ? `${agent} · ${call.mode}` : call.mode, leadId: call.leadId ?? null, actorUserId: call.agentUserId ?? null, refType: "dialerCall", refId: call.id }); }
@@ -468,6 +469,7 @@ export async function setDisposition(db: Db, tenantId: number, userId: number, i
   }
   await db.update(agentSessions).set({ status: "bereit", currentCallId: null, lastActivityAt: new Date() }).where(and(eq(agentSessions.userId, userId), eq(agentSessions.tenantId, tenantId)));
   await writeCallNote(db, tenantId, call.id, "ergebnis").catch(() => null); // Notiz um Ergebnis und Agenten-Notiz ergänzen
+  if (call.leadId) { const { recordDialerAttempt } = await import("./pipeline-extras"); await recordDialerAttempt(db, tenantId, { id: call.id, leadId: call.leadId, agentUserId: call.agentUserId, status: call.status, disposition: input.disposition, startedAt: call.startedAt }).catch(() => null); } // Ergebnis in den Anrufzähler übernehmen
   return callDetail(db, tenantId, call.id);
 }
 

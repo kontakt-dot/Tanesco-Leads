@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { callCounterText, callResultLabel } from "../../../shared/pipeline-extras";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import { PIPELINE_SOURCE_LABEL, pipelineSourceOf, stageLabel } from "../../../shared/sales-pipeline";
@@ -119,7 +120,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
           </div>}
         </div>
         <div className="email-leads-scroll"><table className="email-leads-table">
-          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Name</th><th>Firma</th>{pipeline && <th>Telefon</th>}<th>E-Mail</th>{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{campaignWord}</th><th>Zuletzt</th><th>Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
+          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Name</th><th>Firma</th>{pipeline && <th>Telefon</th>}<th>E-Mail</th>{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{campaignWord}</th><th>Zuletzt</th>{pipeline && <th title="Anrufversuche (Zähler der Karte)">Anrufe</th>}<th>Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
           <tbody>{items.map((lead) => <tr key={lead.id} className={`${picked.includes(lead.id) ? "is-picked" : ""} ${onOpenLead ? "is-clickable" : ""}`} title="Klick öffnet die Lead-Seite" onClick={() => onOpenLead?.(lead.publicId)}>
             <td className="email-leads-check" onClick={(event) => event.stopPropagation()}>{canPick(lead) ? <input type="checkbox" aria-label={`${nameOf(lead)} auswählen`} checked={picked.includes(lead.id)} onChange={(event) => setPicked((value) => event.target.checked ? [...value, lead.id] : value.filter((id) => id !== lead.id))} /> : null}</td>
             <td>{onOpenLead ? <button type="button" className="email-leads-name" onClick={() => onOpenLead(lead.publicId)}>{nameOf(lead)}</button> : nameOf(lead)}</td>
@@ -130,6 +131,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
             <td>{pipeline ? herkunft(lead) : lead.listName || "–"}</td>
             <td>{lead.campaigns.length ? lead.campaigns.map((campaign) => campaign.name).join(", ") : <span className="text-slate-500">in keiner</span>}</td>
             <td><span className={`email-leads-state is-${lead.activity}`}>{ACTIVITY.find((item) => item.key === lead.activity)?.label ?? "–"}</span>{lead.activityAt ? <small> {stamp(lead.activityAt)}</small> : null}</td>
+            {pipeline && <td>{lead.calls?.count ? <span className={`email-leads-calls ${lead.calls.lastResult === "erreicht" || lead.calls.lastResult === "rueckruf" ? "is-reached" : ""}`} title={callCounterText(lead.calls) ?? ""}>{lead.calls.count}× <small>{callResultLabel(lead.calls.lastResult)}</small></span> : "–"}</td>}
             <td>{lead.mails || "–"}</td>
             <td>{lead.stage ? stageLabel(lead.stage, stageDefs) : "–"}</td>
             <td>{lead.ownerName || <span className="text-slate-500">offen</span>}</td>

@@ -10,6 +10,7 @@ import { answerQuestionsHeuristically, decideByQuestions, type QualificationQues
 import { followUpTree, starterTree } from "../../../shared/email-campaigns";
 import { DEFAULT_DESIGN, fillPlaceholders, starterBlocks } from "../../../shared/email-design";
 import { formatCallNote, heuristicCallSummary } from "../../../shared/call-notes";
+import { callResultOfDialer } from "../../../shared/pipeline-extras";
 
 function mulberry32(seed: number) {
   return () => { let t = (seed += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -33,7 +34,8 @@ export function buildSeed(): Store {
   const rnd = mulberry32(20260917);
   const pick = <T,>(items: readonly T[]) => items[Math.floor(rnd() * items.length)];
   const now = new Date();
-  const at = (daysAgo: number, hour: number, minute = 0) => { const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, hour, minute, 0, 0); return date; };
+  // Vergangene Zeitpunkte („heute 9 Uhr“) dürfen nie in der Zukunft liegen – morgens läuft die Demo sonst mit Ereignissen von „später heute“ (Tests, Glocke, Verlauf). Negative Tage (Zukunft) bleiben, wie sie sind.
+  const at = (daysAgo: number, hour: number, minute = 0) => { const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, hour, minute, 0, 0); if (daysAgo >= 0 && date > now) return new Date(now.getTime() - (24 * 60 - (hour * 60 + minute)) * 1000); return date; }; // „später heute“ → vor wenigen Minuten, Reihenfolge bleibt
 
   // Benutzer & Mandant
   const owner = insert(store, "users", { openId: "demo-owner", name: "Tanesco Digital", email: "admin@tanesco.digital", loginMethod: "demo", role: "admin", createdAt: at(120, 9), updatedAt: at(0, 8), lastSignedIn: at(0, 8) });
@@ -570,6 +572,17 @@ export function buildSeed(): Store {
     insert(store, "agentSessions", { tenantId: tenant.id, userId: taner.id, campaignId: liveCampaign.id, mode: "power", status: "im_gespraech", connection: "browser", agentPhone: null, agentDeviceId: null, currentCallId: running.id, lastActivityAt: connectedAt, startedAt: at(0, 8, 30), endedAt: null });
   }
   if (francesco) insert(store, "agentSessions", { tenantId: tenant.id, userId: francesco.id, campaignId: liveCampaign.id, mode: "power", status: "bereit", connection: "browser", agentPhone: null, agentDeviceId: null, currentCallId: null, lastActivityAt: new Date(now.getTime() - 50_000), startedAt: at(0, 8, 45), endedAt: null });
+  // Anrufzähler (Migration 0074 im Echtbetrieb): jeder beendete Dialer-Anruf an einer Karte zählt als Versuch – dazu Versuche, die von Hand festgehalten wurden
+  const FINAL_CALLS = new Set(["beendet", "besetzt", "keine_antwort", "anrufbeantworter", "abgebrochen", "fehlgeschlagen"]);
+  for (const call of store.tables.dialerCalls) { if (!call.leadId || !FINAL_CALLS.has(String(call.status))) continue; const startedAt = new Date(call.startedAt); insert(store, "leadCallAttempts", { tenantId: tenant.id, leadId: call.leadId, userId: call.agentUserId ?? null, dialerCallId: call.id, result: callResultOfDialer(String(call.status), call.disposition ?? null), note: null, at: startedAt, createdAt: startedAt }); }
+  // Murat wurde zweimal erreicht → „Kontaktiert“; Klaus Brandt wird gerade bearbeitet: zwei Versuche ohne Erfolg (Taner) → „In Bearbeitung“
+  if (coldLeads[2]) update(store, "leads", (row) => row.id === coldLeads[2].id, { pipelineStage: "kontaktiert", pipelineUpdatedAt: at(1, 10, 20) });
+  if (coldLeads[4] && taner) {
+    const klaus = coldLeads[4];
+    for (const [daysAgo, hour, result, note] of [[3, 10, "nicht_erreicht", null], [1, 16, "mailbox", "Auf die Mailbox gesprochen, Rückruf erbeten."]] as Array<[number, number, string, string | null]>) { const when = at(daysAgo, hour, 12); insert(store, "leadCallAttempts", { tenantId: tenant.id, leadId: klaus.id, userId: taner.id, dialerCallId: null, result, note, at: when, createdAt: when }); insert(store, "pipelineEvents", { tenantId: tenant.id, leadId: klaus.id, fromStage: null, toStage: "anruf", actorUserId: taner.id, note: `Anruf ${daysAgo === 3 ? 1 : 2}: ${result === "mailbox" ? "Mailbox" : "nicht erreicht"}${note ? ` – ${note}` : ""}`, createdAt: when }); }
+    update(store, "leads", (row) => row.id === klaus.id, { pipelineStage: "in_bearbeitung", pipelineUpdatedAt: at(3, 10, 12) });
+    insert(store, "pipelineEvents", { tenantId: tenant.id, leadId: klaus.id, fromStage: "neu", toStage: "in_bearbeitung", actorUserId: taner.id, note: "Erster Anrufversuch (nicht erreicht)", createdAt: at(3, 10, 13) });
+  }
   // Posteingang: Antworten auf die Serie, eine Anfrage von unbekannt, ein Newsletter
   const hansen = coldLeads[0]; const koch = coldLeads[1]; const hansenRecipient = store.tables.emailCampaignRecipients.find((row) => row.leadId === hansen.id); const kochRecipient = store.tables.emailCampaignRecipients.find((row) => row.leadId === koch.id);
   insert(store, "inboxMessages", { tenantId: tenant.id, messageId: "<demo-1@hansen-bedachungen.de>", imapUid: 1201, fromEmail: "info@hansen-bedachungen.de", fromName: "Peter Hansen", subject: "Re: Mehr Anfragen für Hansen Bedachungen – ohne Risiko", bodyText: "Hallo,\n\nklingt interessant. Wir haben aktuell Kapazitäten frei – können wir Dienstag Nachmittag telefonieren? Wie viele Anfragen kommen im Raum Frankfurt pro Monat?\n\nViele Grüße\nPeter Hansen", receivedAt: at(1, 9), isRead: false, campaignRecipientId: hansenRecipient?.id ?? null, leadId: hansen.id, archived: false, blocked: false, optOut: false, createdAt: at(1, 9) });

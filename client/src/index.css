@@ -1922,3 +1922,49 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
   .raw-report th:nth-child(4),.raw-report td:nth-child(4),.raw-report th:nth-child(9),.raw-report td:nth-child(9){display:none}
   .raw-flow-cell{min-width:96px}.raw-flow{width:88px}
 }
+/* ---------- Anrufzähler an der Karte, „+ Anruf“ ---------- */
+.pipeline-card-calls{display:flex!important;align-items:center;gap:4px;margin-top:4px;color:#c9c5f5!important;font-size:11px}.pipeline-card-calls b{color:#fff;font-weight:700}.pipeline-card-calls.is-reached{color:#8ff0c6!important}.pipeline-card-calls svg{flex:none}
+.pipeline-card-calllog{position:relative;padding:0 10px 8px}
+.calllog-toggle{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 9px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#c9c5f5;font-size:11px;font-weight:600;cursor:pointer}
+.calllog-toggle:hover,.calllog-toggle.is-open{border-color:#9b93ff;background:rgba(129,120,255,.18);color:#fff}
+.calllog-overlay{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:16px;background:rgba(5,4,16,.55);backdrop-filter:blur(2px)}
+.calllog-form{display:grid;gap:10px;width:min(380px,100%);padding:14px;border:1px solid rgba(141,133,255,.4);border-radius:14px;background:rgba(19,17,40,.98);box-shadow:0 20px 50px rgba(0,0,0,.5)}
+.calllog-title{display:grid;gap:2px}.calllog-title strong{color:#fff;font-size:14px}.calllog-title small{color:#8f93af;font-size:11.5px}
+.calllog-results{display:flex;flex-wrap:wrap;gap:4px}
+.calllog-results button{height:26px;padding:0 9px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:transparent;color:#c9c5f5;font-size:11px;cursor:pointer}
+.calllog-results button:hover{border-color:#9b93ff;color:#fff}.calllog-results button.active{background:linear-gradient(135deg,#8278ff,#6258df);border-color:transparent;color:#fff}.calllog-results button.is-reached.active{background:linear-gradient(135deg,#34d399,#0f9d7a)}
+.calllog-note{width:100%;height:30px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#0f1117;color:#f1effe;font-size:12px;padding:0 8px}
+.calllog-followup{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:11px;color:#8f93af}.calllog-followup span{margin-right:2px}
+.calllog-followup button{height:22px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#c9c5f5;font-size:11px;cursor:pointer}.calllog-followup button.active{background:rgba(251,191,36,.18);border-color:rgba(251,191,36,.5);color:#fde68a}
+.calllog-actions{display:flex;justify-content:flex-end;gap:6px}
+.calllog-cancel{height:28px;padding:0 10px;border:0;background:transparent;color:#8f93af;font-size:12px;cursor:pointer}.calllog-cancel:hover{color:#fff}
+.calllog-save{height:28px;padding:0 12px;border:0;border-radius:8px;background:linear-gradient(135deg,#8278ff,#6258df);color:#fff;font-size:12px;font-weight:600;cursor:pointer}.calllog-save:disabled{opacity:.6;cursor:default}
+.pipeline-column header span.pipeline-column-calls{background:rgba(129,120,255,.14);color:#dcd9ff;font-weight:600;font-size:10.5px;padding:0 7px}
+.email-leads-calls{display:inline-flex;align-items:baseline;gap:4px;color:#f1effe;font-weight:600}.email-leads-calls small{font-weight:400;color:#8f93af}.email-leads-calls.is-reached small{color:#8ff0c6}
+/* Lead-Seite: Anrufe */
+.call-attempts{margin-top:4px}
+.call-attempts-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.call-attempts-head strong{font-size:13px;color:#fff}.call-attempts-head small{color:#8f93af;font-size:11px}.call-attempts-head .calllog-toggle{margin-left:auto}
+.call-attempts-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px}
+.call-attempts-list li{display:grid;grid-template-columns:auto auto 1fr;gap:4px 10px;align-items:baseline;padding:6px 10px;border-radius:9px;background:rgba(255,255,255,.03);font-size:12px}
+.call-attempt-no{display:inline-grid;place-items:center;min-width:20px;height:20px;border-radius:999px;background:rgba(255,255,255,.08);font-size:10.5px;font-weight:700;color:#c9c5f5}
+.call-attempt-result{font-weight:600;color:#f1effe}.call-attempt-result.is-reached{color:#8ff0c6}
+.call-attempt-when{color:#8f93af;font-size:11px}.call-attempt-note{grid-column:2 / -1;color:#c9c5f5;font-size:11.5px}
+/* ---------- Vertriebler-Verwaltung ---------- */
+.sales-rep-form{display:grid;gap:8px;margin-top:12px;padding:12px;border:1px solid rgba(141,133,255,.35);border-radius:12px;background:rgba(129,120,255,.06)}
+@media(min-width:900px){.sales-rep-form{grid-template-columns:1.2fr 1.4fr 1fr auto;align-items:center}}
+.sales-rep-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.sales-rep{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02)}
+.sales-rep.is-paused{opacity:.65}
+.sales-rep-avatar{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:999px;background:linear-gradient(135deg,#8278ff,#45d4df);color:#0b0c1e;font-weight:800;font-size:12px}
+.sales-rep-main{display:grid;gap:2px;min-width:0}.sales-rep-main strong{color:#fff;font-size:14px}.sales-rep-main small{color:#8f93af;font-size:11px}
+.sales-rep-stats{font-size:12px;color:#c9c5f5;white-space:nowrap}.sales-rep-stats b{color:#fff}
+.sales-rep-actions{display:flex;gap:4px}
+@media(max-width:760px){.sales-rep{grid-template-columns:auto minmax(0,1fr)}.sales-rep-stats,.sales-rep-actions{grid-column:2}}
+/* ---------- Listen-Upload: Verteilung ---------- */
+.upload-dist-rows{display:grid;gap:6px}
+.upload-dist-row{display:grid;grid-template-columns:auto minmax(0,1fr) 84px auto auto;gap:8px;align-items:center;padding:6px 10px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02);font-size:12px;color:#f1effe}
+.upload-dist-name{font-weight:600}
+.upload-dist-input{height:30px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#0f1117;color:#f1effe;padding:0 8px;font-size:12px;text-align:right}
+.upload-dist-unit{color:#8f93af;font-size:11px}.upload-dist-preview{color:#c9c5f5;font-size:11px;white-space:nowrap}
+.upload-dist-hint{margin:2px 0 0;font-size:11px;color:#8f93af}
+.upload-dist-rep{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;margin-right:6px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#c9c5f5;font-size:12px;cursor:pointer}.upload-dist-rep.active{border-color:#9b93ff;background:rgba(129,120,255,.18);color:#fff}

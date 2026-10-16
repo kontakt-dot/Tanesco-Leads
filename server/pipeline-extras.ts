@@ -10,12 +10,12 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import type { MySqlColumn } from "drizzle-orm/mysql-core";
 import crypto from "node:crypto";
-import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leads, outboundMessages, phoneNumbers, pipelineEvents, pipelineNotes, pipelineSettings, pipelineTasks, users, type PipelineTask } from "../drizzle/schema";
+import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCallAttempts, leadCategories, leads, outboundMessages, phoneNumbers, pipelineEvents, pipelineNotes, pipelineSettings, pipelineTasks, users, type PipelineTask } from "../drizzle/schema";
 import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
 import { recipientValues, renderNode, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
-import { buildIcs, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, fillMessage, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
-import { entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
+import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
+import { contactedStage, entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
 
@@ -185,7 +185,9 @@ export async function sendLeadMessage(db: Db, tenantId: number, input: MessageIn
   await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: input.channel, actorUserId: input.actorUserId, note: `${label} ${status === "gesendet" ? "gesendet" : status === "simuliert" ? "simuliert (kein Versand eingerichtet)" : status === "link" ? "vorbereitet (Link geöffnet)" : "fehlgeschlagen"}${subject ? `: „${subject}“` : `: „${text.slice(0, 80)}${text.length > 80 ? "…" : ""}“`}`.slice(0, 400) });
   // erste Nachricht = Kontakt aufgenommen → aus der Eingangsstufe heraus
   const stages = await stagesOfLead(db, tenantId, lead); const current = isStage(lead.pipelineStage, stages) ? lead.pipelineStage : entryStage(stages);
-  if (status !== "fehlgeschlagen" && current === entryStage(stages) && stages[1] && stages[1].fixed !== "lost") { const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: stages[1].key, note: `Erste Nachricht per ${label}`, actorUserId: input.actorUserId }); }
+  // Erste Nachricht aus „Neu“ → „Kontaktiert“ (Kontakt hergestellt); gibt es die Stufe nicht, die nächste nach dem Eingang
+  const firstTarget = contactedStage(stages) ?? (stages[1] && stages[1].fixed !== "lost" ? stages[1].key : null);
+  if (status !== "fehlgeschlagen" && current === entryStage(stages) && firstTarget) { const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: firstTarget, note: `Erste Nachricht per ${label}`, actorUserId: input.actorUserId }); }
   if (status === "fehlgeschlagen") throw new Error(error ?? `${label} konnte nicht gesendet werden.`);
   return { id: Number(inserted[0]?.insertId) || 0, status, link, error, subject, text, to: toAddress };
 }
@@ -306,8 +308,66 @@ export async function lastActivityMap(db: Db, tenantId: number, leadIds: number[
   for (const row of await db.select({ leadId: pipelineNotes.leadId, createdAt: pipelineNotes.createdAt }).from(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, leadIds)))) bump(row.leadId, row.createdAt);
   for (const row of await db.select({ leadId: pipelineTasks.leadId, doneAt: pipelineTasks.doneAt }).from(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, leadIds)))) bump(row.leadId, row.doneAt);
   for (const row of await db.select({ leadId: outboundMessages.leadId, createdAt: outboundMessages.createdAt }).from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, leadIds)))) { if (row.leadId != null) bump(row.leadId, row.createdAt); }
+  for (const row of await db.select({ leadId: leadCallAttempts.leadId, at: leadCallAttempts.at }).from(leadCallAttempts).where(and(eq(leadCallAttempts.tenantId, tenantId), inArray(leadCallAttempts.leadId, leadIds)))) bump(row.leadId, row.at);
   return map;
 }
+/* ---------------------------------------------------------------- Anrufzähler (Anrufversuche je Karte) */
+export type CallCounter = { count: number; reached: number; lastAt: Date | null; lastResult: string | null; lastBy: string | null };
+const EMPTY_CALLS: CallCounter = { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null };
+/** Zähler je Kontakt: Anzahl, erreicht, letzter Versuch (wann, Ergebnis, wer). */
+export async function callCountsMap(db: Db, tenantId: number, leadIds: number[]) {
+  const map = new Map<number, CallCounter>(); if (!leadIds.length) return map;
+  const rows = await db.select({ leadId: leadCallAttempts.leadId, result: leadCallAttempts.result, at: leadCallAttempts.at, user: users.name }).from(leadCallAttempts).leftJoin(users, eq(users.id, leadCallAttempts.userId)).where(and(eq(leadCallAttempts.tenantId, tenantId), inArray(leadCallAttempts.leadId, leadIds))).orderBy(desc(leadCallAttempts.at), desc(leadCallAttempts.id));
+  for (const row of rows) {
+    const current = map.get(row.leadId) ?? { ...EMPTY_CALLS };
+    current.count += 1; if (CALL_RESULTS.find((item) => item.key === row.result)?.reached) current.reached += 1;
+    if (!current.lastAt) { current.lastAt = row.at; current.lastResult = row.result; current.lastBy = row.user ? row.user.split(/\s+/)[0] : null; }
+    map.set(row.leadId, current);
+  }
+  return map;
+}
+/** Liste der Versuche eines Kontakts (neueste zuerst) für die Lead-Seite. */
+export async function callAttempts(db: Db, tenantId: number, publicId: string) {
+  const lead = await leadByPublicId(db, tenantId, publicId);
+  const rows = await db.select({ attempt: leadCallAttempts, user: users.name }).from(leadCallAttempts).leftJoin(users, eq(users.id, leadCallAttempts.userId)).where(and(eq(leadCallAttempts.tenantId, tenantId), eq(leadCallAttempts.leadId, lead.id))).orderBy(desc(leadCallAttempts.at), desc(leadCallAttempts.id)).limit(100);
+  const counter = (await callCountsMap(db, tenantId, [lead.id])).get(lead.id) ?? EMPTY_CALLS;
+  return { ...counter, attempts: rows.map(({ attempt, user }) => ({ id: attempt.id, at: attempt.at, result: attempt.result, label: callResultLabel(attempt.result), note: attempt.note, by: user ? user.split(/\s+/)[0] : null, fromDialer: Boolean(attempt.dialerCallId) })) };
+}
+/**
+ * Anrufversuch festhalten („+ Anruf“ an der Karte): zählt hoch, steht im Verlauf, und die Karte rutscht von „Neu“ nach
+ * „In Bearbeitung“ (beim ersten Versuch) bzw. nach „Kontaktiert“, sobald jemand erreicht wurde – ohne Hin- und Herschieben.
+ * Ein Rückruf-Termin wird als Aufgabe angelegt. Dialer-Anrufe landen über recordDialerAttempt automatisch hier.
+ */
+export async function logCallAttempt(db: Db, tenantId: number, input: { publicId?: string; leadId?: number; result: string; note?: string | null; at?: Date | null; followUpAt?: Date | null; dialerCallId?: number | null; actorUserId: number | null; move?: boolean }) {
+  if (!isCallResult(input.result)) throw new Error("Unbekanntes Anruf-Ergebnis.");
+  const lead = input.publicId ? await leadByPublicId(db, tenantId, input.publicId) : (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.id, input.leadId ?? 0))).limit(1))[0];
+  if (!lead) throw new Error("Lead nicht gefunden.");
+  const at = input.at ?? new Date(); const note = input.note?.trim().slice(0, 320) || null;
+  await db.insert(leadCallAttempts).values({ tenantId, leadId: lead.id, userId: input.actorUserId, dialerCallId: input.dialerCallId ?? null, result: input.result, note, at });
+  const counter = (await callCountsMap(db, tenantId, [lead.id])).get(lead.id) ?? EMPTY_CALLS;
+  const label = callResultLabel(input.result);
+  await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "anruf", actorUserId: input.actorUserId, note: `Anruf ${counter.count}: ${label}${note ? ` – ${note}` : ""}`.slice(0, 400), createdAt: at });
+  // Stufe automatisch: Neu → In Bearbeitung (erster Versuch), erreicht → Kontaktiert
+  let moved: string | null = null;
+  if (input.move !== false) {
+    const stagesDef = await stagesOfLead(db, tenantId, lead); const current = isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef);
+    const working = workingStage(stagesDef); const contacted = contactedStage(stagesDef); const reached = CALL_RESULTS.find((item) => item.key === input.result)?.reached ?? false;
+    const target = reached && contacted && (current === entryStage(stagesDef) || current === working) ? contacted : !reached && working && current === entryStage(stagesDef) ? working : null;
+    if (target && target !== current) { const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: target, note: reached ? `Erreicht (Anruf ${counter.count})` : `Erster Anrufversuch (${label})`, actorUserId: input.actorUserId }); moved = target; }
+  }
+  if (input.followUpAt) await createTask(db, tenantId, { leadId: lead.id, kind: "anruf", title: input.result === "rueckruf" ? "Rückruf wie vereinbart" : "Erneut anrufen", note, dueAt: input.followUpAt, source: "manuell", actorUserId: input.actorUserId });
+  return { count: counter.count, reached: counter.reached, result: input.result, moved };
+}
+/** Dialer-Anruf an einem Pipeline-Kontakt beendet → Versuch zählen (ohne doppelten Eintrag). */
+export async function recordDialerAttempt(db: Db, tenantId: number, call: { id: number; leadId: number | null; agentUserId: number | null; status: string; disposition?: string | null; startedAt: Date }) {
+  if (!call.leadId) return null;
+  const { callResultOfDialer } = await import("../shared/pipeline-extras");
+  const existing = (await db.select({ id: leadCallAttempts.id }).from(leadCallAttempts).where(and(eq(leadCallAttempts.tenantId, tenantId), eq(leadCallAttempts.dialerCallId, call.id))).limit(1))[0];
+  const result = callResultOfDialer(call.status, call.disposition);
+  if (existing) { await db.update(leadCallAttempts).set({ result }).where(eq(leadCallAttempts.id, existing.id)); return null; }
+  return logCallAttempt(db, tenantId, { leadId: call.leadId, result, at: call.startedAt, dialerCallId: call.id, actorUserId: call.agentUserId, note: null }).catch(() => null);
+}
+
 /** Zusatzdaten je Karte für die Pipeline-Übersicht: Aufgaben, Aktivität, eingeschlafen – und die Temperatur („heiße Phasen“). */
 export async function cardExtras(db: Db, tenantId: number, rows: Array<{ id: number; phone: string | null; email: string | null; company: string | null; pipelineStage: string | null; pipelineUpdatedAt: Date | null; createdAt: Date; ownerUserId: number | null; followUpAt: Date | null; appointmentAt: Date | null; dealValue: string | null; metadata: unknown; noteCount: number }>, stages: StageDef[], now = new Date()) {
   const settings = await loadSettings(db, tenantId); const ids = rows.map((row) => row.id); const activity = await lastActivityMap(db, tenantId, ids);
@@ -315,13 +375,14 @@ export async function cardExtras(db: Db, tenantId: number, rows: Array<{ id: num
   // E-Mail-Reaktion je Kontakt: Serien-Einträge (geöffnet/geklickt/geantwortet/Bounce/abgemeldet) plus Antworten im Posteingang.
   const recipients = ids.length ? await db.select({ leadId: emailCampaignRecipients.leadId, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, bouncedAt: emailCampaignRecipients.bouncedAt, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, ids))) : [];
   const replies = ids.length ? new Set((await db.select({ leadId: inboxMessages.leadId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, ids), eq(inboxMessages.blocked, false)))).map((row) => row.leadId)) : new Set<number | null>();
-  const out = new Map<number, { openTasks: number; nextTask: { title: string; dueAt: Date; kind: string } | null; lastActivityAt: Date; staleDays: number; stale: boolean; score: number; temperature: Temperature; scoreLabel: string; scoreReasons: string[] }>();
+  const callMap = await callCountsMap(db, tenantId, ids);
+  const out = new Map<number, { openTasks: number; nextTask: { title: string; dueAt: Date; kind: string } | null; lastActivityAt: Date; staleDays: number; stale: boolean; score: number; temperature: Temperature; scoreLabel: string; scoreReasons: string[]; calls: CallCounter }>();
   for (const row of rows) {
     const tasks = openTasks.filter((task) => task.leadId === row.id);
     const last = activity.get(row.id) ?? row.pipelineUpdatedAt ?? row.createdAt; const stale = staleInfo({ pipelineStage: row.pipelineStage, pipelineUpdatedAt: row.pipelineUpdatedAt, createdAt: row.createdAt, lastActivityAt: last }, now, settings.staleDays, stages);
     const meta = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? (row.metadata as { lastCallDisposition?: unknown }) : {};
     const scored = leadScore({ phone: row.phone, email: row.email, company: row.company, pipelineStage: row.pipelineStage, stages, dealValue: row.dealValue, appointmentAt: row.appointmentAt, createdAt: row.createdAt, lastActivityAt: last, stale: stale.stale, staleDays: settings.staleDays, noteCount: row.noteCount, openTasks: tasks.length, mail: mailReactionOf(recipients.filter((item) => item.leadId === row.id), replies.has(row.id)), lastCallDisposition: typeof meta.lastCallDisposition === "string" ? meta.lastCallDisposition : null }, now);
-    out.set(row.id, { openTasks: tasks.length, nextTask: tasks[0] ? { title: tasks[0].title, dueAt: tasks[0].dueAt, kind: tasks[0].kind } : null, lastActivityAt: last, staleDays: stale.days, stale: stale.stale, score: scored.score, temperature: scored.temperature, scoreLabel: scored.label, scoreReasons: scored.reasons });
+    out.set(row.id, { openTasks: tasks.length, nextTask: tasks[0] ? { title: tasks[0].title, dueAt: tasks[0].dueAt, kind: tasks[0].kind } : null, lastActivityAt: last, staleDays: stale.days, stale: stale.stale, score: scored.score, temperature: scored.temperature, scoreLabel: scored.label, scoreReasons: scored.reasons, calls: callMap.get(row.id) ?? EMPTY_CALLS });
   }
   return { extras: out, settings };
 }

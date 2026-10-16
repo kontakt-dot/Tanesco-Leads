@@ -1484,3 +1484,69 @@ describe("Agenten-Auswertung und Rohdaten je Kategorie (Chat-Build)", () => {
     expect((await call("leadops.rawCategoryReport", { batchId: messe.id })).totals.angerufen).toBe(0);
   });
 });
+
+describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+  it("zählt Anrufversuche an der Karte: Neu → In Bearbeitung beim ersten Versuch, erreicht → Kontaktiert, Rückruf als Aufgabe, Dialer zählt mit", async () => {
+    const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    expect(overview.stageDefs.map((stage: any) => stage.key).slice(0, 3)).toEqual(["neu", "in_bearbeitung", "kontaktiert"]);
+    const klaus = overview.stages.find((stage: any) => stage.key === "in_bearbeitung").leads.find((lead: any) => lead.name.includes("Brandt"));
+    expect(klaus.calls).toMatchObject({ count: 2, reached: 0, lastResult: "mailbox" }); // aus dem Seed
+    const lena = overview.stages.find((stage: any) => stage.key === "neu").leads.find((lead: any) => lead.name.includes("Vogt"));
+    expect(lena.calls.count).toBe(0);
+    const first = await call("leadops.logCallAttempt", { publicId: lena.publicId, result: "nicht_erreicht", note: "Niemand ran" });
+    expect(first).toMatchObject({ count: 1, moved: "in_bearbeitung" });
+    const second = await call("leadops.logCallAttempt", { publicId: lena.publicId, result: "rueckruf", followUpAt: new Date(Date.now() + 3_600_000).toISOString() });
+    expect(second).toMatchObject({ count: 2, reached: 1, moved: "kontaktiert" }); // Rückruf vereinbart = erreicht
+    const attempts = await call("leadops.callAttempts", { publicId: lena.publicId });
+    expect(attempts.attempts.map((item: any) => item.result)).toEqual(["rueckruf", "nicht_erreicht"]); expect(attempts.attempts[0].by).toBeTruthy();
+    const tasks = await call("leadops.listPipelineTasks", { publicId: lena.publicId });
+    expect(tasks.some((task: any) => task.title === "Rückruf wie vereinbart")).toBe(true);
+    const history = await call("leadops.pipelineHistory", { publicId: lena.publicId });
+    expect(history.some((event: any) => event.toStage === "anruf" && /Anruf 1: nicht erreicht – Niemand ran/.test(event.note))).toBe(true);
+    const after = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    expect(after.stages.find((stage: any) => stage.key === "kontaktiert").leads.find((lead: any) => lead.publicId === lena.publicId).calls.count).toBe(2);
+    await expect(call("leadops.logCallAttempt", { publicId: lena.publicId, result: "irgendwas" })).rejects.toThrow(/Ergebnis/);
+    // Dialer: Anruf an einer Karte beenden → zählt automatisch (Endziffer 4 → Mensch), Ergebnis zieht nach
+    const anja = after.stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.name.includes("Reuter"));
+    const before = anja.calls.count;
+    await call("leadops.startDialerSession", { campaignId: null, mode: "manuell", connection: "browser", agentPhone: null });
+    const instruction = await call("leadops.placeManualCall", { publicId: anja.publicId });
+    getStore().tables.dialerCalls.find((row) => row.id === instruction.callId)!.startedAt = new Date(Date.now() - 5000); // Simulation: nach 5 s verbunden
+    expect((await call("leadops.currentDialerSession")).call.status).toBe("verbunden");
+    await call("leadops.endDialerCall", { callId: instruction.callId, durationSeconds: 30 });
+    await call("leadops.setCallDisposition", { callId: instruction.callId, disposition: "wiedervorlage" });
+    await call("leadops.updateDialerSession", { status: "offline" });
+    const dialed = await call("leadops.callAttempts", { publicId: anja.publicId });
+    expect(dialed.count).toBe(before + 1); expect(dialed.attempts[0]).toMatchObject({ fromDialer: true, result: "rueckruf" });
+    // Kontakte-Reiter zeigt den Zähler
+    const kontakte = await call("leadops.emailLeads", { source: "kaltakquise", withoutEmail: true, inPipeline: true });
+    expect(kontakte.items.find((item: any) => item.publicId === lena.publicId).calls.count).toBe(2);
+  });
+  it("Vertriebler: Taner und Francesco sind da, neue anlegen (mit/ohne Login), umbenennen, pausieren – pausierte bekommen nichts", async () => {
+    const reps = await call("leadops.listSalesReps");
+    expect(reps.map((rep: any) => rep.firstName)).toEqual(expect.arrayContaining(["Taner", "Francesco"]));
+    expect((await call("leadops.ensureDefaultSalesReps")).created).toEqual([]);
+    const lisa = await call("leadops.createSalesRep", { name: "Lisa Neu" }); expect(lisa).toMatchObject({ created: true, hasLogin: false });
+    await expect(call("leadops.createSalesRep", { name: "lisa neu" })).rejects.toThrow(/gibt es schon/);
+    await expect(call("leadops.createSalesRep", { name: "Paul", email: "paul@example.de", password: "kurz" })).rejects.toThrow(/8 Zeichen/);
+    const paul = await call("leadops.createSalesRep", { name: "Paul Login", email: "paul@example.de", password: "geheim-12345" }); expect(paul.hasLogin).toBe(true);
+    expect((await call("leadops.pipelineOwners")).map((owner: any) => owner.name)).toEqual(expect.arrayContaining(["Lisa", "Paul"]));
+    await call("leadops.updateSalesRep", { userId: lisa.userId, name: "Lisa Neumann", active: false });
+    expect((await call("leadops.listSalesReps")).find((rep: any) => rep.userId === lisa.userId)).toMatchObject({ name: "Lisa Neumann", active: false, initials: "LN" });
+    expect((await call("leadops.pipelineOwners")).some((owner: any) => owner.userId === lisa.userId)).toBe(false);
+  });
+  it("Listen-Upload verteilt prozentual (70/30 → 7/3, im Wechsel) oder nach Anzahl (Rest bleibt offen)", async () => {
+    const reps = await call("leadops.listSalesReps"); const taner = reps.find((rep: any) => rep.firstName === "Taner"); const francesco = reps.find((rep: any) => rep.firstName === "Francesco");
+    const rows = Array.from({ length: 10 }, (_, index) => ({ firstName: `Test${index}`, lastName: "Verteilt", company: `Firma ${index}`, phone: `+49 69 4400${100 + index}` }));
+    const result = await call("leadops.importColdList", { listName: "Verteil-Test", rows, ownerShares: [{ userId: taner.userId, value: 70 }, { userId: francesco.userId, value: 30 }], shareMode: "prozent" });
+    expect(result.created).toBe(10);
+    const leads = getStore().tables.leads.filter((row) => row.listName === "Verteil-Test");
+    expect(leads.filter((row) => row.ownerUserId === taner.userId).length).toBe(7); expect(leads.filter((row) => row.ownerUserId === francesco.userId).length).toBe(3);
+    expect(leads.slice(0, 3).map((row) => row.ownerUserId)).not.toEqual([taner.userId, taner.userId, taner.userId]); // abwechselnd
+    const byCount = await call("leadops.importColdList", { listName: "Verteil-Test 2", rows: rows.map((row) => ({ ...row, phone: row.phone.replace("4400", "4401") })), ownerShares: [{ userId: francesco.userId, value: 2 }], shareMode: "anzahl" });
+    expect(byCount.created).toBe(10);
+    const second = getStore().tables.leads.filter((row) => row.listName === "Verteil-Test 2");
+    expect(second.filter((row) => row.ownerUserId === francesco.userId).length).toBe(2); expect(second.filter((row) => !row.ownerUserId).length).toBe(8);
+  });
+});

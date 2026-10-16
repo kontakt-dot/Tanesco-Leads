@@ -18,7 +18,7 @@ describe("Vertriebspipeline (Meta Ads)", () => {
     expect(campaigns[0].adsets).toEqual(["AG1", "AG2"]); expect(campaigns[0].stages).toMatchObject({ kunde: 1, termin: 1, verloren: 1 });
     expect(campaigns[1]).toMatchObject({ campaignId: "c2", leads: 1, spend: 0, costPerLead: null, costPerCustomer: null });
     const steps = funnel(leads);
-    expect(steps.steps.map((step) => step.count)).toEqual([4, 2, 2, 2, 1, 1]); expect(steps.lost).toBe(1);
+    expect(steps.steps.map((step) => step.count)).toEqual([4, 2, 2, 2, 2, 1, 1]); // mit „In Bearbeitung“ sechs offene Stufen expect(steps.lost).toBe(1);
   });
   it("ordnet Meta-Formularfelder den Lead-Feldern zu", () => {
     const mapped = mapMetaFieldData([{ name: "email", values: ["Max@Beispiel.de"] }, { name: "phone_number", values: ["+49 160 1234567"] }, { name: "full_name", values: ["Max Muster"] }, { name: "zip_code", values: ["80331"] }, { name: "city", values: ["München"] }, { name: "hausbesitzer?", values: ["Ja"] }]);

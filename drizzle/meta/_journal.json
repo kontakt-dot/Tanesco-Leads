@@ -519,6 +519,13 @@
       "when": 1792593000000,
       "tag": "0073_twilio_entfernt",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "5",
+      "when": 1792593060000,
+      "tag": "0074_anrufzaehler",
+      "breakpoints": true
     }
   ]
 }

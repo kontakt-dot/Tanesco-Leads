@@ -3,7 +3,8 @@ export type PipelineStage = string;
 export type StageDef = { key: string; label: string; hint: string; fixed?: "entry" | "won" | "lost" };
 export const PIPELINE_STAGES: StageDef[] = [
   { key: "neu", label: "Neu", hint: "Gerade eingegangen", fixed: "entry" },
-  { key: "kontaktiert", label: "Kontaktiert", hint: "Erster Anruf/Nachricht erfolgt" },
+  { key: "in_bearbeitung", label: "In Bearbeitung", hint: "Wird gerade angerufen – der Zähler zeigt die Versuche" },
+  { key: "kontaktiert", label: "Kontaktiert", hint: "Erreicht – erstes Gespräch geführt" },
   { key: "qualifiziert", label: "Qualifiziert", hint: "Bedarf, Budget und Zeitrahmen passen" },
   { key: "termin", label: "Termin", hint: "Beratungs- oder Vor-Ort-Termin vereinbart" },
   { key: "angebot", label: "Angebot", hint: "Angebot verschickt" },
@@ -44,6 +45,10 @@ export function normalizeStages(input: Array<Partial<StageDef>>): { stages: Stag
 export const entryStage = (stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.fixed === "entry")?.key ?? stages[0]?.key ?? "neu";
 export const wonStage = (stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.fixed === "won")?.key ?? "kunde";
 export const lostStage = (stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.fixed === "lost")?.key ?? "verloren";
+/** Stufe „In Bearbeitung“ (wird gerade angerufen) – per Schlüssel oder, bei eigenen Stufen, am Namen erkannt. */
+export const workingStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "in_bearbeitung") ?? stages.find((stage) => /bearbeitung|wird angerufen|anrufen/i.test(stage.label) && !stage.fixed))?.key ?? null;
+/** Stufe „Kontaktiert“ (erreicht) – per Schlüssel oder am Namen. */
+export const contactedStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "kontaktiert") ?? stages.find((stage) => /kontaktiert|erreicht/i.test(stage.label) && !stage.fixed))?.key ?? null;
 export const nextStageKey = (current: string, stages: StageDef[] = PIPELINE_STAGES) => { const index = stages.findIndex((stage) => stage.key === current); if (index < 0) return null; const next = stages[index + 1]; return next && next.fixed !== "lost" ? next.key : null; };
 const stageOf = (value: string | null | undefined, stages: StageDef[]) => (isStage(value, stages) ? value : entryStage(stages));
 
@@ -84,4 +89,4 @@ export function mapMetaFieldData(fieldData: Array<{ name: string; values?: unkno
   return out;
 }
 /** Beschriftung der Schritte im Karten-Verlauf (Stufen + Ereignisse der Erweiterungen). */
-export const historyLabel = (toStage: string, stageDefs: StageDef[]) => ({ besitzer: "Zuteilung", notiz: "Notiz", wiedervorlage: "Wiedervorlage", erledigt: "Erledigt", termin_gesetzt: "Termin", termin_entfernt: "Termin entfernt", angebotswert: "Angebotswert", sms: "SMS", whatsapp: "WhatsApp", email: "E-Mail", serie: "E-Mail-Serie", kontakt: "Kontaktdaten" } as Record<string, string>)[toStage] ?? stageLabel(toStage, stageDefs);
+export const historyLabel = (toStage: string, stageDefs: StageDef[]) => ({ besitzer: "Zuteilung", notiz: "Notiz", wiedervorlage: "Wiedervorlage", erledigt: "Erledigt", termin_gesetzt: "Termin", termin_entfernt: "Termin entfernt", angebotswert: "Angebotswert", sms: "SMS", whatsapp: "WhatsApp", email: "E-Mail", serie: "E-Mail-Serie", kontakt: "Kontaktdaten", anruf: "Anruf" } as Record<string, string>)[toStage] ?? stageLabel(toStage, stageDefs);

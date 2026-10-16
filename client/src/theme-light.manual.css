@@ -900,3 +900,41 @@ html:not(.dark) .agent-table .text-emerald-200, html:not(.dark) .raw-report .tex
 html:not(.dark) .agent-table .text-amber-200 { color: #b45309 !important; }
 html:not(.dark) .agent-table .text-red-200 { color: #b91c1c !important; }
 html:not(.dark) .raw-report .text-violet-200 { color: #6d28d9 !important; }
+html:not(.dark) .pipeline-card-calls { color: #475467 !important; }
+html:not(.dark) .pipeline-card-calls b { color: #101828 !important; }
+html:not(.dark) .pipeline-card-calls.is-reached { color: #15803d !important; }
+html:not(.dark) .calllog-toggle { border-color: #d0d5dd !important; background: #ffffff !important; color: #344054 !important; }
+html:not(.dark) .calllog-toggle:hover, html:not(.dark) .calllog-toggle.is-open { border-color: #bc001d !important; background: #fff1f2 !important; color: #bc001d !important; }
+html:not(.dark) .calllog-overlay { background: rgba(16, 24, 40, .35) !important; }
+html:not(.dark) .calllog-form { border-color: #f3c0c4 !important; background: #ffffff !important; box-shadow: 0 20px 50px rgba(16, 24, 40, .2) !important; }
+html:not(.dark) .calllog-title strong { color: #101828 !important; }
+html:not(.dark) .calllog-title small { color: #667085 !important; }
+html:not(.dark) .calllog-results button { border-color: #d0d5dd !important; color: #344054 !important; }
+html:not(.dark) .calllog-results button.active { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; color: #ffffff !important; }
+html:not(.dark) .calllog-results button.is-reached.active { background: linear-gradient(135deg, #16a34a, #15803d) !important; }
+html:not(.dark) .calllog-note, html:not(.dark) .upload-dist-input { border-color: #d0d5dd !important; background: #ffffff !important; color: #101828 !important; }
+html:not(.dark) .calllog-followup { color: #667085 !important; }
+html:not(.dark) .calllog-followup button { border-color: #d0d5dd !important; color: #344054 !important; }
+html:not(.dark) .calllog-followup button.active { background: #fef3c7 !important; border-color: #f59e0b !important; color: #92400e !important; }
+html:not(.dark) .calllog-cancel { color: #667085 !important; }
+html:not(.dark) .calllog-save { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; }
+html:not(.dark) .pipeline-column header span.pipeline-column-calls { background: #fff1f2 !important; color: #9f1239 !important; }
+html:not(.dark) .email-leads-calls { color: #101828 !important; }
+html:not(.dark) .email-leads-calls small { color: #667085 !important; }
+html:not(.dark) .email-leads-calls.is-reached small { color: #15803d !important; }
+html:not(.dark) .call-attempts-head strong { color: #101828 !important; }
+html:not(.dark) .call-attempts-head small, html:not(.dark) .call-attempt-when, html:not(.dark) .upload-dist-unit, html:not(.dark) .upload-dist-hint { color: #667085 !important; }
+html:not(.dark) .call-attempts-list li { background: #f8fafb !important; }
+html:not(.dark) .call-attempt-no { background: #eef0f4 !important; color: #344054 !important; }
+html:not(.dark) .call-attempt-result { color: #101828 !important; }
+html:not(.dark) .call-attempt-result.is-reached { color: #15803d !important; }
+html:not(.dark) .call-attempt-note, html:not(.dark) .upload-dist-preview { color: #475467 !important; }
+html:not(.dark) .sales-rep-form { border-color: #f3c0c4 !important; background: #fff7f7 !important; }
+html:not(.dark) .sales-rep, html:not(.dark) .upload-dist-row { border-color: #e8ecf1 !important; background: #ffffff !important; color: #101828 !important; }
+html:not(.dark) .sales-rep-avatar { background: linear-gradient(135deg, #bc001d, #fb2c36) !important; color: #ffffff !important; }
+html:not(.dark) .sales-rep-main strong { color: #101828 !important; }
+html:not(.dark) .sales-rep-main small { color: #667085 !important; }
+html:not(.dark) .sales-rep-stats { color: #475467 !important; }
+html:not(.dark) .sales-rep-stats b { color: #101828 !important; }
+html:not(.dark) .upload-dist-rep { border-color: #d0d5dd !important; color: #344054 !important; }
+html:not(.dark) .upload-dist-rep.active { border-color: #bc001d !important; background: #fff1f2 !important; color: #bc001d !important; }

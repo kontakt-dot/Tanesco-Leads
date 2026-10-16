@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildIcs, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
+import { buildIcs, callCounterText, callResultOfDialer, CALL_RESULTS, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, ownerSequence, splitShares, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, moveNodeInTree, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
 import { companyFooterText, DEFAULT_DESIGN, linkifyFooter, renderEmailHtml } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
-import { PIPELINE_STAGES } from "../shared/sales-pipeline";
+import { contactedStage, PIPELINE_STAGES, workingStage } from "../shared/sales-pipeline";
 
 const now = new Date(2026, 9, 12, 14, 0, 0); // Montag, 12.10.2026 14:00
 
@@ -256,3 +256,34 @@ describe("Heiße Phasen (Lead-Temperatur)", () => {
   });
 });
 
+
+describe("Anrufzähler und Verteilung beim Listen-Upload", () => {
+  it("ordnet Dialer-Ergebnisse dem Zähler zu und formuliert den Kurztext", () => {
+    expect(callResultOfDialer("beendet")).toBe("erreicht"); expect(callResultOfDialer("besetzt")).toBe("besetzt"); expect(callResultOfDialer("anrufbeantworter")).toBe("mailbox");
+    expect(callResultOfDialer("keine_antwort")).toBe("nicht_erreicht"); expect(callResultOfDialer("fehlgeschlagen", "falsche_nummer")).toBe("falsche_nummer"); expect(callResultOfDialer("beendet", "wiedervorlage")).toBe("rueckruf");
+    const now = new Date(2026, 9, 16, 11, 0);
+    expect(callCounterText({ count: 3, lastAt: new Date(2026, 9, 16, 10, 8), lastResult: "mailbox" }, now)).toBe("3 Anrufe · zuletzt heute 10:08 · Mailbox");
+    expect(callCounterText({ count: 1, lastAt: new Date(2026, 9, 14, 9, 0), lastResult: "erreicht" }, now)).toMatch(/^1 Anruf · zuletzt Mi\.?,? 14\.10\. · erreicht$/);
+    expect(callCounterText({ count: 0, lastAt: null, lastResult: null }, now)).toBeNull();
+    expect(CALL_RESULTS.filter((item) => item.reached).map((item) => item.key)).toEqual(["erreicht", "rueckruf"]);
+  });
+  it("kennt die Stufen „In Bearbeitung“ und „Kontaktiert“ – auch bei eigenen Namen", () => {
+    expect(workingStage(PIPELINE_STAGES)).toBe("in_bearbeitung"); expect(contactedStage(PIPELINE_STAGES)).toBe("kontaktiert");
+    const custom = [{ key: "neu", label: "Neu", hint: "", fixed: "entry" as const }, { key: "stufe_wird_angerufen", label: "Wird angerufen", hint: "" }, { key: "stufe_erreicht", label: "Erreicht", hint: "" }, { key: "kunde", label: "Kunde", hint: "", fixed: "won" as const }, { key: "verloren", label: "Verloren", hint: "", fixed: "lost" as const }];
+    expect(workingStage(custom)).toBe("stufe_wird_angerufen"); expect(contactedStage(custom)).toBe("stufe_erreicht");
+    expect(workingStage([custom[0], custom[3], custom[4]])).toBeNull();
+    expect(PIPELINE_STAGES.map((stage) => stage.key).slice(0, 3)).toEqual(["neu", "in_bearbeitung", "kontaktiert"]);
+  });
+  it("teilt Kontakte prozentual, nach Anzahl oder gleichmäßig auf – Reste nach größtem Bruchteil, Zuteilung im Wechsel", () => {
+    expect(splitShares(10, [{ userId: 1, value: 70 }, { userId: 2, value: 30 }], "prozent")).toEqual([{ userId: 1, count: 7 }, { userId: 2, count: 3 }]);
+    expect(splitShares(10, [{ userId: 1, value: 50 }, { userId: 2, value: 50 }, { userId: 3, value: 50 }], "prozent").map((item) => item.count)).toEqual([4, 3, 3]); // Anteile müssen nicht 100 ergeben
+    expect(splitShares(7, [{ userId: 1, value: 1 }, { userId: 2, value: 1 }], "gleich").map((item) => item.count)).toEqual([4, 3]);
+    expect(splitShares(10, [{ userId: 1, value: 4 }, { userId: 2, value: 3 }], "anzahl").map((item) => item.count)).toEqual([4, 3]); // 3 bleiben offen
+    expect(splitShares(5, [{ userId: 1, value: 10 }, { userId: 2, value: 10 }], "anzahl").map((item) => item.count)).toEqual([5, 0]); // nicht mehr als da sind
+    expect(splitShares(10, [], "prozent")).toEqual([]); expect(splitShares(0, [{ userId: 1, value: 100 }], "prozent")).toEqual([]);
+    const sequence = ownerSequence(10, [{ userId: 1, value: 70 }, { userId: 2, value: 30 }], "prozent");
+    expect(sequence.filter((id) => id === 1).length).toBe(7); expect(sequence.filter((id) => id === 2).length).toBe(3);
+    expect(sequence.slice(0, 4)).not.toEqual([1, 1, 1, 1]); // abwechselnd, nicht erst alle für einen
+    expect(ownerSequence(5, [{ userId: 1, value: 2 }], "anzahl")).toEqual([1, 1, null, null, null]);
+  });
+});

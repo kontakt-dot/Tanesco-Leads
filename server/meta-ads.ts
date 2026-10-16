@@ -14,6 +14,7 @@ import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
 import { autoAssign, cardExtras, onStageChanged } from "./pipeline-extras";
 import { pipelineValueSummary } from "../shared/pipeline-extras";
+import { ownerSequence, type OwnerShare, type ShareMode } from "../shared/pipeline-extras";
 import { logActivity } from "./activity";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -171,7 +172,7 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const notes = await noteCounts(db, tenantId, scoped.map((lead) => lead.id));
   const { extras, settings } = await cardExtras(db, tenantId, scoped.map((lead) => ({ ...lead, noteCount: notes.get(lead.id)?.count ?? 0 })), stagesDef);
   const limit = options.limitPerStage ?? 60;
-  const stages = stagesDef.map((stage) => ({ ...stage, leads: scoped.filter((lead) => (isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef)) === stage.key).slice(0, limit).map((lead) => { const { metadata, ...rest } = lead; const extra = extras.get(lead.id); const meta = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? (metadata as { lastCallDisposition?: string; salutation?: string }) : {}; return { ...rest, dealValue: lead.dealValue === null ? null : Number(lead.dealValue), noteCount: notes.get(lead.id)?.count ?? 0, latestNote: notes.get(lead.id)?.latest ?? null, lastCallDisposition: meta.lastCallDisposition ?? null, salutation: meta.salutation ?? null, fields: extraFieldsOf(metadata), openTasks: extra?.openTasks ?? 0, nextTask: extra?.nextTask ?? null, lastActivityAt: extra?.lastActivityAt ?? lead.pipelineUpdatedAt ?? lead.createdAt, staleDays: extra?.staleDays ?? 0, stale: extra?.stale ?? false, score: extra?.score ?? 0, temperature: extra?.temperature ?? "kalt", scoreLabel: extra?.scoreLabel ?? "Kalt", scoreReasons: extra?.scoreReasons ?? [] }; }) }));
+  const stages = stagesDef.map((stage) => ({ ...stage, leads: scoped.filter((lead) => (isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef)) === stage.key).slice(0, limit).map((lead) => { const { metadata, ...rest } = lead; const extra = extras.get(lead.id); const meta = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? (metadata as { lastCallDisposition?: string; salutation?: string }) : {}; return { ...rest, dealValue: lead.dealValue === null ? null : Number(lead.dealValue), noteCount: notes.get(lead.id)?.count ?? 0, latestNote: notes.get(lead.id)?.latest ?? null, lastCallDisposition: meta.lastCallDisposition ?? null, salutation: meta.salutation ?? null, fields: extraFieldsOf(metadata), openTasks: extra?.openTasks ?? 0, nextTask: extra?.nextTask ?? null, lastActivityAt: extra?.lastActivityAt ?? lead.pipelineUpdatedAt ?? lead.createdAt, staleDays: extra?.staleDays ?? 0, stale: extra?.stale ?? false, score: extra?.score ?? 0, temperature: extra?.temperature ?? "kalt", scoreLabel: extra?.scoreLabel ?? "Kalt", scoreReasons: extra?.scoreReasons ?? [], calls: extra?.calls ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } }; }) }));
   const totals = { leads: scoped.length, customers: scoped.filter((lead) => lead.pipelineStage === wonStage(stagesDef)).length, spend: (options.campaignId ? campaigns.filter((c) => c.campaignId === options.campaignId) : campaigns).reduce((sum, c) => sum + c.spend, 0) };
   const value = pipelineValueSummary(scoped.map((lead) => ({ pipelineStage: isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef), dealValue: lead.dealValue, ownerUserId: lead.ownerUserId, ownerName: lead.ownerName })), stagesDef);
   const staleCount = Array.from(extras.values()).filter((extra) => extra.stale).length; const hotCount = scoped.filter((lead) => { const extra = extras.get(lead.id); return extra?.temperature === "heiss" && lead.pipelineStage !== wonStage(stagesDef); }).length; const dueToday = scoped.filter((lead) => lead.followUpAt && lead.followUpAt < new Date(new Date().setHours(24, 0, 0, 0))).length;
@@ -221,11 +222,16 @@ export async function assignOwner(db: Db, tenantId: number, input: { publicIds: 
   return { updated: rows.length, ownerName: owner?.name ?? null };
 }
 /** Verteilt Leads reihum (z. B. 50/50) auf die angegebenen Vertriebler. */
-export async function distributeOwners(db: Db, tenantId: number, input: { leadIds: number[]; userIds: number[]; actorUserId: number | null }) {
-  if (!input.userIds.length || !input.leadIds.length) return { updated: 0 };
-  const owners = await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, input.userIds));
-  let index = 0; for (const leadId of input.leadIds) { const owner = owners[index % owners.length]; index += 1; await db.update(leads).set({ ownerUserId: owner.id }).where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId))); await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "besitzer", actorUserId: input.actorUserId, note: `Zugeteilt an ${owner.name ?? "Vertriebler"} (Verteilung)` }); }
-  return { updated: input.leadIds.length };
+export async function distributeOwners(db: Db, tenantId: number, input: { leadIds: number[]; userIds: number[]; actorUserId: number | null; shares?: OwnerShare[] | null; mode?: ShareMode | null }) {
+  if (!input.leadIds.length) return { updated: 0 };
+  // Gewichtet (Prozent/Anzahl aus dem Listen-Upload) oder gleichmäßig reihum
+  const sequence = input.shares?.length ? ownerSequence(input.leadIds.length, input.shares, input.mode ?? "prozent") : null;
+  const userIds = sequence ? Array.from(new Set(sequence.filter((id): id is number => id !== null))) : input.userIds;
+  if (!userIds.length) return { updated: 0 };
+  const owners = await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, userIds));
+  let index = 0; let updated = 0;
+  for (const leadId of input.leadIds) { const wanted = sequence ? sequence[index] : owners[index % owners.length]?.id ?? null; index += 1; const owner = wanted === null ? null : owners.find((row) => row.id === wanted) ?? null; if (!owner) continue; updated += 1; await db.update(leads).set({ ownerUserId: owner.id }).where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId))); await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "besitzer", actorUserId: input.actorUserId, note: `Zugeteilt an ${owner.name ?? "Vertriebler"} (Verteilung)` }); }
+  return { updated };
 }
 
 /* ---------- Notizen an Karten ---------- */

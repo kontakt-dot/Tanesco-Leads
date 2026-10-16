@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { CallAttemptsSection } from "@/components/CallLog";
 import { Input } from "@/components/ui/input";
 import { confirmAction } from "@/lib/confirm";
 import { catPill } from "@/lib/colors";
@@ -122,6 +123,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
         </section>
         <section><span className="eyebrow">HERKUNFT</span><dl className="lead-kv mt-2"><div><dt>Quelle</dt><dd>{platformLabel(lead.adPlatform)}</dd></div>{lead.adPlatform === "kaltakquise" ? <div><dt>Liste</dt><dd>{(lead.adCampaignName ?? lead.listName ?? "").replace(/^Liste: /, "") || "–"}</dd></div> : lead.adPlatform === "email" || lead.adPlatform === "posteingang" ? <div><dt>E-Mail-Kampagne</dt><dd>{lead.adCampaignName ?? "–"}</dd></div> : <><div><dt>Kampagne</dt><dd>{lead.adCampaignName ?? "–"}</dd></div><div><dt>Anzeigengruppe</dt><dd>{lead.adsetName ?? "–"}</dd></div><div><dt>Anzeige</dt><dd>{lead.adName ?? "–"}</dd></div><div><dt>Formular</dt><dd>{lead.adFormName ?? "–"}</dd></div></>}<div><dt>Eingegangen</dt><dd>{stamp(lead.createdAt)}</dd></div><div><dt>Letzte Bewegung</dt><dd>{stamp(lead.lastActivityAt)}</dd></div>{lead.lastCallDisposition && <div><dt>Letzter Anruf</dt><dd>{lead.lastCallDisposition}</dd></div>}</dl>{lead.notesFromImport && <p className="lead-window-import-note">{lead.notesFromImport}</p>}</section>
         {Object.keys(lead.fields ?? {}).length > 0 && <section><span className="eyebrow">AUS DER LISTE</span><p className="mt-1 text-xs text-slate-500">Zusatzspalten der hochgeladenen Liste – als Platzhalter in E-Mails und Nachrichten nutzbar.</p><dl className="lead-kv mt-2">{Object.entries(lead.fields ?? {}).map(([key, value]) => <div key={key}><dt title={`Platzhalter {{${key}}}`}>{fieldLabel(key)}</dt><dd>{value}</dd></div>)}</dl></section>}
+        <CallAttemptsSection publicId={lead.publicId} name={lead.name} />
         <section className="lead-temp-section"><span className="eyebrow">EINSCHÄTZUNG</span>
           <div className="lead-temp-head"><span className={`lead-temp is-${lead.temperature}`}>{lead.temperature === "heiss" ? "🔥 " : ""}{lead.scoreLabel}</span><strong>{lead.score} / 100</strong></div>
           <div className="lead-temp-bar" aria-hidden="true"><span className={`is-${lead.temperature}`} style={{ width: `${Math.max(2, lead.score)}%` }} /></div>
