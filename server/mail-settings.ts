@@ -4,6 +4,7 @@
  * setzen „Geantwortet“ automatisch.
  */
 import { and, eq, gt, inArray, isNull } from "drizzle-orm";
+import { looksLikeAutoReplySubject } from "../shared/reply-ai";
 import dns from "node:dns/promises";
 import { emailCampaignEvents, emailCampaignRecipients, mailSettings, tenantSettings } from "../drizzle/schema";
 import { normalizeSignature, renderSignatureHtml, renderSignatureText, type MailSignature, type SignatureContext } from "../shared/email-signature";
@@ -79,15 +80,17 @@ export async function checkDomain(domain: string, provider: Provider) {
   const providerInSpf = spf ? ({ gmail: /_spf\.google\.com/, brevo: /sendinblue\.com|brevo\.com/, brevo_api: /sendinblue\.com|brevo\.com/, mailgun: /mailgun\.org/, postmark: /mtasv\.net/, ses: /amazonses\.com/, smtp: /./ } as Record<Provider, RegExp>)[provider].test(spf) : false;
   return { domain: clean, spf: { found: Boolean(spf), record: spf, providerIncluded: providerInSpf }, dkim: { found: Boolean(dkim), selector: dkim?.selector ?? null, record: dkim?.record ?? null, checked: preset.dkimSelectors }, dmarc: { found: Boolean(dmarc), record: dmarc }, ready: Boolean(spf && providerInSpf && (dkim || preset.dkimSelectors.length === 0)) };
 }
-/** IMAP-Abgleich: ungelesene Mails der letzten Tage; Absender, die Empfänger einer laufenden Serie sind, werden als „geantwortet“ markiert. */
+/** IMAP-Abgleich: ungelesene Mails der letzten Tage; Absender, die Empfänger einer laufenden Serie sind, werden als „geantwortet“ markiert – und ihre Serien gestoppt (Antwort-Stopp). */
 export async function checkReplies(db: Db, tenantId: number) {
   const row = await ensureSettings(db, tenantId); if (!row.imapEnabled || !row.imapHost || !row.imapUsername || !row.imapPassword) throw new Error("IMAP ist nicht eingerichtet (Server, Benutzer, Passwort).");
   const { ImapFlow } = await import("imapflow");
   const client = new ImapFlow({ host: row.imapHost, port: row.imapPort ?? 993, secure: (row.imapPort ?? 993) === 993, auth: { user: row.imapUsername, pass: row.imapPassword }, logger: false });
   const candidates = await db.select({ id: emailCampaignRecipients.id, email: emailCampaignRecipients.email, campaignId: emailCampaignRecipients.campaignId, nodeId: emailCampaignRecipients.nodeId }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), gt(emailCampaignRecipients.sentCount, 0), isNull(emailCampaignRecipients.repliedAt)));
-  const byEmail = new Map(candidates.map((item) => [item.email.toLowerCase(), item])); let matched = 0; let scanned = 0;
-  try { await client.connect(); const lock = await client.getMailboxLock("INBOX"); try { const since = new Date(Date.now() - 14 * 86_400_000); for await (const message of client.fetch({ since }, { envelope: true })) { scanned += 1; const from = message.envelope?.from?.[0]?.address?.toLowerCase(); const hit = from ? byEmail.get(from) : undefined; if (hit) { await db.update(emailCampaignRecipients).set({ repliedAt: message.envelope?.date ?? new Date() }).where(eq(emailCampaignRecipients.id, hit.id)); await db.insert(emailCampaignEvents).values({ tenantId, campaignId: hit.campaignId, recipientId: hit.id, nodeId: hit.nodeId, kind: "geoeffnet", note: `Antwort im Postfach erkannt: „${(message.envelope?.subject ?? "").slice(0, 120)}“` }); byEmail.delete(from!); matched += 1; } } } finally { lock.release(); } await client.logout(); }
+  const byEmail = new Map(candidates.map((item) => [item.email.toLowerCase(), item])); let matched = 0; let scanned = 0; const stops: Array<{ email: string; repliedAt: Date }> = [];
+  try { await client.connect(); const lock = await client.getMailboxLock("INBOX"); try { const since = new Date(Date.now() - 14 * 86_400_000); for await (const message of client.fetch({ since }, { envelope: true })) { scanned += 1; const from = message.envelope?.from?.[0]?.address?.toLowerCase(); const hit = from && !looksLikeAutoReplySubject(message.envelope?.subject) ? byEmail.get(from) : undefined; /* automatische Antworten zählen nicht */ if (hit) { const repliedAt = message.envelope?.date ?? new Date(); await db.update(emailCampaignRecipients).set({ repliedAt }).where(eq(emailCampaignRecipients.id, hit.id)); await db.insert(emailCampaignEvents).values({ tenantId, campaignId: hit.campaignId, recipientId: hit.id, nodeId: hit.nodeId, kind: "geoeffnet", note: `Antwort im Postfach erkannt: „${(message.envelope?.subject ?? "").slice(0, 120)}“` }); stops.push({ email: from!, repliedAt }); byEmail.delete(from!); matched += 1; } } } finally { lock.release(); } await client.logout(); }
   catch (error) { throw new Error(`IMAP-Abgleich fehlgeschlagen: ${error instanceof Error ? error.message.slice(0, 200) : "unbekannt"}`); }
+  // Antwort-Stopp: jede erkannte Antwort beendet alle laufenden Serien an diese Adresse
+  if (stops.length) { const { stopSeriesForContact } = await import("./sales-outreach"); for (const stop of stops) await stopSeriesForContact(db, tenantId, stop).catch(() => null); }
   await db.update(mailSettings).set({ lastReplyCheckAt: new Date() }).where(eq(mailSettings.id, row.id));
   return { scanned, matched };
 }

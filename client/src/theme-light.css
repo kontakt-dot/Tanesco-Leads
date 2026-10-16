@@ -343,6 +343,9 @@ html:not(.dark) .campaign-table tr.is-selected td { background: #f8fafb !importa
 html:not(.dark) .pipeline-column.is-over { border-color: #111318 !important; box-shadow: inset 0 0 0 2px rgba(15, 23, 42, .05) !important; background: #f8fafb !important; }
 html:not(.dark) .pipeline-drop-hint { color: #8a94a6 !important; border: 1px dashed #e8ecf1 !important; }
 html:not(.dark) .pipeline-platform.is-cold { color: #8a742a !important; }
+html:not(.dark) .reply-stop { color: #0f172a !important; }
+html:not(.dark) .reply-stop svg { color: #1c7454 !important; }
+html:not(.dark) .reply-stop strong { color: #0f172a !important; }
 html:not(.dark) .tree-summary { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #4b5568 !important; }
 html:not(.dark) .tree-summary-title { color: #0f172a !important; }
 html:not(.dark) .tree-summary-arrow { color: #8a94a6 !important; }
@@ -916,7 +919,7 @@ html:not(.dark) .inbox-reaction.is-ohne { color: #4b5568 !important; }
 html:not(.dark) .inbox-reaction.is-bounce { color: #0f172a !important; }
 html:not(.dark) .inbox-reaction.is-abgemeldet { color: #8b7e4b !important; }
 html:not(.dark) .activity-bell>button { color: #4b5568 !important; }
-html:not(.dark) .notification.has-new i { color: #0f172a !important; background: #111318 !important; box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .notification.has-new i { color: #0f172a !important; background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .activity-panel { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 22px 55px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .activity-head { border-bottom: 1px solid #e8ecf1 !important; background: #ffffff !important; }
 html:not(.dark) .activity-head strong { color: #0f172a !important; }
@@ -1092,6 +1095,23 @@ html:not(.dark) .calllog-dialer:hover { background: #f3f6f8 !important; }
 html:not(.dark) .calllog-section { border-top: 1px solid #e8ecf1 !important; }
 html:not(.dark) .calllog-section small { color: #8a94a6 !important; }
 html:not(.dark) .email-leads-call { color: #4e846c !important; }
+html:not(.dark) [data-slot="switch"] { background: #ffffff !important; border: 1px solid #e8ecf1 !important; box-shadow: inset 0 1px 2px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) [data-slot="switch"][data-state="checked"] { background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; box-shadow: 0 0 0 1px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) [data-slot="switch-thumb"] { box-shadow: 0 1px 2px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .auto-note-switch i { background: #ffffff !important; border: 1px solid #e8ecf1 !important; }
+html:not(.dark) .auto-note-switch.on i { background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; }
+html:not(.dark) button.profile-orb:hover, html:not(.dark) button.profile-orb.is-open { background: #f8fafb !important; border-color: #e8ecf1 !important; }
+html:not(.dark) .profile-orb-chevron { color: #8a94a6 !important; }
+html:not(.dark) .profile-menu { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 22px 55px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .profile-menu-head { border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .profile-menu-head strong { color: #0f172a !important; }
+html:not(.dark) .profile-menu-head small { color: #4b5568 !important; }
+html:not(.dark) .profile-menu button[role="menuitem"] { color: #0f172a !important; }
+html:not(.dark) .profile-menu button[role="menuitem"] svg { color: #4b5568 !important; }
+html:not(.dark) .profile-menu button[role="menuitem"]:hover { background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .profile-menu button.is-danger { color: #8a5a5a !important; }
+html:not(.dark) .profile-menu button.is-danger svg { color: #883e3e !important; }
+html:not(.dark) .profile-menu-sep { background: #f8fafb !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2285,3 +2305,39 @@ html:not(.dark) .calllog-dialer { border-color: #f3c0c4 !important; background: 
 html:not(.dark) .calllog-section { border-top-color: #e8ecf1 !important; }
 html:not(.dark) .calllog-section small { color: #667085 !important; }
 html:not(.dark) .email-leads-call { border-color: #86efac !important; background: #f0fdf4 !important; color: #15803d !important; }
+html:not(.dark) button[data-slot="switch"], html:not(.dark) [data-slot="switch"] { background: #111318 !important; border-color: #111318 !important; }
+html:not(.dark) button[data-slot="switch"][data-state="checked"], html:not(.dark) [data-slot="switch"][data-state="checked"] { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; border-color: #bc001d !important; }
+html:not(.dark) [data-slot="switch-thumb"] { background: #ffffff !important; }
+html:not(.dark) .auto-note-switch i { background: #111318 !important; border-color: #111318 !important; }
+html:not(.dark) .auto-note-switch.on { border-color: #f3c0c4 !important; color: #bc001d !important; }
+html:not(.dark) .auto-note-switch.on i { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; border-color: #bc001d !important; }
+/* Glocke: Zähler rot mit weißer Zahl (vorher schwarz mit dunkler Zahl – unlesbar) */
+html:not(.dark) .notification i, html:not(.dark) .notification.has-new i { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; color: #ffffff !important; box-shadow: 0 0 0 2px #ffffff !important; }
+html:not(.dark) button.profile-orb:hover, html:not(.dark) button.profile-orb.is-open { background: #f4f6fa !important; border-color: #e5e7eb !important; }
+html:not(.dark) .profile-orb-chevron { color: #667085 !important; }
+html:not(.dark) .profile-menu { border-color: #e5e7eb !important; background: #ffffff !important; box-shadow: 0 20px 50px rgba(16, 24, 40, .16) !important; }
+html:not(.dark) .profile-menu-head { border-bottom-color: #eef0f4 !important; }
+html:not(.dark) .profile-menu-head>span { background: linear-gradient(135deg, #bc001d, #fb2c36) !important; color: #ffffff !important; }
+html:not(.dark) .profile-menu-head strong { color: #101828 !important; }
+html:not(.dark) .profile-menu-head small { color: #667085 !important; }
+html:not(.dark) .profile-menu button[role="menuitem"] { color: #101828 !important; }
+html:not(.dark) .profile-menu button[role="menuitem"] svg { color: #667085 !important; }
+html:not(.dark) .profile-menu button[role="menuitem"]:hover { background: #f4f6fa !important; }
+html:not(.dark) .profile-menu button.is-danger { color: #b91c1c !important; }
+html:not(.dark) .profile-menu button.is-danger svg { color: #dc2626 !important; }
+html:not(.dark) .profile-menu button.is-danger:hover { background: #fef2f2 !important; }
+html:not(.dark) .profile-menu-sep { background: #eef0f4 !important; }
+
+/* Antwort-Stopp-Hinweis im Ablauf (hell) */
+html:not(.dark) .reply-stop { background: #ecfdf5 !important; border-color: #a7f3d0 !important; color: #065f46 !important; }
+html:not(.dark) .reply-stop svg { color: #059669 !important; }
+html:not(.dark) .reply-stop strong { color: #064e3b !important; }
+
+/* Lead-Kategorie (hell): aktiver Reiter nur rot unterstrichen – kein schwarzer Block; „Kategorie löschen“ weiß auf rot */
+html:not(.dark) nav[aria-label="Kategoriearbeitsbereich"] button { background: transparent !important; border-color: transparent !important; color: #64748b !important; }
+html:not(.dark) nav[aria-label="Kategoriearbeitsbereich"] button:hover { color: #0f172a !important; }
+html:not(.dark) nav[aria-label="Kategoriearbeitsbereich"] button.border-violet-400 { background: transparent !important; border-color: transparent !important; border-bottom-color: #bc001d !important; color: #bc001d !important; }
+html:not(.dark) nav[aria-label="Kategoriearbeitsbereich"] button.border-violet-400 svg { color: #bc001d !important; }
+html:not(.dark) button[data-slot="button"].bg-destructive.text-white, html:not(.dark) button[data-slot="button"].bg-destructive.text-white svg { color: #ffffff !important; }
+html:not(.dark) button[data-slot="button"].bg-destructive { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; border: 0 !important; }
+html:not(.dark) button[data-slot="button"].bg-destructive:hover { background: linear-gradient(90deg, #a30019, #e6202b) !important; }

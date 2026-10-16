@@ -626,6 +626,10 @@ body:has(.side-drawer-backdrop),body:has(.app-confirm-backdrop){overflow:hidden}
 /* Ablauf-Editor: Schritte als Karten an einer Linie, „+“ auf der Linie fügt ein, Wenn-dann mit zwei beschrifteten Zweigen, Zusammenfassung oben */
 .tree{display:grid;gap:0}
 .tree-chain{display:grid;gap:0;justify-items:stretch;min-width:0}
+/* Antwort-Stopp: feste Regel, immer sichtbar über dem Ablauf */
+.reply-stop{display:flex;align-items:flex-start;gap:8px;max-width:420px;padding:8px 11px;border:1px solid rgba(52,211,153,.28);border-radius:12px;background:rgba(52,211,153,.08);font-size:12px;line-height:1.45;color:#b9f5dc}
+.reply-stop svg{flex:none;margin-top:1px;color:#34d399}
+.reply-stop strong{color:#fff}
 .tree-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 4px;margin-top:12px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(15,23,42,.35);font-size:12px;color:#c9c5f5}
 .tree-summary-title{font-weight:700;color:#fff;margin-right:4px}
 .tree-summary-item{display:inline-flex;align-items:center;gap:4px;min-width:0}
@@ -1699,7 +1703,7 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 /* Glocke: Verlauf der Plattform als Tagesverlauf (Zusammenfassung je Tag, aufklappbar bis zum Eintrag) */
 .activity-bell{position:relative;display:flex}
 .activity-bell>button{color:#a9abc2;position:relative}
-.notification.has-new i{position:absolute;right:-8px;top:-8px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;font-style:normal;line-height:1;color:#fff;background:#6d63ef;box-shadow:0 0 0 2px rgba(19,17,33,.9);animation:none}
+.notification.has-new i{position:absolute;right:-8px;top:-8px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;font-style:normal;line-height:1;color:#fff;background:linear-gradient(90deg,#bc001d,#fb2c36);box-shadow:0 0 0 2px rgba(19,17,33,.9);animation:none}
 .activity-panel{position:absolute;right:0;top:calc(100% + 14px);z-index:60;width:min(470px,92vw);max-height:min(72vh,680px);overflow:auto;border:1px solid rgba(177,171,255,.22);border-radius:16px;background:#1e1b34;box-shadow:0 22px 55px rgba(4,2,16,.45);padding:0 0 8px;text-align:left}
 .activity-head{position:sticky;top:0;z-index:1;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px 10px;border-bottom:1px solid rgba(255,255,255,.07);background:#1e1b34}
 .activity-head strong{display:block;font-size:14px;color:#f1effe}
@@ -1978,3 +1982,27 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .calllog-phone-missing{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center}
 .calllog-section{display:grid;gap:2px;margin-top:4px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08)}.calllog-section small{font-size:11px;color:#8f93af}
 .email-leads-call{display:inline-grid;place-items:center;width:26px;height:26px;margin-right:2px;border-radius:7px;border:1px solid rgba(52,211,153,.35);background:rgba(52,211,153,.1);color:#8ff0c6;cursor:pointer}.email-leads-call:hover{background:rgba(52,211,153,.22)}
+/* ---------- Schalter plattformweit: an = rot, aus = schwarz (hell wie dunkel) ---------- */
+[data-slot="switch"]{background:#111318!important;border:1px solid #2b2e3b!important;box-shadow:inset 0 1px 2px rgba(0,0,0,.4)}
+[data-slot="switch"][data-state="checked"]{background:linear-gradient(90deg,#bc001d,#fb2c36)!important;border-color:#bc001d!important;box-shadow:0 0 0 1px rgba(188,0,29,.25)}
+[data-slot="switch"]:focus-visible{outline:2px solid rgba(251,44,54,.5);outline-offset:2px}
+[data-slot="switch-thumb"]{background:#ffffff!important;box-shadow:0 1px 2px rgba(0,0,0,.45)}
+[data-slot="switch"][disabled]{opacity:.45}
+.auto-note-switch i{background:#111318;border:1px solid #2b2e3b;box-sizing:content-box}
+.auto-note-switch.on{border-color:rgba(251,44,54,.55);color:#fecaca}
+.auto-note-switch.on i{background:linear-gradient(90deg,#bc001d,#fb2c36);border-color:#bc001d}
+/* ---------- Profil oben rechts: anklickbar mit Menü ---------- */
+.profile-orb-wrap{position:relative}
+button.profile-orb{border:1px solid transparent;background:transparent;border-radius:12px;padding:4px 8px 4px 4px;cursor:pointer;color:inherit;text-align:left;transition:background-color .15s,border-color .15s}
+button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}
+.profile-orb-chevron{width:14px;height:14px;color:#8f93af;margin-left:2px;transition:transform .15s}.profile-orb.is-open .profile-orb-chevron{transform:rotate(180deg)}
+.profile-menu{position:absolute;right:0;top:calc(100% + 10px);z-index:70;width:260px;padding:6px;border:1px solid rgba(177,171,255,.22);border-radius:14px;background:#1e1b34;box-shadow:0 22px 55px rgba(4,2,16,.45)}
+.profile-menu-head{display:flex;align-items:center;gap:10px;padding:8px 10px 10px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:4px}
+.profile-menu-head>span{display:grid;place-items:center;width:34px;height:34px;border-radius:999px;background:#f0c95a;color:#292335;font-weight:800;font-size:12px}
+.profile-menu-head strong{display:block;font-size:13px;color:#fff}.profile-menu-head small{display:block;font-size:11px;color:#9ca0ba;word-break:break-all}
+.profile-menu button[role="menuitem"]{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border:0;border-radius:9px;background:transparent;color:#e4e2ff;font-size:13px;text-align:left;cursor:pointer}
+.profile-menu button[role="menuitem"] svg{width:15px;height:15px;color:#a5a1d7}
+.profile-menu button[role="menuitem"]:hover{background:rgba(255,255,255,.07);color:#fff}
+.profile-menu button.is-danger{color:#fca5a5}.profile-menu button.is-danger svg{color:#f87171}.profile-menu button.is-danger:hover{background:rgba(248,113,113,.12)}
+.profile-menu-sep{height:1px;margin:4px 6px;background:rgba(255,255,255,.08)}
+@media(max-width:760px){.profile-menu{position:fixed;right:10px;left:10px;top:64px;width:auto}}

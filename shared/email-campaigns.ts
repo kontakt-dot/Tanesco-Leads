@@ -86,12 +86,28 @@ export function nextSendSlot(now: Date, window: SendWindow | null | undefined): 
   }
   return null;
 }
+/**
+ * Antwort-Stopp – feste Regel für jede Serie, unabhängig vom gebauten Ablauf: Sobald der Kontakt geantwortet hat
+ * (`repliedAt`), geht keine weitere E-Mail mehr raus. Der Empfänger wird mit diesem Vermerk beendet.
+ */
+export const REPLY_STOP_NOTE = "Antwort erhalten – Serie gestoppt, keine weitere E-Mail";
+/** Offene Empfänger: nur diese bekommen noch E-Mails (fertig/fehler/abgemeldet/bounce/beschwerde sind endgültig). */
+export const OPEN_RECIPIENT_STATUSES: RecipientStatus[] = ["wartet", "laeuft"];
+export function isOpenRecipient(status: string | null | undefined): boolean { return status === "wartet" || status === "laeuft"; }
+/** Muss dieser Empfänger wegen Antwort gestoppt werden? (offen und geantwortet) */
+export function stoppedByReply(state: Pick<RecipientState, "status" | "repliedAt">): boolean { return Boolean(state.repliedAt) && isOpenRecipient(state.status); }
 /** Führt einen Empfänger so weit wie möglich aus (bis Warten/Ende). send() liefert false, wenn der Versand fehlschlägt. */
-/** Versand-Rückruf: `true`/`false` – oder `{ ok, subject }` mit dem fertig gefüllten Betreff (steht dann im Verlauf statt der Vorlage mit Platzhaltern). */
-export type SendOutcome = boolean | { ok: boolean; subject?: string | null };
+/**
+ * Versand-Rückruf: `true`/`false` – oder `{ ok, subject }` mit dem fertig gefüllten Betreff (steht dann im Verlauf statt der
+ * Vorlage mit Platzhaltern). `stopped` (Text) bricht die Serie ohne Versand ab – z. B. wenn beim Nachprüfen direkt vor dem
+ * Senden eine Antwort oder eine Sperre aufgetaucht ist.
+ */
+export type SendOutcome = boolean | { ok: boolean; subject?: string | null; stopped?: string | null };
 export async function advanceRecipient(tree: EmailTree, state: RecipientState, now: Date, send: (node: Extract<EmailNode, { type: "send" }>, subject: string) => Promise<SendOutcome>, options: { window?: SendWindow | null } = {}): Promise<{ state: RecipientState; events: StepEvent[] }> {
   const events: StepEvent[] = []; let current = { ...state }; let guard = 0;
   if (!current.nodeId) current.nodeId = tree.start;
+  // Antwort-Stopp: geantwortet → sofort beenden, egal wo der Ablauf gerade steht. Kein Schritt mehr, keine E-Mail mehr.
+  if (stoppedByReply(current)) { const at = current.nodeId ?? ""; current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: at, note: REPLY_STOP_NOTE }); return { state: current, events }; }
   while (current.nodeId && guard < 12) {
     guard += 1; if (current.nextActionAt && current.nextActionAt > now) break; // noch nicht fällig
     const node = tree.nodes.find((item) => item.id === current.nodeId);
@@ -103,6 +119,7 @@ export async function advanceRecipient(tree: EmailTree, state: RecipientState, n
       if (current.nextActionAt && current.nextActionAt > now) break;
       const slot = nextSendSlot(now, options.window); if (slot) { current = { ...current, status: "wartet", nextActionAt: slot }; events.push({ kind: "gewartet", nodeId: node.id, note: `Versandfenster: wartet bis ${slot.toLocaleString("de-DE", { timeZone: options.window?.timezone })}` }); break; }
       const template = subjectFor(node, current.variant); const outcome = await send(node, template);
+      if (typeof outcome === "object" && outcome.stopped) { current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: node.id, note: outcome.stopped }); break; } // z. B. Antwort kurz vor dem Senden eingetroffen
       const ok = typeof outcome === "boolean" ? outcome : outcome.ok; const subject = (typeof outcome === "object" && outcome.subject) || template;
       if (!ok) { current = { ...current, status: "fehler", nextActionAt: null }; events.push({ kind: "fehler", nodeId: node.id, subject, note: "Versand fehlgeschlagen" }); break; }
       current = { ...current, status: "laeuft", sentCount: current.sentCount + 1, lastSentAt: now, nodeId: node.next, nextActionAt: null }; events.push({ kind: "gesendet", nodeId: node.id, subject, note: `E-Mail „${subject}“ gesendet${current.variant && node.subjectB?.trim() ? ` (Variante ${current.variant})` : ""}` });

@@ -31,6 +31,19 @@ const quoteOf = (text: string, pattern: RegExp) => { const line = firstMatchLine
 
 const COMPLAINT_STRONG = /(\bspam\b|abmahnung|anwalt|rechtsanwalt|unterlassen|unterlassungs|(hören|hört) sie (endlich |sofort |bitte )?auf|lassen sie mich in ruhe|in ruhe lassen|belästig|ich (werde|habe) .*(melden|anzeige|beschwer|gemeldet)|wie kommen sie an meine (daten|adresse|e-?mail)|woher haben sie meine|dsgvo|datenschutzbeschwerde|unverschämt|frechheit|dreist|ich verbitte mir|verbiete ihnen|nie wieder (schreiben|kontaktieren|anschreiben)|bombardier|zumüll|beschwerde)/i;
 const COMPLAINT_WEAK = /(unerwünscht|nicht erwünscht|datenschutz|ohne meine (zustimmung|einwilligung)|keine einwilligung|nie zugestimmt|nicht angefordert|nervig|nervt|lästig|aufdringlich|ärgerlich|genervt|woher (stammen|kommen|haben sie|haben) (eigentlich |denn )?meine|meine (kontakt|adress)?daten|(nicht|kaum) in ordnung|rechtens|zulässig|erlaubt ist)/i;
+/**
+ * Zählt diese Mail als echte Antwort? Abwesenheitsnotizen und automatische Antworten nicht – sie stoppen eine Serie nicht
+ * (Antwort-Stopp) und werden nicht als „geantwortet“ gewertet. Im Zweifel (unsichere Einordnung) gilt: echte Antwort.
+ */
+export function isAutoReply(assessment: { kind: ReplyKind; confidence: number } | null | undefined, subject?: string | null): boolean {
+  if (assessment?.kind === "abwesenheit" && assessment.confidence >= MARK_CONFIDENCE) return true;
+  return looksLikeAutoReplySubject(subject);
+}
+/** Betreff einer automatischen Antwort (IMAP-Abgleich sieht nur den Umschlag): „Automatische Antwort: …“, „Abwesenheitsnotiz“, „Out of Office“ … */
+export function looksLikeAutoReplySubject(subject: string | null | undefined): boolean {
+  const text = (subject ?? "").trim().toLowerCase(); if (!text) return false;
+  return /^(automatische antwort|automatic reply|auto-?reply|autoreply|auto:|abwesenheit|abwesenheitsnotiz|out of office|out-of-office|außer haus|automatische rückantwort|ihre nachricht wurde empfangen|zustellbenachrichtigung|delivery status notification)/.test(text) || /(abwesenheitsnotiz|out of office|out-of-office|automatische antwort|automatic reply|auto-?reply)/.test(text);
+}
 const OUT_OF_OFFICE = /(abwesenheitsnotiz|abwesenheitsnachricht|out of office|out-of-office|außer haus|nicht im (büro|haus|hause)|im urlaub|in urlaub|bin (ab|bis|erst|vom) .*(wieder|zurück|erreichbar)|automatische antwort|automatic reply|auto-?reply|autoreply|in meiner abwesenheit|wird nicht weitergeleitet|erreichen sie meine vertretung|vertretung erreichen|derzeit nicht erreichbar|elternzeit)/i;
 const INTEREST_STRONG = /(klingt (gut|interessant|spannend)|sehr interessant|(gerne|gern) (ein )?(angebot|termin|gespräch|telefonat|mehr)|angebot (schicken|senden|zukommen|zusenden|machen)|schicken sie (mir )?(ein|das) angebot|termin (vereinbaren|machen|ausmachen|vorschlagen)|rufen sie (mich )?(gerne )?an|können wir (telefonieren|sprechen|reden)|haben interesse|hätten interesse|habe interesse|hätte interesse|wären interessiert|wäre interessiert|sind interessiert|bin interessiert|melden sie sich|weitere (infos|informationen|details) (bitte|wären)|preisliste|konditionen)/i;
 const INTEREST_WEAK = /(interess|angebot|termin|rückruf|gerne|preis|kosten|kapazität|wie viele|unterlagen|mehr (infos|informationen|details))/i;

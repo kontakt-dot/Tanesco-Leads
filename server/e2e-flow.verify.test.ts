@@ -12,7 +12,7 @@
 import express from "express";
 import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
@@ -2025,5 +2025,47 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Migration 0074 hat vorhandene Dialer-Anrufe der Vortests übernommen? (Hooks laufen seit dem Anruf, Backfill greift bei der Migration) – mindestens dieser eine Eintrag hängt am Dialer-Anruf
     expect((await db.select({ id: leadCallAttempts.id }).from(leadCallAttempts).where(eq(leadCallAttempts.dialerCallId, instruction.callId))).length).toBe(1);
   }, 20000);
+
+  it("40. Antwort-Stopp: eine Antwort stoppt sofort jede laufende Serie an den Kontakt – auch ohne „Wenn geantwortet“ im Ablauf; Abwesenheitsnotiz zählt nicht; Knopf „Geantwortet“ stoppt ebenfalls", async () => {
+    const tenantId = S.tenantId as number; const { REPLY_STOP_NOTE } = await import("../shared/email-campaigns"); const { starterBlocks } = await import("../shared/email-design");
+    // Drei Kontakte mit E-Mail in einer frischen Liste
+    const rows = [["Anna", "anna@antwort-test.example"], ["Bernd", "bernd@antwort-test.example"], ["Dirk", "dirk@antwort-test.example"]].map(([firstName, email]) => ({ firstName, lastName: "Stopp", company: `${firstName} Dach GmbH`, email, phone: null }));
+    expect((await owner.leadops.importColdList({ listName: "Antwort-Stopp Test", rows })).created).toBe(3);
+    // Ablauf OHNE Antwort-Verzweigung: E-Mail → 1 Std. warten → E-Mail → E-Mail. Zwei Serien gleichzeitig an dieselben Kontakte.
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste Mail an {{vorname}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Zweite", subject: "Zweite Mail", blocks: starterBlocks("nachfassen"), next: "m3" }, { id: "m3", type: "send" as const, label: "Dritte", subject: "Dritte Mail", blocks: starterBlocks("nachfassen"), next: null }] };
+    const starter = await owner.leadops.emailCampaignStarter();
+    const a = await owner.leadops.saveEmailCampaign({ name: "Stopp-Serie A", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Antwort-Stopp Test" }, tree, design: starter.design as unknown as Record<string, unknown> });
+    const b = await owner.leadops.saveEmailCampaign({ name: "Stopp-Serie B", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Antwort-Stopp Test" }, tree, design: starter.design as unknown as Record<string, unknown> });
+    for (const campaign of [a, b]) { const started = await owner.leadops.startEmailCampaign({ id: campaign.id }); expect(started.added).toBe(3); if (started.processed < 3) await owner.leadops.runEmailCampaigns(); }
+    const rowsOf = async (email: string) => db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.email, email)));
+    for (const email of ["anna@antwort-test.example", "bernd@antwort-test.example", "dirk@antwort-test.example"]) { const items = await rowsOf(email); expect(items).toHaveLength(2); expect(items.every((row) => row.status === "wartet" && row.sentCount === 1 && !row.repliedAt)).toBe(true); }
+    // 1) Anna antwortet auf Serie A → beide Serien (A und B) sind für Anna sofort beendet, Vermerk im Verlauf
+    const reply = await owner.leadops.storeInboxMessage({ fromEmail: "anna@antwort-test.example", fromName: "Anna Stopp", subject: "Re: Erste Mail an Anna", bodyText: "Ja gerne, rufen Sie mich an." }); expect(reply.replied).toBe(true);
+    const anna = await rowsOf("anna@antwort-test.example"); expect(anna.every((row) => row.status === "fertig" && row.repliedAt && !row.nextActionAt && !row.nodeId)).toBe(true);
+    for (const row of anna) { const events = await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, row.id)); expect(events.some((event) => event.kind === "beendet" && event.note === REPLY_STOP_NOTE)).toBe(true); }
+    // 2) Bernd schickt nur eine Abwesenheitsnotiz → zählt nicht als Antwort, Serie läuft weiter (Vermerk im Verlauf)
+    const away = await owner.leadops.storeInboxMessage({ fromEmail: "bernd@antwort-test.example", fromName: "Bernd Stopp", subject: "Automatische Antwort: Erste Mail an Bernd", bodyText: "Ich bin bis zum 30.10. im Urlaub und erst danach wieder erreichbar." }); expect(away.replied).toBe(false); expect(away.ai?.kind).toBe("abwesenheit");
+    const bernd = await rowsOf("bernd@antwort-test.example"); expect(bernd.every((row) => row.status === "wartet" && !row.repliedAt)).toBe(true);
+    const berndEvents = await db.select().from(emailCampaignEvents).where(or(eq(emailCampaignEvents.recipientId, bernd[0].id), eq(emailCampaignEvents.recipientId, bernd[1].id))); expect(berndEvents.some((event) => event.kind === "gewartet" && /Abwesenheitsnotiz/.test(event.note ?? ""))).toBe(true); expect(berndEvents.some((event) => event.note === REPLY_STOP_NOTE)).toBe(false);
+    // 3) Knopf „Geantwortet“ an Dirks Eintrag in Serie A → stoppt A und B für Dirk
+    const dirkA = (await rowsOf("dirk@antwort-test.example")).find((row) => row.campaignId === a.id)!; expect((await owner.leadops.markEmailReplied({ recipientId: dirkA.id })).stopped).toBe(2);
+    expect((await rowsOf("dirk@antwort-test.example")).every((row) => row.status === "fertig" && row.repliedAt)).toBe(true);
+    // 4) Wartezeit abgelaufen → Zeitplaner: Bernd bekommt Mail 2 und 3, Anna und Dirk bekommen nichts mehr
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(and(eq(emailCampaignRecipients.tenantId, tenantId), or(eq(emailCampaignRecipients.campaignId, a.id), eq(emailCampaignRecipients.campaignId, b.id))));
+    await owner.leadops.runEmailCampaigns();
+    expect((await rowsOf("bernd@antwort-test.example")).every((row) => row.status === "fertig" && row.sentCount === 3)).toBe(true);
+    expect((await rowsOf("anna@antwort-test.example")).every((row) => row.sentCount === 1)).toBe(true); expect((await rowsOf("dirk@antwort-test.example")).every((row) => row.sentCount === 1)).toBe(true);
+    // Kampagnen-Ansicht: gestoppte Empfänger als „geantwortet“ gezählt, Serie beendet
+    const detail = await owner.leadops.getEmailCampaign({ id: a.id }); expect(detail.stats.replied).toBe(2); expect(detail.status).toBe("beendet"); expect(detail.recipients.find((row) => row.email === "anna@antwort-test.example")).toMatchObject({ status: "fertig", sentCount: 1 });
+    expect(detail.events.filter((event) => event.kind === "beendet" && event.note === REPLY_STOP_NOTE)).toHaveLength(2);
+    // 5) Antwort trifft zwischen Laden und Senden ein (Nachprüfung direkt vor dem Versand): dritte Serie, Antwort wird vor dem Zeitplaner gesetzt, aber ohne Stopp-Lauf → der Zeitplaner selbst beendet statt zu senden
+    const c = await owner.leadops.saveEmailCampaign({ name: "Stopp-Serie C", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Antwort-Stopp Test" }, tree, design: starter.design as unknown as Record<string, unknown> });
+    expect((await owner.leadops.startEmailCampaign({ id: c.id })).added).toBe(3); await owner.leadops.runEmailCampaigns();
+    const berndC = (await rowsOf("bernd@antwort-test.example")).find((row) => row.campaignId === c.id)!; expect(berndC.sentCount).toBe(1);
+    await db.update(emailCampaignRecipients).set({ repliedAt: new Date(), nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, berndC.id)); // nur Zeitstempel, kein Stopp-Lauf
+    await owner.leadops.runEmailCampaigns();
+    const berndAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, berndC.id)))[0]; expect(berndAfter.status).toBe("fertig"); expect(berndAfter.sentCount).toBe(1);
+    expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, berndC.id))).some((event) => event.kind === "beendet" && event.note === REPLY_STOP_NOTE)).toBe(true);
+  }, 30000);
 
 });

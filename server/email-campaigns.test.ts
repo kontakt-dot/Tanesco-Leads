@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { advanceRecipient, recipientValues, starterTree, validateTree, summarizeCampaign } from "../shared/email-campaigns";
+import { advanceRecipient, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, validateTree, summarizeCampaign } from "../shared/email-campaigns";
+import { isAutoReply, looksLikeAutoReplySubject } from "../shared/reply-ai";
 import { fillPlaceholders, renderEmailHtml, renderEmailText, starterBlocks, usesSignature } from "../shared/email-design";
 import { renderNode } from "../shared/email-campaigns";
 import { detectMapping, extraFieldsOf, parseColdList, placeholderKey } from "../shared/cold-list";
@@ -15,6 +16,30 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
     const sentBefore = sent.length; const notOpened = await advanceRecipient(tree, first.state, new Date(t0.getTime() + 73 * 3_600_000), send); expect(sent[sentBefore]).toContain("Haben Sie meine E-Mail gesehen"); expect(notOpened.events[0].note).toContain("nein → Sonst");
     const failing = await advanceRecipient(tree, start, t0, async () => false); expect(failing.state.status).toBe("fehler");
     expect(summarizeCampaign([{ status: "fertig", sentCount: 2, openedAt: new Date(), clickedAt: null, repliedAt: null }, { status: "wartet", sentCount: 1, openedAt: null, clickedAt: null, repliedAt: null }])).toMatchObject({ total: 2, sent: 2, opened: 1, openRate: 50 });
+  });
+  it("Antwort-Stopp: hat der Kontakt geantwortet, geht keine E-Mail mehr raus – egal wie der Ablauf gebaut ist", async () => {
+    // Ablauf OHNE „Wenn geantwortet“-Verzweigung: E-Mail → 1 Std. warten → zweite E-Mail → dritte E-Mail
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Zweite", subject: "Zweite", blocks: starterBlocks("nachfassen"), next: "m3" }, { id: "m3", type: "send" as const, label: "Dritte", subject: "Dritte", blocks: starterBlocks("nachfassen"), next: null }] };
+    expect(validateTree(tree)).toEqual([]);
+    const sent: string[] = []; const send = async (node: { subject: string }) => { sent.push(node.subject); return true; };
+    const t0 = new Date("2026-10-01T09:00:00"); const start = { nodeId: null, nextActionAt: null, status: "wartet" as const, sentCount: 0, openedAt: null, clickedAt: null, repliedAt: null, lastSentAt: null };
+    const first = await advanceRecipient(tree, start, t0, send); expect(sent).toEqual(["Erste"]); expect(first.state.status).toBe("wartet");
+    // Antwort trifft ein, dann wird die Wartezeit fällig → Stopp statt zweiter E-Mail, Vermerk im Verlauf, Status endgültig
+    const replied = { ...first.state, repliedAt: new Date(t0.getTime() + 600_000) };
+    expect(stoppedByReply(replied)).toBe(true);
+    const stopped = await advanceRecipient(tree, replied, new Date(t0.getTime() + 2 * 3_600_000), send);
+    expect(sent).toEqual(["Erste"]); expect(stopped.state.status).toBe("fertig"); expect(stopped.state.nodeId).toBeNull(); expect(stopped.state.nextActionAt).toBeNull();
+    expect(stopped.events).toEqual([{ kind: "beendet", nodeId: "m2", note: REPLY_STOP_NOTE }]);
+    // Ohne Antwort läuft die Serie normal weiter (Gegenprobe)
+    const normal = await advanceRecipient(tree, first.state, new Date(t0.getTime() + 2 * 3_600_000), send); expect(sent).toEqual(["Erste", "Zweite", "Dritte"]); expect(normal.state.status).toBe("fertig");
+    // Antwort kurz vor dem Senden (Nachprüfung im Versand-Rückruf) → Stopp ohne Versand, kein „Fehler“
+    const lateSent: string[] = []; const lateStop = await advanceRecipient(tree, first.state, new Date(t0.getTime() + 2 * 3_600_000), async (node) => { lateSent.push(node.subject); return { ok: false, subject: node.subject, stopped: REPLY_STOP_NOTE }; });
+    expect(lateSent).toEqual(["Zweite"]); expect(lateStop.state.status).toBe("fertig"); expect(lateStop.state.sentCount).toBe(1); expect(lateStop.events.map((event) => event.kind)).toEqual(["beendet"]);
+    // Bereits beendete/abgemeldete Einträge werden nicht noch einmal „gestoppt“
+    expect(stoppedByReply({ status: "abgemeldet", repliedAt: new Date() })).toBe(false); expect(stoppedByReply({ status: "fertig", repliedAt: new Date() })).toBe(false); expect(stoppedByReply({ status: "laeuft", repliedAt: null })).toBe(false);
+    // Abwesenheitsnotizen zählen nicht als Antwort
+    expect(isAutoReply({ kind: "abwesenheit", confidence: 90 }, "Re: Mehr Anfragen")).toBe(true); expect(isAutoReply({ kind: "abwesenheit", confidence: 30 }, "Re: Mehr Anfragen")).toBe(false); expect(isAutoReply({ kind: "interessiert", confidence: 90 }, "Re: Mehr Anfragen")).toBe(false); expect(isAutoReply(null, "Re: Mehr Anfragen")).toBe(false);
+    expect(looksLikeAutoReplySubject("Automatische Antwort: Mehr Anfragen")).toBe(true); expect(looksLikeAutoReplySubject("Out of Office – Re: Angebot")).toBe(true); expect(looksLikeAutoReplySubject("AW: Mehr Anfragen für Koch Dach")).toBe(false); expect(looksLikeAutoReplySubject(null)).toBe(false);
   });
   it("rendert Bausteine mit Platzhaltern, Tracking-Pixel und umgeschriebenen Links", () => {
     const html = renderEmailHtml(starterBlocks("kaltakquise"), { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, sans-serif" }, { firma: "Hansen Bedachungen", anrede: "Herr", nachname: "Hansen", abmelden: "Abmelden: https://x.de/u" }, { trackingPixelUrl: "https://x.de/api/mail/o/t.gif", wrapLink: (url) => `https://x.de/api/mail/c/t?u=${encodeURIComponent(url)}` });

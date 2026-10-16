@@ -5,7 +5,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leads, mailSettings, outboundMessages, pipelineEvents, pipelineNotes, users } from "../drizzle/schema";
-import { decideReply, describeAssessment, DEFAULT_REPLY_AI, matchesAiFilter, type InboxAiFilter, type ReplyAiSettings } from "../shared/reply-ai";
+import { decideReply, describeAssessment, DEFAULT_REPLY_AI, isAutoReply, matchesAiFilter, type InboxAiFilter, type ReplyAiSettings } from "../shared/reply-ai";
 import { assessReply } from "./reply-ai";
 import { isStage } from "../shared/sales-pipeline";
 import { extractPhone } from "../shared/pipeline-extras";
@@ -95,9 +95,15 @@ export async function storeMessage(db: Db, tenantId: number, input: { messageId:
   if (decision.action === "markiert" && assessment?.kind === "interessiert" && settings.markInterest && noteLeadId) { // „Interessiert“ als Notiz an der Pipeline-Karte
     await db.insert(pipelineNotes).values({ tenantId, leadId: noteLeadId, authorUserId: null, text: `KI: Antwort klingt interessiert (${assessment.confidence} %)${assessment.quote ? ` – „${assessment.quote}“` : ""}`, source: "text" }).catch(() => null);
   }
-  if (!blocked && recipient && recipient.sentCount > 0 && !recipient.repliedAt) { await db.update(emailCampaignRecipients).set({ repliedAt: input.receivedAt }).where(eq(emailCampaignRecipients.id, recipient.id)); await db.insert(emailCampaignEvents).values({ tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: "geoeffnet", note: `Antwort im Posteingang: „${(input.subject ?? "").slice(0, 120)}“` }); replied = true;
+  // Antwort-Stopp: eine echte Antwort beendet sofort jede laufende Serie an diese Adresse – egal aus welcher Kampagne die
+  // Mail kam. Abwesenheitsnotizen/automatische Antworten zählen nicht als Antwort: die Serie läuft weiter, der Verlauf vermerkt es.
+  const autoReply = isAutoReply(assessment, input.subject);
+  if (!blocked && autoReply && recipient) await db.insert(emailCampaignEvents).values({ tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: "gewartet", note: `Abwesenheitsnotiz erhalten – zählt nicht als Antwort, Serie läuft weiter: „${(input.subject ?? "").slice(0, 100)}“` });
+  if (!blocked && !autoReply && recipient && recipient.sentCount > 0 && !recipient.repliedAt) { await db.update(emailCampaignRecipients).set({ repliedAt: input.receivedAt }).where(eq(emailCampaignRecipients.id, recipient.id)); await db.insert(emailCampaignEvents).values({ tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: recipient.nodeId, kind: "geoeffnet", note: `Antwort im Posteingang: „${(input.subject ?? "").slice(0, 120)}“` }); replied = true;
     const replyLeadId = recipient.leadId ?? lead?.id ?? null; if (replyLeadId) { const { onInboxReply } = await import("./pipeline-extras"); await onInboxReply(db, tenantId, { leadId: replyLeadId, subject: input.subject ?? null }).catch(() => null); }
     await logActivity(db, tenantId, { kind: "email_antwort", title: `Antwort von ${input.fromName?.trim() || input.fromEmail}: „${(input.subject ?? "(ohne Betreff)").slice(0, 100)}“`, detail: assessment ? `KI: ${assessment.kind} (${assessment.confidence} %)` : null, leadId: replyLeadId, refType: "inboxMessage", refId: Number(inserted[0]?.insertId) || null }); }
+  // Antwort-Stopp: eine echte Antwort beendet sofort jede laufende Serie an diese Adresse – egal aus welcher Kampagne die Mail kam
+  if (!blocked && !autoReply) { const { stopSeriesForContact } = await import("./sales-outreach"); await stopSeriesForContact(db, tenantId, { email: fromEmail, leadId: recipient?.leadId ?? lead?.id ?? null, repliedAt: input.receivedAt }).catch(() => null); }
   return { id: Number(inserted[0]?.insertId) || 0, replied, leadId: recipient?.leadId ?? lead?.id ?? null, ai: assessment ? { kind: assessment.kind, confidence: assessment.confidence, action: decision.action } : null };
 }
 /** KI-Schalter aus den E-Mail-Einstellungen (Einstellungen → E-Mail-Versand → Antworten). */

@@ -1536,6 +1536,37 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.listSalesReps")).find((rep: any) => rep.userId === lisa.userId)).toMatchObject({ name: "Lisa Neumann", active: false, initials: "LN" });
     expect((await call("leadops.pipelineOwners")).some((owner: any) => owner.userId === lisa.userId)).toBe(false);
   });
+  it("Antwort-Stopp: Antwort beendet jede laufende Serie an den Kontakt (ohne Verzweigung im Ablauf), Abwesenheitsnotiz nicht, Knopf „Geantwortet“ stoppt ebenfalls", async () => {
+    const { REPLY_STOP_NOTE } = await import("../../../../shared/email-campaigns"); const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Antwort-Stopp", rows: [["Anna", "anna@stopp-test.example"], ["Bernd", "bernd@stopp-test.example"], ["Dirk", "dirk@stopp-test.example"]].map(([firstName, email]) => ({ firstName, lastName: "Test", company: `${firstName} GmbH`, email })) });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste Mail", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Zweite", subject: "Zweite Mail", blocks: starterBlocks("nachfassen"), next: "m3" }, { id: "m3", type: "send", label: "Dritte", subject: "Dritte Mail", blocks: starterBlocks("nachfassen"), next: null }] };
+    const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Antwort-Stopp" }, tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 30 };
+    const a = await call("leadops.saveEmailCampaign", { ...base, name: "Stopp A" }); const b = await call("leadops.saveEmailCampaign", { ...base, name: "Stopp B" });
+    expect((await call("leadops.startEmailCampaign", { id: a.id })).added).toBe(3); expect((await call("leadops.startEmailCampaign", { id: b.id })).added).toBe(3);
+    const rowsOf = (email: string) => getStore().tables.emailCampaignRecipients.filter((row) => row.email === email && (row.campaignId === a.id || row.campaignId === b.id));
+    expect(rowsOf("anna@stopp-test.example").every((row) => row.status === "wartet" && row.sentCount === 1)).toBe(true);
+    // Anna antwortet → A und B für Anna beendet, Vermerk im Verlauf
+    const reply = await call("leadops.storeInboxMessage", { fromEmail: "anna@stopp-test.example", fromName: "Anna Test", subject: "Re: Erste Mail", bodyText: "Ja gerne, rufen Sie an." }); expect(reply.replied).toBe(true);
+    expect(rowsOf("anna@stopp-test.example").every((row) => row.status === "fertig" && row.repliedAt && !row.nextActionAt)).toBe(true);
+    expect(getStore().tables.emailCampaignEvents.filter((row) => rowsOf("anna@stopp-test.example").some((item) => item.id === row.recipientId) && row.kind === "beendet" && row.note === REPLY_STOP_NOTE)).toHaveLength(2);
+    // Bernd: nur Abwesenheitsnotiz → läuft weiter
+    const away = await call("leadops.storeInboxMessage", { fromEmail: "bernd@stopp-test.example", fromName: "Bernd Test", subject: "Automatische Antwort: Erste Mail", bodyText: "Ich bin bis zum 30.10. im Urlaub und erst danach wieder erreichbar." }); expect(away.replied).toBe(false);
+    expect(rowsOf("bernd@stopp-test.example").every((row) => row.status === "wartet" && !row.repliedAt)).toBe(true);
+    // Dirk: Knopf „Geantwortet“ in Serie A → stoppt A und B
+    const dirkA = rowsOf("dirk@stopp-test.example").find((row) => row.campaignId === a.id)!; expect((await call("leadops.markEmailReplied", { recipientId: dirkA.id })).stopped).toBe(2);
+    expect(rowsOf("dirk@stopp-test.example").every((row) => row.status === "fertig" && row.repliedAt)).toBe(true);
+    // Zeitplaner: nur Bernd bekommt Mail 2 und 3
+    for (const row of getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === a.id || row.campaignId === b.id)) row.nextActionAt = new Date(Date.now() - 1000);
+    await call("leadops.runEmailCampaigns");
+    expect(rowsOf("bernd@stopp-test.example").every((row) => row.status === "fertig" && row.sentCount === 3)).toBe(true);
+    expect(rowsOf("anna@stopp-test.example").every((row) => row.sentCount === 1)).toBe(true); expect(rowsOf("dirk@stopp-test.example").every((row) => row.sentCount === 1)).toBe(true);
+    // Nur Zeitstempel gesetzt (ohne Stopp-Lauf) → der Zeitplaner beendet statt zu senden
+    const c = await call("leadops.saveEmailCampaign", { ...base, name: "Stopp C" }); expect((await call("leadops.startEmailCampaign", { id: c.id })).added).toBe(3);
+    const berndC = getStore().tables.emailCampaignRecipients.find((row) => row.campaignId === c.id && row.email === "bernd@stopp-test.example")!; berndC.repliedAt = new Date(); berndC.nextActionAt = new Date(Date.now() - 1000);
+    await call("leadops.runEmailCampaigns"); expect(berndC.status).toBe("fertig"); expect(berndC.sentCount).toBe(1);
+    expect(getStore().tables.emailCampaignEvents.some((row) => row.recipientId === berndC.id && row.kind === "beendet" && row.note === REPLY_STOP_NOTE)).toBe(true);
+    const detail = await call("leadops.getEmailCampaign", { id: a.id }); expect(detail.stats.replied).toBe(2);
+  });
   it("Listen-Upload verteilt prozentual (70/30 → 7/3, im Wechsel) oder nach Anzahl (Rest bleibt offen)", async () => {
     const reps = await call("leadops.listSalesReps"); const taner = reps.find((rep: any) => rep.firstName === "Taner"); const francesco = reps.find((rep: any) => rep.firstName === "Francesco");
     const rows = Array.from({ length: 10 }, (_, index) => ({ firstName: `Test${index}`, lastName: "Verteilt", company: `Firma ${index}`, phone: `+49 69 4400${100 + index}` }));
