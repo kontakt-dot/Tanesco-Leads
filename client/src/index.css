@@ -635,6 +635,13 @@ body:has(.side-drawer-backdrop),body:has(.app-confirm-backdrop){overflow:hidden}
 .reply-stop svg{color:#34d399}
 .reply-stop.is-off{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.1);color:#fecaca}
 .reply-stop.is-off svg{color:#f87171}
+/* Mehrfach-Durchlauf: aus = ruhig grau (Standard), an = violett/rot wie die Akzentfarbe */
+.reply-stop.is-runs.is-off-muted{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:#9a9ec0}
+.reply-stop.is-runs.is-off-muted svg{color:#8f93af}
+.reply-stop.is-runs.is-on{border-color:rgba(130,120,255,.4);background:rgba(130,120,255,.1);color:#dcd9ff}
+.reply-stop.is-runs.is-on svg{color:#a89fff}
+.reply-stop-runs{display:inline}
+.reply-stop-select{margin:0 3px;padding:1px 6px;border:1px solid rgba(255,255,255,.18);border-radius:7px;background:#111318;color:#fff;font-size:12px;font-weight:700}
 .tree-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 4px;margin-top:12px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(15,23,42,.35);font-size:12px;color:#c9c5f5}
 .tree-summary-title{font-weight:700;color:#fff;margin-right:4px}
 .tree-summary-item{display:inline-flex;align-items:center;gap:4px;min-width:0}
@@ -1652,6 +1659,9 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .upload-history{display:grid;gap:6px;margin-top:12px}
 .upload-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:9px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.02)}
 .upload-row.is-undone{opacity:.55}
+.upload-row.is-deletion{border-color:rgba(248,113,113,.28);background:rgba(248,113,113,.06)}
+.upload-deleted-tag{display:inline-block;margin-right:4px;padding:1px 7px;border-radius:999px;background:rgba(248,113,113,.18);color:#fca5a5;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;vertical-align:middle}
+.upload-deleted-sum{margin:10px 0 0;font-size:12px;color:#fca5a5}
 .upload-main{flex:1;min-width:190px}
 .upload-main strong{display:block;font-size:13px;color:#e2e8f0}
 .upload-main small{display:block;margin-top:2px;font-size:11px;color:#94a3b8}
@@ -2037,3 +2047,47 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 .profile-menu button.is-danger{color:#fca5a5}.profile-menu button.is-danger svg{color:#f87171}.profile-menu button.is-danger:hover{background:rgba(248,113,113,.12)}
 .profile-menu-sep{height:1px;margin:4px 6px;background:rgba(255,255,255,.08)}
 @media(max-width:760px){.profile-menu{position:fixed;right:10px;left:10px;top:64px;width:auto}}
+
+/* Lead-Log: Empfänger anklicken → alles, was in der Serie passiert ist */
+.recipients-table tr.is-error td{background:rgba(248,113,113,.06)}
+.recipient-open{display:block;text-align:left;cursor:pointer}
+.recipient-open:hover strong{color:#c9c5f5;text-decoration:underline;text-underline-offset:3px}
+.stage-pill{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;background:rgba(130,120,255,.16);color:#e5e1fd;font-size:11px;font-weight:600;white-space:nowrap}
+.stage-pill.is-muted{background:rgba(255,255,255,.06);color:#8f93af;font-weight:500}
+.leadlog-dialog{width:min(900px,94vw)!important;max-width:min(900px,94vw)!important;max-height:90vh;overflow:auto;padding:24px 26px!important;gap:14px!important}
+.leadlog-head{display:flex!important;flex-direction:row!important;align-items:flex-start;justify-content:space-between;gap:14px;text-align:left;padding-right:28px}
+.leadlog-title{font-size:20px!important;font-weight:800;color:#fff}
+.leadlog-desc{margin-top:4px!important;font-size:12.5px!important;color:#9a9ec0!important}
+.leadlog-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:none;max-width:48%}
+.leadlog-status{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.14);font-size:12px;font-weight:700;color:#e5e1fd;white-space:nowrap}
+.leadlog-status.is-fertig{border-color:rgba(52,211,153,.4);color:#8ff0c6}.leadlog-status.is-fehler,.leadlog-status.is-bounce,.leadlog-status.is-beschwerde{border-color:rgba(248,113,113,.5);background:rgba(248,113,113,.12);color:#fca5a5}.leadlog-status.is-wartet,.leadlog-status.is-laeuft{border-color:rgba(251,191,36,.4);color:#fde68a}
+.leadlog-stage{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:999px;background:rgba(130,120,255,.16);color:#e5e1fd;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer}
+.leadlog-stage:hover{background:rgba(130,120,255,.3)}.leadlog-stage.is-muted{background:rgba(255,255,255,.06);color:#8f93af;cursor:default}
+.leadlog-body{display:grid;gap:14px}
+.leadlog-errors{display:grid;gap:4px;padding:12px 14px;border:1px solid rgba(248,113,113,.4);border-radius:12px;background:rgba(248,113,113,.1);color:#fecaca;font-size:12.5px}
+.leadlog-errors strong{display:inline-flex;align-items:center;gap:6px;color:#fff}.leadlog-errors p{margin:0}.leadlog-errors p span{display:inline-block;min-width:112px;color:#fca5a5}.leadlog-errors small{color:#fca5a5;opacity:.85}
+.leadlog-now{display:grid;gap:10px;padding:12px 14px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.03)}
+.leadlog-now>div:first-child{display:grid;gap:3px}.leadlog-now strong{font-size:14px;color:#fff}.leadlog-now small{font-size:12px;color:#9a9ec0}
+.leadlog-facts{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:#9a9ec0}.leadlog-facts b{color:#fff;margin-right:3px}
+.leadlog-steps ol,.leadlog-events ol,.leadlog-runs ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:0}
+.leadlog-steps li{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.06);font-size:12.5px}
+.leadlog-steps li:first-child{border-top:0}
+.leadlog-step-state{margin-top:1px;color:#6f739a}.leadlog-steps li.is-erledigt .leadlog-step-state{color:#34d399}.leadlog-steps li.is-aktuell .leadlog-step-state{color:#fbbf24}.leadlog-steps li.is-abgebrochen .leadlog-step-state{color:#f87171}.leadlog-steps li.is-uebersprungen{opacity:.6}
+.leadlog-step-main{display:grid;gap:2px;min-width:0}.leadlog-step-main strong{display:inline-flex;align-items:center;gap:5px;color:#fff;font-weight:600}.leadlog-step-main small{color:#9a9ec0}
+.leadlog-steps li.is-aktuell .leadlog-step-main strong{color:#fde68a}
+.leadlog-step-when{font-size:11.5px;color:#8f93af;white-space:nowrap}
+.leadlog-events li{display:grid;grid-template-columns:118px minmax(0,1fr);gap:10px;padding:7px 0;border-top:1px solid rgba(255,255,255,.06);font-size:12.5px}
+.leadlog-events li:first-child{border-top:0}
+.leadlog-event-when{color:#8f93af;font-size:11.5px;padding-top:1px}
+.leadlog-event-main{display:grid;gap:2px;min-width:0}.leadlog-event-main strong{color:#fff;font-weight:600}.leadlog-event-main em{color:#c9c5f5;font-style:normal}.leadlog-event-main small{color:#9a9ec0}
+.leadlog-events li.is-fehler .leadlog-event-main strong{color:#fca5a5}.leadlog-events li.is-beendet .leadlog-event-main strong{color:#8ff0c6}.leadlog-events li.is-gesendet .leadlog-event-main strong{color:#dcd9ff}
+.leadlog-runs li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 12px;padding:7px 10px;border-radius:9px;font-size:12px;color:#9a9ec0}.leadlog-runs li strong{color:#e5e1fd}.leadlog-runs li.is-current{background:rgba(130,120,255,.12)}
+@media(max-width:700px){.leadlog-head{flex-direction:column!important}.leadlog-badges{justify-content:flex-start;max-width:none}.leadlog-events li{grid-template-columns:1fr}.leadlog-dialog{padding:18px 14px!important}}
+
+/* Karten verteilen (Fenster) */
+.distribute-dialog{width:min(640px,94vw)!important;max-width:min(640px,94vw)!important}
+.distribute-title{display:flex!important;align-items:center;gap:8px}
+.distribute-body{display:grid;gap:16px}
+.distribute-block .dashboard-segments{flex-wrap:wrap}
+.distribute-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)}
+.upload-dist-row.is-static{cursor:default}

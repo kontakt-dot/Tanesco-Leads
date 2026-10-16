@@ -2088,4 +2088,67 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, dirkE.id))).some((event) => event.kind === "beendet" && event.note === REPLY_STOP_NOTE)).toBe(true);
   }, 30000);
 
+  it("41. Upload-Verlauf mit Löschungen, Lead-Log je Empfänger (Stufe, Schritte, Wartezeit, Fehler), Karten prozentual verteilen, Mehrfach-Durchlauf je Kampagne (Migration 0076)", async () => {
+    const tenantId = S.tenantId as number; const { REPLY_STOP_NOTE } = await import("../shared/email-campaigns"); const { starterBlocks } = await import("../shared/email-design");
+    // 1) Upload-Verlauf: Liste hochladen, zwei Kontakte von Hand löschen, Liste löschen → Einträge „gelöscht“ mit Grund und Person
+    const rows = [["Udo", "udo@verlauf-test.example"], ["Vera", "vera@verlauf-test.example"], ["Willi", "willi@verlauf-test.example"], ["Xenia", "xenia@verlauf-test.example"]].map(([firstName, email]) => ({ firstName, lastName: "Verlauf", company: `${firstName} GmbH`, email }));
+    expect((await owner.leadops.importColdList({ listName: "Verlauf Test", rows })).created).toBe(4);
+    const contacts = await owner.leadops.emailLeads({ listName: "Verlauf Test" }); expect(contacts.items.length).toBe(4);
+    expect((await owner.leadops.deleteEmailLeads({ leadIds: contacts.items.slice(0, 2).map((item) => item.id) })).deleted).toBe(2);
+    let history = await owner.leadops.listImportHistory({ limit: 50 }); let deletion = history.find((row) => row.kind === "loeschung" && row.listName === "Verlauf Test");
+    expect(deletion).toMatchObject({ rowCount: 2, created: 0 }); expect(deletion?.note).toContain("von Hand gelöscht"); expect(deletion?.actorName).toBeTruthy();
+    expect(history.find((row) => row.kind === "upload" && row.listName === "Verlauf Test")?.stillThere).toBe(2);
+    expect((await owner.leadops.deleteColdList({ listName: "Verlauf Test" })).deleted).toBe(2);
+    history = await owner.leadops.listImportHistory({ limit: 50 }); const deletions = history.filter((row) => row.kind === "loeschung" && row.listName === "Verlauf Test"); expect(deletions.length).toBe(2); expect(deletions.some((row) => /komplett gelöscht/.test(row.note ?? ""))).toBe(true);
+    expect(history.find((row) => row.kind === "upload" && row.listName === "Verlauf Test")?.stillThere).toBe(0);
+    // Upload zurücknehmen schreibt ebenfalls einen Lösch-Eintrag
+    expect((await owner.leadops.importColdList({ listName: "Verlauf Rücknahme", rows: rows.slice(0, 2) })).created).toBe(2);
+    const upload = (await owner.leadops.listImportHistory({ limit: 50 })).find((row) => row.kind === "upload" && row.listName === "Verlauf Rücknahme")!; expect((await owner.leadops.undoListImport({ id: upload.id })).deleted).toBe(2);
+    expect((await owner.leadops.listImportHistory({ limit: 50 })).some((row) => row.kind === "loeschung" && row.listName === "Verlauf Rücknahme" && /rückgängig/.test(row.note ?? ""))).toBe(true);
+    // 2) Lead-Log + Stufe je Empfänger: Serie an drei neue Kontakte, einer bekommt einen Versandfehler (ungültige Adresse), einer eine Antwort
+    const logRows = [["Lena", "lena@log-test.example"], ["Max", "max@log-test.example"], ["Nora", "nora@log-test.example"]].map(([firstName, email]) => ({ firstName, lastName: "Log", company: `${firstName} Dach GmbH`, email }));
+    expect((await owner.leadops.importColdList({ listName: "Log Test", rows: logRows })).created).toBe(3);
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste Mail an {{vorname}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 48, next: "c1" }, { id: "c1", type: "condition" as const, check: "opened" as const, yes: "e1", no: "m2" }, { id: "m2", type: "send" as const, label: "Zweite", subject: "Zweite Mail", blocks: starterBlocks("nachfassen"), next: null }, { id: "e1", type: "end" as const, label: "Hat geöffnet" }] };
+    const starter = await owner.leadops.emailCampaignStarter();
+    const log = await owner.leadops.saveEmailCampaign({ name: "Log-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Log Test" }, tree, design: starter.design as unknown as Record<string, unknown> });
+    expect((await owner.leadops.startEmailCampaign({ id: log.id })).added).toBe(3); await owner.leadops.runEmailCampaigns();
+    const detail = await owner.leadops.getEmailCampaign({ id: log.id }); expect(detail.recipients.every((row) => row.lead?.key === "neu" && row.lead.label === "Neu")).toBe(true); // Stufe je Empfänger
+    const lena = detail.recipients.find((row) => row.email === "lena@log-test.example")!;
+    const lenaLog = await owner.leadops.emailRecipientLog({ recipientId: lena.id });
+    expect(lenaLog.recipient.sentCount).toBe(1); expect(lenaLog.lead?.stage?.label).toBe("Neu"); expect(lenaLog.waiting).toMatch(/^wartet noch 1 Tag 23 Std\.|^wartet noch 2 Tage/); expect(lenaLog.steps.map((step) => step.state)).toEqual(["erledigt", "erledigt", "aktuell", "offen"]); expect(lenaLog.events.map((event) => event.kind)).toEqual(["gesendet", "gewartet"]); expect(lenaLog.errors).toEqual([]);
+    // Versandfehler: Adresse unzustellbar simulieren (lastError + Ereignis) → Fehler im Log, Fehler-Chip in der Liste, Glocke
+    const max = detail.recipients.find((row) => row.email === "max@log-test.example")!;
+    await db.update(emailCampaignRecipients).set({ status: "fehler", nextActionAt: null, lastError: "SMTP: 550 Mailbox unavailable" }).where(eq(emailCampaignRecipients.id, max.id));
+    await db.insert(emailCampaignEvents).values({ tenantId, campaignId: log.id, recipientId: max.id, nodeId: "m2", kind: "fehler", subject: "Zweite Mail", note: "Versand fehlgeschlagen" });
+    const maxLog = await owner.leadops.emailRecipientLog({ recipientId: max.id }); expect(maxLog.errors.length).toBe(2); expect(maxLog.errors.map((item) => item.note)).toContain("SMTP: 550 Mailbox unavailable"); expect(maxLog.waiting).toBeNull();
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === log.id)?.stats.failed).toBe(1);
+    expect((await owner.leadops.getEmailCampaign({ id: log.id })).recipients.find((row) => row.id === max.id)?.lastError).toBe("SMTP: 550 Mailbox unavailable");
+    // Antwort → Log zeigt „Antwort erhalten“ und den Stopp, Stufe springt (Automatik „Antwort → Kontaktiert“ aus den Vortests)
+    await owner.leadops.storeInboxMessage({ fromEmail: "nora@log-test.example", fromName: "Nora Log", subject: "Re: Erste Mail an Nora", bodyText: "Ja, gern." });
+    const nora = detail.recipients.find((row) => row.email === "nora@log-test.example")!; const noraLog = await owner.leadops.emailRecipientLog({ recipientId: nora.id });
+    expect(noraLog.recipient.status).toBe("fertig"); expect(noraLog.events.map((event) => event.label)).toContain("Antwort erhalten"); expect(noraLog.events.some((event) => event.note === REPLY_STOP_NOTE)).toBe(true); expect(noraLog.steps.some((step) => step.state === "abgebrochen" || step.state === "uebersprungen")).toBe(true);
+    // 3) Karten verteilen: 70/30 auf die ersten beiden Vertriebler – nur die Karten ohne Vertriebler
+    const reps = await owner.leadops.pipelineOwners(); expect(reps.length).toBeGreaterThanOrEqual(2);
+    const cards = (await owner.leadops.getEmailCampaign({ id: log.id })).recipients.map((row) => row.lead!.publicId);
+    expect((await owner.leadops.distributePipelineOwners({ publicIds: cards, userIds: [reps[0].userId, reps[1].userId], shares: [{ userId: reps[0].userId, value: 70 }, { userId: reps[1].userId, value: 30 }], mode: "prozent" })).updated).toBe(3);
+    const owned = await db.select({ ownerUserId: leads.ownerUserId }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.listName, "Log Test"))); expect(owned.filter((row) => row.ownerUserId === reps[0].userId).length).toBe(2); expect(owned.filter((row) => row.ownerUserId === reps[1].userId).length).toBe(1);
+    expect((await owner.leadops.getEmailCampaign({ id: log.id })).recipients.every((row) => row.lead?.ownerUserId)).toBe(true);
+    // 4) Mehrfach-Durchlauf: Standard 1 → erneuter Start nimmt niemanden erneut; maxRuns 2 → fertige Kontakte erneut, Antwort/Fehler nie
+    await db.update(emailCampaignRecipients).set({ status: "fertig", nextActionAt: null, nodeId: null }).where(eq(emailCampaignRecipients.id, lena.id)); // Lena fertig
+    const again = await owner.leadops.startEmailCampaign({ id: log.id }); expect(again).toMatchObject({ added: 1, repeated: 1, skipped: 2, maxRuns: 1 }); // Standard: nur Max (Versandfehler zählt nicht als Durchlauf) erneut – Lena fertig, Nora geantwortet
+    await owner.leadops.saveEmailCampaign({ id: log.id, name: "Log-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Log Test" }, tree, design: starter.design as unknown as Record<string, unknown>, maxRuns: 2 });
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === log.id)?.maxRuns).toBe(2);
+    const second = await owner.leadops.startEmailCampaign({ id: log.id }); expect(second).toMatchObject({ added: 1, repeated: 1, skipped: 2, maxRuns: 2 }); // Lena (fertig) erneut – Max läuft gerade, Nora (geantwortet) nie
+    const lenaRows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, log.id), eq(emailCampaignRecipients.email, "lena@log-test.example"))); expect(lenaRows.length).toBe(2); expect(lenaRows.some((row) => row.status === "wartet")).toBe(true);
+    expect((await owner.leadops.emailRecipientLog({ recipientId: lena.id })).runs.length).toBe(2);
+    expect((await owner.leadops.startEmailCampaign({ id: log.id })).added).toBe(0); // Lenas zweiter Durchlauf läuft noch → kein dritter
+    // Lena: beide Durchläufe fertig → maxRuns 2 erreicht; Max: zweiter Durchlauf offen; Nora: geantwortet → niemand mehr
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.email, "lena@log-test.example"));
+    const third = await owner.leadops.startEmailCampaign({ id: log.id }); expect(third.added).toBe(0); expect(third.skipped).toBe(3);
+    // Standard (maxRuns 1): ein Kontakt mit Versandfehler darf nach dem Beheben erneut rein – sonst niemand
+    await owner.leadops.saveEmailCampaign({ id: log.id, name: "Log-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Log Test" }, tree, design: starter.design as unknown as Record<string, unknown>, maxRuns: 1 });
+    await db.update(emailCampaignRecipients).set({ status: "fehler", nextActionAt: null, lastError: "SMTP: Verbindung abgelehnt" }).where(and(eq(emailCampaignRecipients.campaignId, log.id), eq(emailCampaignRecipients.email, "max@log-test.example")));
+    const retry = await owner.leadops.startEmailCampaign({ id: log.id }); expect(retry).toMatchObject({ added: 1, repeated: 1, skipped: 2 });
+  }, 30000);
+
 });

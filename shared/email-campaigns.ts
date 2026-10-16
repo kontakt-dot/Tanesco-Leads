@@ -194,3 +194,87 @@ export function moveNodeInTree(tree: EmailTree, id: string, parentId: string | n
   else nodes = nodes.map((node) => node.id === parent.id ? (node.type === "condition" ? { ...node, [branch === "yes" ? "yes" : "no"]: id } : node.type === "end" ? node : { ...node, next: id }) : node);
   return { start, nodes };
 }
+
+/* ---------------------------------------------------------------- Lead-Log (Verlauf je Empfänger) */
+export const EVENT_KIND_LABEL: Record<string, string> = { gesendet: "E-Mail gesendet", geoeffnet: "Geöffnet", geklickt: "Link geklickt", gewartet: "Gewartet", verzweigt: "Verzweigung geprüft", beendet: "Beendet", fehler: "Fehler", abgemeldet: "Abgemeldet", bounce: "Unzustellbar", beschwerde: "Beschwerde" };
+export function eventLabel(event: { kind: string; note?: string | null }): string { if (event.kind === "geoeffnet" && /^antwort/i.test(event.note ?? "")) return "Antwort erhalten"; if (event.kind === "gewartet" && /abwesenheitsnotiz/i.test(event.note ?? "")) return "Abwesenheitsnotiz"; if (event.kind === "gewartet" && /läuft weiter/i.test(event.note ?? "")) return "Antwort erhalten (Serie läuft weiter)"; return EVENT_KIND_LABEL[event.kind] ?? event.kind; }
+export type LogStepState = "erledigt" | "aktuell" | "offen" | "uebersprungen" | "abgebrochen";
+export type LogStep = { id: string; type: EmailNode["type"]; title: string; detail: string | null; state: LogStepState; at: Date | null; branch?: "yes" | "no" | null };
+/** Kurzname eines Schritts: „E-Mail: Betreff“, „Warten 2 Tage“, „Wenn geöffnet“, „Ende“. */
+export function nodeTitle(node: EmailNode): string {
+  if (node.type === "send") return `E-Mail: ${node.label?.trim() || node.subject || "ohne Betreff"}`;
+  if (node.type === "wait") { const h = node.hours; return `Warten ${h % 24 === 0 && h >= 24 ? `${h / 24} Tag${h / 24 === 1 ? "" : "e"}` : h % 168 === 0 ? `${h / 168} Woche${h / 168 === 1 ? "" : "n"}` : `${h} Std.`}`; }
+  if (node.type === "condition") return `Wenn ${node.check === "opened" ? "geöffnet" : node.check === "clicked" ? (node.url ? `Link „${node.url.slice(0, 30)}“ geklickt` : "geklickt") : "geantwortet"}`;
+  return node.label && node.label !== "Ende" ? `Ende – ${node.label}` : "Ende";
+}
+/**
+ * Der Weg eines Empfängers durch den Ablauf, Schritt für Schritt: was erledigt ist (mit Zeitpunkt aus den Ereignissen), wo er
+ * gerade steht, was noch offen ist. Bei einer noch nicht geprüften Verzweigung geht es mit dem Sonst-Zweig weiter (der Dann-Zweig
+ * steht als Hinweis dabei), bei einer geprüften mit dem Zweig, der genommen wurde.
+ */
+export function recipientPath(tree: EmailTree, recipient: { nodeId: string | null; status: string; sentCount: number }, events: Array<{ kind: string; nodeId?: string | null; note?: string | null; subject?: string | null; createdAt: Date | string }>): LogStep[] {
+  const byId = new Map(tree.nodes.map((node) => [node.id, node])); const steps: LogStep[] = []; const closed = !isOpenRecipient(recipient.status);
+  const ordered = [...events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const lastOf = (nodeId: string, kinds: string[]) => [...ordered].reverse().find((event) => event.nodeId === nodeId && kinds.includes(event.kind)) ?? null;
+  let current: string | null = tree.start; let guard = 0; let reachedCurrent = false;
+  while (current && guard < 40) {
+    guard += 1; const node = byId.get(current); if (!node) break;
+    const isCurrent = !closed && recipient.nodeId === node.id; if (isCurrent) reachedCurrent = true;
+    if (node.type === "send") {
+      const sent = lastOf(node.id, ["gesendet"]); const failed = lastOf(node.id, ["fehler"]); const stopped = lastOf(node.id, ["beendet"]);
+      const state: LogStepState = sent ? "erledigt" : failed && !sent ? "abgebrochen" : isCurrent ? "aktuell" : reachedCurrent || closed ? (closed && !stopped ? "uebersprungen" : stopped ? "abgebrochen" : "offen") : "offen";
+      steps.push({ id: node.id, type: "send", title: nodeTitle(node), detail: sent?.subject ? `Betreff: ${sent.subject}` : failed ? failed.note ?? "Versand fehlgeschlagen" : stopped ? stopped.note ?? null : null, state, at: sent ? new Date(sent.createdAt) : failed ? new Date(failed.createdAt) : null });
+      current = node.next; continue;
+    }
+    if (node.type === "wait") {
+      const waited = lastOf(node.id, ["gewartet"]); const passed = Boolean(waited) && recipient.nodeId !== node.id && (reachedCurrent === false || closed) && !isCurrent;
+      const state: LogStepState = passed || (waited && recipient.nodeId && recipient.nodeId !== node.id && stepsAfter(tree, node.id, recipient.nodeId)) ? "erledigt" : isCurrent || (waited && recipient.nodeId === node.next && !closed) ? "aktuell" : closed ? "uebersprungen" : "offen";
+      steps.push({ id: node.id, type: "wait", title: nodeTitle(node), detail: waited?.note ?? null, state, at: waited ? new Date(waited.createdAt) : null });
+      current = node.next; continue;
+    }
+    if (node.type === "condition") {
+      const checked = lastOf(node.id, ["verzweigt"]); const yes = checked ? /ja →/.test(checked.note ?? "") : null;
+      const state: LogStepState = checked ? "erledigt" : isCurrent ? "aktuell" : closed ? "uebersprungen" : "offen";
+      const yesNode = node.yes ? byId.get(node.yes) : null; const noNode = node.no ? byId.get(node.no) : null;
+      steps.push({ id: node.id, type: "condition", title: nodeTitle(node), detail: checked ? checked.note ?? null : `Falls ja → ${yesNode ? nodeTitle(yesNode) : "Ende"} · falls nein → ${noNode ? nodeTitle(noNode) : "Ende"}`, state, at: checked ? new Date(checked.createdAt) : null, branch: checked ? (yes ? "yes" : "no") : null });
+      current = checked ? (yes ? node.yes : node.no) : node.no; continue;
+    }
+    const ended = lastOf(node.id, ["beendet"]); const previousDone = steps.length > 0 && steps[steps.length - 1].state === "erledigt"; // fertig ohne eigenes Ende-Ereignis (ältere Daten): Ende gilt als erreicht
+    steps.push({ id: node.id, type: "end", title: nodeTitle(node), detail: ended?.note ?? null, state: ended ? "erledigt" : recipient.status === "fertig" && previousDone ? "erledigt" : closed ? "uebersprungen" : "offen", at: ended ? new Date(ended.createdAt) : null });
+    break;
+  }
+  return steps;
+}
+/** Liegt `target` im Ablauf hinter `from` (nur Hauptkette, ohne Zweige)? */
+function stepsAfter(tree: EmailTree, from: string, target: string): boolean {
+  const byId = new Map(tree.nodes.map((node) => [node.id, node])); let current: string | null = byId.get(from)?.type === "end" ? null : ((byId.get(from) as { next?: string | null } | undefined)?.next ?? null); let guard = 0;
+  while (current && guard < 40) { guard += 1; if (current === target) return true; const node = byId.get(current); if (!node) return false; current = node.type === "condition" ? (node.no ?? node.yes) : node.type === "end" ? null : node.next; }
+  return false;
+}
+/** „wartet noch 2 Tage 3 Std.“ / „fällig – nächster Lauf“ – für den Lead-Log. */
+export function waitingText(nextActionAt: Date | string | null | undefined, status: string, now = new Date()): string | null {
+  if (!isOpenRecipient(status)) return null; if (!nextActionAt) return "fällig – wird beim nächsten Lauf des Zeitplaners verarbeitet";
+  const ms = new Date(nextActionAt).getTime() - now.getTime(); if (ms <= 0) return "fällig – wird beim nächsten Lauf des Zeitplaners verarbeitet";
+  const minutes = Math.round(ms / 60_000); const days = Math.floor(minutes / 1440); const hours = Math.floor((minutes % 1440) / 60); const mins = minutes % 60;
+  const parts = [days ? `${days} Tag${days === 1 ? "" : "e"}` : null, hours ? `${hours} Std.` : null, !days && mins ? `${mins} Min.` : null].filter(Boolean);
+  return `wartet noch ${parts.join(" ") || "unter einer Minute"} – bis ${new Date(nextActionAt).toLocaleString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+}
+
+/* ---------------------------------------------------------------- Mehrfach-Durchlauf je Kampagne */
+/** Wie oft darf ein Kontakt durch diese Kampagne? 1 = einmal (Standard, Schalter aus), 2/3/5 = so oft, 0 = unbegrenzt. */
+export const MAX_RUNS_OPTIONS: Array<{ value: number; label: string }> = [{ value: 1, label: "Aus – jeder Kontakt nur einmal" }, { value: 2, label: "Bis zu 2 Durchläufe" }, { value: 3, label: "Bis zu 3 Durchläufe" }, { value: 5, label: "Bis zu 5 Durchläufe" }, { value: 0, label: "Unbegrenzt" }];
+export function maxRunsOf(campaign: object | null | undefined): number { const value = Number((campaign as { maxRuns?: number | null } | null | undefined)?.maxRuns ?? 1); return Number.isFinite(value) && value >= 0 ? Math.round(value) : 1; }
+export function maxRunsLabel(maxRuns: number): string { return maxRuns === 0 ? "unbegrenzt viele Durchläufe" : maxRuns <= 1 ? "jeder Kontakt nur einmal" : `bis zu ${maxRuns} Durchläufe je Kontakt`; }
+/**
+ * Darf ein Kontakt (erneut) in die Kampagne? Nie, solange ein Durchlauf offen ist; nie nach Antwort, Bounce, Beschwerde oder
+ * Abmeldung; sonst, solange die erlaubte Zahl nicht erreicht ist. Mit Standard 1 ist jeder Kontakt genau einmal dabei.
+ * Ein Durchlauf, der am Versand gescheitert ist (Status „fehler“), zählt nicht – so lässt er sich nach dem Beheben wiederholen.
+ */
+export function canEnroll(previous: Array<{ status: string; repliedAt?: Date | string | null }>, maxRuns: number): { ok: boolean; reason: string | null } {
+  if (previous.some((row) => isOpenRecipient(row.status))) return { ok: false, reason: "läuft bereits" };
+  if (previous.some((row) => row.repliedAt)) return { ok: false, reason: "hat geantwortet" };
+  if (previous.some((row) => row.status === "bounce" || row.status === "beschwerde" || row.status === "abgemeldet")) return { ok: false, reason: "gesperrt" };
+  const completed = previous.filter((row) => row.status !== "fehler").length; // ein Versandfehler zählt nicht als Durchlauf – nach dem Beheben darf der Kontakt erneut rein
+  if (maxRuns !== 0 && completed >= Math.max(1, maxRuns)) return { ok: false, reason: completed === 1 ? "war schon einmal dabei" : `schon ${completed}× dabei` };
+  return { ok: true, reason: null };
+}

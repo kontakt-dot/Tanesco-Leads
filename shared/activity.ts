@@ -20,10 +20,11 @@ export type ActivityKind =
   | "pipeline_uebernommen" // Kontakte in die Pipeline übernommen
   | "email_gesendet"       // Kampagnen-E-Mails rausgegangen
   | "email_antwort"        // Antwort im Posteingang
+  | "email_fehler"         // Kampagnen-E-Mail konnte nicht gesendet werden (Lead-Log)
   | "kampagne"             // Kampagne gestartet / pausiert
   | "sonstiges";
 
-export const ACTIVITY_KINDS: ActivityKind[] = ["lead_neu", "kontakt_neu", "anruf", "gespraech_abgehoert", "gespraech_bewertet", "lead_verkauft", "bestellung", "reklamation", "pipeline_uebernommen", "pipeline_stufe", "email_gesendet", "email_antwort", "kampagne", "upload_rueckgaengig", "sonstiges"];
+export const ACTIVITY_KINDS: ActivityKind[] = ["lead_neu", "kontakt_neu", "anruf", "gespraech_abgehoert", "gespraech_bewertet", "lead_verkauft", "bestellung", "reklamation", "pipeline_uebernommen", "pipeline_stufe", "email_gesendet", "email_antwort", "email_fehler", "kampagne", "upload_rueckgaengig", "sonstiges"];
 
 /** Bezeichnung in der Zusammenfassung – Einzahl und Mehrzahl, damit „1 Anruf“ und „14 Anrufe“ richtig stehen. */
 export const ACTIVITY_LABEL: Record<ActivityKind, { one: string; many: string }> = {
@@ -40,6 +41,7 @@ export const ACTIVITY_LABEL: Record<ActivityKind, { one: string; many: string }>
   pipeline_uebernommen: { one: "in die Pipeline übernommen", many: "in die Pipeline übernommen" },
   email_gesendet: { one: "E-Mail gesendet", many: "E-Mails gesendet" },
   email_antwort: { one: "Antwort", many: "Antworten" },
+  email_fehler: { one: "E-Mail-Fehler", many: "E-Mail-Fehler" },
   kampagne: { one: "Kampagne", many: "Kampagnen" },
   sonstiges: { one: "Vorgang", many: "Vorgänge" },
 };

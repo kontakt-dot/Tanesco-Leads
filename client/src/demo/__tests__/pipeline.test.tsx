@@ -1155,8 +1155,9 @@ describe("Upload-Verlauf und Rückgängig (Chat-Build)", () => {
     const inhalt = await call("leadops.coldListContacts", { listName: "Probelauf" });
     expect(inhalt.contacts).toHaveLength(0);
     const danach = await call("leadops.listImportHistory", {});
-    expect(danach[0].undoneAt).toBeTruthy();
-    expect(danach[0].stillThere).toBe(0);
+    const upload = danach.find((row: any) => row.id === eintrag.id); expect(upload.undoneAt).toBeTruthy();
+    expect(upload.stillThere).toBe(0);
+    expect(danach[0]).toMatchObject({ kind: "loeschung", listName: "Probelauf", rowCount: 2 }); // die Rücknahme steht als Löschung im Verlauf
     await expect(call("leadops.undoListImport", { id: eintrag.id })).rejects.toThrow(); // kein zweites Mal
   });
   it("Kontakte, die beim Upload nur aktualisiert wurden, bleiben beim Rückgängig erhalten", async () => {
@@ -1578,6 +1579,39 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     dirkE.createdAt = new Date(Date.now() - 3 * 3_600_000); dirkE.nextActionAt = new Date(Date.now() - 1000);
     await call("leadops.saveEmailCampaign", { ...base, id: e.id, name: "Stopp E", stopOnReply: true }); await call("leadops.runEmailCampaigns");
     expect(dirkE.status).toBe("fertig"); expect(dirkE.sentCount).toBe(1);
+  });
+  it("Upload-Verlauf zeigt Löschungen, Lead-Log je Empfänger, Karten prozentual verteilen, Mehrfach-Durchlauf", async () => {
+    const { REPLY_STOP_NOTE } = await import("../../../../shared/email-campaigns"); const { starterBlocks } = await import("../../../../shared/email-design");
+    // Löschungen im Verlauf
+    await call("leadops.importColdList", { listName: "Verlauf Demo", rows: [["Udo", "udo@verlauf-demo.example"], ["Vera", "vera@verlauf-demo.example"], ["Willi", "willi@verlauf-demo.example"]].map(([firstName, email]) => ({ firstName, lastName: "Test", company: `${firstName} GmbH`, email })) });
+    const contacts = (await call("leadops.emailLeads", { listName: "Verlauf Demo" })).items; expect(contacts.length).toBe(3);
+    await call("leadops.deleteEmailLeads", { leadIds: [contacts[0].id] });
+    let history = await call("leadops.listImportHistory", { limit: 100 }); const deletion = history.find((row: any) => row.kind === "loeschung" && row.listName === "Verlauf Demo"); expect(deletion).toBeTruthy(); expect(deletion.rowCount).toBe(1); expect(deletion.note).toContain("von Hand gelöscht"); expect(deletion.actorName).toBeTruthy();
+    await call("leadops.deleteColdList", { listName: "Verlauf Demo" }); history = await call("leadops.listImportHistory", { limit: 100 });
+    expect(history.filter((row: any) => row.kind === "loeschung" && row.listName === "Verlauf Demo").length).toBe(2); expect(history.some((row: any) => row.kind === "loeschung" && /komplett gelöscht/.test(row.note ?? ""))).toBe(true);
+    // Lead-Log
+    await call("leadops.importColdList", { listName: "Log Demo", rows: [["Lena", "lena@log-demo.example"], ["Max", "max@log-demo.example"], ["Nora", "nora@log-demo.example"]].map(([firstName, email]) => ({ firstName, lastName: "Log", company: `${firstName} GmbH`, email })) });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste Mail", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 48, next: "c1" }, { id: "c1", type: "condition", check: "opened", yes: "e1", no: "m2" }, { id: "m2", type: "send", label: "Zweite", subject: "Zweite Mail", blocks: starterBlocks("nachfassen"), next: null }, { id: "e1", type: "end", label: "Hat geöffnet" }] };
+    const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Log Demo" }, tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 30 };
+    const log = await call("leadops.saveEmailCampaign", { ...base, name: "Log-Serie" }); expect((await call("leadops.startEmailCampaign", { id: log.id })).added).toBe(3);
+    const detail = await call("leadops.getEmailCampaign", { id: log.id }); expect(detail.recipients.every((row: any) => row.lead?.label === "Neu")).toBe(true);
+    const lena = detail.recipients.find((row: any) => row.email === "lena@log-demo.example"); const lenaLog = await call("leadops.emailRecipientLog", { recipientId: lena.id });
+    expect(lenaLog.steps.map((step: any) => step.state)).toEqual(["erledigt", "erledigt", "aktuell", "offen"]); expect(lenaLog.waiting).toMatch(/wartet noch/); expect(lenaLog.lead.stage.label).toBe("Neu"); expect(lenaLog.events.map((event: any) => event.kind)).toEqual(["gesendet", "gewartet"]);
+    const max = getStore().tables.emailCampaignRecipients.find((row) => row.id === detail.recipients.find((item: any) => item.email === "max@log-demo.example").id)!; max.status = "fehler"; max.nextActionAt = null; (max as any).lastError = "SMTP: 550 Mailbox unavailable";
+    const maxLog = await call("leadops.emailRecipientLog", { recipientId: max.id }); expect(maxLog.errors.map((item: any) => item.note)).toContain("SMTP: 550 Mailbox unavailable"); expect((await call("leadops.listEmailCampaigns")).find((row: any) => row.id === log.id).stats.failed).toBe(1);
+    await call("leadops.storeInboxMessage", { fromEmail: "nora@log-demo.example", fromName: "Nora Log", subject: "Re: Erste Mail", bodyText: "Ja, gern." });
+    const nora = detail.recipients.find((row: any) => row.email === "nora@log-demo.example"); const noraLog = await call("leadops.emailRecipientLog", { recipientId: nora.id }); expect(noraLog.recipient.status).toBe("fertig"); expect(noraLog.events.some((event: any) => event.note === REPLY_STOP_NOTE)).toBe(true); expect(noraLog.events.map((event: any) => event.label)).toContain("Antwort erhalten");
+    // Karten verteilen 70/30
+    const reps = await call("leadops.pipelineOwners"); const cards = detail.recipients.map((row: any) => row.lead.publicId);
+    expect((await call("leadops.distributePipelineOwners", { publicIds: cards, userIds: [reps[0].userId, reps[1].userId], shares: [{ userId: reps[0].userId, value: 70 }, { userId: reps[1].userId, value: 30 }], mode: "prozent" })).updated).toBe(3);
+    const owned = getStore().tables.leads.filter((row) => row.listName === "Log Demo"); expect(owned.filter((row) => row.ownerUserId === reps[0].userId).length).toBe(2); expect(owned.filter((row) => row.ownerUserId === reps[1].userId).length).toBe(1);
+    // Mehrfach-Durchlauf
+    const lenaRow = getStore().tables.emailCampaignRecipients.find((row) => row.id === lena.id)!; lenaRow.status = "fertig"; lenaRow.nextActionAt = null;
+    expect(await call("leadops.startEmailCampaign", { id: log.id })).toMatchObject({ added: 1, repeated: 1, skipped: 2, maxRuns: 1 }); // Standard: nur Max (Versandfehler zählt nicht) erneut
+    await call("leadops.saveEmailCampaign", { ...base, id: log.id, name: "Log-Serie", maxRuns: 2 }); expect((await call("leadops.listEmailCampaigns")).find((row: any) => row.id === log.id).maxRuns).toBe(2);
+    expect(await call("leadops.startEmailCampaign", { id: log.id })).toMatchObject({ added: 1, repeated: 1, skipped: 2 }); // Lena erneut (2. Durchlauf), Max läuft, Nora hat geantwortet
+    expect(getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === log.id && row.email === "lena@log-demo.example").length).toBe(2);
+    expect((await call("leadops.emailRecipientLog", { recipientId: lena.id })).runs.length).toBe(2);
   });
   it("Listen-Upload verteilt prozentual (70/30 → 7/3, im Wechsel) oder nach Anzahl (Rest bleibt offen)", async () => {
     const reps = await call("leadops.listSalesReps"); const taner = reps.find((rep: any) => rep.firstName === "Taner"); const francesco = reps.find((rep: any) => rep.firstName === "Francesco");

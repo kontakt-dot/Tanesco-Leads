@@ -1,5 +1,6 @@
 import { confirmAction } from "@/lib/confirm";
 import { trpc } from "@/lib/trpc";
+import { useState } from "react";
 import { toast } from "sonner";
 
 /**
@@ -11,20 +12,28 @@ const stamp = (value: string | Date) => new Date(value).toLocaleString("de-DE", 
 
 export default function UploadHistory({ onChanged }: { onChanged?: () => void }) {
   const utils = trpc.useUtils();
-  const history = trpc.leadops.listImportHistory.useQuery({ limit: 50 }, { retry: false });
+  const history = trpc.leadops.listImportHistory.useQuery({ limit: 100 }, { retry: false });
+  const [filter, setFilter] = useState<"alle" | "upload" | "loeschung">("alle");
   const undo = trpc.leadops.undoListImport.useMutation({ onSuccess: (result) => {
     toast.success(`Upload „${result.listName}“ zurückgenommen: ${result.deleted} ${result.deleted === 1 ? "Kontakt" : "Kontakte"} gelöscht${result.keptCustomers ? `, ${result.keptCustomers} Kunden behalten` : ""}.`);
     utils.leadops.listImportHistory.invalidate(); utils.leadops.listColdLists.invalidate(); utils.leadops.emailLeads.invalidate(); utils.leadops.pipelineOverview.invalidate(); onChanged?.();
   }, onError: (error) => toast.error(error.message) });
-  const rows = history.data ?? [];
+  const all = history.data ?? []; const uploads = all.filter((row) => (row.kind ?? "upload") === "upload"); const deletions = all.filter((row) => row.kind === "loeschung");
+  const rows = filter === "upload" ? uploads : filter === "loeschung" ? deletions : all;
+  const deletedTotal = deletions.reduce((sum, row) => sum + row.rowCount, 0);
 
   return <section className="surface-panel operations-panel p-5">
-    <span className="eyebrow">UPLOAD-VERLAUF</span>
-    <h2 className="mt-1 text-lg text-slate-100">Was wurde wann hochgeladen?</h2>
-    <p className="text-xs text-slate-500">Jeder Upload mit Datum, Liste und Anzahl. „Rückgängig“ entfernt genau die Kontakte dieses Uploads – Kontakte, die dabei nur ergänzt wurden, und Kunden bleiben erhalten.</p>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="eyebrow">UPLOAD-VERLAUF</span>
+      <h2 className="mt-1 text-lg text-slate-100">Was wurde wann hochgeladen – und wann gelöscht?</h2>
+      <p className="text-xs text-slate-500">Jeder Upload mit Datum, Liste, Anzahl und wer. Jede Löschung steht ebenfalls hier: wann, wie viele Kontakte, aus welcher Liste, von wem und warum (von Hand, ganze Liste, Upload zurückgenommen). „Rückgängig“ entfernt genau die Kontakte eines Uploads – Kontakte, die dabei nur ergänzt wurden, und Kunden bleiben erhalten.</p></div>
+      <div className="dashboard-segments" role="tablist" aria-label="Verlauf filtern">{([["alle", `Alles ${all.length}`], ["upload", `Uploads ${uploads.length}`], ["loeschung", `Löschungen ${deletions.length}`]] as const).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={filter === key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}</button>)}</div></div>
+    {deletions.length > 0 && filter !== "upload" && <p className="upload-deleted-sum">Insgesamt <strong>{deletedTotal}</strong> {deletedTotal === 1 ? "Kontakt" : "Kontakte"} gelöscht – zuletzt {stamp(deletions[0].createdAt)}.</p>}
     {history.isLoading ? <p className="py-8 text-center text-sm text-slate-500">Wird geladen …</p>
-      : !rows.length ? <p className="py-8 text-center text-sm text-slate-500">Noch nichts hochgeladen.</p>
-      : <div className="upload-history">{rows.map((row) => <div key={row.id} className={`upload-row ${row.undoneAt ? "is-undone" : ""}`}>
+      : !rows.length ? <p className="py-8 text-center text-sm text-slate-500">{filter === "loeschung" ? "Noch nichts gelöscht." : "Noch nichts hochgeladen."}</p>
+      : <div className="upload-history">{rows.map((row) => row.kind === "loeschung" ? <div key={row.id} className="upload-row is-deletion">
+          <div className="upload-main"><strong><span className="upload-deleted-tag">Gelöscht</span> {row.rowCount} {row.rowCount === 1 ? "Kontakt" : "Kontakte"} aus „{row.listName}“</strong><small>{stamp(row.createdAt)}{row.actorName ? ` · ${row.actorName}` : ""}{row.note ? ` · ${row.note}` : ""}</small></div>
+          <div className="upload-numbers"><span><strong>−{row.rowCount}</strong> gelöscht</span></div>
+        </div> : <div key={row.id} className={`upload-row ${row.undoneAt ? "is-undone" : ""}`}>
           <div className="upload-main">
             <strong>{row.listName}</strong>
             <small>{stamp(row.createdAt)}{row.actorName ? ` · ${row.actorName}` : ""} · {row.source === "kampagne" ? "aus der E-Mail-Kampagne" : "aus der Kaltakquise"}{row.toPipeline ? "" : " · nicht in der Pipeline"}</small>

@@ -1007,3 +1007,56 @@ html:not(.dark) .template-card-delete:hover { background: #fde8ea !important; co
 html:not(.dark) .template-empty { border-color: #d9dce5 !important; color: #64748b !important; }
 html:not(.dark) .template-empty strong { color: #0f172a !important; }
 html:not(.dark) .template-empty svg { color: #bc001d !important; }
+
+/* Knöpfe mit rotem Hintergrund: immer weiße Schrift – egal, woher das Rot kommt (hell) */
+html:not(.dark) button.flux-button, html:not(.dark) a.flux-button, html:not(.dark) .flux-button svg, html:not(.dark) .flux-button span, html:not(.dark) .flux-button b,
+html:not(.dark) button.bg-destructive, html:not(.dark) a.bg-destructive, html:not(.dark) button.bg-destructive svg, html:not(.dark) span.bg-destructive,
+html:not(.dark) button[class*="bg-red-5"]:not([class*="bg-red-5"][class*="/"]), html:not(.dark) button[class*="bg-red-6"]:not([class*="bg-red-6"][class*="/"]), html:not(.dark) button[class*="bg-rose-5"]:not([class*="bg-rose-5"][class*="/"]),
+html:not(.dark) .app-confirm-ok, html:not(.dark) .app-confirm-ok.danger, html:not(.dark) .calllog-save, html:not(.dark) .calllog-save svg, html:not(.dark) .profile-menu button.is-danger:hover { color: #ffffff !important; }
+
+/* Upload-Verlauf: Löschungen (hell) */
+html:not(.dark) .upload-row.is-deletion { border-color: #fecaca !important; background: #fff5f5 !important; }
+html:not(.dark) .upload-deleted-tag { background: #fde8ea !important; color: #bc001d !important; }
+html:not(.dark) .upload-deleted-sum { color: #b91c1c !important; }
+
+/* Lead-Log (hell) */
+html:not(.dark) .recipients-table tr.is-error td { background: #fff5f5 !important; }
+html:not(.dark) .recipient-open:hover strong { color: #bc001d !important; }
+html:not(.dark) .stage-pill { background: #fde8ea !important; color: #bc001d !important; }
+html:not(.dark) .stage-pill.is-muted { background: #f1f3f7 !important; color: #64748b !important; }
+html:not(.dark) .leadlog-title { color: #0f172a !important; }
+html:not(.dark) .leadlog-desc { color: #64748b !important; }
+html:not(.dark) .leadlog-status { border-color: #d9dce5 !important; color: #334155 !important; }
+html:not(.dark) .leadlog-status.is-fertig { border-color: #a7f3d0 !important; background: #ecfdf5 !important; color: #047857 !important; }
+html:not(.dark) .leadlog-status.is-fehler, html:not(.dark) .leadlog-status.is-bounce, html:not(.dark) .leadlog-status.is-beschwerde { border-color: #fecaca !important; background: #fef2f2 !important; color: #b91c1c !important; }
+html:not(.dark) .leadlog-status.is-wartet, html:not(.dark) .leadlog-status.is-laeuft { border-color: #fde68a !important; background: #fffbeb !important; color: #92400e !important; }
+html:not(.dark) .leadlog-stage { background: #fde8ea !important; color: #bc001d !important; }
+html:not(.dark) .leadlog-stage:hover { background: #fbd0d5 !important; }
+html:not(.dark) .leadlog-stage.is-muted { background: #f1f3f7 !important; color: #64748b !important; }
+html:not(.dark) .leadlog-errors { border-color: #fecaca !important; background: #fef2f2 !important; color: #7f1d1d !important; }
+html:not(.dark) .leadlog-errors strong { color: #991b1b !important; }
+html:not(.dark) .leadlog-errors p span, html:not(.dark) .leadlog-errors small { color: #b91c1c !important; }
+html:not(.dark) .leadlog-now { border-color: #e5e7ee !important; background: #f8fafb !important; }
+html:not(.dark) .leadlog-now strong, html:not(.dark) .leadlog-facts b, html:not(.dark) .leadlog-step-main strong, html:not(.dark) .leadlog-event-main strong { color: #0f172a !important; }
+html:not(.dark) .leadlog-now small, html:not(.dark) .leadlog-facts, html:not(.dark) .leadlog-step-main small, html:not(.dark) .leadlog-event-main small, html:not(.dark) .leadlog-step-when, html:not(.dark) .leadlog-event-when, html:not(.dark) .leadlog-runs li { color: #64748b !important; }
+html:not(.dark) .leadlog-event-main em { color: #334155 !important; }
+html:not(.dark) .leadlog-steps li, html:not(.dark) .leadlog-events li { border-top-color: #eef0f4 !important; }
+html:not(.dark) .leadlog-step-state { color: #94a3b8 !important; }
+html:not(.dark) .leadlog-steps li.is-erledigt .leadlog-step-state { color: #059669 !important; }
+html:not(.dark) .leadlog-steps li.is-aktuell .leadlog-step-state, html:not(.dark) .leadlog-steps li.is-aktuell .leadlog-step-main strong { color: #b45309 !important; }
+html:not(.dark) .leadlog-steps li.is-abgebrochen .leadlog-step-state { color: #dc2626 !important; }
+html:not(.dark) .leadlog-events li.is-fehler .leadlog-event-main strong { color: #b91c1c !important; }
+html:not(.dark) .leadlog-events li.is-beendet .leadlog-event-main strong { color: #047857 !important; }
+html:not(.dark) .leadlog-events li.is-gesendet .leadlog-event-main strong { color: #bc001d !important; }
+html:not(.dark) .leadlog-runs li strong { color: #0f172a !important; }
+html:not(.dark) .leadlog-runs li.is-current { background: #fde8ea !important; }
+html:not(.dark) .distribute-foot { border-top-color: #eef0f4 !important; }
+
+/* Mehrfach-Durchlauf (hell) */
+html:not(.dark) .reply-stop.is-runs.is-off-muted { background: #f8fafb !important; border-color: #e5e7ee !important; color: #64748b !important; }
+html:not(.dark) .reply-stop.is-runs.is-off-muted svg { color: #94a3b8 !important; }
+html:not(.dark) .reply-stop.is-runs.is-off-muted strong { color: #334155 !important; }
+html:not(.dark) .reply-stop.is-runs.is-on { background: #fde8ea !important; border-color: #f5b5bc !important; color: #7f1d1d !important; }
+html:not(.dark) .reply-stop.is-runs.is-on svg { color: #bc001d !important; }
+html:not(.dark) .reply-stop.is-runs.is-on strong { color: #7f1d1d !important; }
+html:not(.dark) .reply-stop-select { background: #ffffff !important; border-color: #d9dce5 !important; color: #0f172a !important; }

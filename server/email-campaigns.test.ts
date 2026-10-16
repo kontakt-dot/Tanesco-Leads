@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceRecipient, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, stopsOnReply, validateTree, summarizeCampaign } from "../shared/email-campaigns";
+import { advanceRecipient, canEnroll, eventLabel, maxRunsLabel, maxRunsOf, recipientPath, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, stopsOnReply, validateTree, summarizeCampaign, waitingText } from "../shared/email-campaigns";
 import { isAutoReply, looksLikeAutoReplySubject } from "../shared/reply-ai";
 import { fillPlaceholders, renderEmailHtml, renderEmailText, starterBlocks, usesSignature } from "../shared/email-design";
 import { renderNode } from "../shared/email-campaigns";
@@ -44,6 +44,36 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
     // Abwesenheitsnotizen zählen nicht als Antwort
     expect(isAutoReply({ kind: "abwesenheit", confidence: 90 }, "Re: Mehr Anfragen")).toBe(true); expect(isAutoReply({ kind: "abwesenheit", confidence: 30 }, "Re: Mehr Anfragen")).toBe(false); expect(isAutoReply({ kind: "interessiert", confidence: 90 }, "Re: Mehr Anfragen")).toBe(false); expect(isAutoReply(null, "Re: Mehr Anfragen")).toBe(false);
     expect(looksLikeAutoReplySubject("Automatische Antwort: Mehr Anfragen")).toBe(true); expect(looksLikeAutoReplySubject("Out of Office – Re: Angebot")).toBe(true); expect(looksLikeAutoReplySubject("AW: Mehr Anfragen für Koch Dach")).toBe(false); expect(looksLikeAutoReplySubject(null)).toBe(false);
+  });
+  it("Mehrfach-Durchlauf: Standard einmal, sonst bis zu N – nie offen, nie nach Antwort/Bounce/Abmeldung", () => {
+    expect(maxRunsOf({})).toBe(1); expect(maxRunsOf(null)).toBe(1); expect(maxRunsOf({ maxRuns: 3 })).toBe(3); expect(maxRunsOf({ maxRuns: 0 })).toBe(0);
+    expect(maxRunsLabel(1)).toBe("jeder Kontakt nur einmal"); expect(maxRunsLabel(0)).toContain("unbegrenzt"); expect(maxRunsLabel(3)).toContain("3");
+    expect(canEnroll([], 1).ok).toBe(true);
+    expect(canEnroll([{ status: "fertig" }], 1)).toMatchObject({ ok: false, reason: "war schon einmal dabei" });
+    expect(canEnroll([{ status: "fertig" }], 2).ok).toBe(true); expect(canEnroll([{ status: "fertig" }, { status: "fertig" }], 2).ok).toBe(false); expect(canEnroll([{ status: "fertig" }, { status: "fertig" }, { status: "fehler" }], 0).ok).toBe(true);
+    expect(canEnroll([{ status: "wartet" }], 0)).toMatchObject({ ok: false, reason: "läuft bereits" });
+    expect(canEnroll([{ status: "fertig", repliedAt: new Date() }], 0)).toMatchObject({ ok: false, reason: "hat geantwortet" });
+    expect(canEnroll([{ status: "bounce" }], 0)).toMatchObject({ ok: false, reason: "gesperrt" }); expect(canEnroll([{ status: "abgemeldet" }], 5).ok).toBe(false);
+    expect(canEnroll([{ status: "fehler" }], 1).ok).toBe(true); // Versandfehler zählt nicht als Durchlauf → nach dem Beheben erneut
+  });
+  it("Lead-Log: Weg durch den Ablauf (erledigt / aktuell / offen), Wartezeit-Text, Ereignis-Namen", () => {
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 48, next: "c1" }, { id: "c1", type: "condition" as const, check: "opened" as const, yes: "e1", no: "m2" }, { id: "m2", type: "send" as const, label: "Zweite", subject: "Zweite", blocks: starterBlocks("nachfassen"), next: null }, { id: "e1", type: "end" as const, label: "Hat geöffnet" }] };
+    const t0 = new Date("2026-10-01T09:00:00");
+    // Nach der ersten Mail: wartet 48 h, nächster Schritt ist die Verzweigung
+    const events = [{ kind: "gesendet", nodeId: "m1", subject: "Erste Mail", createdAt: t0 }, { kind: "gewartet", nodeId: "w1", note: "Wartet 2 Tage", createdAt: t0 }];
+    const steps = recipientPath(tree, { nodeId: "c1", status: "wartet", sentCount: 1 }, events);
+    expect(steps.map((step) => [step.id, step.state])).toEqual([["m1", "erledigt"], ["w1", "erledigt"], ["c1", "aktuell"], ["m2", "offen"]]);
+    expect(steps[0].detail).toBe("Betreff: Erste Mail"); expect(steps[2].detail).toContain("Falls ja → Ende – Hat geöffnet"); expect(steps[2].detail).toContain("falls nein → E-Mail: Zweite");
+    // Verzweigung geprüft (ja) → Ende erreicht, Sonst-Zweig taucht nicht auf
+    const done = recipientPath(tree, { nodeId: null, status: "fertig", sentCount: 1 }, [...events, { kind: "verzweigt", nodeId: "c1", note: "Wenn geöffnet: ja → Dann-Zweig", createdAt: new Date(t0.getTime() + 1) }, { kind: "beendet", nodeId: "e1", note: "Hat geöffnet", createdAt: new Date(t0.getTime() + 2) }]);
+    expect(done.map((step) => [step.id, step.state])).toEqual([["m1", "erledigt"], ["w1", "erledigt"], ["c1", "erledigt"], ["e1", "erledigt"]]); expect(done[2].branch).toBe("yes");
+    // Antwort-Stopp mitten im Ablauf: zweite Mail abgebrochen, Rest übersprungen
+    const stopped = recipientPath(tree, { nodeId: null, status: "fertig", sentCount: 1 }, [...events, { kind: "verzweigt", nodeId: "c1", note: "Wenn geöffnet: nein → Sonst-Zweig", createdAt: new Date(t0.getTime() + 1) }, { kind: "beendet", nodeId: "m2", note: REPLY_STOP_NOTE, createdAt: new Date(t0.getTime() + 2) }]);
+    expect(stopped.map((step) => [step.id, step.state])).toEqual([["m1", "erledigt"], ["w1", "erledigt"], ["c1", "erledigt"], ["m2", "abgebrochen"]]); expect(stopped[3].detail).toBe(REPLY_STOP_NOTE);
+    // Wartezeit-Text
+    expect(waitingText(new Date(Date.now() + 2 * 86_400_000 + 3 * 3_600_000 + 60_000), "wartet")).toMatch(/^wartet noch 2 Tage 3 Std\. – bis/); expect(waitingText(new Date(Date.now() + 25 * 60_000), "wartet")).toMatch(/^wartet noch 25 Min\./);
+    expect(waitingText(new Date(Date.now() - 1000), "wartet")).toContain("fällig"); expect(waitingText(null, "laeuft")).toContain("fällig"); expect(waitingText(new Date(), "fertig")).toBeNull();
+    expect(eventLabel({ kind: "geoeffnet", note: "Antwort im Posteingang: „Re: Hallo“" })).toBe("Antwort erhalten"); expect(eventLabel({ kind: "geoeffnet", note: "E-Mail geöffnet" })).toBe("Geöffnet"); expect(eventLabel({ kind: "fehler" })).toBe("Fehler"); expect(eventLabel({ kind: "gewartet", note: "Abwesenheitsnotiz erhalten – zählt nicht" })).toBe("Abwesenheitsnotiz");
   });
   it("rendert Bausteine mit Platzhaltern, Tracking-Pixel und umgeschriebenen Links", () => {
     const html = renderEmailHtml(starterBlocks("kaltakquise"), { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, sans-serif" }, { firma: "Hansen Bedachungen", anrede: "Herr", nachname: "Hansen", abmelden: "Abmelden: https://x.de/u" }, { trackingPixelUrl: "https://x.de/api/mail/o/t.gif", wrapLink: (url) => `https://x.de/api/mail/c/t?u=${encodeURIComponent(url)}` });

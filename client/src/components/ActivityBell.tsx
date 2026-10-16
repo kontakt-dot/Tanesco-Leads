@@ -12,7 +12,7 @@ import type { ActivityDay, ActivityEntry, ActivityKind } from "../../../shared/a
 const ICON: Record<ActivityKind, typeof Bell> = {
   kontakt_neu: UserPlus, lead_neu: Flame, upload_rueckgaengig: Undo2, anruf: PhoneCall, gespraech_abgehoert: Headphones, gespraech_bewertet: ClipboardCheck,
   lead_verkauft: HandCoins, bestellung: ShoppingBag, reklamation: ShieldAlert, pipeline_stufe: Route, pipeline_uebernommen: ArrowDownToLine,
-  email_gesendet: Send, email_antwort: Reply, kampagne: Play, sonstiges: Activity,
+  email_gesendet: Send, email_antwort: Reply, email_fehler: ShieldAlert, kampagne: Play, sonstiges: Activity,
 };
 const SEEN_KEY = "tanesco-activity-seen";
 const readSeen = () => { try { return localStorage.getItem(SEEN_KEY); } catch { return null; } };
