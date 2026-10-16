@@ -547,6 +547,13 @@
       "when": 1792593240000,
       "tag": "0077_gebietskarte",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "5",
+      "when": 1792593300000,
+      "tag": "0078_gebiet_an_aus",
+      "breakpoints": true
     }
   ]
 }

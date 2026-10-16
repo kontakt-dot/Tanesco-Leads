@@ -1127,10 +1127,10 @@ html:not(.dark) .calllog-section { border-top: 1px solid #e8ecf1 !important; }
 html:not(.dark) .calllog-section small { color: #8a94a6 !important; }
 html:not(.dark) .email-leads-call { color: #4e846c !important; }
 html:not(.dark) [data-slot="switch"] { background: #ffffff !important; border: 1px solid #e8ecf1 !important; box-shadow: inset 0 1px 2px rgba(15, 23, 42, .05) !important; }
-html:not(.dark) [data-slot="switch"][data-state="checked"] { background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; box-shadow: 0 0 0 1px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) [data-slot="switch"][data-state="checked"] { background: linear-gradient(135deg, #2a2e3a, #111318) !important; border-color: #111318 !important; box-shadow: 0 0 0 1px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) [data-slot="switch-thumb"] { box-shadow: 0 1px 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .auto-note-switch i { background: #ffffff !important; border: 1px solid #e8ecf1 !important; }
-html:not(.dark) .auto-note-switch.on i { background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; }
+html:not(.dark) .auto-note-switch.on i { background: linear-gradient(135deg, #2a2e3a, #111318) !important; border-color: #111318 !important; }
 html:not(.dark) button.profile-orb:hover, html:not(.dark) button.profile-orb.is-open { background: #f8fafb !important; border-color: #e8ecf1 !important; }
 html:not(.dark) .profile-orb-chevron { color: #8a94a6 !important; }
 html:not(.dark) .profile-menu { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 22px 55px rgba(15, 23, 42, .05) !important; }
@@ -1155,6 +1155,8 @@ html:not(.dark) .leadlog-status.is-wartet, html:not(.dark) .leadlog-status.is-la
 html:not(.dark) .leadlog-stage { background: #f3f6f8 !important; color: #0f172a !important; }
 html:not(.dark) .leadlog-stage:hover { background: #f3f6f8 !important; }
 html:not(.dark) .leadlog-stage.is-muted { background: #f8fafb !important; color: #8a94a6 !important; }
+html:not(.dark) .leadlog-error-text { color: #8a5a5a !important; }
+html:not(.dark) .leadlog-retry { background: linear-gradient(135deg, #2a2e3a, #111318) !important; color: #0f172a !important; }
 html:not(.dark) .leadlog-errors { color: #0f172a !important; }
 html:not(.dark) .leadlog-errors strong { color: #0f172a !important; }
 html:not(.dark) .leadlog-errors p span { color: #8a5a5a !important; }
@@ -1231,6 +1233,9 @@ html:not(.dark) .territory-preview { color: #0f172a !important; }
 html:not(.dark) .territory-preview strong { color: #0f172a !important; }
 html:not(.dark) .territory-preview em { color: #8b7e4b !important; }
 html:not(.dark) .territory-preview small { color: #4b5568 !important; }
+html:not(.dark) .territory-link { color: #4b5568 !important; }
+html:not(.dark) .territory-link:hover { color: #0f172a !important; }
+html:not(.dark) .territory-chip-off { color: #8a5a5a !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2574,3 +2579,12 @@ html:not(.dark) .territory-textarea { background: #ffffff !important; border-col
 html:not(.dark) .territory-preview { background: #ecfdf5 !important; border-color: #a7f3d0 !important; color: #065f46 !important; }
 html:not(.dark) .territory-preview em { color: #b45309 !important; }
 html:not(.dark) .territory-swatch.is-active { border-color: #0f172a !important; box-shadow: 0 0 0 2px #ffffff !important; }
+html:not(.dark) .leadlog-error-text { color: #b91c1c !important; }
+html:not(.dark) .leadlog-retry { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; color: #ffffff !important; }
+
+/* Ausgewählte Kategorie in der Liste: Rahmen rot statt lila (hell) */
+html:not(.dark) .ring-violet-400\/35 { --tw-ring-color: rgba(188, 0, 29, .35) !important; }
+html:not(.dark) .ring-violet-300\/25 { --tw-ring-color: rgba(188, 0, 29, .25) !important; }
+html:not(.dark) .bg-violet-500\/15 { background: #fde8ea !important; }
+html:not(.dark) .territory-link { color: #bc001d !important; }
+html:not(.dark) .territory-chip-off { background: #fde8ea !important; color: #bc001d !important; }

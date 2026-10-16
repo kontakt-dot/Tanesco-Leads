@@ -2151,7 +2151,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const retry = await owner.leadops.startEmailCampaign({ id: log.id }); expect(retry).toMatchObject({ added: 1, repeated: 1, skipped: 2 });
   }, 30000);
 
-  it("42. Gebietskarte (Migration 0077): Gebiete je Kunde und Sparte speichern, Überschneidungen je Sparte, ändern, löschen, Rechte", async () => {
+  it("42. Gebietskarte (Migrationen 0077/0078): Gebiete je Kunde und Kategorie speichern, Überschneidungen je Kategorie, ändern, Kunde aus-/einschalten, löschen, Rechte", async () => {
     const categories = await owner.leadops.listCategories(); const pv = categories[0]; const second = categories[1] ?? categories[0];
     const aurora = await owner.leadops.saveTerritory({ customerName: "Aurora Home Solar", categoryId: pv.id, postcodes: ["60311", "60313", "60316", "61118", "63065", "abc", "60311"], note: "Rhein-Main", sourceName: "Aurora.csv", rawCount: 3 });
     expect(aurora).toMatchObject({ created: true, postcodes: 5 });
@@ -2162,13 +2162,18 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(list.find((row) => row.id === helios.id)?.color).not.toBe(auroraRow.color); // nächste freie Farbe
     const overlaps = await owner.leadops.territoryOverlaps(); expect(overlaps).toMatchObject({ customers: 3, territories: 3, totalOverlapPlz: 3 });
     const pvGroup = overlaps.groups.find((group) => group.categoryId === pv.id)!; expect(pvGroup).toMatchObject({ customers: 2, overlapPlz: 3, maxCustomers: 2 }); expect(pvGroup.items.map((item) => item.plz)).toEqual(["60311", "60313", "63065"]); expect(pvGroup.pairs[0]).toMatchObject({ shared: 3 });
-    if (second.id !== pv.id) expect(overlaps.groups.find((group) => group.categoryId === second.id)?.overlapPlz).toBe(0); // andere Sparte zählt nicht
+    if (second.id !== pv.id) expect(overlaps.groups.find((group) => group.categoryId === second.id)?.overlapPlz).toBe(0); // andere Kategorie zählt nicht
     // Gebiet ersetzen (gleiche Farbe bleibt), dann löschen
     expect(await owner.leadops.saveTerritory({ id: aurora.id, customerName: "Aurora Home Solar", categoryId: pv.id, postcodes: ["60311"] })).toMatchObject({ created: false, postcodes: 1 });
     expect((await owner.leadops.listTerritories()).find((row) => row.id === aurora.id)).toMatchObject({ postcodes: ["60311"], color: auroraRow.color });
     expect((await owner.leadops.territoryOverlaps()).groups.find((group) => group.categoryId === pv.id)?.overlapPlz).toBe(1);
     await expect(owner.leadops.saveTerritory({ customerName: "Leer", postcodes: ["abc"] })).rejects.toThrow(/Keine gültige PLZ/);
-    await expect(owner.leadops.saveTerritory({ customerName: "Falsche Sparte", categoryId: 999999, postcodes: ["60311"] })).rejects.toThrow(/Sparte/);
+    await expect(owner.leadops.saveTerritory({ customerName: "Falsche Sparte", categoryId: 999999, postcodes: ["60311"] })).rejects.toThrow(/Kategorie/);
+    // Kunde ausschalten (Migration 0078): bleibt gespeichert, zählt aber nicht mehr bei Überschneidungen und Kennzahlen
+    expect((await owner.leadops.setTerritoryActive({ id: helios.id, active: false })).active).toBe(false);
+    expect((await owner.leadops.listTerritories()).find((row) => row.id === helios.id)?.active).toBe(false);
+    const paused = await owner.leadops.territoryOverlaps(); expect(paused.inactive).toBe(1); expect(paused.groups.find((group) => group.categoryId === pv.id)?.overlapPlz ?? 0).toBe(0);
+    expect((await owner.leadops.setTerritoryActive({ id: helios.id, active: true })).active).toBe(true); expect((await owner.leadops.territoryOverlaps()).groups.find((group) => group.categoryId === pv.id)?.overlapPlz).toBe(1);
     expect((await owner.leadops.deleteTerritory({ id: vektor.id })).customerName).toBe("Vektor Klima"); expect((await owner.leadops.listTerritories()).length).toBe(2);
     await expect(owner.leadops.deleteTerritory({ id: vektor.id })).rejects.toThrow();
     // Partner (extern, z. B. Käufer) sehen die Gebietskarte nicht

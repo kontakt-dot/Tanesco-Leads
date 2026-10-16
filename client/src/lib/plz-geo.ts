@@ -3,10 +3,12 @@
  * (knapp 500 KB) und dann im Speicher behalten. Die Projektion rechnet Länge/Breite in die Fläche der Deutschlandkarte
  * (germany-map.json, viewBox 600 × 817) um – gleiche Karte wie im Dashboard.
  */
+import type { PlaceLookup } from "../../../shared/territories";
+
 export type PlzEntry = { plz: string; place: string; lat: number; lng: number; state: string };
 type GeoFile = { attribution: string; projection: { x: number[]; y: number[]; terms: string[] }; plz: Record<string, [string, number, number, string]> };
 
-export type PlzGeo = { attribution: string; entries: Map<string, PlzEntry>; universe: Set<string>; project: (lng: number, lat: number) => { x: number; y: number } };
+export type PlzGeo = { attribution: string; entries: Map<string, PlzEntry>; universe: Set<string>; project: (lng: number, lat: number) => { x: number; y: number }; lookup: PlaceLookup };
 let cache: PlzGeo | null = null;
 let loading: Promise<PlzGeo> | null = null;
 
@@ -18,7 +20,9 @@ export function loadPlzGeo(): Promise<PlzGeo> {
     for (const [plz, [place, lat, lng, state]] of Object.entries(file.plz)) entries.set(plz, { plz, place, lat, lng, state });
     const { x, y } = file.projection;
     const project = (lng: number, lat: number) => { const terms = [lng, lat, 1, lng * lat, lng * lng, lat * lat]; return { x: terms.reduce((sum, term, index) => sum + term * x[index], 0), y: terms.reduce((sum, term, index) => sum + term * y[index], 0) }; };
-    cache = { attribution: file.attribution, entries, universe: new Set(entries.keys()), project };
+    const byPlace = new Map<string, PlzEntry[]>(); const allEntries = Array.from(entries.values()); for (const entry of allEntries) { const key = entry.place.toLowerCase(); byPlace.set(key, [...(byPlace.get(key) ?? []), entry]); }
+    const lookup: PlaceLookup = { place: (name) => byPlace.get(name.trim().toLowerCase()) ?? [], coords: (plz) => { const entry = entries.get(plz); return entry ? { lat: entry.lat, lng: entry.lng } : null; }, all: () => allEntries };
+    cache = { attribution: file.attribution, entries, universe: new Set(entries.keys()), project, lookup };
     return cache;
   });
   return loading;

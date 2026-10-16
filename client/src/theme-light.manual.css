@@ -1095,3 +1095,12 @@ html:not(.dark) .territory-textarea { background: #ffffff !important; border-col
 html:not(.dark) .territory-preview { background: #ecfdf5 !important; border-color: #a7f3d0 !important; color: #065f46 !important; }
 html:not(.dark) .territory-preview em { color: #b45309 !important; }
 html:not(.dark) .territory-swatch.is-active { border-color: #0f172a !important; box-shadow: 0 0 0 2px #ffffff !important; }
+html:not(.dark) .leadlog-error-text { color: #b91c1c !important; }
+html:not(.dark) .leadlog-retry { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; color: #ffffff !important; }
+
+/* Ausgewählte Kategorie in der Liste: Rahmen rot statt lila (hell) */
+html:not(.dark) .ring-violet-400\/35 { --tw-ring-color: rgba(188, 0, 29, .35) !important; }
+html:not(.dark) .ring-violet-300\/25 { --tw-ring-color: rgba(188, 0, 29, .25) !important; }
+html:not(.dark) .bg-violet-500\/15 { background: #fde8ea !important; }
+html:not(.dark) .territory-link { color: #bc001d !important; }
+html:not(.dark) .territory-chip-off { background: #fde8ea !important; color: #bc001d !important; }

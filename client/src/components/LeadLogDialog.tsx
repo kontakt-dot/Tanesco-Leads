@@ -12,11 +12,11 @@ const STATUS: Record<string, string> = { wartet: "Wartet", laeuft: "Läuft", fer
 const STEP_ICON = { send: Mail, wait: Clock3, condition: GitBranch, end: Flag } as const;
 
 export default function LeadLogDialog({ recipientId, onClose, onOpenLead }: { recipientId: number | null; onClose: () => void; onOpenLead?: (publicId: string) => void }) {
-  const log = trpc.leadops.emailRecipientLog.useQuery({ recipientId: recipientId ?? 0 }, { enabled: recipientId !== null, retry: false, refetchInterval: 30_000 });
+  const log = trpc.leadops.emailRecipientLog.useQuery({ recipientId: recipientId ?? 0 }, { enabled: recipientId !== null, retry: 2, retryDelay: 800, refetchInterval: 30_000, refetchOnWindowFocus: false });
   const data = log.data;
   return <Dialog open={recipientId !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
     <DialogContent className="leadlog-dialog">
-      {!data ? <DialogHeader><DialogTitle>Lead-Log</DialogTitle><DialogDescription>{log.error ? log.error.message : "Wird geladen …"}</DialogDescription></DialogHeader> : <>
+      {!data ? <DialogHeader><DialogTitle>Lead-Log</DialogTitle>{log.error ? <div className="leadlog-error"><DialogDescription className="leadlog-error-text">Der Lead-Log konnte gerade nicht geladen werden{/fetch|network|load failed|failed to/i.test(log.error.message) ? " – die Verbindung zum Server ist kurz abgerissen (z. B. während einer Aktualisierung der Plattform)." : `: ${log.error.message}`}</DialogDescription><button type="button" className="leadlog-retry" onClick={() => void log.refetch()}>Nochmal versuchen</button></div> : <DialogDescription>{log.isFetching ? "Wird geladen …" : "Noch keine Daten."}</DialogDescription>}</DialogHeader> : <>
         <DialogHeader className="leadlog-head">
           <div>
             <DialogTitle className="leadlog-title">{data.recipient.name || data.lead?.name || data.recipient.email}</DialogTitle>

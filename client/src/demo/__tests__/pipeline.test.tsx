@@ -1613,16 +1613,21 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect(getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === log.id && row.email === "lena@log-demo.example").length).toBe(2);
     expect((await call("leadops.emailRecipientLog", { recipientId: lena.id })).runs.length).toBe(2);
   });
-  it("Gebietskarte: fünf Kunden im Seed, Überschneidungen je Sparte, Gebiet anlegen/ändern/löschen", async () => {
+  it("Gebietskarte: fünf Kunden im Seed, Überschneidungen je Kategorie, Gebiet anlegen/ändern/löschen", async () => {
     const list = await call("leadops.listTerritories"); expect(list.length).toBe(5); expect(list.map((row: any) => row.customerName)).toContain("Aurora Home Solar"); expect(list.every((row: any) => row.postcodes.length > 0 && /^#[0-9a-f]{6}$/i.test(row.color))).toBe(true);
     const overlaps = await call("leadops.territoryOverlaps"); expect(overlaps.customers).toBe(5); expect(overlaps.totalOverlapPlz).toBeGreaterThan(50);
     const pv = overlaps.groups.find((group: any) => group.categoryName === "Photovoltaik"); expect(pv.maxCustomers).toBe(3); expect(pv.items.some((item: any) => item.count === 3 && item.plz.startsWith("60"))).toBe(true); expect(pv.pairs.length).toBeGreaterThanOrEqual(3);
-    expect(overlaps.groups.find((group: any) => group.categoryName === "Wärmepumpe").overlapPlz).toBe(0); // nur ein WP-Kunde → keine Überschneidung trotz gleicher PLZ wie PV
+    expect(overlaps.groups.find((group: any) => group.categoryName === "Wärmepumpe").overlapPlz).toBe(0); // nur ein WP-Kunde → keine Überschneidung trotz gleicher PLZ wie PV (andere Kategorie)
     const created = await call("leadops.saveTerritory", { customerName: "Test Kunde", categoryId: list[0].categoryId, postcodes: ["60311", "60313", "xx"] }); expect(created).toMatchObject({ created: true, postcodes: 2 });
     expect((await call("leadops.listTerritories")).length).toBe(6);
     expect(await call("leadops.saveTerritory", { id: created.id, customerName: "Test Kunde", categoryId: list[0].categoryId, postcodes: ["60311"] })).toMatchObject({ created: false, postcodes: 1 });
     await expect(call("leadops.saveTerritory", { customerName: "Leer", postcodes: ["abc"] })).rejects.toThrow(/Keine gültige PLZ/);
     expect((await call("leadops.deleteTerritory", { id: created.id })).customerName).toBe("Test Kunde"); expect((await call("leadops.listTerritories")).length).toBe(5);
+    // Kunde ausschalten → zählt nicht mehr; SonnenKraft liegt im Umkreis 25 km um Frankfurt (Seed per Umkreis)
+    const sonne = list.find((row: any) => row.customerName === "SonnenKraft Rhein-Main"); expect(sonne.postcodes.length).toBeGreaterThan(30); expect(sonne.postcodes.every((plz: string) => /^6[0-5]/.test(plz))).toBe(true);
+    expect((await call("leadops.setTerritoryActive", { id: sonne.id, active: false })).active).toBe(false);
+    const paused = await call("leadops.territoryOverlaps"); expect(paused.inactive).toBe(1); expect(paused.groups.find((group: any) => group.categoryName === "Photovoltaik").maxCustomers).toBe(2);
+    await call("leadops.setTerritoryActive", { id: sonne.id, active: true }); expect((await call("leadops.territoryOverlaps")).groups.find((group: any) => group.categoryName === "Photovoltaik").maxCustomers).toBe(3);
   });
   it("Listen-Upload verteilt prozentual (70/30 → 7/3, im Wechsel) oder nach Anzahl (Rest bleibt offen)", async () => {
     const reps = await call("leadops.listSalesReps"); const taner = reps.find((rep: any) => rep.firstName === "Taner"); const francesco = reps.find((rep: any) => rep.firstName === "Francesco");

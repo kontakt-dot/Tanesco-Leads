@@ -1,5 +1,5 @@
 /**
- * Gebietskarte: Einsatzgebiete der Kunden (PLZ-Listen je Sparte) speichern und die Überschneidungen berechnen.
+ * Gebietskarte: Einsatzgebiete der Kunden (PLZ-Listen je Kategorie) speichern und die Überschneidungen berechnen.
  * Die PLZ kommen schon aufgelöst vom Client (Vorwahl-Bereiche und Bereiche werden dort gegen die PLZ-Liste erweitert);
  * hier wird nur geprüft, dass es 5-stellige Zahlen sind, und gespeichert. Überschneidungen: shared/territories.ts.
  */
@@ -13,7 +13,7 @@ const cleanPostcodes = (input: string[]) => Array.from(new Set(input.map((plz) =
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
 export async function listTerritories(db: Db, tenantId: number) {
-  const rows = await db.select({ id: territories.id, customerName: territories.customerName, categoryId: territories.categoryId, color: territories.color, postcodes: territories.postcodes, rawCount: territories.rawCount, note: territories.note, sourceName: territories.sourceName, createdByUserId: territories.createdByUserId, createdAt: territories.createdAt, updatedAt: territories.updatedAt }).from(territories).where(eq(territories.tenantId, tenantId)).orderBy(asc(territories.customerName), asc(territories.id));
+  const rows = await db.select({ id: territories.id, customerName: territories.customerName, categoryId: territories.categoryId, color: territories.color, postcodes: territories.postcodes, rawCount: territories.rawCount, note: territories.note, sourceName: territories.sourceName, active: territories.active, createdByUserId: territories.createdByUserId, createdAt: territories.createdAt, updatedAt: territories.updatedAt }).from(territories).where(eq(territories.tenantId, tenantId)).orderBy(asc(territories.customerName), asc(territories.id));
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
   const actorIds = Array.from(new Set(rows.map((row) => row.createdByUserId).filter((id): id is number => typeof id === "number")));
   const actors = actorIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, actorIds)) : [];
@@ -26,7 +26,7 @@ export async function saveTerritory(db: Db, tenantId: number, input: SaveTerrito
   const customerName = input.customerName.trim().replace(/\s+/g, " ").slice(0, 160); if (customerName.length < 2) throw new Error("Bitte den Kundennamen angeben.");
   const postcodes = cleanPostcodes(input.postcodes); if (!postcodes.length) throw new Error("Keine gültige PLZ erkannt – bitte 5-stellige PLZ, Vorwahl-Bereiche wie „60“ oder Bereiche wie „60000-60599“ eingeben.");
   if (postcodes.length > 12000) throw new Error("Das sind mehr PLZ, als es in Deutschland gibt – bitte die Liste prüfen.");
-  if (input.categoryId) { const category = (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.id, input.categoryId), eq(leadCategories.tenantId, tenantId))).limit(1))[0]; if (!category) throw new Error("Die Sparte wurde nicht gefunden."); }
+  if (input.categoryId) { const category = (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.id, input.categoryId), eq(leadCategories.tenantId, tenantId))).limit(1))[0]; if (!category) throw new Error("Die Kategorie wurde nicht gefunden."); }
   const existing = await listTerritories(db, tenantId);
   const sameCustomer = existing.find((row) => row.customerName.toLowerCase() === customerName.toLowerCase());
   const color = input.color && COLOR.test(input.color) ? input.color : sameCustomer?.color ?? colorForIndex(new Set(existing.map((row) => row.customerName.toLowerCase())).size);
@@ -43,17 +43,24 @@ export async function saveTerritory(db: Db, tenantId: number, input: SaveTerrito
   return { id, postcodes: postcodes.length, created: true as const };
 }
 
+/** Kunde ein- oder ausschalten: ausgeschaltete Gebiete bleiben gespeichert, zählen aber nicht auf der Karte und nicht bei den Überschneidungen. */
+export async function setTerritoryActive(db: Db, tenantId: number, input: { id: number; active: boolean }) {
+  const row = (await db.select({ id: territories.id, customerName: territories.customerName }).from(territories).where(and(eq(territories.id, input.id), eq(territories.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Dieses Gebiet gibt es nicht mehr.");
+  await db.update(territories).set({ active: input.active }).where(eq(territories.id, row.id));
+  return { id: row.id, active: input.active, customerName: row.customerName };
+}
 export async function deleteTerritory(db: Db, tenantId: number, id: number) {
   const row = (await db.select({ id: territories.id, customerName: territories.customerName }).from(territories).where(and(eq(territories.id, id), eq(territories.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Dieses Gebiet gibt es nicht mehr.");
   await db.delete(territories).where(eq(territories.id, row.id));
   return { deleted: true as const, customerName: row.customerName };
 }
 
-/** Überschneidungen je Sparte – plus Kennzahlen für die Kopfzeile der Karte. */
+/** Überschneidungen je Kategorie – plus Kennzahlen für die Kopfzeile der Karte. */
 export async function territoryOverlaps(db: Db, tenantId: number) {
   const rows = await listTerritories(db, tenantId);
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
-  const list: Territory[] = rows.map((row) => ({ id: row.id, customerName: row.customerName, categoryId: row.categoryId, color: row.color, postcodes: row.postcodes }));
+  const active = rows.filter((row) => row.active !== false); // ausgeschaltete Kunden zählen nicht mit
+  const list: Territory[] = active.map((row) => ({ id: row.id, customerName: row.customerName, categoryId: row.categoryId, color: row.color, postcodes: row.postcodes }));
   const result = computeOverlaps(list, categories);
-  return { ...result, customers: new Set(rows.map((row) => row.customerName.toLowerCase())).size, territories: rows.length, categories: new Set(rows.map((row) => row.categoryId ?? 0)).size };
+  return { ...result, customers: new Set(active.map((row) => row.customerName.toLowerCase())).size, territories: active.length, inactive: rows.length - active.length, categories: new Set(active.map((row) => row.categoryId ?? 0)).size };
 }
