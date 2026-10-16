@@ -6,6 +6,8 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { leadCategories, territories, users } from "../drizzle/schema";
 import { colorForIndex, computeOverlaps, type Territory } from "../shared/territories";
+import { buildTerritoryDrafts, describePlan, detectTerritoryLayout, parseTerritoryPlan, territoryPlanPrompt, TERRITORY_PLAN_SCHEMA, trimTable, type TerritoryPlan } from "../shared/territory-import";
+import { invokeLLM } from "./_core/llm";
 import { logActivity } from "./activity";
 import type { Db } from "./lead-pipeline";
 
@@ -63,4 +65,34 @@ export async function territoryOverlaps(db: Db, tenantId: number) {
   const list: Territory[] = active.map((row) => ({ id: row.id, customerName: row.customerName, categoryId: row.categoryId, color: row.color, postcodes: row.postcodes }));
   const result = computeOverlaps(list, categories);
   return { ...result, customers: new Set(active.map((row) => row.customerName.toLowerCase())).size, territories: active.length, inactive: rows.length - active.length, categories: new Set(active.map((row) => row.categoryId ?? 0)).size };
+}
+
+const PLAN_SYSTEM = "Du analysierst Tabellen mit Einsatzgebieten von Kunden (deutsche Postleitzahlen). Du antwortest nur über das vorgegebene Werkzeug. Gib jeder Spalte genau eine Rolle; Spalten ohne Nutzen bekommen „ignorieren“. Eine Kunden-Spalte enthält Firmennamen, die sich meist über mehrere Zeilen wiederholen.";
+export type AnalyzeTerritoryInput = { fileName?: string | null; rows: string[][] };
+/**
+ * KI-Erkennung für Gebietslisten: Die KI (Haiku, 12 s, nur mit ANTHROPIC_API_KEY) sagt, welche Spalte Kunde, PLZ, Ort,
+ * Umkreis oder Kategorie ist und ob Kunden in Zeilen oder Spalten stehen. Ohne Schlüssel oder bei Fehlern entscheiden die
+ * Regeln aus shared/territory-import.ts. Die Entwürfe je Kunde (Zeilen für den PLZ-Parser) werden hier deterministisch
+ * gebaut – aufgelöst zu PLZ werden sie erst im Client, der die PLZ-Liste hat.
+ */
+export async function analyzeTerritoryFile(db: Db, tenantId: number, input: AnalyzeTerritoryInput, deps: { llm?: typeof invokeLLM; apiKey?: string | null } = {}) {
+  const rows = trimTable(input.rows); if (!rows.some((row) => row.some(Boolean))) throw new Error("Die Datei ist leer – keine Zeilen gefunden.");
+  const categories = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
+  const width = Math.max(0, ...rows.map((row) => row.length));
+  const rulesPlan = detectTerritoryLayout(rows, categories);
+  let plan: TerritoryPlan = rulesPlan; let source: "ki" | "regeln" = "regeln"; let aiError: string | null = null;
+  const apiKey = deps.apiKey === undefined ? process.env.ANTHROPIC_API_KEY : deps.apiKey;
+  if (apiKey) {
+    try {
+      const call = (deps.llm ?? invokeLLM)({ model: "fast", maxTokens: 600, temperature: 0, outputSchema: TERRITORY_PLAN_SCHEMA, messages: [{ role: "system", content: PLAN_SYSTEM }, { role: "user", content: territoryPlanPrompt(rows, input.fileName, categories) }] });
+      const response = await Promise.race([call, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("KI-Zeitüberschreitung")), 12_000))]);
+      const parsed = parseTerritoryPlan(response.choices?.[0]?.message?.content ?? "", width);
+      if (parsed) { plan = parsed; source = "ki"; }
+      else aiError = "Die KI hat keine verwertbare Struktur geliefert – Regeln wurden genutzt.";
+    } catch (error) { aiError = `KI nicht erreichbar (${error instanceof Error ? error.message : "Fehler"}) – Regeln wurden genutzt.`; }
+  } else aiError = "Keine KI eingerichtet (ANTHROPIC_API_KEY fehlt) – Regeln wurden genutzt.";
+  let drafts = buildTerritoryDrafts(rows, plan, { categories, fileName: input.fileName });
+  // Sicherheitsnetz: liefert der KI-Plan nichts Brauchbares, die Regeln aber schon, gewinnen die Regeln
+  if (source === "ki" && drafts.every((draft) => !draft.lines.length)) { const fallback = buildTerritoryDrafts(rows, rulesPlan, { categories, fileName: input.fileName }); if (fallback.some((draft) => draft.lines.length)) { plan = rulesPlan; drafts = fallback; source = "regeln"; aiError = "Die KI-Struktur ergab keine PLZ – Regeln wurden genutzt."; } }
+  return { plan, source, aiError, summary: describePlan(plan, rows), drafts, rows: rows.length, columns: width, categories };
 }

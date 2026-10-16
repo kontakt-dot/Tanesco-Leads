@@ -3,7 +3,7 @@
  * Wiedervorlagen/Aufgaben („Heute fällig“), eingeschlafene Karten, Termine (Kalender, ICS-Einladung),
  * Angebotswerte/Pipeline-Wert, Verteilregeln & Tagesziele, CSV-Export, SMS/WhatsApp-Vorlagen.
  */
-import { lostStage, wonStage, type StageDef } from "./sales-pipeline";
+import { lostStage, wonStage, type PipelineSource, type StageDef } from "./sales-pipeline";
 
 /* ---------------------------------------------------------------- Aufgaben & Wiedervorlagen */
 export type TaskKind = "anruf" | "email" | "termin" | "aufgabe" | "sms" | "whatsapp";
@@ -145,7 +145,13 @@ export function mailReactionOf(rows: Array<{ openedAt?: Date | string | null; cl
 
 /* ---------------------------------------------------------------- Einstellungen (Automatik, Verteilung, Ziele) */
 export type DistributionRule = { id: string; userId: number; postcodePrefixes: string[]; categoryIds: number[]; maxOpen: number | null };
-export type DistributionRules = { mode: "aus" | "reihum" | "regeln"; rules: DistributionRule[]; fallback: "reihum" | "ohne" };
+export type DistributionMode = "aus" | "reihum" | "anteile" | "regeln";
+/** Anteil je Vertriebler in Prozent (Modus „Nach Anteilen“, z. B. 50/50 oder 70/30). */
+export type DistributionShare = { userId: number; percent: number };
+/** Ausnahme je Pipeline: „standard“ = wie die allgemeine Einstellung, sonst eigener Modus (und eigene Anteile). */
+export type PipelineDistribution = { mode: "standard" | DistributionMode; shares: DistributionShare[] };
+export type DistributionRules = { mode: DistributionMode; rules: DistributionRule[]; fallback: "reihum" | "ohne"; shares: DistributionShare[]; perPipeline: Partial<Record<PipelineSource, PipelineDistribution>> };
+export const DISTRIBUTION_MODE_LABEL: Record<DistributionMode, string> = { aus: "Aus", reihum: "Reihum", anteile: "Nach Anteilen", regeln: "Nach Regeln" };
 export type DailyTarget = { calls: number; appointments: number; deals: number };
 export type PipelineSettings = {
   staleDays: number;
@@ -159,7 +165,7 @@ export type PipelineSettings = {
   distribution: DistributionRules;
   dailyTargets: Record<string, DailyTarget>;
 };
-export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum" }, dailyTargets: {} };
+export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {} };
 const numberOrNull = (value: unknown) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.round(number) : null; };
 const numberMap = (value: unknown) => { const out: Record<string, number> = {}; if (value && typeof value === "object" && !Array.isArray(value)) for (const [key, item] of Object.entries(value as Record<string, unknown>)) { const id = numberOrNull(item); if (id) out[key] = id; } return out; };
 export function normalizePipelineSettings(input: unknown): PipelineSettings {
@@ -170,6 +176,11 @@ export function normalizePipelineSettings(input: unknown): PipelineSettings {
   const dailyTargets: Record<string, DailyTarget> = {};
   for (const [key, item] of Object.entries(targetsRaw)) { const target = item && typeof item === "object" ? (item as Record<string, unknown>) : {}; dailyTargets[key] = { calls: Math.max(0, Math.round(Number(target.calls) || 0)), appointments: Math.max(0, Math.round(Number(target.appointments) || 0)), deals: Math.max(0, Math.round(Number(target.deals) || 0)) }; }
   const reminder = raw.appointmentReminder; const mode = distributionRaw.mode;
+  const sharesOf = (value: unknown): DistributionShare[] => Array.isArray(value) ? (value as Array<Record<string, unknown>>).map((share) => ({ userId: numberOrNull(share?.userId) ?? 0, percent: Math.min(100, Math.max(0, Math.round(Number(share?.percent) || 0))) })).filter((share) => share.userId > 0).slice(0, 40) : [];
+  const modeOf = (value: unknown): DistributionMode => value === "reihum" || value === "regeln" || value === "anteile" ? value : "aus";
+  const perPipelineRaw = distributionRaw.perPipeline && typeof distributionRaw.perPipeline === "object" ? (distributionRaw.perPipeline as Record<string, unknown>) : {};
+  const perPipeline: Partial<Record<PipelineSource, PipelineDistribution>> = {};
+  for (const source of ["ads", "kaltakquise", "email"] as PipelineSource[]) { const item = perPipelineRaw[source]; if (!item || typeof item !== "object") continue; const entry = item as Record<string, unknown>; const entryMode = entry.mode === "standard" ? "standard" : modeOf(entry.mode); if (entryMode === "standard") continue; perPipeline[source] = { mode: entryMode, shares: sharesOf(entry.shares) }; }
   return {
     staleDays: Math.min(90, Math.max(0, Math.round(Number(raw.staleDays ?? DEFAULT_STALE_DAYS) || 0))),
     staleCampaignId: numberOrNull(raw.staleCampaignId),
@@ -179,25 +190,48 @@ export function normalizePipelineSettings(input: unknown): PipelineSettings {
     replyStage: raw.replyStage === null || raw.replyStage === "" ? null : String(raw.replyStage ?? "kontaktiert").slice(0, 40),
     appointmentReminder: reminder === "aus" || reminder === "sms" || reminder === "whatsapp" || reminder === "email" ? reminder : "email",
     appointmentReminderHours: Math.min(168, Math.max(1, Math.round(Number(raw.appointmentReminderHours ?? 24) || 24))),
-    distribution: { mode: mode === "reihum" || mode === "regeln" ? mode : "aus", rules, fallback: distributionRaw.fallback === "ohne" ? "ohne" : "reihum" },
+    distribution: { mode: modeOf(mode), rules, fallback: distributionRaw.fallback === "ohne" ? "ohne" : "reihum", shares: sharesOf(distributionRaw.shares), perPipeline },
     dailyTargets,
   };
 }
 
-/** Verteilregel anwenden: Region (PLZ-Anfang) und Kategorie müssen passen, offene Karten unter dem Limit; sonst reihum (oder niemand). */
-export function pickOwner(settings: DistributionRules, lead: { postcode?: string | null; categoryId?: number | null }, candidates: Array<{ userId: number; openCount: number }>, cursor: number): { userId: number | null; reason: string } {
-  if (settings.mode === "aus" || !candidates.length) return { userId: null, reason: "Verteilung aus" };
+/** Ist irgendeine Verteilung an (allgemein oder als Ausnahme je Pipeline)? */
+export const distributionActive = (distribution: DistributionRules) => distribution.mode !== "aus" || Object.values(distribution.perPipeline ?? {}).some((entry) => entry && entry.mode !== "standard" && entry.mode !== "aus");
+/** Welche Verteilung gilt für eine Pipeline: die Ausnahme je Pipeline (wenn gesetzt), sonst die allgemeine Einstellung. */
+export function effectiveDistribution(settings: DistributionRules, source: PipelineSource | null | undefined): { mode: DistributionMode; shares: DistributionShare[]; rules: DistributionRule[]; fallback: "reihum" | "ohne"; scope: "standard" | PipelineSource } {
+  const override = source ? settings.perPipeline?.[source] : undefined;
+  if (override && override.mode !== "standard") return { mode: override.mode, shares: override.shares, rules: settings.rules, fallback: settings.fallback, scope: source! };
+  return { mode: settings.mode, shares: settings.shares ?? [], rules: settings.rules, fallback: settings.fallback, scope: "standard" };
+}
+/** Reihenfolge für „Nach Anteilen“: 50/50 → A, B, A, B …; 70/30 → gewichtet abwechselnd. Kurz gehalten (Anteile durch den ggT geteilt), damit der Zähler nicht groß wird. */
+export function shareSequence(shares: DistributionShare[], allowed?: Set<number>): number[] {
+  const clean = shares.filter((share) => share.userId > 0 && share.percent > 0 && (!allowed || allowed.has(share.userId))); if (!clean.length) return [];
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a); const divisor = clean.reduce((acc, share) => gcd(acc, share.percent), 0) || 1;
+  const total = clean.reduce((acc, share) => acc + share.percent / divisor, 0);
+  return ownerSequence(Math.min(400, total), clean.map((share) => ({ userId: share.userId, value: share.percent })), "prozent").filter((userId): userId is number => userId !== null);
+}
+/** Verteilregel anwenden: je Pipeline-Quelle (lead.source) gilt die Ausnahme oder der Standard. Reihum, nach Anteilen oder nach Regeln (Region, Kategorie, Höchstzahl offener Karten; sonst reihum oder niemand). */
+export function pickOwner(settings: DistributionRules, lead: { postcode?: string | null; categoryId?: number | null; source?: PipelineSource | null }, candidates: Array<{ userId: number; openCount: number }>, cursor: number): { userId: number | null; reason: string } {
+  const effective = effectiveDistribution(settings, lead.source);
+  if (effective.mode === "aus" || !candidates.length) return { userId: null, reason: "Verteilung aus" };
   const roundRobin = () => { const target = candidates[cursor % candidates.length]; return { userId: target.userId, reason: "reihum" }; };
-  if (settings.mode === "reihum") return roundRobin();
+  if (effective.mode === "reihum") return roundRobin();
+  if (effective.mode === "anteile") {
+    const sequence = shareSequence(effective.shares, new Set(candidates.map((candidate) => candidate.userId)));
+    if (!sequence.length) return roundRobin(); // keine Anteile hinterlegt (oder keiner der Vertriebler mehr im Team) → reihum
+    const userId = sequence[cursor % sequence.length]; const percent = effective.shares.find((share) => share.userId === userId)?.percent ?? 0;
+    const sum = effective.shares.reduce((acc, share) => acc + share.percent, 0) || 100;
+    return { userId, reason: `Anteil ${Math.round((percent / sum) * 100)} %${effective.scope !== "standard" ? ` (${effective.scope === "ads" ? "Meta Ads" : effective.scope === "kaltakquise" ? "Kaltakquise" : "E-Mail-Kampagne"})` : ""}` };
+  }
   const postcode = String(lead.postcode ?? "").replace(/\s/g, "");
-  for (const rule of settings.rules) {
+  for (const rule of effective.rules) {
     const candidate = candidates.find((item) => item.userId === rule.userId); if (!candidate) continue;
     if (rule.postcodePrefixes.length && !rule.postcodePrefixes.some((prefix) => postcode.startsWith(prefix))) continue;
     if (rule.categoryIds.length && (!lead.categoryId || !rule.categoryIds.includes(lead.categoryId))) continue;
     if (rule.maxOpen && candidate.openCount >= rule.maxOpen) continue;
     return { userId: rule.userId, reason: [rule.postcodePrefixes.length ? `PLZ ${rule.postcodePrefixes.join("/")}` : "", rule.categoryIds.length ? "Kategorie" : "", rule.maxOpen ? `max. ${rule.maxOpen} offen` : ""].filter(Boolean).join(" · ") || "Regel" };
   }
-  return settings.fallback === "ohne" ? { userId: null, reason: "keine Regel passt" } : roundRobin();
+  return effective.fallback === "ohne" ? { userId: null, reason: "keine Regel passt" } : roundRobin();
 }
 
 /* ---------------------------------------------------------------- Angebote & Umsatz */

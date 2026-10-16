@@ -524,14 +524,14 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
 
 /**
  * Kontakte aus der E-Mail-Akquise in die Vertriebspipeline übernehmen – von Hand, nicht automatisch.
- * Sie erscheinen dort in der Eingangsstufe; die Zuteilung an Vertriebler läuft wie beim Listen-Upload
- * (reihum auf mehrere, alles an einen, oder gar nicht und später von Hand).
+ * Sie erscheinen dort in der gewählten Stufe; Kontakte ohne Vertriebler werden nach der Verteilung aus den
+ * Einstellungen zugeteilt (reihum, nach Anteilen wie 50/50 oder nach Regeln – je Pipeline einstellbar).
  */
 export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { leadIds: number[]; stage?: string | null; target?: "email" | "kaltakquise" | null; actorUserId?: number | null }) {
   const ids = Array.from(new Set(input.leadIds)).slice(0, 2000);
   if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
-  // Kontakte aus der E-Mail-Akquise landen in der gewählten Pipeline („E-Mail-Kampagne“ oder „Kaltakquise“) – in der gewählten Stufe,
-  // ohne Vertriebler-Verteilung. Das gilt auch für Kontakte, die schon in einer anderen Pipeline stehen: sie werden verschoben.
+  // Kontakte aus der E-Mail-Akquise landen in der gewählten Pipeline („E-Mail-Kampagne“ oder „Kaltakquise“) – in der gewählten Stufe.
+  // Das gilt auch für Kontakte, die schon in einer anderen Pipeline stehen: sie werden verschoben (ein vorhandener Vertriebler bleibt).
   const target: "email" | "kaltakquise" = input.target === "kaltakquise" ? "kaltakquise" : "email";
   const targetName = PIPELINE_SOURCE_LABEL[target];
   const stageDefs = await pipelineStages(db, tenantId, target);
@@ -548,8 +548,11 @@ export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { lea
   for (const row of neu) await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: stage, actorUserId: input.actorUserId ?? null, note: `Aus der E-Mail-Akquise in die Pipeline „${targetName}“ übernommen` });
   for (const row of verschoben) await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId: input.actorUserId ?? null, note: `Aus der Pipeline „${platformName(row.adPlatform)}“ in die Pipeline „${targetName}“ verschoben` });
   for (const row of umgestuft) await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId: input.actorUserId ?? null, note: "Stufe über die Kontakte der E-Mail-Akquise gesetzt" });
-  if (touched.length) await logActivity(db, tenantId, { kind: "pipeline_uebernommen", title: `${touched.length} ${touched.length === 1 ? "Kontakt" : "Kontakte"} in die Pipeline „${targetName}“ übernommen${verschoben.length ? ` (${verschoben.length} aus anderen Pipelines verschoben)` : ""}`, detail: `Stufe „${stageDefs.find((item) => item.key === stage)?.label ?? stage}“`, count: touched.length, leadId: touched.length === 1 ? touched[0].id : null, actorUserId: input.actorUserId ?? null });
-  return { moved: neu.length, switched: verschoben.length, restaged: umgestuft.length, already: unveraendert, stage, target, targetName };
+  // Verteilung aus den Einstellungen (Team → Verteilung neuer Leads): neue und verschobene Kontakte ohne Vertriebler bekommen einen – z. B. 50/50 in der Kaltakquise-Pipeline
+  let assigned = 0; const assignedTo = new Map<number, number>();
+  for (const row of [...neu, ...verschoben]) { const result = await autoAssign(db, tenantId, row.id); const userId = result?.details?.[0]?.userId ?? null; if (userId) { assigned += 1; assignedTo.set(userId, (assignedTo.get(userId) ?? 0) + 1); } }
+  if (touched.length) await logActivity(db, tenantId, { kind: "pipeline_uebernommen", title: `${touched.length} ${touched.length === 1 ? "Kontakt" : "Kontakte"} in die Pipeline „${targetName}“ übernommen${verschoben.length ? ` (${verschoben.length} aus anderen Pipelines verschoben)` : ""}`, detail: `Stufe „${stageDefs.find((item) => item.key === stage)?.label ?? stage}“${assigned ? ` · ${assigned} an Vertriebler verteilt` : ""}`, count: touched.length, leadId: touched.length === 1 ? touched[0].id : null, actorUserId: input.actorUserId ?? null });
+  return { moved: neu.length, switched: verschoben.length, restaged: umgestuft.length, already: unveraendert, stage, target, targetName, assigned, assignedTo: Array.from(assignedTo.entries()).map(([userId, count]) => ({ userId, count })) };
 }
 
 /* ---------- Upload-Verlauf ---------- */

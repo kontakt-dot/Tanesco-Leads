@@ -677,6 +677,16 @@ html:not(.dark) .team-bar i.is-done { background: linear-gradient(180deg, #fffff
 html:not(.dark) .team-target { color: #8a94a6 !important; }
 html:not(.dark) .team-target input { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #0f172a !important; }
 html:not(.dark) .team-rule { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .team-shares { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .team-share-unit { color: #4b5568 !important; }
+html:not(.dark) .team-shares-foot small { color: #4b5568 !important; }
+html:not(.dark) .team-shares-foot small.is-off { color: #8b7e4b !important; }
+html:not(.dark) .team-per-pipeline { border-top: 1px solid #e8ecf1 !important; }
+html:not(.dark) .team-per-pipeline>div:first-child strong { color: #0f172a !important; }
+html:not(.dark) .team-per-pipeline>div:first-child small { color: #4b5568 !important; }
+html:not(.dark) .team-pipeline-row { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .team-pipeline-row.is-custom { border-color: #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .team-pipeline-name { color: #0f172a !important; }
 html:not(.dark) .starter-menu { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 20px 50px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .starter-menu button { color: #0f172a !important; }
 html:not(.dark) .starter-menu button:hover { background: #f3f6f8 !important; }
@@ -1227,6 +1237,17 @@ html:not(.dark) .territory-plz-list { background: #f3f6f8 !important; }
 html:not(.dark) .territory-plz-list span { background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .territory-plz-list span small { color: #4b5568 !important; }
 html:not(.dark) .territory-plz-list span.is-hot { color: #0f172a !important; }
+html:not(.dark) .territory-ai-head { border: 1px solid #d9dfe7 !important; background: linear-gradient(135deg, rgba(var(--acc1), .14), rgba(var(--acc2), .10)) !important; }
+html:not(.dark) .territory-ai-head svg { color: #111318 !important; }
+html:not(.dark) .territory-ai-head strong { color: #0f172a !important; }
+html:not(.dark) .territory-ai-head span { color: #4b5568 !important; }
+html:not(.dark) .territory-ai-head small { color: #4b5568 !important; }
+html:not(.dark) .territory-ai-busy { color: #4b5568 !important; }
+html:not(.dark) .territory-ai-busy svg { color: #111318 !important; }
+html:not(.dark) .territory-ai-area strong { color: #0f172a !important; }
+html:not(.dark) .territory-ai-area small { color: #4b5568 !important; }
+html:not(.dark) .territory-ai-area em { color: #8b7e4b !important; }
+html:not(.dark) .territory-ai-notes em { color: #8b7e4b !important; }
 html:not(.dark) .territory-swatch.is-active { border-color: #d9dfe7 !important; box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .territory-textarea { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; color: #0f172a !important; }
 html:not(.dark) .territory-preview { color: #0f172a !important; }
@@ -2588,3 +2609,18 @@ html:not(.dark) .ring-violet-300\/25 { --tw-ring-color: rgba(188, 0, 29, .25) !i
 html:not(.dark) .bg-violet-500\/15 { background: #fde8ea !important; }
 html:not(.dark) .territory-link { color: #bc001d !important; }
 html:not(.dark) .territory-chip-off { background: #fde8ea !important; color: #bc001d !important; }
+
+/* v143: Verteilung nach Anteilen + Ausnahmen je Pipeline, KI-Erkennung in der Gebietskarte */
+html:not(.dark) .team-shares, html:not(.dark) .team-pipeline-row { background: #ffffff !important; border-color: #e8ecf1 !important; }
+html:not(.dark) .team-pipeline-row.is-custom { border-color: #fb2c36 !important; background: #fff1f2 !important; }
+html:not(.dark) .team-pipeline-name, html:not(.dark) .team-per-pipeline > div:first-child strong { color: #0f172a !important; }
+html:not(.dark) .team-share-unit, html:not(.dark) .team-shares-foot small, html:not(.dark) .team-per-pipeline > div:first-child small { color: #64748b !important; }
+html:not(.dark) .team-shares-foot small.is-off { color: #b45309 !important; }
+html:not(.dark) .team-per-pipeline { border-top-color: #e8ecf1 !important; }
+html:not(.dark) .territory-ai-head { background: #fff1f2 !important; border-color: #fecdd3 !important; }
+html:not(.dark) .territory-ai-head svg, html:not(.dark) .territory-ai-busy svg { color: #bc001d !important; }
+html:not(.dark) .territory-ai-head strong, html:not(.dark) .territory-ai-area strong { color: #0f172a !important; }
+html:not(.dark) .territory-ai-head span, html:not(.dark) .territory-ai-busy { color: #334155 !important; }
+html:not(.dark) .territory-ai-head small, html:not(.dark) .territory-ai-area small { color: #64748b !important; }
+html:not(.dark) .territory-ai-area em, html:not(.dark) .territory-ai-notes em { color: #b45309 !important; }
+html:not(.dark) .territory-ai-check { accent-color: #bc001d !important; }

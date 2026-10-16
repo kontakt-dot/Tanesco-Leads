@@ -53,6 +53,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
     if (result.moved) teile.push(`${result.moved} neu übernommen`);
     if (result.switched) teile.push(`${result.switched} aus einer anderen Pipeline verschoben`);
     if (result.restaged) teile.push(`${result.restaged} in die Stufe gesetzt`);
+    if (result.assigned) teile.push(`${result.assigned} an Vertriebler verteilt`); // Verteilung aus den Einstellungen (Team → Verteilung neuer Leads)
     const summe = result.moved + result.switched + result.restaged;
     toast.success(summe ? `${summe} ${summe === 1 ? "Kontakt" : "Kontakte"} in der Pipeline „${result.targetName}“, Stufe „${stageLabel(result.stage, stageDefs)}“ (${teile.join(", ")})${result.already ? ` – ${result.already} standen dort schon so` : ""}.` : `Diese Kontakte stehen schon in der Pipeline „${result.targetName}“ in dieser Stufe.`);
     setPicked([]); refreshAll();

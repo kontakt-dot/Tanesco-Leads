@@ -1642,4 +1642,31 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const second = getStore().tables.leads.filter((row) => row.listName === "Verteil-Test 2");
     expect(second.filter((row) => row.ownerUserId === francesco.userId).length).toBe(2); expect(second.filter((row) => !row.ownerUserId).length).toBe(8);
   });
+
+  it("Verteilung je Pipeline: 50/50 Taner/Francesco nur in der Kaltakquise – greift beim Übernehmen aus der E-Mail-Akquise", async () => {
+    const taner = getStore().tables.users.find((row) => row.email === "taner@tanesco.digital")!; const francesco = getStore().tables.users.find((row) => row.email === "francesco@tanesco.digital")!;
+    const settings = await call("leadops.pipelineSettings");
+    const saved = await call("leadops.savePipelineSettings", { ...settings, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: { kaltakquise: { mode: "anteile", shares: [{ userId: taner.id, percent: 50 }, { userId: francesco.id, percent: 50 }] }, email: { mode: "standard", shares: [] } } } });
+    expect(Object.keys(saved.distribution.perPipeline)).toEqual(["kaltakquise"]);
+    const imported = await call("leadops.importColdList", { listName: "Verteil-Mail", toPipeline: false, ownerUserIds: [], rows: [1, 2, 3, 4].map((n) => ({ firstName: `Kontakt${n}`, lastName: "Verteil", email: `kontakt${n}@verteil.example` })) }); expect(imported.created).toBe(4);
+    const kontakte = (await call("leadops.emailLeads", { listName: "Verteil-Mail" })).items; expect(kontakte).toHaveLength(4);
+    const inEmail = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte[0].id], stage: "neu", target: "email" }); expect(inEmail).toMatchObject({ moved: 1, assigned: 0 }); // E-Mail-Pipeline: Verteilung aus
+    const inKalt = await call("leadops.pushLeadsToPipeline", { leadIds: kontakte.map((item: { id: number }) => item.id), stage: "neu", target: "kaltakquise" }); expect(inKalt).toMatchObject({ moved: 3, switched: 1, assigned: 4 });
+    const rows = getStore().tables.leads.filter((row) => row.listName === "Verteil-Mail");
+    expect(rows.filter((row) => row.ownerUserId === taner.id)).toHaveLength(2); expect(rows.filter((row) => row.ownerUserId === francesco.id)).toHaveLength(2);
+    expect(getStore().tables.pipelineEvents.some((event) => event.leadId === kontakte[1].id && /Anteil 50 % \(Kaltakquise\)/.test(String(event.note)))).toBe(true);
+    expect(await call("leadops.pushLeadsToPipeline", { leadIds: kontakte.map((item: { id: number }) => item.id), stage: "kontaktiert", target: "kaltakquise" })).toMatchObject({ restaged: 4, assigned: 0 }); // schon zugeteilt → bleibt
+    await call("leadops.savePipelineSettings", settings);
+  });
+
+  it("Gebietskarte: KI-Erkennung einer Datei (Demo über Regeln) – Kunden, PLZ, Orte, Umkreise, Kategorie je Spalte, Entwürfe je Kunde", async () => {
+    const categories = await call("leadops.listCategories"); const pv = categories.find((category: { name: string }) => /photovoltaik/i.test(category.name)) ?? categories[0];
+    const result = await call("leadops.analyzeTerritoryFile", { fileName: "kunden.xlsx", rows: [["Kunde", "Kategorie", "PLZ", "Ort", "Umkreis km"], ["Nordlicht", pv.name, "20095", "Hamburg", ""], ["", "", "20097", "", ""], ["Aurora", "", "", "Frankfurt am Main", "25"], ["Helios", "Gibt es nicht", "63065", "", ""]] });
+    expect(result.source).toBe("regeln"); expect(result.plan.layout).toBe("zeilen"); expect(result.summary).toContain("Kunde:");
+    expect(result.drafts.map((draft: { customerName: string; lines: string[] }) => [draft.customerName, draft.lines])).toEqual([["Nordlicht", ["20095", "Hamburg", "20097"]], ["Aurora", ["Frankfurt am Main 25 km Umkreis"]], ["Helios", ["63065"]]]);
+    expect(result.drafts[0].categoryId).toBe(pv.id); expect(result.drafts[2].warnings[0]).toContain("Gibt es nicht");
+    const spalten = await call("leadops.analyzeTerritoryFile", { fileName: "spalten.csv", rows: [["Nordlicht", "Aurora"], ["20095", "60311"], ["20097", "60313"]] });
+    expect(spalten.plan.layout).toBe("kunden-als-spalten"); expect(spalten.drafts.map((draft: { customerName: string }) => draft.customerName)).toEqual(["Nordlicht", "Aurora"]);
+    await expect(call("leadops.analyzeTerritoryFile", { rows: [[""]] })).rejects.toThrow("leer");
+  });
 });

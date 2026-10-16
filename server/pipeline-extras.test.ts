@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIcs, callCounterText, callResultOfDialer, CALL_RESULTS, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, ownerSequence, splitShares, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
+import { buildIcs, callCounterText, callResultOfDialer, CALL_RESULTS, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, ownerSequence, splitShares, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, shareSequence, distributionActive, effectiveDistribution, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, moveNodeInTree, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
 import { companyFooterText, DEFAULT_DESIGN, linkifyFooter, renderEmailHtml } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
@@ -57,8 +57,24 @@ describe("Verteilregeln & Einstellungen", () => {
     expect(pickOwner(settings.distribution, { postcode: "60311", categoryId: 9 }, candidates, 0)).toMatchObject({ userId: null, reason: "keine Regel passt" }); // Kategorie passt nicht, Fallback „ohne“
     expect(pickOwner(settings.distribution, { postcode: "80331", categoryId: 9 }, candidates, 0)).toMatchObject({ userId: 2 });
     expect(pickOwner(settings.distribution, { postcode: "60311", categoryId: 2 }, [{ userId: 1, openCount: 2 }, { userId: 2, openCount: 0 }], 0).userId).toBeNull(); // Limit erreicht
-    expect(pickOwner({ mode: "reihum", rules: [], fallback: "reihum" }, {}, candidates, 3)).toMatchObject({ userId: 2, reason: "reihum" });
-    expect(pickOwner({ mode: "aus", rules: [], fallback: "reihum" }, {}, candidates, 0).userId).toBeNull();
+    expect(pickOwner({ mode: "reihum", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, {}, candidates, 3)).toMatchObject({ userId: 2, reason: "reihum" });
+    expect(pickOwner({ mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, {}, candidates, 0).userId).toBeNull();
+  });
+  it("verteilt nach Anteilen (50/50, 70/30) und je Pipeline anders – z. B. nur die Kaltakquise 50/50 an zwei Vertriebler", () => {
+    const candidates = [{ userId: 1, openCount: 0 }, { userId: 2, openCount: 0 }, { userId: 3, openCount: 0 }];
+    const halbe = normalizePipelineSettings({ distribution: { mode: "anteile", shares: [{ userId: 1, percent: 50 }, { userId: 2, percent: 50 }, { userId: 9, percent: "x" }], perPipeline: { kaltakquise: { mode: "standard", shares: [] }, email: { mode: "aus", shares: [] }, unsinn: { mode: "reihum" } } } }).distribution;
+    expect(halbe.shares).toEqual([{ userId: 1, percent: 50 }, { userId: 2, percent: 50 }, { userId: 9, percent: 0 }]); expect(halbe.perPipeline).toEqual({ email: { mode: "aus", shares: [] } }); // „standard“ wird nicht gespeichert, unbekannte Pipeline fliegt raus
+    expect(shareSequence([{ userId: 1, percent: 50 }, { userId: 2, percent: 50 }])).toEqual([1, 2]); expect(shareSequence([{ userId: 1, percent: 70 }, { userId: 2, percent: 30 }])).toEqual([1, 2, 1, 1, 2, 1, 1, 2, 1, 1]); // 7 von 10 an Vertriebler 1, gewichtet abwechselnd expect(shareSequence([{ userId: 1, percent: 100 }], new Set([2]))).toEqual([]);
+    expect([0, 1, 2, 3].map((cursor) => pickOwner(halbe, { source: "kaltakquise" }, candidates, cursor).userId)).toEqual([1, 2, 1, 2]); // 50/50, Vertriebler 3 ohne Anteil bekommt nichts
+    expect(pickOwner(halbe, { source: "kaltakquise" }, candidates, 0).reason).toBe("Anteil 50 %");
+    expect(pickOwner(halbe, { source: "email" }, candidates, 0)).toMatchObject({ userId: null, reason: "Verteilung aus" }); // Ausnahme: E-Mail-Pipeline aus
+    expect(pickOwner(halbe, { source: "ads" }, [{ userId: 3, openCount: 0 }], 0)).toMatchObject({ userId: 3, reason: "reihum" }); // keiner der Anteils-Vertriebler mehr im Team → reihum
+    const nurKalt = normalizePipelineSettings({ distribution: { mode: "aus", perPipeline: { kaltakquise: { mode: "anteile", shares: [{ userId: 1, percent: 70 }, { userId: 2, percent: 30 }] } } } }).distribution;
+    expect(distributionActive(nurKalt)).toBe(true); expect(distributionActive(normalizePipelineSettings({}).distribution)).toBe(false);
+    expect(pickOwner(nurKalt, { source: "ads" }, candidates, 0).userId).toBeNull(); expect(pickOwner(nurKalt, { source: null }, candidates, 0).userId).toBeNull();
+    expect(Array.from({ length: 10 }, (_, cursor) => pickOwner(nurKalt, { source: "kaltakquise" }, candidates, cursor).userId).filter((id) => id === 1)).toHaveLength(7);
+    expect(pickOwner(nurKalt, { source: "kaltakquise" }, candidates, 0).reason).toBe("Anteil 70 % (Kaltakquise)");
+    expect(effectiveDistribution(nurKalt, "kaltakquise").scope).toBe("kaltakquise"); expect(effectiveDistribution(nurKalt, "email").scope).toBe("standard");
   });
 });
 

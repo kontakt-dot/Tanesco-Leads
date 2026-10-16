@@ -14,7 +14,7 @@ import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipi
 import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
 import { recipientValues, renderNode, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
-import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
+import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
 import { contactedStage, entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
@@ -487,12 +487,14 @@ async function ownerCandidates(db: Db, tenantId: number, stages: StageDef[]) {
 }
 /** Verteilregeln auf Leads anwenden (neue Leads automatisch oder per Knopf „Nach Regeln verteilen“). */
 export async function distributeByRules(db: Db, tenantId: number, input: { leadIds: number[]; actorUserId: number | null; force?: boolean }) {
-  const settings = await loadSettings(db, tenantId); if (settings.distribution.mode === "aus" && !input.force) return { assigned: 0, skipped: input.leadIds.length, details: [] as Array<{ leadId: number; userId: number | null; reason: string }> };
+  const settings = await loadSettings(db, tenantId); if (!input.force && !distributionActive(settings.distribution)) return { assigned: 0, skipped: input.leadIds.length, details: [] as Array<{ leadId: number; userId: number | null; reason: string }> };
   const stages = unionStages(await stageSetsOf(db, tenantId)); const candidates = await ownerCandidates(db, tenantId, stages); const details: Array<{ leadId: number; userId: number | null; reason: string }> = []; let assigned = 0;
-  const rules = settings.distribution.mode === "aus" ? { ...settings.distribution, mode: "reihum" as const } : settings.distribution;
   for (const leadId of input.leadIds) {
     const lead = (await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"))).limit(1))[0]; if (!lead) continue;
-    const cursor = await nextCursor(db, tenantId); const pick = pickOwner(rules, lead, candidates, cursor); details.push({ leadId, ...pick });
+    const source = pipelineSourceOf(lead.adPlatform);
+    // „Nach Regeln verteilen“ per Knopf (force): eine ausgeschaltete Verteilung zählt dann als reihum – je Pipeline und allgemein
+    const rules: DistributionRules = input.force ? { ...settings.distribution, mode: settings.distribution.mode === "aus" ? "reihum" : settings.distribution.mode, perPipeline: Object.fromEntries(Object.entries(settings.distribution.perPipeline ?? {}).map(([key, value]) => [key, value && value.mode === "aus" ? { ...value, mode: "reihum" as const } : value])) } : settings.distribution;
+    const cursor = await nextCursor(db, tenantId); const pick = pickOwner(rules, { ...lead, source }, candidates, cursor); details.push({ leadId, ...pick });
     if (!pick.userId) continue; const candidate = candidates.find((item) => item.userId === pick.userId); if (candidate) candidate.openCount += 1;
     await db.update(leads).set({ ownerUserId: pick.userId }).where(eq(leads.id, leadId));
     await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "besitzer", actorUserId: input.actorUserId, note: `Zugeteilt an ${candidate?.name ?? "Vertriebler"} (Regel: ${pick.reason})`.slice(0, 400) }); assigned += 1;
@@ -500,7 +502,7 @@ export async function distributeByRules(db: Db, tenantId: number, input: { leadI
   return { assigned, skipped: input.leadIds.length - assigned, details };
 }
 /** Neue Pipeline-Karte ohne Zuständigen automatisch verteilen (wenn Verteilung eingeschaltet). */
-export async function autoAssign(db: Db, tenantId: number, leadId: number) { try { const settings = await loadSettings(db, tenantId); if (settings.distribution.mode === "aus") return null; const lead = (await db.select({ ownerUserId: leads.ownerUserId }).from(leads).where(eq(leads.id, leadId)).limit(1))[0]; if (!lead || lead.ownerUserId) return null; return await distributeByRules(db, tenantId, { leadIds: [leadId], actorUserId: null }); } catch { return null; } }
+export async function autoAssign(db: Db, tenantId: number, leadId: number) { try { const settings = await loadSettings(db, tenantId); if (!distributionActive(settings.distribution)) return null; const lead = (await db.select({ ownerUserId: leads.ownerUserId }).from(leads).where(eq(leads.id, leadId)).limit(1))[0]; if (!lead || lead.ownerUserId) return null; return await distributeByRules(db, tenantId, { leadIds: [leadId], actorUserId: null }); } catch { return null; } }
 /** Team-Übersicht: Tagesziele und Zählung je Vertriebler (heute / Zeitraum), Umsatz aus gewonnenen Karten. */
 export async function teamOverview(db: Db, tenantId: number, options: { from?: Date; until?: Date; now?: Date } = {}) {
   const now = options.now ?? new Date(); const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()); const from = options.from ?? dayStart; const until = options.until ?? now;

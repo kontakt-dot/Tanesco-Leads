@@ -1194,6 +1194,15 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .team-rule .lead-action-select{height:34px}
 .team-rule-cats{display:flex;flex-wrap:wrap;gap:4px}
 .team-rule-cats .segment-tab{height:26px;padding:0 9px;font-size:11px}
+/* Verteilung: Anteile je Vertriebler (z. B. 50/50) und Ausnahmen je Pipeline */
+.team-shares{display:grid;gap:6px;margin-top:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02)}
+.team-shares.is-compact{margin-top:8px;padding:8px 10px}
+.team-share{display:flex;align-items:center;gap:10px;min-height:32px;opacity:.72}.team-share.is-on{opacity:1}.team-share .owner-chip{flex:1;min-width:0}
+.team-share-input{width:76px;height:32px;text-align:right}.team-share-unit{font-size:12px;color:#9a9ec0}
+.team-shares-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}.team-shares-foot small{font-size:11.5px;color:#9a9ec0}.team-shares-foot small.is-off{color:#fde68a}
+.team-per-pipeline{display:grid;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)}.team-per-pipeline>div:first-child{display:grid;gap:2px}.team-per-pipeline>div:first-child strong{font-size:13px;color:#fff}.team-per-pipeline>div:first-child small{font-size:11.5px;color:#9a9ec0}
+.team-pipeline-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02)}.team-pipeline-row.is-custom{border-color:rgba(130,120,255,.45);background:rgba(130,120,255,.07)}
+.team-pipeline-name{min-width:130px;font-size:13px;font-weight:600;color:#e2e8f0}.team-pipeline-row .team-shares{flex-basis:100%}
 /* E-Mail-Kampagnen: Vorlagen-Menü, A/B, Sperrliste */
 .starter-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;display:grid;gap:2px;min-width:300px;padding:6px;border:1px solid rgba(166,159,255,.25);border-radius:12px;background:#181530;box-shadow:0 20px 50px rgba(0,0,0,.45)}
 .starter-menu button{display:grid;gap:1px;padding:8px 10px;text-align:left;border:0;border-radius:9px;background:transparent;color:#f1effe;cursor:pointer}
@@ -2139,6 +2148,14 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 .territory-plz-list span{display:inline-flex;align-items:baseline;gap:3px;padding:1px 6px;border-radius:6px;background:rgba(255,255,255,.07);font-size:11.5px;font-variant-numeric:tabular-nums;color:#e5e1fd}.territory-plz-list span small{color:#9a9ec0;font-size:10px}.territory-plz-list span.is-hot{background:rgba(251,113,133,.2);color:#fecdd3}
 .territory-dialog{width:min(760px,94vw)!important;max-width:min(760px,94vw)!important;max-height:90vh;overflow:auto}
 .territory-form{display:grid;gap:12px}
+/* Gebietskarte: KI-Erkennung einer hochgeladenen Datei – Vorschau je Kunde, dann alle Gebiete auf einmal anlegen */
+.territory-ai{display:grid;gap:12px}
+.territory-ai-head{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid rgba(130,120,255,.4);border-radius:12px;background:linear-gradient(120deg,rgba(130,120,255,.14),rgba(69,212,223,.08))}.territory-ai-head svg{flex:none;margin-top:2px;color:#b8b2ff}.territory-ai-head>div{display:grid;gap:3px;min-width:0}.territory-ai-head strong{font-size:14px;color:#fff}.territory-ai-head span{font-size:12.5px;color:#c7cbe6}.territory-ai-head small{font-size:11.5px;color:#9a9ec0}
+.territory-ai-busy{align-items:center;color:#c7cbe6}.territory-ai-busy svg{color:#b8b2ff}
+.territory-ai-table td,.territory-ai-table th{vertical-align:top;text-align:left;padding:8px 8px}.territory-ai-table th:first-child,.territory-ai-table td:first-child{width:28px;padding-right:0}.territory-ai-table tr.is-off td{opacity:.55}.territory-ai-table tr.is-off td:first-child{opacity:1}
+.territory-ai-check{width:16px;height:16px;margin-top:8px;accent-color:#8278ff}.territory-ai-name{min-width:170px}.territory-ai-category{min-width:150px}
+.territory-ai-area{min-width:200px;font-size:12.5px}.territory-ai-area-in{display:grid;gap:2px}.territory-ai-area strong{color:#fff}.territory-ai-area small{color:#9a9ec0}.territory-ai-area em{font-style:normal;color:#fde68a}
+.territory-ai-notes{min-width:160px;max-width:260px;font-size:12px}.territory-ai-notes-in{display:grid;gap:4px}.territory-ai-notes em{font-style:normal;color:#fde68a}.territory-ai-notes .dash-pill{justify-self:start}
 .territory-colors{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.territory-swatch{width:22px;height:22px;border-radius:999px;border:2px solid transparent;cursor:pointer}.territory-swatch.is-active{border-color:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .territory-textarea{min-height:120px;width:100%;padding:8px 10px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(15,14,36,.6);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:#e5e1fd}
 .territory-preview{display:grid;gap:3px;padding:10px 12px;border:1px solid rgba(52,211,153,.25);border-radius:10px;background:rgba(52,211,153,.07);font-size:12.5px;color:#b9f5dc}.territory-preview strong{color:#fff;font-size:14px}.territory-preview em{font-style:normal;color:#fde68a}.territory-preview small{color:#9a9ec0}

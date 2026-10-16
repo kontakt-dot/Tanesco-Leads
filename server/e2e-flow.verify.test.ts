@@ -2181,4 +2181,36 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     if (externalUser) await expect(appRouter.createCaller({ user: { id: externalUser.userId } } as never).leadops.listTerritories()).rejects.toThrow("vorbehalten");
   }, 20000);
 
+  it("43. Verteilung je Pipeline (50/50 Taner/Francesco in der Kaltakquise) greift beim Übernehmen aus der E-Mail-Akquise; KI-Erkennung einer Gebietsliste ohne Schlüssel über Regeln", async () => {
+    const tenantId = S.tenantId as number;
+    const reps = await owner.leadops.listSalesReps(); const taner = reps.find((rep) => rep.firstName === "Taner")!; const francesco = reps.find((rep) => rep.firstName === "Francesco")!;
+    const settings = await owner.leadops.pipelineSettings();
+    // Allgemein aus, nur die Kaltakquise-Pipeline 50/50 – „standard“-Einträge werden nicht gespeichert
+    const saved = await owner.leadops.savePipelineSettings({ ...settings, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: { kaltakquise: { mode: "anteile", shares: [{ userId: taner.userId, percent: 50 }, { userId: francesco.userId, percent: 50 }] }, email: { mode: "standard", shares: [] } } } });
+    expect(saved.distribution.perPipeline).toEqual({ kaltakquise: { mode: "anteile", shares: [{ userId: taner.userId, percent: 50 }, { userId: francesco.userId, percent: 50 }] } });
+    const imported = await owner.leadops.importColdList({ listName: "Verteil-Mail-Liste", toPipeline: false, ownerUserIds: [], rows: [1, 2, 3, 4].map((n) => ({ firstName: `Kontakt${n}`, lastName: "Verteil", email: `kontakt${n}@verteil-test.example` })) }); expect(imported.created).toBe(4);
+    const contacts = (await owner.leadops.emailLeads({ listName: "Verteil-Mail-Liste" })).items; expect(contacts).toHaveLength(4);
+    // In die E-Mail-Pipeline: dort ist die Verteilung aus → niemand zugeteilt
+    const toEmail = await owner.leadops.pushLeadsToPipeline({ leadIds: [contacts[0].id], stage: "neu", target: "email" }); expect(toEmail).toMatchObject({ moved: 1, assigned: 0 });
+    expect((await db.select({ ownerUserId: leads.ownerUserId }).from(leads).where(eq(leads.id, contacts[0].id)))[0].ownerUserId).toBeNull();
+    // In die Kaltakquise-Pipeline: 50/50 – drei neue plus der eine aus der E-Mail-Pipeline verschobene → 2 Taner, 2 Francesco
+    const toCold = await owner.leadops.pushLeadsToPipeline({ leadIds: contacts.map((item) => item.id), stage: "neu", target: "kaltakquise" }); expect(toCold).toMatchObject({ moved: 3, switched: 1, assigned: 4 });
+    expect(toCold.assignedTo.map((item) => item.count).sort()).toEqual([2, 2]);
+    const owners = await db.select({ ownerUserId: leads.ownerUserId }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.listName, "Verteil-Mail-Liste")));
+    expect(owners.filter((row) => row.ownerUserId === taner.userId)).toHaveLength(2); expect(owners.filter((row) => row.ownerUserId === francesco.userId)).toHaveLength(2);
+    const events = await db.select({ note: pipelineEvents.note }).from(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), eq(pipelineEvents.leadId, contacts[1].id)));
+    expect(events.some((event) => /Zugeteilt an (Taner|Francesco) \(Regel: Anteil 50 % \(Kaltakquise\)\)/.test(event.note ?? ""))).toBe(true);
+    // Nochmal übernehmen: schon zugeteilt → bleibt beim Vertriebler, nichts doppelt verteilt
+    expect(await owner.leadops.pushLeadsToPipeline({ leadIds: contacts.map((item) => item.id), stage: "kontaktiert", target: "kaltakquise" })).toMatchObject({ restaged: 4, assigned: 0 });
+    await owner.leadops.savePipelineSettings({ ...saved, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} } });
+    // KI-Erkennung: ohne ANTHROPIC_API_KEY entscheiden die Regeln – Kunden-Spalte, PLZ, Ort, Umkreis, Kategorie
+    const categories = await owner.leadops.listCategories();
+    const analysed = await owner.leadops.analyzeTerritoryFile({ fileName: "kunden-gebiete.xlsx", rows: [["Kunde", "Kategorie", "PLZ", "Ort", "Umkreis km"], ["Nordlicht Solar", categories[0]?.name ?? "PV", "20095", "Hamburg", ""], ["", "", "20097", "", ""], ["Aurora Energie", "", "", "Frankfurt am Main", "25"]] });
+    expect(analysed.source).toBe("regeln"); expect(analysed.aiError).toContain("ANTHROPIC_API_KEY"); expect(analysed.plan.layout).toBe("zeilen"); expect(analysed.summary).toContain("Kunde:");
+    expect(analysed.drafts.map((draft) => [draft.customerName, draft.lines])).toEqual([["Nordlicht Solar", ["20095", "Hamburg", "20097"]], ["Aurora Energie", ["Frankfurt am Main 25 km Umkreis"]]]);
+    if (categories[0]) expect(analysed.drafts[0].categoryId).toBe(categories[0].id);
+    await expect(owner.leadops.analyzeTerritoryFile({ rows: [[""]] })).rejects.toThrow("leer");
+    await expect(invitee.leadops.analyzeTerritoryFile({ rows: [["60311"]] })).rejects.toThrow("nicht zur Verfügung"); // Partner-Zugänge dürfen keine Gebiete analysieren
+  }, 20000);
+
 });
