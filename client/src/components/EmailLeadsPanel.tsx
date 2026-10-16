@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Phone } from "lucide-react";
+import { CallDialog } from "@/components/CallLog";
 import { trpc } from "@/lib/trpc";
 import { callCounterText, callResultLabel } from "../../../shared/pipeline-extras";
 import { toast } from "sonner";
@@ -31,6 +33,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const utils = trpc.useUtils();
   const pipeline = mode === "pipeline";
   const [picked, setPicked] = useState<number[]>([]);
+  const [callFor, setCallFor] = useState<{ publicId: string; name: string; phone: string | null } | null>(null); // Anruf-Fenster aus der Zeile
   const [target, setTarget] = useState<"email" | "kaltakquise">("email"); // Ziel-Pipeline beim Übernehmen
   const [stage, setStage] = useState("neu"); // Stufe, in der übernommene Kontakte in der Ziel-Pipeline landen
   const [search, setSearch] = useState("");
@@ -137,9 +140,10 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
             <td>{lead.ownerName || <span className="text-slate-500">offen</span>}</td>
             <td>{stamp(lead.createdAt)}</td>
             {!pipeline && <td>{lead.inPipeline === false ? <span className="email-leads-state">nur E-Mail</span> : <span className="email-leads-state is-geoeffnet" title="Steht in dieser Pipeline">{pipelineName(lead)}</span>}</td>}
-            <td className="email-leads-row-tools" onClick={(event) => event.stopPropagation()}><button type="button" title="Kontakt löschen" aria-label="Kontakt löschen" onClick={async () => { if (await confirmAction(`${nameOf(lead)} löschen?${pipeline ? " Verlauf, Aufgaben und Notizen gehen mit." : " Kunden bleiben erhalten."}`, { danger: true })) { if (pipeline) removeCards.mutate({ publicIds: [lead.publicId] }); else removeLeads.mutate({ leadIds: [lead.id] }); } }}>✕</button></td>
+            <td className="email-leads-row-tools" onClick={(event) => event.stopPropagation()}>{pipeline && <button type="button" className="email-leads-call" title="Anrufen und Ergebnis festhalten (zählt auch ohne Dialer)" aria-label={`${nameOf(lead)} anrufen`} onClick={() => setCallFor({ publicId: lead.publicId, name: nameOf(lead), phone: lead.phone ?? null })}><Phone className="h-3.5 w-3.5" /></button>}<button type="button" title="Kontakt löschen" aria-label="Kontakt löschen" onClick={async () => { if (await confirmAction(`${nameOf(lead)} löschen?${pipeline ? " Verlauf, Aufgaben und Notizen gehen mit." : " Kunden bleiben erhalten."}`, { danger: true })) { if (pipeline) removeCards.mutate({ publicIds: [lead.publicId] }); else removeLeads.mutate({ leadIds: [lead.id] }); } }}>✕</button></td>
           </tr>)}</tbody>
         </table></div>
       </>}
+    {callFor && <CallDialog publicId={callFor.publicId} name={callFor.name} phone={callFor.phone} onDone={() => { setCallFor(null); data.refetch(); onChanged?.(); }} onCancel={() => setCallFor(null)} onPhoneSaved={() => data.refetch()} />}
   </section>;
 }

@@ -1968,3 +1968,13 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .upload-dist-unit{color:#8f93af;font-size:11px}.upload-dist-preview{color:#c9c5f5;font-size:11px;white-space:nowrap}
 .upload-dist-hint{margin:2px 0 0;font-size:11px;color:#8f93af}
 .upload-dist-rep{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;margin-right:6px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#c9c5f5;font-size:12px;cursor:pointer}.upload-dist-rep.active{border-color:#9b93ff;background:rgba(129,120,255,.18);color:#fff}
+/* Anruf-Fenster: Telefon-App / Dialer oben, Ergebnis unten */
+.calllog-dial{display:grid;gap:6px}
+.calllog-tel{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;border:1px solid rgba(52,211,153,.45);background:rgba(52,211,153,.12);color:#d1fae5;text-decoration:none}
+.calllog-tel:hover{background:rgba(52,211,153,.2)}
+.calllog-tel span{display:grid;gap:1px;min-width:0}.calllog-tel b{font-size:15px;color:#fff;letter-spacing:.01em}.calllog-tel small{font-size:11px;color:#8ff0c6}
+.calllog-dialer{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 12px;border-radius:10px;border:1px solid rgba(129,120,255,.4);background:rgba(129,120,255,.12);color:#e3e0ff;font-size:12.5px;font-weight:600;cursor:pointer}
+.calllog-dialer:hover{background:rgba(129,120,255,.24)}
+.calllog-phone-missing{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center}
+.calllog-section{display:grid;gap:2px;margin-top:4px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08)}.calllog-section small{font-size:11px;color:#8f93af}
+.email-leads-call{display:inline-grid;place-items:center;width:26px;height:26px;margin-right:2px;border-radius:7px;border:1px solid rgba(52,211,153,.35);background:rgba(52,211,153,.1);color:#8ff0c6;cursor:pointer}.email-leads-call:hover{background:rgba(52,211,153,.22)}
