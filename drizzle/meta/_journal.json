@@ -526,6 +526,13 @@
       "when": 1792593060000,
       "tag": "0074_anrufzaehler",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "5",
+      "when": 1792593120000,
+      "tag": "0075_antwort_stopp",
+      "breakpoints": true
     }
   ]
 }

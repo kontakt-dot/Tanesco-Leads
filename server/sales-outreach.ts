@@ -2,10 +2,10 @@
  * Vertrieb: Kaltakquise-Listen (CSV → Leads in der Pipeline, Anrufkampagne manuell/power/predictive über den Dialer)
  * und E-Mail-Kampagnen mit Ablauf-Baum (Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst), Tracking per Pixel/Link.
  */
-import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import crypto from "node:crypto";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, OPEN_RECIPIENT_STATUSES, recipientValues, renderNode, REPLY_STOP_NOTE, starterTree, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
+import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, resolveSendWindow, hasAbTest, OPEN_RECIPIENT_STATUSES, recipientValues, renderNode, REPLY_STOP_NOTE, starterTree, stopsOnReply, summarizeCampaign, validateTree, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -112,7 +112,7 @@ const design = (campaign: EmailCampaign): EmailDesign => ({ ...DEFAULT_DESIGN, .
 export async function listEmailCampaigns(db: Db, tenantId: number) {
   const rows = await db.select().from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId)).orderBy(desc(emailCampaigns.updatedAt));
   const recipients = await db.select({ campaignId: emailCampaignRecipients.campaignId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, variant: emailCampaignRecipients.variant }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
-  return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.audience ?? { source: "alle" }) as Audience, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, sendWindow: sendWindowOf(row), stats: summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) }));
+  return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.audience ?? { source: "alle" }) as Audience, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), sendWindow: sendWindowOf(row), stats: summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) }));
 }
 export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
   const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
@@ -147,9 +147,9 @@ async function tenantDesign(db: Db, tenantId: number): Promise<Partial<EmailDesi
   const text = companyFooterText({ footer: row.footer, website: row.website, appointment: row.appointment });
   return { footerText: `${text}\nDu erhältst diese E-Mail, weil du dich für unser Angebot interessiert hast. {{abmelden}}` };
 }
-export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null }) {
+export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null; stopOnReply?: boolean | null }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
-  const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.audience, tree: input.tree, design: { ...DEFAULT_DESIGN, ...(await tenantDesign(db, tenantId)), ...input.design }, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}) };
+  const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.audience, tree: input.tree, design: { ...DEFAULT_DESIGN, ...(await tenantDesign(db, tenantId)), ...input.design }, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}), ...(typeof input.stopOnReply === "boolean" ? { stopOnReply: input.stopOnReply } : {}) };
   if (input.id) { await db.update(emailCampaigns).set(values).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))); return { id: input.id }; }
   const inserted = await db.insert(emailCampaigns).values(values); return { id: Number(inserted[0]?.insertId) || 0 };
 }
@@ -162,7 +162,7 @@ export function starterCampaign(kind: "kaltakquise" | "angebot" | "aufwecken" = 
 export async function duplicateEmailCampaign(db: Db, tenantId: number, userId: number, input: { id: number; name?: string | null; asTemplate?: boolean }) {
   const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
   const name = (input.name?.trim() || `${row.name} ${input.asTemplate ? "(Vorlage)" : "(Kopie)"}`).slice(0, 160);
-  const inserted = await db.insert(emailCampaigns).values({ tenantId, name, status: "entwurf", fromName: row.fromName, fromEmail: row.fromEmail, replyTo: row.replyTo, audience: row.audience, tree: row.tree, design: row.design, sendWindow: row.sendWindow, isTemplate: Boolean(input.asTemplate), abSplit: row.abSplit, createdByUserId: userId });
+  const inserted = await db.insert(emailCampaigns).values({ tenantId, name, status: "entwurf", fromName: row.fromName, fromEmail: row.fromEmail, replyTo: row.replyTo, audience: row.audience, tree: row.tree, design: row.design, sendWindow: row.sendWindow, isTemplate: Boolean(input.asTemplate), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), createdByUserId: userId });
   return { id: Number(inserted[0]?.insertId) || 0, name };
 }
 export async function setEmailCampaignTemplate(db: Db, tenantId: number, id: number, isTemplate: boolean) { await db.update(emailCampaigns).set({ isTemplate }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
@@ -211,6 +211,7 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
   const now = new Date(); const horizon = new Date(now.getTime() + 1500); const base = appUrl.replace(/\/+$/, ""); /* horizon: Toleranz für Sekundenrundung der DB */
   const campaignConditions = [eq(emailCampaigns.status, "aktiv")]; if (options.campaignId) campaignConditions.push(eq(emailCampaigns.id, options.campaignId));
   const active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
+  await enforceReplyStop(db, Array.from(new Set(active.map((campaign) => campaign.tenantId)))).catch((error) => console.error("[E-Mail-Kampagnen] Antwort-Stopp:", error instanceof Error ? error.message : error)); // Sicherheitsnetz: geantwortet → beendet, bevor etwas rausgeht
   for (const campaign of active) {
     let sentInRun = 0;
     const signature = await signatureFor(db, campaign.tenantId, base).then((result) => ({ html: result.html, text: result.text })).catch(() => null); // Signatur aus den E-Mail-Einstellungen – hängt an jeder Kampagnen-Mail
@@ -221,8 +222,8 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
       const state: RecipientState = { nodeId: recipient.nodeId, nextActionAt: recipient.nextActionAt && recipient.nextActionAt <= horizon ? null : recipient.nextActionAt, status: recipient.status as RecipientState["status"], sentCount: recipient.sentCount, openedAt: recipient.openedAt, clickedAt: recipient.clickedAt, repliedAt: recipient.repliedAt, lastSentAt: recipient.lastSentAt, variant: (recipient.variant ?? null) as RecipientState["variant"], clickedUrls: (Array.isArray(recipient.clickedUrls) ? recipient.clickedUrls : []) as string[] };
       const result = await advanceRecipient(tree(campaign), state, now, async (node, subject) => { const rendered = (() => { const d = design(campaign); // persönlicher Versand: kein Zählpixel, keine umgeschriebenen Links – nur der Abmelde-Link bleibt (gesetzlich nötig)
         return renderNode(node, d, values, d.plain ? { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature } : { pixelUrl: `${base}/api/mail/o/${recipient.token}.gif`, wrapLink: (url) => `${base}/api/mail/c/${recipient.token}?u=${encodeURIComponent(url)}`, unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature }); })(); const fresh = (await db.select({ repliedAt: emailCampaignRecipients.repliedAt, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]; // Antwort-Stopp: direkt vor dem Senden noch einmal nachsehen
-        if (fresh?.repliedAt) return { ok: false, subject: rendered.subject, stopped: REPLY_STOP_NOTE }; if (fresh && !["wartet", "laeuft"].includes(fresh.status)) return { ok: false, subject: rendered.subject, stopped: "Empfänger inzwischen beendet – keine weitere E-Mail" };
-        const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text }, { db, tenantId: campaign.tenantId }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign) });
+        if (fresh?.repliedAt && stopsOnReply(campaign)) return { ok: false, subject: rendered.subject, stopped: REPLY_STOP_NOTE }; if (fresh && !["wartet", "laeuft"].includes(fresh.status)) return { ok: false, subject: rendered.subject, stopped: "Empfänger inzwischen beendet – keine weitere E-Mail" };
+        const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text }, { db, tenantId: campaign.tenantId }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign), stopOnReply: stopsOnReply(campaign) });
       await db.update(emailCampaignRecipients).set({ nodeId: result.state.nodeId, nextActionAt: result.state.nextActionAt, status: result.state.status, sentCount: result.state.sentCount, lastSentAt: result.state.lastSentAt }).where(eq(emailCampaignRecipients.id, recipient.id));
       for (const event of result.events) await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note });
       sentInRun += result.events.filter((event) => event.kind === "gesendet").length;
@@ -248,14 +249,36 @@ export async function unsubscribe(db: Db, token: string) { const recipient = (aw
 export async function stopSeriesForContact(db: Db, tenantId: number, input: { email?: string | null; leadId?: number | null; repliedAt?: Date | null; note?: string | null }) {
   const email = input.email?.trim().toLowerCase() || null; if (!email && !input.leadId) return { stopped: 0, recipientIds: [] as number[] };
   const match = [email ? eq(emailCampaignRecipients.email, email) : null, input.leadId ? eq(emailCampaignRecipients.leadId, input.leadId) : null].filter((item): item is NonNullable<typeof item> => Boolean(item));
-  const open = await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, nodeId: emailCampaignRecipients.nodeId, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients)
+  const open = await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, nodeId: emailCampaignRecipients.nodeId, repliedAt: emailCampaignRecipients.repliedAt, stopOnReply: emailCampaigns.stopOnReply }).from(emailCampaignRecipients)
+    .innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId))
     .where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.status, OPEN_RECIPIENT_STATUSES), match.length > 1 ? or(...match) : match[0]));
-  const at = input.repliedAt ?? new Date(); const note = input.note ?? REPLY_STOP_NOTE;
+  const at = input.repliedAt ?? new Date(); const note = input.note ?? REPLY_STOP_NOTE; const stopped: number[] = [];
   for (const row of open) {
+    if (!stopsOnReply(row)) { await db.update(emailCampaignRecipients).set({ repliedAt: row.repliedAt ?? at }).where(eq(emailCampaignRecipients.id, row.id)); await db.insert(emailCampaignEvents).values({ tenantId, campaignId: row.campaignId, recipientId: row.id, nodeId: row.nodeId, kind: "gewartet", note: "Antwort erhalten – Serie läuft weiter („Bei Antwort anhalten“ ist für diese Kampagne aus)" }); continue; } // Schalter bewusst aus
     await db.update(emailCampaignRecipients).set({ status: "fertig", nextActionAt: null, nodeId: null, repliedAt: row.repliedAt ?? at }).where(eq(emailCampaignRecipients.id, row.id));
-    await db.insert(emailCampaignEvents).values({ tenantId, campaignId: row.campaignId, recipientId: row.id, nodeId: row.nodeId, kind: "beendet", note });
+    await db.insert(emailCampaignEvents).values({ tenantId, campaignId: row.campaignId, recipientId: row.id, nodeId: row.nodeId, kind: "beendet", note }); stopped.push(row.id);
   }
-  return { stopped: open.length, recipientIds: open.map((row) => row.id) };
+  return { stopped: stopped.length, recipientIds: stopped };
+}
+/**
+ * Sicherheitsnetz vor jedem Zeitplaner-Lauf: offene Empfänger, deren Kontakt (gleiche Adresse im Mandanten) geantwortet
+ * hat, bevor der Eintrag angelegt wurde – z. B. Daten aus der Zeit vor dem Antwort-Stopp oder ein nur gesetzter Zeitstempel –
+ * werden beendet, sofern die Kampagne „Bei Antwort anhalten“ an hat. So ist der Stopp wirklich überall dabei.
+ */
+export async function enforceReplyStop(db: Db, tenantIds: number[]) {
+  let stopped = 0; if (!tenantIds.length) return stopped;
+  const replied = await db.select({ tenantId: emailCampaignRecipients.tenantId, email: emailCampaignRecipients.email, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients).where(and(inArray(emailCampaignRecipients.tenantId, tenantIds), isNotNull(emailCampaignRecipients.repliedAt)));
+  const latest = new Map<string, Date>(); for (const row of replied) { if (!row.repliedAt) continue; const key = `${row.tenantId}:${row.email.toLowerCase()}`; const current = latest.get(key); if (!current || row.repliedAt > current) latest.set(key, row.repliedAt); }
+  if (!latest.size) return stopped;
+  const open = await db.select({ id: emailCampaignRecipients.id, tenantId: emailCampaignRecipients.tenantId, campaignId: emailCampaignRecipients.campaignId, nodeId: emailCampaignRecipients.nodeId, email: emailCampaignRecipients.email, repliedAt: emailCampaignRecipients.repliedAt, createdAt: emailCampaignRecipients.createdAt, stopOnReply: emailCampaigns.stopOnReply }).from(emailCampaignRecipients)
+    .innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(and(inArray(emailCampaignRecipients.tenantId, tenantIds), inArray(emailCampaignRecipients.status, OPEN_RECIPIENT_STATUSES)));
+  for (const row of open) {
+    if (!stopsOnReply(row)) continue;
+    const at = latest.get(`${row.tenantId}:${row.email.toLowerCase()}`); const hit = Boolean(row.repliedAt) || Boolean(at && at >= row.createdAt); if (!hit) continue;
+    await db.update(emailCampaignRecipients).set({ status: "fertig", nextActionAt: null, nodeId: null, repliedAt: row.repliedAt ?? at ?? new Date() }).where(eq(emailCampaignRecipients.id, row.id));
+    await db.insert(emailCampaignEvents).values({ tenantId: row.tenantId, campaignId: row.campaignId, recipientId: row.id, nodeId: row.nodeId, kind: "beendet", note: REPLY_STOP_NOTE }); stopped += 1;
+  }
+  return stopped;
 }
 /** Von Hand „hat geantwortet“: Zeitstempel setzen, Vermerk im Verlauf – und alle Serien dieses Kontakts stoppen (Antwort-Stopp). */
 export async function markReplied(db: Db, tenantId: number, recipientId: number) {

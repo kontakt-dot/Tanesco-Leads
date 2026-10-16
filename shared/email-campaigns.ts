@@ -87,10 +87,14 @@ export function nextSendSlot(now: Date, window: SendWindow | null | undefined): 
   return null;
 }
 /**
- * Antwort-Stopp – feste Regel für jede Serie, unabhängig vom gebauten Ablauf: Sobald der Kontakt geantwortet hat
- * (`repliedAt`), geht keine weitere E-Mail mehr raus. Der Empfänger wird mit diesem Vermerk beendet.
+ * Antwort-Stopp („Bei Antwort anhalten“, Schalter je Kampagne, standardmäßig an – auch für alle schon angelegten
+ * Kampagnen): Sobald der Kontakt geantwortet hat (`repliedAt`), geht keine weitere E-Mail mehr raus – unabhängig vom
+ * gebauten Ablauf. Der Empfänger wird mit diesem Vermerk beendet. Nur wer den Schalter bewusst ausschaltet, schickt die
+ * Serie trotz Antwort zu Ende.
  */
 export const REPLY_STOP_NOTE = "Antwort erhalten – Serie gestoppt, keine weitere E-Mail";
+/** Gilt der Antwort-Stopp für diese Kampagne? Fehlt das Feld (alte Daten, alte Demo-Stände), ist er an. */
+export function stopsOnReply(campaign: object | null | undefined): boolean { return (campaign as { stopOnReply?: boolean | null } | null | undefined)?.stopOnReply !== false; }
 /** Offene Empfänger: nur diese bekommen noch E-Mails (fertig/fehler/abgemeldet/bounce/beschwerde sind endgültig). */
 export const OPEN_RECIPIENT_STATUSES: RecipientStatus[] = ["wartet", "laeuft"];
 export function isOpenRecipient(status: string | null | undefined): boolean { return status === "wartet" || status === "laeuft"; }
@@ -103,11 +107,11 @@ export function stoppedByReply(state: Pick<RecipientState, "status" | "repliedAt
  * Senden eine Antwort oder eine Sperre aufgetaucht ist.
  */
 export type SendOutcome = boolean | { ok: boolean; subject?: string | null; stopped?: string | null };
-export async function advanceRecipient(tree: EmailTree, state: RecipientState, now: Date, send: (node: Extract<EmailNode, { type: "send" }>, subject: string) => Promise<SendOutcome>, options: { window?: SendWindow | null } = {}): Promise<{ state: RecipientState; events: StepEvent[] }> {
+export async function advanceRecipient(tree: EmailTree, state: RecipientState, now: Date, send: (node: Extract<EmailNode, { type: "send" }>, subject: string) => Promise<SendOutcome>, options: { window?: SendWindow | null; stopOnReply?: boolean | null } = {}): Promise<{ state: RecipientState; events: StepEvent[] }> {
   const events: StepEvent[] = []; let current = { ...state }; let guard = 0;
   if (!current.nodeId) current.nodeId = tree.start;
-  // Antwort-Stopp: geantwortet → sofort beenden, egal wo der Ablauf gerade steht. Kein Schritt mehr, keine E-Mail mehr.
-  if (stoppedByReply(current)) { const at = current.nodeId ?? ""; current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: at, note: REPLY_STOP_NOTE }); return { state: current, events }; }
+  // Antwort-Stopp (Schalter „Bei Antwort anhalten“, Standard an): geantwortet → sofort beenden, egal wo der Ablauf gerade steht.
+  if (options.stopOnReply !== false && stoppedByReply(current)) { const at = current.nodeId ?? ""; current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: at, note: REPLY_STOP_NOTE }); return { state: current, events }; }
   while (current.nodeId && guard < 12) {
     guard += 1; if (current.nextActionAt && current.nextActionAt > now) break; // noch nicht fällig
     const node = tree.nodes.find((item) => item.id === current.nodeId);

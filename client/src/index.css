@@ -400,6 +400,7 @@
 .dash-bar i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#8278ff,#45d4df)}
 .dash-pill{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid rgba(255,255,255,.14);border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;color:#e5e1fd}
 .dash-pill.muted{color:#a5a1d7;border-style:dashed}
+.dash-pill.is-green{border-color:rgba(52,211,153,.4);color:#8ff0c6}.dash-pill.is-red{border-color:rgba(248,113,113,.5);background:rgba(248,113,113,.12);color:#fca5a5}
 .dash-pill-clip{max-width:170px;overflow:hidden;text-overflow:ellipsis;display:inline-block;line-height:20px}
 .recent-panel .dash-table th,.recent-panel .dash-table td{padding-left:8px;padding-right:8px}
 .recent-panel .dash-bar{width:56px}
@@ -627,9 +628,13 @@ body:has(.side-drawer-backdrop),body:has(.app-confirm-backdrop){overflow:hidden}
 .tree{display:grid;gap:0}
 .tree-chain{display:grid;gap:0;justify-items:stretch;min-width:0}
 /* Antwort-Stopp: feste Regel, immer sichtbar über dem Ablauf */
-.reply-stop{display:flex;align-items:flex-start;gap:8px;max-width:420px;padding:8px 11px;border:1px solid rgba(52,211,153,.28);border-radius:12px;background:rgba(52,211,153,.08);font-size:12px;line-height:1.45;color:#b9f5dc}
-.reply-stop svg{flex:none;margin-top:1px;color:#34d399}
-.reply-stop strong{color:#fff}
+.reply-stop{display:flex;align-items:flex-start;gap:10px;max-width:460px;padding:9px 12px;border:1px solid rgba(52,211,153,.28);border-radius:12px;background:rgba(52,211,153,.08);font-size:12px;line-height:1.45;color:#b9f5dc;cursor:pointer}
+.reply-stop>button{flex:none;margin-top:2px}
+.reply-stop>span{display:grid;gap:2px}
+.reply-stop strong{display:inline-flex;align-items:center;gap:5px;color:#fff;font-size:12.5px}
+.reply-stop svg{color:#34d399}
+.reply-stop.is-off{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.1);color:#fecaca}
+.reply-stop.is-off svg{color:#f87171}
 .tree-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 4px;margin-top:12px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(15,23,42,.35);font-size:12px;color:#c9c5f5}
 .tree-summary-title{font-weight:700;color:#fff;margin-right:4px}
 .tree-summary-item{display:inline-flex;align-items:center;gap:4px;min-width:0}
@@ -1046,8 +1051,10 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
   .pipeline-board{display:flex;align-items:flex-start;gap:10px}
   .pipeline-column{flex:1 1 236px;min-width:236px;transition:flex-basis .2s ease,min-width .2s ease}
   .pipeline-column:has(.pipeline-card.is-open){flex:0 0 480px;min-width:480px}
-  .pipeline-column:has(.pipeline-card.is-open) .pipeline-cards{max-height:none}
   .pipeline-column{max-height:max(360px,calc(100vh - var(--board-top,236px) - 14px))} /* Oberkante wird im Board gemessen – Spalten scrollen innen, der Querbalken bleibt im Bild */
+  /* Aufgeklappte Karte: die Spalte wächst mit, nichts wird abgeschnitten – die Seite scrollt ganz normal (statt eines versteckten Scrollbereichs in der Spalte) */
+  .pipeline-column:has(.pipeline-card.is-open){max-height:none}
+  .pipeline-column:has(.pipeline-card.is-open) .pipeline-cards{max-height:none;overflow:visible}
 }
 .lead-map-list-all{max-height:520px;overflow-y:auto;padding-right:4px}
 .lead-map-state.is-selected{stroke:#fbbf24;stroke-width:2}
@@ -1695,10 +1702,34 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .inbox-sent-row{flex-wrap:wrap}
 
 /* Vorlagen als eigenes Fenster (Knopf „Vorlagen“ in der Kopfzeile der Kampagnen) */
-.template-dialog{width:min(1040px,94vw)!important;max-width:min(1040px,94vw)!important;max-height:86vh;overflow:auto}
-.template-dialog-table{margin:4px -24px -24px;padding:0 0 8px}
-.template-dialog-table .table-wrap{max-height:52vh;overflow:auto}
-.template-dialog .flux-table{min-width:760px}
+/* Vorlagen-Fenster: groß, luftig, Karten statt gequetschter Tabelle */
+.template-dialog{width:min(1180px,94vw)!important;max-width:min(1180px,94vw)!important;max-height:88vh;overflow:auto;padding:28px 30px!important;gap:18px!important}
+.template-dialog-head{display:flex!important;flex-direction:row!important;align-items:flex-start;justify-content:space-between;gap:16px;text-align:left}
+.template-dialog-title{display:flex!important;align-items:center;gap:10px;font-size:22px!important;font-weight:800;color:#fff}
+.template-dialog-title svg{color:#8278ff}
+.template-dialog-count{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:999px;background:rgba(130,120,255,.18);color:#e5e1fd;font-size:13px;font-weight:700}
+.template-dialog-desc{max-width:720px;margin-top:6px!important;font-size:13px!important;line-height:1.55;color:#9a9ec0!important}
+.template-dialog-head>button{flex:none;margin-top:4px;margin-right:28px}
+.template-grid-wrap{margin:0 -6px;padding:2px 6px 4px;max-height:62vh;overflow:auto}
+.template-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px}
+.template-card{display:flex;flex-direction:column;gap:10px;padding:18px 18px 16px;border:1px solid rgba(255,255,255,.09);border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));transition:border-color .15s,transform .15s,box-shadow .15s}
+.template-card:hover{border-color:rgba(130,120,255,.45);box-shadow:0 10px 30px rgba(0,0,0,.25);transform:translateY(-1px)}
+.template-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.template-card-kind{font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8278ff}
+.template-card-delete{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;color:#8b8fb0;transition:background .15s,color .15s}
+.template-card-delete:hover{background:rgba(248,113,113,.14);color:#fca5a5}
+.template-card-title{text-align:left;font-size:17px;font-weight:700;line-height:1.3;color:#fff;cursor:pointer}
+.template-card-title:hover{color:#c9c5f5;text-decoration:underline;text-underline-offset:3px}
+.template-card-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:#9a9ec0}
+.template-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06);color:#d7d4f3;font-weight:600;font-size:12px}
+.template-chip.is-count{background:rgba(130,120,255,.16);color:#e5e1fd}
+.template-card-date{margin-left:auto;font-size:11.5px;color:#7d81a3}
+.template-card-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;padding-top:12px;border-top:1px solid rgba(255,255,255,.07)}
+.template-card-actions>button{height:36px}
+.template-card-actions>button:last-child{color:#9a9ec0}
+.template-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:40px 16px;border:1px dashed rgba(255,255,255,.14);border-radius:16px;text-align:center;color:#9a9ec0;font-size:13px}
+.template-empty svg{color:#8278ff}.template-empty strong{color:#fff;font-size:15px}
+@media(max-width:760px){.template-dialog{padding:20px 16px!important}.template-dialog-head{flex-direction:column!important}.template-dialog-head>button{margin-right:0}.template-grid{grid-template-columns:1fr}.template-card-actions>button{flex:1 1 100%}.template-card-date{margin-left:0;flex-basis:100%}}
 
 /* Glocke: Verlauf der Plattform als Tagesverlauf (Zusammenfassung je Tag, aufklappbar bis zum Eintrag) */
 .activity-bell{position:relative;display:flex}

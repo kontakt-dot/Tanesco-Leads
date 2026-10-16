@@ -2066,6 +2066,26 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.runEmailCampaigns();
     const berndAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, berndC.id)))[0]; expect(berndAfter.status).toBe("fertig"); expect(berndAfter.sentCount).toBe(1);
     expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, berndC.id))).some((event) => event.kind === "beendet" && event.note === REPLY_STOP_NOTE)).toBe(true);
+    // 6) Schalter „Bei Antwort anhalten“ (Migration 0075, Standard an – auch für alte Kampagnen): Serie D bewusst aus → Annas Antwort stoppt D nicht
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === a.id)?.stopOnReply).toBe(true); expect((await owner.leadops.getEmailCampaign({ id: a.id })).stopOnReply).toBe(true);
+    const d = await owner.leadops.saveEmailCampaign({ name: "Stopp-Serie D (aus)", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Antwort-Stopp Test" }, tree, design: starter.design as unknown as Record<string, unknown>, stopOnReply: false });
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === d.id)?.stopOnReply).toBe(false);
+    expect((await owner.leadops.startEmailCampaign({ id: d.id })).added).toBe(3); await owner.leadops.runEmailCampaigns();
+    const annaD = (await rowsOf("anna@antwort-test.example")).find((row) => row.campaignId === d.id)!; expect(annaD.sentCount).toBe(1); expect(annaD.status).toBe("wartet"); // neue Serie: Anna darf wieder angeschrieben werden (bewusst gestartet)
+    await owner.leadops.storeInboxMessage({ fromEmail: "anna@antwort-test.example", fromName: "Anna Stopp", subject: "Re: Erste Mail an Anna", bodyText: "Nochmal: ja, gerne anrufen." });
+    const annaDAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, annaD.id)))[0]; expect(annaDAfter.status).toBe("wartet"); expect(annaDAfter.repliedAt).toBeTruthy();
+    expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, annaD.id))).some((event) => event.kind === "gewartet" && /läuft weiter/.test(event.note ?? ""))).toBe(true);
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, d.id)); await owner.leadops.runEmailCampaigns();
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, annaD.id)))[0]).toMatchObject({ status: "fertig", sentCount: 3 }); // trotz Antwort alle drei Mails
+    // Schalter nachträglich einschalten → gilt sofort für die laufende Serie (Sicherheitsnetz vor dem nächsten Lauf)
+    const e = await owner.leadops.saveEmailCampaign({ name: "Stopp-Serie E", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Antwort-Stopp Test" }, tree, design: starter.design as unknown as Record<string, unknown>, stopOnReply: false });
+    expect((await owner.leadops.startEmailCampaign({ id: e.id })).added).toBe(3); await owner.leadops.runEmailCampaigns();
+    const dirkE = (await rowsOf("dirk@antwort-test.example")).find((row) => row.campaignId === e.id)!; expect(dirkE.status).toBe("wartet"); // Dirks frühere Antwort liegt vor dieser Anmeldung → bewusst neu angeschrieben
+    await db.update(emailCampaignRecipients).set({ createdAt: new Date(Date.now() - 3 * 3_600_000), nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, dirkE.id)); // alter Eintrag (vor Dirks Antwort angelegt) – wie Daten aus der Zeit vor dem Antwort-Stopp
+    await owner.leadops.saveEmailCampaign({ id: e.id, name: "Stopp-Serie E", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Antwort-Stopp Test" }, tree, design: starter.design as unknown as Record<string, unknown>, stopOnReply: true });
+    await owner.leadops.runEmailCampaigns();
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, dirkE.id)))[0]).toMatchObject({ status: "fertig", sentCount: 1 }); // Sicherheitsnetz: beendet statt Mail 2
+    expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, dirkE.id))).some((event) => event.kind === "beendet" && event.note === REPLY_STOP_NOTE)).toBe(true);
   }, 30000);
 
 });

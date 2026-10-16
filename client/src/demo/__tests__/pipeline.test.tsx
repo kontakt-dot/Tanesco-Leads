@@ -1565,7 +1565,19 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const berndC = getStore().tables.emailCampaignRecipients.find((row) => row.campaignId === c.id && row.email === "bernd@stopp-test.example")!; berndC.repliedAt = new Date(); berndC.nextActionAt = new Date(Date.now() - 1000);
     await call("leadops.runEmailCampaigns"); expect(berndC.status).toBe("fertig"); expect(berndC.sentCount).toBe(1);
     expect(getStore().tables.emailCampaignEvents.some((row) => row.recipientId === berndC.id && row.kind === "beendet" && row.note === REPLY_STOP_NOTE)).toBe(true);
-    const detail = await call("leadops.getEmailCampaign", { id: a.id }); expect(detail.stats.replied).toBe(2);
+    const detail = await call("leadops.getEmailCampaign", { id: a.id }); expect(detail.stats.replied).toBe(2); expect(detail.stopOnReply).toBe(true);
+    // Schalter „Bei Antwort anhalten“ aus → Annas Antwort stoppt diese Serie nicht, alle Mails gehen raus
+    const d = await call("leadops.saveEmailCampaign", { ...base, name: "Stopp D (aus)", stopOnReply: false }); expect((await call("leadops.listEmailCampaigns")).find((row: any) => row.id === d.id).stopOnReply).toBe(false);
+    expect((await call("leadops.startEmailCampaign", { id: d.id })).added).toBe(3);
+    const annaD = getStore().tables.emailCampaignRecipients.find((row) => row.campaignId === d.id && row.email === "anna@stopp-test.example")!; expect(annaD.sentCount).toBe(1);
+    await call("leadops.storeInboxMessage", { fromEmail: "anna@stopp-test.example", fromName: "Anna Test", subject: "Re: Erste Mail", bodyText: "Nochmal ja." }); expect(annaD.status).toBe("wartet"); expect(annaD.repliedAt).toBeTruthy();
+    annaD.nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns"); expect(annaD.status).toBe("fertig"); expect(annaD.sentCount).toBe(3);
+    // Schalter nachträglich an → Sicherheitsnetz beendet alte Einträge (vor der Antwort angelegt) vor dem nächsten Lauf
+    const e = await call("leadops.saveEmailCampaign", { ...base, name: "Stopp E", stopOnReply: false }); expect((await call("leadops.startEmailCampaign", { id: e.id })).added).toBe(3);
+    const dirkE = getStore().tables.emailCampaignRecipients.find((row) => row.campaignId === e.id && row.email === "dirk@stopp-test.example")!; expect(dirkE.status).toBe("wartet");
+    dirkE.createdAt = new Date(Date.now() - 3 * 3_600_000); dirkE.nextActionAt = new Date(Date.now() - 1000);
+    await call("leadops.saveEmailCampaign", { ...base, id: e.id, name: "Stopp E", stopOnReply: true }); await call("leadops.runEmailCampaigns");
+    expect(dirkE.status).toBe("fertig"); expect(dirkE.sentCount).toBe(1);
   });
   it("Listen-Upload verteilt prozentual (70/30 → 7/3, im Wechsel) oder nach Anzahl (Rest bleibt offen)", async () => {
     const reps = await call("leadops.listSalesReps"); const taner = reps.find((rep: any) => rep.firstName === "Taner"); const francesco = reps.find((rep: any) => rep.firstName === "Francesco");

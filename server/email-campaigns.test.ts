@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceRecipient, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, validateTree, summarizeCampaign } from "../shared/email-campaigns";
+import { advanceRecipient, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, stopsOnReply, validateTree, summarizeCampaign } from "../shared/email-campaigns";
 import { isAutoReply, looksLikeAutoReplySubject } from "../shared/reply-ai";
 import { fillPlaceholders, renderEmailHtml, renderEmailText, starterBlocks, usesSignature } from "../shared/email-design";
 import { renderNode } from "../shared/email-campaigns";
@@ -35,6 +35,10 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
     // Antwort kurz vor dem Senden (Nachprüfung im Versand-Rückruf) → Stopp ohne Versand, kein „Fehler“
     const lateSent: string[] = []; const lateStop = await advanceRecipient(tree, first.state, new Date(t0.getTime() + 2 * 3_600_000), async (node) => { lateSent.push(node.subject); return { ok: false, subject: node.subject, stopped: REPLY_STOP_NOTE }; });
     expect(lateSent).toEqual(["Zweite"]); expect(lateStop.state.status).toBe("fertig"); expect(lateStop.state.sentCount).toBe(1); expect(lateStop.events.map((event) => event.kind)).toEqual(["beendet"]);
+    // Schalter „Bei Antwort anhalten“ bewusst aus → die Serie läuft trotz Antwort zu Ende
+    const offSent: string[] = []; const off = await advanceRecipient(tree, replied, new Date(t0.getTime() + 2 * 3_600_000), async (node) => { offSent.push(node.subject); return true; }, { stopOnReply: false });
+    expect(offSent).toEqual(["Zweite", "Dritte"]); expect(off.state.status).toBe("fertig"); expect(off.events.some((event) => event.note === REPLY_STOP_NOTE)).toBe(false);
+    expect(stopsOnReply({ stopOnReply: false })).toBe(false); expect(stopsOnReply({})).toBe(true); expect(stopsOnReply(null)).toBe(true); // fehlt das Feld (alte Daten) → an
     // Bereits beendete/abgemeldete Einträge werden nicht noch einmal „gestoppt“
     expect(stoppedByReply({ status: "abgemeldet", repliedAt: new Date() })).toBe(false); expect(stoppedByReply({ status: "fertig", repliedAt: new Date() })).toBe(false); expect(stoppedByReply({ status: "laeuft", repliedAt: null })).toBe(false);
     // Abwesenheitsnotizen zählen nicht als Antwort

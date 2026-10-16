@@ -244,6 +244,8 @@ html:not(.dark) .dash-bar { background: #f8fafb !important; }
 html:not(.dark) .dash-bar i { background: linear-gradient(135deg, #2a2e3a, #111318) !important; }
 html:not(.dark) .dash-pill { border: 1px solid #e8ecf1 !important; color: #0f172a !important; }
 html:not(.dark) .dash-pill.muted { color: #4b5568 !important; }
+html:not(.dark) .dash-pill.is-green { color: #4e846c !important; }
+html:not(.dark) .dash-pill.is-red { color: #8a5a5a !important; }
 html:not(.dark) .dashboard-segments { border: 1px solid #e8ecf1 !important; background: #ffffff !important; }
 html:not(.dark) .dashboard-segments button { color: #4b5568 !important; }
 html:not(.dark) .dashboard-segments button:hover { color: #0f172a !important; background: #f8fafb !important; }
@@ -344,8 +346,10 @@ html:not(.dark) .pipeline-column.is-over { border-color: #111318 !important; box
 html:not(.dark) .pipeline-drop-hint { color: #8a94a6 !important; border: 1px dashed #e8ecf1 !important; }
 html:not(.dark) .pipeline-platform.is-cold { color: #8a742a !important; }
 html:not(.dark) .reply-stop { color: #0f172a !important; }
-html:not(.dark) .reply-stop svg { color: #1c7454 !important; }
 html:not(.dark) .reply-stop strong { color: #0f172a !important; }
+html:not(.dark) .reply-stop svg { color: #1c7454 !important; }
+html:not(.dark) .reply-stop.is-off { color: #0f172a !important; }
+html:not(.dark) .reply-stop.is-off svg { color: #883e3e !important; }
 html:not(.dark) .tree-summary { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #4b5568 !important; }
 html:not(.dark) .tree-summary-title { color: #0f172a !important; }
 html:not(.dark) .tree-summary-arrow { color: #8a94a6 !important; }
@@ -918,6 +922,26 @@ html:not(.dark) .inbox-reaction.is-geantwortet { color: #5b8572 !important; }
 html:not(.dark) .inbox-reaction.is-ohne { color: #4b5568 !important; }
 html:not(.dark) .inbox-reaction.is-bounce { color: #0f172a !important; }
 html:not(.dark) .inbox-reaction.is-abgemeldet { color: #8b7e4b !important; }
+html:not(.dark) .template-dialog-title { color: #0f172a !important; }
+html:not(.dark) .template-dialog-title svg { color: #111318 !important; }
+html:not(.dark) .template-dialog-count { background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .template-dialog-desc { color: #4b5568 !important; }
+html:not(.dark) .template-card { border: 1px solid #e8ecf1 !important; background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; }
+html:not(.dark) .template-card:hover { border-color: #d9dfe7 !important; box-shadow: 0 10px 30px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .template-card-kind { color: #111318 !important; }
+html:not(.dark) .template-card-delete { color: #8a94a6 !important; }
+html:not(.dark) .template-card-delete:hover { color: #8a5a5a !important; }
+html:not(.dark) .template-card-title { color: #0f172a !important; }
+html:not(.dark) .template-card-title:hover { color: #4b5568 !important; }
+html:not(.dark) .template-card-meta { color: #4b5568 !important; }
+html:not(.dark) .template-chip { background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .template-chip.is-count { background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .template-card-date { color: #8a94a6 !important; }
+html:not(.dark) .template-card-actions { border-top: 1px solid #e8ecf1 !important; }
+html:not(.dark) .template-card-actions>button:last-child { color: #4b5568 !important; }
+html:not(.dark) .template-empty { border: 1px dashed #e8ecf1 !important; color: #4b5568 !important; }
+html:not(.dark) .template-empty svg { color: #111318 !important; }
+html:not(.dark) .template-empty strong { color: #0f172a !important; }
 html:not(.dark) .activity-bell>button { color: #4b5568 !important; }
 html:not(.dark) .notification.has-new i { color: #0f172a !important; background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .activity-panel { border: 1px solid #e8ecf1 !important; background: #ffffff !important; box-shadow: 0 22px 55px rgba(15, 23, 42, .05) !important; }
@@ -2332,6 +2356,11 @@ html:not(.dark) .profile-menu-sep { background: #eef0f4 !important; }
 html:not(.dark) .reply-stop { background: #ecfdf5 !important; border-color: #a7f3d0 !important; color: #065f46 !important; }
 html:not(.dark) .reply-stop svg { color: #059669 !important; }
 html:not(.dark) .reply-stop strong { color: #064e3b !important; }
+html:not(.dark) .reply-stop.is-off { background: #fef2f2 !important; border-color: #fecaca !important; color: #991b1b !important; }
+html:not(.dark) .reply-stop.is-off svg { color: #dc2626 !important; }
+html:not(.dark) .reply-stop.is-off strong { color: #7f1d1d !important; }
+html:not(.dark) .dash-pill.is-green { border-color: #a7f3d0 !important; background: #ecfdf5 !important; color: #047857 !important; }
+html:not(.dark) .dash-pill.is-red { border-color: #fecaca !important; background: #fef2f2 !important; color: #b91c1c !important; }
 
 /* Lead-Kategorie (hell): aktiver Reiter nur rot unterstrichen – kein schwarzer Block; „Kategorie löschen“ weiß auf rot */
 html:not(.dark) nav[aria-label="Kategoriearbeitsbereich"] button { background: transparent !important; border-color: transparent !important; color: #64748b !important; }
@@ -2341,3 +2370,24 @@ html:not(.dark) nav[aria-label="Kategoriearbeitsbereich"] button.border-violet-4
 html:not(.dark) button[data-slot="button"].bg-destructive.text-white, html:not(.dark) button[data-slot="button"].bg-destructive.text-white svg { color: #ffffff !important; }
 html:not(.dark) button[data-slot="button"].bg-destructive { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; border: 0 !important; }
 html:not(.dark) button[data-slot="button"].bg-destructive:hover { background: linear-gradient(90deg, #a30019, #e6202b) !important; }
+
+/* Vorlagen-Fenster (hell) */
+html:not(.dark) .template-dialog-title { color: #0f172a !important; }
+html:not(.dark) .template-dialog-title svg { color: #bc001d !important; }
+html:not(.dark) .template-dialog-count { background: #fde8ea !important; color: #bc001d !important; }
+html:not(.dark) .template-dialog-desc { color: #64748b !important; }
+html:not(.dark) .template-card { background: #ffffff !important; border-color: #e5e7ee !important; box-shadow: 0 1px 2px rgba(15, 23, 42, .04) !important; }
+html:not(.dark) .template-card:hover { border-color: #bc001d !important; box-shadow: 0 10px 28px rgba(15, 23, 42, .10) !important; }
+html:not(.dark) .template-card-kind { color: #bc001d !important; }
+html:not(.dark) .template-card-title { color: #0f172a !important; }
+html:not(.dark) .template-card-title:hover { color: #bc001d !important; }
+html:not(.dark) .template-card-meta, html:not(.dark) .template-card-date { color: #64748b !important; }
+html:not(.dark) .template-chip { background: #f1f3f7 !important; color: #334155 !important; }
+html:not(.dark) .template-chip.is-count { background: #fde8ea !important; color: #bc001d !important; }
+html:not(.dark) .template-card-actions { border-top-color: #eef0f4 !important; }
+html:not(.dark) .template-card-actions>button:last-child { color: #64748b !important; }
+html:not(.dark) .template-card-delete { color: #94a3b8 !important; }
+html:not(.dark) .template-card-delete:hover { background: #fde8ea !important; color: #bc001d !important; }
+html:not(.dark) .template-empty { border-color: #d9dce5 !important; color: #64748b !important; }
+html:not(.dark) .template-empty strong { color: #0f172a !important; }
+html:not(.dark) .template-empty svg { color: #bc001d !important; }
