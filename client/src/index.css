@@ -2128,6 +2128,12 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 .territory-canvas{position:relative}
 .territory-svg{max-height:680px}
 .territory-state{fill:rgba(255,255,255,.05);stroke:rgba(255,255,255,.28);stroke-width:1}
+/* PLZ-Gebiete (2-stellig) mit Nummer */
+.territory-region{fill-opacity:.16;stroke:rgba(255,255,255,.22);stroke-width:.45;transition:fill-opacity .15s}.territory-region:hover{fill-opacity:.32}
+.territory-state-outline{fill:none;stroke:rgba(255,255,255,.55);stroke-width:1.1;pointer-events:none}
+.territory-region-label{font-size:7px;font-weight:700;fill:rgba(255,255,255,.72);text-anchor:middle;dominant-baseline:middle;pointer-events:none;paint-order:stroke;stroke:rgba(0,0,0,.45);stroke-width:1.6px;stroke-linejoin:round}
+.territory-regions-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#c9c5f5}.territory-regions-toggle .territory-switch{transform:scale(.8);transform-origin:left center}
+.territory-tooltip small{display:block;color:#9a9ec0;font-size:11px}
 .territory-dot{opacity:.82;transition:opacity .15s}.territory-dot.is-overlap{stroke:rgba(0,0,0,.55);stroke-width:.8;opacity:.95}.territory-dot.is-dim{opacity:.12}
 .territory-tooltip{position:absolute;transform:translate(-50%,-115%);display:grid;gap:2px;min-width:160px;max-width:260px;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(17,18,40,.96);font-size:12px;color:#e5e1fd;pointer-events:none;z-index:5;box-shadow:0 10px 30px rgba(0,0,0,.35)}
 .territory-tooltip strong{color:#fff}.territory-tooltip span{display:inline-flex;align-items:center;gap:6px}.territory-tooltip span i{width:9px;height:9px;border-radius:999px;display:inline-block}.territory-tooltip em{font-style:normal;color:#fde68a}

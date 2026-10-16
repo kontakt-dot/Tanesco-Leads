@@ -20,6 +20,11 @@ import { trimTable, type TerritoryDraft } from "../../../shared/territory-import
  */
 type TerritoryRow = { id: number; customerName: string; categoryId: number | null; categoryName: string | null; color: string; postcodes: string[]; rawCount: number; note: string | null; sourceName: string | null; active: boolean; createdBy: string | null; createdAt: string | Date; updatedAt: string | Date };
 const stamp = (value: string | Date) => new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
+/** PLZ-Gebiete (2-stellig) als Flächen mit Nummer – aus client/src/data/plz-regions.json (wird mit der Karte nachgeladen). */
+type PlzRegions = { zones2: Record<string, { d: string; cx: number; cy: number; plz: number }>; zones1: Record<string, { d: string; cx: number; cy: number }> };
+const ZONE_TINTS = ["#f59e0b", "#ef4444", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#14b8a6", "#84cc16", "#64748b"]; // je Leitzone 0–9 eine Farbe
+let regionsCache: PlzRegions | null = null;
+const loadRegions = () => regionsCache ? Promise.resolve(regionsCache) : import("@/data/plz-regions.json").then((module) => { regionsCache = ((module as unknown as { default?: PlzRegions }).default ?? (module as unknown as PlzRegions)) as PlzRegions; return regionsCache; });
 /**
  * Verkaufs-Stufen: wie oft lässt sich ein Lead in einer PLZ verkaufen? 1 = genau ein Kunde, 2/3 = so viele Kunden derselben
  * Kategorie, 4 = mehr als drei. Jede Stufe lässt sich einzeln an- und abschalten; abgeschaltete PLZ bleiben blass auf der Karte,
@@ -42,6 +47,9 @@ export default function TerritoryMap() {
   const refresh = () => { utils.leadops.listTerritories.invalidate(); utils.leadops.territoryOverlaps.invalidate(); };
   const [geo, setGeo] = useState<PlzGeo | null>(null); const [geoError, setGeoError] = useState<string | null>(null);
   useEffect(() => { loadPlzGeo().then(setGeo).catch(() => setGeoError("Die PLZ-Koordinaten konnten nicht geladen werden.")); }, []);
+  const [regions, setRegions] = useState<PlzRegions | null>(null); const [showRegions, setShowRegions] = useState(true);
+  useEffect(() => { loadRegions().then(setRegions).catch(() => setRegions(null)); }, []);
+  const regionOf = (plz: string) => regions?.zones2[plz.slice(0, 2)] ?? null;
   const [categoryFilter, setCategoryFilter] = useState<number | "alle">("alle");
   const setActive = trpc.leadops.setTerritoryActive.useMutation({ onSuccess: (result) => { toast.success(`${result.customerName} ${result.active ? "eingeschaltet" : "ausgeschaltet"}.`); refresh(); }, onError: (error) => toast.error(error.message) });
   const [focus, setFocus] = useState<number | null>(null);
@@ -106,15 +114,20 @@ export default function TerritoryMap() {
         <div className="lead-map-canvas territory-canvas" onMouseLeave={() => setHover(null)}>
           <svg viewBox={map.viewBox.join(" ")} role="img" aria-label="Deutschlandkarte mit Einsatzgebieten" className="lead-map-svg territory-svg">
             {map.states.map((state) => <path key={state.id} d={state.d} className="territory-state" />)}
-            {map.states.map((state) => <text key={`${state.id}-label`} x={state.cx} y={state.cy} className="lead-map-state-label">{state.id}</text>)}
+            {showRegions && regions && <g className="territory-regions" aria-label="PLZ-Gebiete (2-stellig)">
+              {Object.entries(regions.zones2).map(([code, zone]) => <path key={code} d={zone.d} className="territory-region" style={{ fill: ZONE_TINTS[Number(code[0])] }} data-region={code}><title>{`PLZ-Gebiet ${code} – ${zone.plz} PLZ`}</title></path>)}
+              {map.states.map((state) => <path key={`${state.id}-outline`} d={state.d} className="territory-state-outline" />)}
+              {Object.entries(regions.zones2).map(([code, zone]) => <text key={`${code}-label`} x={zone.cx} y={zone.cy} className="territory-region-label">{code}</text>)}
+            </g>}
+            {(!showRegions || !regions) && map.states.map((state) => <text key={`${state.id}-label`} x={state.cx} y={state.cy} className="lead-map-state-label">{state.id}</text>)}
             {shown.map((point) => { const fill = dotColor(point.overlap, point.customers[0]?.color ?? "#8278ff"); return <circle key={point.plz} cx={point.x} cy={point.y} r={point.overlap >= 4 ? 3.5 : point.overlap >= 2 ? 3.1 : 2.1} fill={fill} className={`territory-dot ${point.overlap >= 2 ? "is-overlap" : ""} ${point.on ? "" : "is-dim"}`} data-count={point.overlap} data-on={point.on ? "1" : "0"} onMouseEnter={() => setHover({ plz: point.plz, x: point.x, y: point.y })} />; })}
           </svg>
-          {hovered && <div className="territory-tooltip" style={{ left: `${(hover!.x / map.viewBox[2]) * 100}%`, top: `${(hover!.y / map.viewBox[3]) * 100}%` }}><strong>{hovered.plz} {placeOf(hovered.plz) ?? ""}</strong>{hovered.customers.map((customer) => <span key={customer.id}><i style={{ background: customer.color }} /> {customer.name}</span>)}{hovered.overlap >= 2 ? <em>{hovered.overlap} Kunden in derselben Kategorie – Lead {timesText(hovered.overlap)} verkaufbar</em> : <em className="is-single">ein Kunde – Lead 1× verkaufbar</em>}</div>}
+          {hovered && <div className="territory-tooltip" style={{ left: `${(hover!.x / map.viewBox[2]) * 100}%`, top: `${(hover!.y / map.viewBox[3]) * 100}%` }}><strong>{hovered.plz} {placeOf(hovered.plz) ?? ""}</strong>{regionOf(hovered.plz) && <small>PLZ-Gebiet {hovered.plz.slice(0, 2)} · {geo?.entries.get(hovered.plz)?.state ?? ""}</small>}{hovered.customers.map((customer) => <span key={customer.id}><i style={{ background: customer.color }} /> {customer.name}</span>)}{hovered.overlap >= 2 ? <em>{hovered.overlap} Kunden in derselben Kategorie – Lead {timesText(hovered.overlap)} verkaufbar</em> : <em className="is-single">ein Kunde – Lead 1× verkaufbar</em>}</div>}
           {!geo && !geoError && <p className="text-xs text-slate-500">Karte wird geladen …</p>}{geoError && <p className="text-xs text-red-300">{geoError}</p>}
           {geo && !shown.length && <p className="territory-empty">{rows.length ? "Alle Kunden ausgeblendet – oben wieder einblenden." : "Noch keine Gebiete – „PLZ-Liste hochladen“ klicken."}</p>}
           {geo && shown.length > 0 && !shownOn && <p className="territory-empty">{!chosenLevels.length ? "Keine Stufe gewählt – oben eine Stufe anklicken." : focused ? `${focused.customerName}: keine PLZ für ${levelLabel}.` : `Keine PLZ für ${levelLabel} im aktuellen Filter – die anderen Stufen bleiben blass sichtbar.`}</p>}
         </div>
-        <div className="territory-legend"><span><i style={{ background: focused?.color ?? "#8278ff" }} /> {focused ? `nur ${focused.customerName}` : "ein Kunde (Farbe des Kunden)"}</span><span><i style={{ background: LEVEL_COLORS[2] }} /> 2 Kunden – 2× verkaufbar</span><span><i style={{ background: LEVEL_COLORS[3] }} /> 3 Kunden – 3× verkaufbar</span><span><i style={{ background: LEVEL_COLORS[4] }} /> mehr als 3 Kunden</span><small>{PLZ_ATTRIBUTION}</small></div>
+        <div className="territory-legend"><label className="territory-regions-toggle" title="PLZ-Gebiete (2-stellig) mit Nummer ein- oder ausblenden"><Switch className="territory-switch" checked={showRegions} onCheckedChange={setShowRegions} aria-label="PLZ-Gebiete zeigen" /> PLZ-Gebiete</label><span><i style={{ background: focused?.color ?? "#8278ff" }} /> {focused ? `nur ${focused.customerName}` : "ein Kunde (Farbe des Kunden)"}</span><span><i style={{ background: LEVEL_COLORS[2] }} /> 2 Kunden – 2× verkaufbar</span><span><i style={{ background: LEVEL_COLORS[3] }} /> 3 Kunden – 3× verkaufbar</span><span><i style={{ background: LEVEL_COLORS[4] }} /> mehr als 3 Kunden</span><small>{PLZ_ATTRIBUTION}</small></div>
       </section>
       <aside className="lead-map-side territory-side">
         <section className="surface-panel operations-panel p-4"><div className="flex items-start justify-between gap-2"><div><span className="eyebrow">KUNDEN & GEBIETE</span><p className="mt-1 text-xs text-slate-500">{focused ? <>Nur <strong className="text-slate-200">{focused.customerName}</strong> wird gezeigt – <button type="button" className="territory-link" onClick={() => setFocus(null)}>alle Kunden zeigen</button></> : "Klick auf einen Kunden zeigt nur sein Gebiet – mit den Stellen, an denen es sich mit anderen überschneidet."}</p></div><Button size="sm" variant="outline" onClick={() => setDialog({ open: true, edit: null })}><Plus /> Neu</Button></div>

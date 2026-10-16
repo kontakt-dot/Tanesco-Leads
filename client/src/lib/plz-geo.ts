@@ -1,7 +1,8 @@
 /**
- * PLZ-Koordinaten für die Gebietskarte: GeoNames (geonames.org), CC BY 4.0. Wird erst geladen, wenn die Karte geöffnet wird
- * (knapp 500 KB) und dann im Speicher behalten. Die Projektion rechnet Länge/Breite in die Fläche der Deutschlandkarte
- * (germany-map.json, viewBox 600 × 817) um – gleiche Karte wie im Dashboard.
+ * PLZ-Koordinaten für die Gebietskarte: 8.204 Zustell-PLZ (Flächenmittelpunkte aus WZB plz_geocoord / OpenStreetMap, Namen aus
+ * GeoNames). Wird erst geladen, wenn die Karte geöffnet wird (ca. 350 KB) und dann im Speicher behalten. Die Projektion ist die
+ * Plattkarte der Deutschlandkarte (germany-map.json, viewBox 600 × 817): x = 65,2167·Länge − 381,52, y = −104,083·Breite + 5734,97
+ * (gegen die amtlichen Bundesland-Umrisse geeicht, Abweichung unter 0,1 px) – gleiche Karte wie im Dashboard.
  */
 import type { PlaceLookup } from "../../../shared/territories";
 
@@ -28,4 +29,4 @@ export function loadPlzGeo(): Promise<PlzGeo> {
   return loading;
 }
 export function plzGeoSync() { return cache; }
-export const PLZ_ATTRIBUTION = "PLZ-Koordinaten: GeoNames (geonames.org), CC BY 4.0";
+export const PLZ_ATTRIBUTION = "PLZ-Daten: GeoNames (CC BY 4.0) · Koordinaten: WZB/OpenStreetMap (ODbL)";

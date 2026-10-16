@@ -1210,6 +1210,11 @@ html:not(.dark) .territory-plz-place { color: #4b5568 !important; }
 html:not(.dark) .territory-level-note { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .territory-table b.is-hotter, html:not(.dark) .territory-plz-list span.is-hotter { color: #111318 !important; }
 html:not(.dark) .territory-state { fill: #0f172a !important; stroke: #0f172a !important; }
+html:not(.dark) .territory-region { stroke: #0f172a !important; }
+html:not(.dark) .territory-state-outline { stroke: #0f172a !important; }
+html:not(.dark) .territory-region-label { fill: #0f172a !important; }
+html:not(.dark) .territory-regions-toggle { color: #4b5568 !important; }
+html:not(.dark) .territory-tooltip small { color: #4b5568 !important; }
 html:not(.dark) .territory-tooltip { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #0f172a !important; box-shadow: 0 10px 30px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .territory-tooltip strong { color: #0f172a !important; }
 html:not(.dark) .territory-tooltip em { color: #8b7e4b !important; }
@@ -2636,3 +2641,8 @@ html:not(.dark) .territory-levels .dashboard-segments button small { background:
 html:not(.dark) .territory-levels .dashboard-segments button.active small { background: rgba(255, 255, 255, .25) !important; }
 html:not(.dark) .territory-table b.is-hotter, html:not(.dark) .territory-plz-list span.is-hotter { color: #7e22ce !important; }
 html:not(.dark) .territory-levels-hint, html:not(.dark) .territory-plz-place { color: #64748b !important; }
+html:not(.dark) .territory-region { fill-opacity: .22 !important; stroke: rgba(15, 23, 42, .28) !important; }
+html:not(.dark) .territory-region:hover { fill-opacity: .4 !important; }
+html:not(.dark) .territory-state-outline { stroke: rgba(15, 23, 42, .75) !important; }
+html:not(.dark) .territory-region-label { fill: #1e293b !important; stroke: rgba(255, 255, 255, .85) !important; }
+html:not(.dark) .territory-regions-toggle { color: #334155 !important; }
