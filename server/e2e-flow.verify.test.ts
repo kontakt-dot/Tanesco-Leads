@@ -2151,4 +2151,29 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const retry = await owner.leadops.startEmailCampaign({ id: log.id }); expect(retry).toMatchObject({ added: 1, repeated: 1, skipped: 2 });
   }, 30000);
 
+  it("42. Gebietskarte (Migration 0077): Gebiete je Kunde und Sparte speichern, Überschneidungen je Sparte, ändern, löschen, Rechte", async () => {
+    const categories = await owner.leadops.listCategories(); const pv = categories[0]; const second = categories[1] ?? categories[0];
+    const aurora = await owner.leadops.saveTerritory({ customerName: "Aurora Home Solar", categoryId: pv.id, postcodes: ["60311", "60313", "60316", "61118", "63065", "abc", "60311"], note: "Rhein-Main", sourceName: "Aurora.csv", rawCount: 3 });
+    expect(aurora).toMatchObject({ created: true, postcodes: 5 });
+    const helios = await owner.leadops.saveTerritory({ customerName: "Helios Solar", categoryId: pv.id, postcodes: ["60311", "60313", "63065", "63067", "65183"] });
+    const vektor = await owner.leadops.saveTerritory({ customerName: "Vektor Klima", categoryId: second.id === pv.id ? null : second.id, postcodes: ["60311", "60313", "80331"] });
+    const list = await owner.leadops.listTerritories(); expect(list.map((row) => row.customerName)).toEqual(["Aurora Home Solar", "Helios Solar", "Vektor Klima"]);
+    const auroraRow = list.find((row) => row.id === aurora.id)!; expect(auroraRow.postcodes).toEqual(["60311", "60313", "60316", "61118", "63065"]); expect(auroraRow.categoryName).toBe(pv.name); expect(auroraRow.color).toMatch(/^#[0-9a-f]{6}$/i); expect(auroraRow.createdBy).toBeTruthy();
+    expect(list.find((row) => row.id === helios.id)?.color).not.toBe(auroraRow.color); // nächste freie Farbe
+    const overlaps = await owner.leadops.territoryOverlaps(); expect(overlaps).toMatchObject({ customers: 3, territories: 3, totalOverlapPlz: 3 });
+    const pvGroup = overlaps.groups.find((group) => group.categoryId === pv.id)!; expect(pvGroup).toMatchObject({ customers: 2, overlapPlz: 3, maxCustomers: 2 }); expect(pvGroup.items.map((item) => item.plz)).toEqual(["60311", "60313", "63065"]); expect(pvGroup.pairs[0]).toMatchObject({ shared: 3 });
+    if (second.id !== pv.id) expect(overlaps.groups.find((group) => group.categoryId === second.id)?.overlapPlz).toBe(0); // andere Sparte zählt nicht
+    // Gebiet ersetzen (gleiche Farbe bleibt), dann löschen
+    expect(await owner.leadops.saveTerritory({ id: aurora.id, customerName: "Aurora Home Solar", categoryId: pv.id, postcodes: ["60311"] })).toMatchObject({ created: false, postcodes: 1 });
+    expect((await owner.leadops.listTerritories()).find((row) => row.id === aurora.id)).toMatchObject({ postcodes: ["60311"], color: auroraRow.color });
+    expect((await owner.leadops.territoryOverlaps()).groups.find((group) => group.categoryId === pv.id)?.overlapPlz).toBe(1);
+    await expect(owner.leadops.saveTerritory({ customerName: "Leer", postcodes: ["abc"] })).rejects.toThrow(/Keine gültige PLZ/);
+    await expect(owner.leadops.saveTerritory({ customerName: "Falsche Sparte", categoryId: 999999, postcodes: ["60311"] })).rejects.toThrow(/Sparte/);
+    expect((await owner.leadops.deleteTerritory({ id: vektor.id })).customerName).toBe("Vektor Klima"); expect((await owner.leadops.listTerritories()).length).toBe(2);
+    await expect(owner.leadops.deleteTerritory({ id: vektor.id })).rejects.toThrow();
+    // Partner (extern, z. B. Käufer) sehen die Gebietskarte nicht
+    const externalUser = (await db.select({ userId: memberships.userId }).from(memberships).where(and(eq(memberships.tenantId, S.tenantId as number), eq(memberships.partnerType, "extern"))).limit(1))[0];
+    if (externalUser) await expect(appRouter.createCaller({ user: { id: externalUser.userId } } as never).leadops.listTerritories()).rejects.toThrow("vorbehalten");
+  }, 20000);
+
 });

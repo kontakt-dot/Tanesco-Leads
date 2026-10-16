@@ -11,6 +11,8 @@ import { followUpTree, starterTree } from "../../../shared/email-campaigns";
 import { DEFAULT_DESIGN, fillPlaceholders, starterBlocks } from "../../../shared/email-design";
 import { formatCallNote, heuristicCallSummary } from "../../../shared/call-notes";
 import { callResultOfDialer } from "../../../shared/pipeline-extras";
+import { parsePostcodeText } from "../../../shared/territories";
+import plzGeo from "../../../shared/data/plz-geo.json";
 
 function mulberry32(seed: number) {
   return () => { let t = (seed += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -430,6 +432,17 @@ export function buildSeed(): Store {
   const coldTag = insert(store, "tags", { tenantId: tenant.id, name: "Liste: Dachdecker Hessen", color: "#f59e0b", createdAt: at(6, 9) });
   const coldRows = [["Peter", "Hansen", "Hansen Bedachungen", "+49 69 5550101", "info@hansen-bedachungen.de", "60311", "Frankfurt"], ["Sabine", "Koch", "Koch Dach GmbH", "+49 611 5550102", "kontakt@koch-dach.de", "65183", "Wiesbaden"], ["Murat", "Yilmaz", "Yilmaz Dachbau", "+49 6151 5550103", "mail@yilmaz-dachbau.de", "64283", "Darmstadt"], ["Anja", "Reuter", "Reuter Dach & Fassade", "+49 561 5550104", "office@reuter-dach.de", "34117", "Kassel"], ["Klaus", "Brandt", "Brandt Bedachung", "+49 6421 5550105", "", "35037", "Marburg"], ["Lena", "Vogt", "Vogt Dächer", "+49 641 5550106", "hallo@vogt-daecher.de", "35390", "Gießen"]];
   const coldLeads = coldRows.map(([firstName, lastName, company, phone, email, postcode, city], index) => { const lead = insert(store, "leads", { kind: "vertrieb", ownerUserId: index % 2 ? francesco?.id ?? null : taner?.id ?? null, tenantId: tenant.id, publicId: `KALT-${randomId(7).toUpperCase()}`, categoryId: pv.id, firstName, lastName, email: email || null, phone, postcode, city, country: "DE", supplierId: null, supplierName: "Kaltakquise", assignedUserId: null, metadata: { salutation: index % 2 ? "frau" : "herr", kaltakquise: { liste: "Dachdecker Hessen" } }, status: "neu", cost: "0.00", pipelineStage: index === 0 ? "termin" : index === 1 ? "kontaktiert" : "neu", pipelineUpdatedAt: at(4, 11), adCampaignId: "liste-dachdecker-hessen", adCampaignName: "Liste: Dachdecker Hessen", adsetName: null, adName: null, adFormName: null, adPlatform: "kaltakquise", leadgenId: null, company, listName: "Dachdecker Hessen", assignedAt: null, createdAt: at(6, 10), updatedAt: at(6, 10) }); insert(store, "leadTagAssignments", { leadId: lead.id, tagId: coldTag.id }); insert(store, "leadStatusEvents", { tenantId: tenant.id, leadId: lead.id, previousStatus: null, nextStatus: "neu", actorUserId: null, note: "Kaltakquise-Liste „Dachdecker Hessen“ hochgeladen", occurredAt: at(6, 10) }); insert(store, "pipelineEvents", { tenantId: tenant.id, leadId: lead.id, fromStage: null, toStage: "neu", actorUserId: null, note: "Aus Kaltakquise-Liste „Dachdecker Hessen“", createdAt: at(6, 10) }); return lead; });
+  // Gebietskarte: vier Kunden mit Einsatzgebieten – zwei PV-Kunden überschneiden sich im Rhein-Main-Gebiet, ein WP-Kunde liegt teils im selben Raum
+  const plzUniverse = new Set(Object.keys((plzGeo as { plz: Record<string, unknown> }).plz));
+  const area = (text: string) => parsePostcodeText(text, plzUniverse).postcodes;
+  const territorySeed: Array<[string, number | null, string, string, string, string]> = [
+    ["Nordlicht Energie GmbH", pv.id, "#2f6df6", "20 21 22 23 24 25", "Hamburg, Schleswig-Holstein, Lübeck", "Gebiete_Nordlicht.csv"],
+    ["Aurora Home Solar", pv.id, "#e2583e", "60 61 63 64 65", "Rhein-Main komplett", "Aurora_PLZ.xlsx"],
+    ["Helios Solar Hessen", pv.id, "#13a37a", "60 61 63 34 35 36", "Frankfurt, Offenbach, Nordhessen", "Helios_Einsatzgebiet.txt"],
+    ["Vektor Klima & Wärme", wp.id, "#8b5cf6", "60 61 70 71 72", "Rhein-Main und Stuttgart", "Vektor_WP.csv"],
+    ["SonnenKraft Rhein-Main", pv.id, "#d9a21b", "60 61", "Nur Frankfurt und Umland", "SonnenKraft.txt"],
+  ];
+  territorySeed.forEach(([customerName, categoryId, color, prefixes, note, sourceName], index) => { const postcodes = area(prefixes); insert(store, "territories", { tenantId: tenant.id, customerName, categoryId, color, postcodes, rawCount: prefixes.split(" ").length, note, sourceName, createdByUserId: taner?.id ?? null, createdAt: at(20 - index * 3, 10, 15), updatedAt: at(20 - index * 3, 10, 15) }); });
   // Upload-Verlauf: der Upload der Dachdecker-Liste (von Taner), eine Löschung von Hand (zwei Kontakte, Francesco) und eine Test-Liste, die wieder zurückgenommen wurde
   insert(store, "listImports", { tenantId: tenant.id, listName: "Dachdecker Hessen", source: "kaltakquise", kind: "upload", note: null, rowCount: coldLeads.length + 2, created: coldLeads.length + 2, updated: 0, duplicates: 1, toPipeline: true, leadIds: coldLeads.map((lead) => lead.id), undoneAt: null, actorUserId: taner?.id ?? null, createdAt: at(12, 9, 5) });
   insert(store, "listImports", { tenantId: tenant.id, listName: "Dachdecker Hessen", source: "kaltakquise", kind: "loeschung", note: "2 Kontakte von Hand gelöscht (Reiter Kontakte)", rowCount: 2, created: 0, updated: 0, duplicates: 0, toPipeline: false, leadIds: [], undoneAt: null, actorUserId: francesco?.id ?? null, createdAt: at(9, 16, 40) });

@@ -540,6 +540,13 @@
       "when": 1792593180000,
       "tag": "0076_upload_verlauf_loeschungen_durchlaeufe",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "5",
+      "when": 1792593240000,
+      "tag": "0077_gebietskarte",
+      "breakpoints": true
     }
   ]
 }

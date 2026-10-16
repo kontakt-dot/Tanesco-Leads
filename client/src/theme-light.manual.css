@@ -1060,3 +1060,38 @@ html:not(.dark) .reply-stop.is-runs.is-on { background: #fde8ea !important; bord
 html:not(.dark) .reply-stop.is-runs.is-on svg { color: #bc001d !important; }
 html:not(.dark) .reply-stop.is-runs.is-on strong { color: #7f1d1d !important; }
 html:not(.dark) .reply-stop-select { background: #ffffff !important; border-color: #d9dce5 !important; color: #0f172a !important; }
+
+/* Gebietskarte (hell) */
+html:not(.dark) .territory-kpis .metric-card small { color: #64748b !important; }
+html:not(.dark) .territory-kpis .metric-card.is-accent { background: #fff7ed !important; border-color: #fdba74 !important; }
+html:not(.dark) .territory-chip { background: #ffffff !important; border-color: #d9dce5 !important; color: #0f172a !important; }
+html:not(.dark) .territory-chip small { color: #64748b !important; }
+html:not(.dark) .territory-chip i { box-shadow: 0 0 0 2px #ffffff !important; }
+html:not(.dark) .territory-toggle { color: #334155 !important; }
+html:not(.dark) .territory-state { fill: #f1f3f7 !important; stroke: #c6cad6 !important; }
+html:not(.dark) .territory-dot.is-overlap { stroke: rgba(255, 255, 255, .9) !important; }
+html:not(.dark) .territory-tooltip { background: #ffffff !important; border-color: #d9dce5 !important; color: #0f172a !important; box-shadow: 0 10px 30px rgba(15, 23, 42, .15) !important; }
+html:not(.dark) .territory-tooltip strong { color: #0f172a !important; }
+html:not(.dark) .territory-tooltip em { color: #b45309 !important; }
+html:not(.dark) .territory-empty, html:not(.dark) .territory-legend, html:not(.dark) .territory-list-main small, html:not(.dark) .territory-group-head, html:not(.dark) .territory-table th, html:not(.dark) .territory-table td small, html:not(.dark) .territory-plz-list span small, html:not(.dark) .territory-preview small { color: #64748b !important; }
+html:not(.dark) .territory-legend small { color: #94a3b8 !important; }
+html:not(.dark) .territory-list li { background: #ffffff !important; border-color: #e5e7ee !important; }
+html:not(.dark) .territory-list li.is-focus { border-color: #0f172a !important; background: #f8fafb !important; }
+html:not(.dark) .territory-list-main strong, html:not(.dark) .territory-group-head strong, html:not(.dark) .territory-table td strong, html:not(.dark) .territory-pairs b, html:not(.dark) .territory-preview strong { color: #0f172a !important; }
+html:not(.dark) .territory-note { color: #334155 !important; }
+html:not(.dark) .territory-meta { color: #94a3b8 !important; }
+html:not(.dark) .territory-list-actions button { color: #94a3b8 !important; }
+html:not(.dark) .territory-list-actions button:hover { background: #f1f3f7 !important; color: #0f172a !important; }
+html:not(.dark) .territory-group { border-top-color: #eef0f4 !important; }
+html:not(.dark) .territory-pairs { color: #334155 !important; }
+html:not(.dark) .territory-pairs span { background: #f1f3f7 !important; }
+html:not(.dark) .territory-table td { color: #334155 !important; border-top-color: #eef0f4 !important; }
+html:not(.dark) .territory-table tbody tr:hover td, html:not(.dark) .territory-table tbody tr.is-open td { background: #f8fafb !important; }
+html:not(.dark) .territory-table b.is-hot { color: #bc001d !important; }
+html:not(.dark) .territory-plz-list { background: #f1f3f7 !important; }
+html:not(.dark) .territory-plz-list span { background: #ffffff !important; color: #0f172a !important; }
+html:not(.dark) .territory-plz-list span.is-hot { background: #fde8ea !important; color: #bc001d !important; }
+html:not(.dark) .territory-textarea { background: #ffffff !important; border-color: #d9dce5 !important; color: #0f172a !important; }
+html:not(.dark) .territory-preview { background: #ecfdf5 !important; border-color: #a7f3d0 !important; color: #065f46 !important; }
+html:not(.dark) .territory-preview em { color: #b45309 !important; }
+html:not(.dark) .territory-swatch.is-active { border-color: #0f172a !important; box-shadow: 0 0 0 2px #ffffff !important; }
