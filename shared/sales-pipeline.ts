@@ -14,7 +14,7 @@ export const PIPELINE_STAGES: StageDef[] = [
 export const STAGE_ORDER: string[] = PIPELINE_STAGES.map((stage) => stage.key);
 /** Die drei Pipelines – jede kann eigene Stufen haben; „alle“ ist der gemeinsame Standard, der gilt, solange eine Pipeline keine eigenen Stufen hat. */
 export type PipelineSource = "ads" | "kaltakquise" | "email";
-export const PIPELINE_SOURCES: PipelineSource[] = ["ads", "kaltakquise", "email"];
+export const PIPELINE_SOURCES: PipelineSource[] = ["email", "ads", "kaltakquise"]; // Reihenfolge wie die Karten in der Vertriebspipeline
 export const PIPELINE_SOURCE_LABEL: Record<PipelineSource, string> = { ads: "Meta Ads", kaltakquise: "Kaltakquise", email: "E-Mail-Kampagne" };
 /** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board. */
 export const pipelineSourceOf = (adPlatform: string | null | undefined): PipelineSource => adPlatform === "kaltakquise" ? "kaltakquise" : adPlatform === "email" ? "email" : "ads";
