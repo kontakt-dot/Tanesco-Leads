@@ -1129,3 +1129,7 @@ html:not(.dark) .territory-region:hover { fill-opacity: .4 !important; }
 html:not(.dark) .territory-state-outline { stroke: rgba(15, 23, 42, .75) !important; }
 html:not(.dark) .territory-region-label { fill: #1e293b !important; stroke: rgba(255, 255, 255, .85) !important; }
 html:not(.dark) .territory-regions-toggle { color: #334155 !important; }
+html:not(.dark) .overlap-list li { background: #ffffff !important; border-color: #e8ecf1 !important; }
+html:not(.dark) .overlap-main strong, html:not(.dark) .overlap-plz b { color: #0f172a !important; }
+html:not(.dark) .overlap-main small, html:not(.dark) .overlap-chevron { color: #64748b !important; }
+html:not(.dark) .overlap-plz span { background: #f1f5f9 !important; color: #334155 !important; }
