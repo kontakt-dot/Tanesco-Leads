@@ -1157,7 +1157,7 @@ describe("Upload-Verlauf und Rückgängig (Chat-Build)", () => {
     const danach = await call("leadops.listImportHistory", {});
     const upload = danach.find((row: any) => row.id === eintrag.id); expect(upload.undoneAt).toBeTruthy();
     expect(upload.stillThere).toBe(0);
-    expect(danach[0]).toMatchObject({ kind: "loeschung", listName: "Probelauf", rowCount: 2 }); // die Rücknahme steht als Löschung im Verlauf
+    expect(danach.find((row: any) => row.kind === "loeschung" && row.listName === "Probelauf")).toMatchObject({ kind: "loeschung", listName: "Probelauf", rowCount: 2 }); // die Rücknahme steht als Löschung im Verlauf
     await expect(call("leadops.undoListImport", { id: eintrag.id })).rejects.toThrow(); // kein zweites Mal
   });
   it("Kontakte, die beim Upload nur aktualisiert wurden, bleiben beim Rückgängig erhalten", async () => {
@@ -1668,5 +1668,19 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const spalten = await call("leadops.analyzeTerritoryFile", { fileName: "spalten.csv", rows: [["Nordlicht", "Aurora"], ["20095", "60311"], ["20097", "60313"]] });
     expect(spalten.plan.layout).toBe("kunden-als-spalten"); expect(spalten.drafts.map((draft: { customerName: string }) => draft.customerName)).toEqual(["Nordlicht", "Aurora"]);
     await expect(call("leadops.analyzeTerritoryFile", { rows: [[""]] })).rejects.toThrow("leer");
+  });
+
+  it("Upload umbenennen: zwei Dateien versehentlich unter demselben Listennamen – der zweite Upload wird zur eigenen Liste", async () => {
+    await call("leadops.importColdList", { listName: "Trojaner M. PV", rows: [{ company: "Erste GmbH", phone: "+49 30 111" }] });
+    const zweite = await call("leadops.importColdList", { listName: "Trojaner M. PV", rows: [{ company: "Zweite GmbH", phone: "+49 30 222" }, { company: "Dritte GmbH", phone: "+49 30 333" }] });
+    const history = await call("leadops.listImportHistory", { limit: 50 });
+    const upload = history.find((row: { listName: string; created: number }) => row.listName === "Trojaner M. PV" && row.created === 2);
+    const result = await call("leadops.renameListImport", { id: upload.id, listName: "Eigene Kontakte" });
+    expect(result).toMatchObject({ renamed: 2, from: "Trojaner M. PV", listName: "Eigene Kontakte" });
+    const leadsOf = (name: string) => getStore().tables.leads.filter((row) => row.listName === name).map((row) => row.lastName ?? row.company);
+    expect(leadsOf("Eigene Kontakte").sort()).toEqual(["Dritte GmbH", "Zweite GmbH"]); expect(leadsOf("Trojaner M. PV")).toEqual(["Erste GmbH"]);
+    const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    expect(overview.campaigns.map((campaign: { campaignName: string }) => campaign.campaignName)).toEqual(expect.arrayContaining(["Liste: Trojaner M. PV", "Liste: Eigene Kontakte"]));
+    expect(zweite.created).toBe(2);
   });
 });

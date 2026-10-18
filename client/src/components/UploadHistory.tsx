@@ -1,4 +1,4 @@
-import { confirmAction } from "@/lib/confirm";
+import { confirmAction, promptAction } from "@/lib/confirm";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -16,6 +16,10 @@ export default function UploadHistory({ onChanged }: { onChanged?: () => void })
   const [filter, setFilter] = useState<"alle" | "upload" | "loeschung">("alle");
   const undo = trpc.leadops.undoListImport.useMutation({ onSuccess: (result) => {
     toast.success(`Upload „${result.listName}“ zurückgenommen: ${result.deleted} ${result.deleted === 1 ? "Kontakt" : "Kontakte"} gelöscht${result.keptCustomers ? `, ${result.keptCustomers} Kunden behalten` : ""}.`);
+    utils.leadops.listImportHistory.invalidate(); utils.leadops.listColdLists.invalidate(); utils.leadops.emailLeads.invalidate(); utils.leadops.pipelineOverview.invalidate(); onChanged?.();
+  }, onError: (error) => toast.error(error.message) });
+  const rename = trpc.leadops.renameListImport.useMutation({ onSuccess: (result) => {
+    toast.success(`${result.renamed} ${result.renamed === 1 ? "Kontakt" : "Kontakte"} jetzt in der Liste „${result.listName}“.`);
     utils.leadops.listImportHistory.invalidate(); utils.leadops.listColdLists.invalidate(); utils.leadops.emailLeads.invalidate(); utils.leadops.pipelineOverview.invalidate(); onChanged?.();
   }, onError: (error) => toast.error(error.message) });
   const all = history.data ?? []; const uploads = all.filter((row) => (row.kind ?? "upload") === "upload"); const deletions = all.filter((row) => row.kind === "loeschung");
@@ -46,6 +50,7 @@ export default function UploadHistory({ onChanged }: { onChanged?: () => void })
           </div>
           {row.undoneAt ? <span className="upload-done">zurückgenommen {stamp(row.undoneAt)}</span>
             : <button type="button" className="upload-undo" disabled={undo.isPending || row.stillThere === 0} onClick={async () => { if (await confirmAction(`Upload „${row.listName}“ vom ${stamp(row.createdAt)} rückgängig machen? Dabei werden ${row.stillThere} Kontakte gelöscht. Das lässt sich nicht widerrufen.`, { danger: true })) undo.mutate({ id: row.id }); }}>{row.stillThere === 0 ? "nichts mehr da" : "Rückgängig"}</button>}
+          {!row.undoneAt && (row.kind ?? "upload") === "upload" && row.stillThere !== 0 && <button type="button" className="upload-undo upload-rename" disabled={rename.isPending} title="Die Kontakte dieses Uploads in eine Liste mit anderem Namen verschieben" onClick={async () => { const next = await promptAction(`Neuer Listenname für den Upload vom ${stamp(row.createdAt)} (${row.stillThere ?? row.created} Kontakte):`, row.listName); if (next && next.trim() && next.trim() !== row.listName) rename.mutate({ id: row.id, listName: next.trim() }); }}>Umbenennen</button>}
         </div>)}</div>}
   </section>;
 }

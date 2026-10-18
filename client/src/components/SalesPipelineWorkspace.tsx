@@ -311,7 +311,7 @@ function ColdCallingPanel({ onChanged }: { onChanged: () => void }) {
   const lists = trpc.leadops.listColdLists.useQuery(undefined, { retry: false });
   const categories = trpc.leadops.listCategories.useQuery(undefined, { retry: false });
   const utils = trpc.useUtils();
-  const importList = trpc.leadops.importColdList.useMutation({ onSuccess: (result) => { toast.success(`${result.created} Kontakte in der Pipeline angelegt${(result as { updated?: number }).updated ? `, ${(result as { updated?: number }).updated} vorhandene aktualisiert` : result.duplicates ? `, ${result.duplicates} Dubletten übersprungen` : ""}.`); setCsv(""); setMapping(null); setTagText(""); utils.leadops.listColdLists.invalidate(); utils.leadops.listImportHistory.invalidate(); onChanged(); }, onError: (error) => toast.error(error.message) });
+  const importList = trpc.leadops.importColdList.useMutation({ onSuccess: (result) => { toast.success(`${result.created} Kontakte in der Pipeline angelegt${(result as { updated?: number }).updated ? `, ${(result as { updated?: number }).updated} vorhandene aktualisiert` : result.duplicates ? `, ${result.duplicates} Dubletten übersprungen` : ""}.`); setCsv(""); setListName(""); setMapping(null); setTagText(""); utils.leadops.listColdLists.invalidate(); utils.leadops.listImportHistory.invalidate(); onChanged(); }, onError: (error) => toast.error(error.message) });
   const removeList = trpc.leadops.deleteColdList.useMutation({ onSuccess: (result) => { toast.success(`Liste „${result.listName}“ gelöscht: ${result.deleted} Kontakte entfernt${result.keptCustomers ? `, ${result.keptCustomers} Kunden behalten` : ""}.`); setOpenList(null); utils.leadops.listColdLists.invalidate(); onChanged(); }, onError: (error) => toast.error(error.message) });
   const startCalls = trpc.leadops.startCallCampaign.useMutation({ onSuccess: (result) => { toast.success(`Anrufkampagne (${result.mode}) gestartet – ${result.queued} Kontakte in der Warteschlange. Unter „Telefonie“ geht es los.`); }, onError: (error) => toast.error(error.message) });
   const [csv, setCsv] = useState(""); const [listName, setListName] = useState(""); const [categoryId, setCategoryId] = useState(""); const [tagText, setTagText] = useState(""); const [openList, setOpenList] = useState<string | null>(null); const [mode, setMode] = useState<"manuell" | "power" | "predictive">("power");
@@ -336,7 +336,7 @@ function ColdCallingPanel({ onChanged }: { onChanged: () => void }) {
   const preview = parsed?.rows.length && usesShares ? splitShares(parsed.rows.length, ownerShares, shareMode) : [];
   /** CSV/Text direkt, Excel (.xlsx/.xls) über das erste Tabellenblatt → Semikolon-CSV; der Dateiname wird zum Listennamen. */
   const readFile = async (file: File) => {
-    try { const { name, text } = await readListFile(file); setMapping(null); setCsv(text); if (!listName) setListName(name); }
+    try { const { name, text } = await readListFile(file); setMapping(null); setCsv(text); setListName(name); } // neuer Datei-Name = neuer Listenname (sonst landeten weitere Dateien in der vorigen Liste)
     catch (error) { toast.error(error instanceof Error ? error.message : "Die Datei konnte nicht gelesen werden."); }
   };
   const [dragging, setDragging] = useState(false);

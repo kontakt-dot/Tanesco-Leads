@@ -1090,6 +1090,15 @@ const procedures: Record<string, Handler> = {
       return { id: row.id, listName: row.listName, source: row.source, kind: (row as { kind?: string }).kind ?? "upload", note: (row as { note?: string | null }).note ?? null, rowCount: row.rowCount, created: row.created, updated: row.updated, duplicates: row.duplicates, toPipeline: row.toPipeline, undoneAt: row.undoneAt ?? null, createdAt: row.createdAt, actorName: T().users.find((user) => user.id === row.actorUserId)?.name ?? null, stillThere: ids.filter((id) => vorhanden.has(id)).length };
     });
   },
+  "leadops.renameListImport": (input) => {
+    const listName = String(input.listName ?? "").trim().replace(/\s+/g, " ").slice(0, 160); if (!listName) fail("Bitte einen Listennamen angeben.");
+    const row = T().listImports.find((item) => item.id === input.id) ?? fail("Diesen Upload gibt es nicht mehr."); if (row.undoneAt) fail("Dieser Upload wurde zurückgenommen.");
+    const ids = new Set(((row.leadIds as number[]) ?? []));
+    update(store, "leads", (lead) => ids.has(lead.id), { listName, adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}` });
+    const from = String(row.listName); update(store, "listImports", (item) => item.id === row.id, { listName });
+    demoLog({ kind: "sonstiges", title: `Liste umbenannt: „${from}“ → „${listName}“ (${ids.size} Kontakte)`, actorUserId: currentUser().id });
+    return { renamed: ids.size, from, listName };
+  },
   "leadops.undoListImport": (input) => {
     // Spiegel von undoListImport: nur die Kontakte dieses Uploads löschen, Kunden behalten.
     const row = T().listImports.find((item) => item.id === input.id) ?? fail("Diesen Upload gibt es nicht mehr.");

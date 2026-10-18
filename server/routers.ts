@@ -384,6 +384,7 @@ export const appRouter = router({
     /** Upload-Verlauf: welche Listen wann hochgeladen wurden. */
     listImportHistory: leadopsProcedure.input(z.object({ limit: z.number().int().min(5).max(200).optional() }).optional()).query(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return outreach.listImportHistory(db, tenant.id, input?.limit ?? 50); }),
     /** Einen Upload rückgängig machen – löscht nur die Kontakte, die dabei neu entstanden sind. */
+    renameListImport: leadopsProcedure.input(z.object({ id: z.number().int().positive(), listName: z.string().trim().min(1).max(160) })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return outreach.renameListImport(db, tenant.id, input, ctx.user.id); }),
     undoListImport: leadopsProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return outreach.undoListImport(db, tenant.id, input.id, ctx.user.id); }),
     /** Ausgewählte Kontakte der E-Mail-Akquise löschen (Kunden bleiben). */
     /* Vertriebspipeline: mehrere Karten auf einmal löschen (Mehrfachauswahl, Reiter „Kontakte“) – nur Vertriebskontakte, Verlauf/Aufgaben/Notizen werden mit entfernt */

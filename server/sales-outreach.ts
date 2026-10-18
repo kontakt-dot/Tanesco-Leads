@@ -571,6 +571,19 @@ export async function listImportHistory(db: Db, tenantId: number, limit = 50) {
  * Einen Upload rückgängig machen: Es werden nur die Kontakte gelöscht, die bei genau diesem Upload neu entstanden sind.
  * Kontakte, die dabei nur aktualisiert wurden, bleiben – sie gab es ja vorher schon. Kunden bleiben ebenfalls erhalten.
  */
+/** Liste eines Uploads umbenennen – z. B. wenn zwei Dateien versehentlich unter demselben Listennamen hochgeladen wurden. Nur die Kontakte dieses Uploads wandern in die neue Liste. */
+export async function renameListImport(db: Db, tenantId: number, input: { id: number; listName: string }, actorUserId: number | null = null) {
+  const listName = input.listName.trim().replace(/\s+/g, " ").slice(0, 160); if (!listName) throw new Error("Bitte einen Listennamen angeben.");
+  const row = (await db.select().from(listImports).where(and(eq(listImports.tenantId, tenantId), eq(listImports.id, input.id))).limit(1))[0];
+  if (!row) throw new Error("Diesen Upload gibt es nicht mehr.");
+  if (row.undoneAt) throw new Error("Dieser Upload wurde zurückgenommen.");
+  const ids = Array.isArray(row.leadIds) ? (row.leadIds as number[]) : [];
+  if (ids.length) await db.update(leads).set({ listName, adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}` }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, ids)));
+  await db.update(listImports).set({ listName }).where(eq(listImports.id, row.id));
+  await logActivity(db, tenantId, { kind: "sonstiges", title: `Liste umbenannt: „${row.listName}“ → „${listName}“ (${ids.length} Kontakte)`, actorUserId, refType: "listImport", refId: row.id });
+  return { renamed: ids.length, from: row.listName, listName };
+}
+
 export async function undoListImport(db: Db, tenantId: number, importId: number, actorUserId: number | null = null) {
   const row = (await db.select().from(listImports).where(and(eq(listImports.tenantId, tenantId), eq(listImports.id, importId))).limit(1))[0];
   if (!row) throw new Error("Diesen Upload gibt es nicht mehr.");
