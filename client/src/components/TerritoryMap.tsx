@@ -10,7 +10,7 @@ import { Check, ChevronDown, Download, Layers, Loader2, MapPinned, Pencil, Plus,
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { describePostcodes, overlapsCsv, topPlaces, parsePostcodeText, TERRITORY_COLORS, type OverlapCustomer, type OverlapGroup, type ParsedPostcodes } from "../../../shared/territories";
-import { trimTable, type TerritoryDraft } from "../../../shared/territory-import";
+import { buildTerritoryDrafts, trimTable, type TerritoryDraft } from "../../../shared/territory-import";
 
 /**
  * Gebietskarte: Deutschlandkarte wie im Dashboard, darauf die Einsatzgebiete der Kunden als farbige PLZ-Punkte.
@@ -188,8 +188,11 @@ function TerritoryDialog({ edit, geo, categories, existing, onClose, onSaved }: 
       const table = await readTableFile(file); setSourceName(file.name);
       if (edit) { setText(table.map((row) => row.filter(Boolean).join(";")).filter(Boolean).join("\n")); setFileNote(`Datei „${file.name}“ gelesen – unten die erkannten PLZ prüfen.`); return; }
       setFileNote(null); setAnalysis(null);
-      const result = await analyze.mutateAsync({ fileName: file.name, rows: trimTable(table) });
-      setAnalysis({ fileName: file.name, summary: result.summary, source: result.source, aiError: result.aiError, rows: result.rows, drafts: result.drafts.map((draft, index) => ({ ...draft, key: `${index}-${draft.customerName}`, selected: draft.lines.length > 0, categoryValue: draft.categoryId ? String(draft.categoryId) : "", merge: "ergaenzen" as const })) });
+      // Die KI bekommt nur eine Stichprobe (Kopf + erste Zeilen) für die STRUKTUR – die Gebiete baut der Browser aus ALLEN Zeilen der Datei
+      const result = await analyze.mutateAsync({ fileName: file.name, rows: trimTable(table, 60) });
+      const fullRows = table.map((row) => row.map((value) => String(value ?? "").trim())).filter((row) => row.some(Boolean));
+      const drafts = buildTerritoryDrafts(fullRows, result.plan, { categories: result.categories, fileName: file.name });
+      setAnalysis({ fileName: file.name, summary: result.summary, source: result.source, aiError: result.aiError, rows: Math.max(0, fullRows.length - (result.plan.headerRow === null ? 0 : result.plan.headerRow + 1)), drafts: drafts.map((draft, index) => ({ ...draft, key: `${index}-${draft.customerName}`, selected: draft.lines.length > 0, categoryValue: draft.categoryId ? String(draft.categoryId) : "", merge: "ergaenzen" as const })) });
     } catch { toast.error("Die Datei konnte nicht gelesen werden – bitte als CSV/TXT speichern oder die PLZ einfügen."); }
   };
   const draftParsed = useMemo(() => new Map((analysis?.drafts ?? []).map((draft) => [draft.key, geo && draft.lines.length ? parsePostcodeText(draft.lines.join("\n"), geo.universe, { lookup: geo.lookup }) : null])), [analysis, geo]);

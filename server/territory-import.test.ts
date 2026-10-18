@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTerritoryDrafts, fixExcelPlz, describePlan, detectHeaderRow, detectTerritoryLayout, matchCategory, parseTerritoryPlan, territoryPlanPrompt, trimTable } from "../shared/territory-import";
+import { buildTerritoryDrafts, fixExcelPlz, splitCategoryCell, describePlan, detectHeaderRow, detectTerritoryLayout, matchCategory, parseTerritoryPlan, territoryPlanPrompt, trimTable } from "../shared/territory-import";
 import { analyzeTerritoryFile } from "./territories";
 
 const categories = [{ id: 1, name: "Photovoltaik" }, { id: 2, name: "Wärmepumpe" }, { id: 3, name: "Fenster & Türen" }];
@@ -55,6 +55,20 @@ describe("Excel-PLZ ohne führende Null", () => {
     expect(buildTerritoryDrafts(rows, detectTerritoryLayout(rows))[0].lines).toEqual(["01067", "04109"]);
     expect(buildTerritoryDrafts([["Ost"], ["1067"]], { layout: "kunden-als-spalten", headerRow: 0, columns: [{ index: 0, role: "plz" }] })[0].lines).toEqual(["01067"]);
     expect(buildTerritoryDrafts([["1067"], ["60311"]], { layout: "ein-kunde", headerRow: null, columns: [{ index: 0, role: "plz" }] }, { fileName: "x.xlsx" })[0].lines).toEqual(["01067", "60311"]);
+  });
+});
+
+describe("Echte Kundendateien: alle Zeilen, Sparte je Zeile, PLZ als Umkreis-Mitte", () => {
+  it("liest 1.653 Zeilen vollständig (nicht nur die ersten 400) und teilt „PV + WP“ / „Nicht angegeben“ richtig auf", () => {
+    const musterhaus = [["PLZ"], ...Array.from({ length: 1653 }, (_, index) => [String(10000 + index)])];
+    const plan = detectTerritoryLayout(musterhaus.slice(0, 61)); // die KI sieht nur eine Stichprobe …
+    expect(buildTerritoryDrafts(musterhaus, plan)[0].lines).toHaveLength(1653); // … die Gebiete entstehen aus allen Zeilen
+    expect(splitCategoryCell("PV + WP")).toEqual(["PV", "WP"]); expect(splitCategoryCell("Nicht angegeben")).toEqual([null]); expect(splitCategoryCell("")).toEqual([null]); expect(splitCategoryCell("WP")).toEqual(["WP"]);
+    const younes = [["PLZ", "Umkreis (km)", "Sparte"], ["55128", "30", "PV"], ["28325", "100", "WP"], ["14532", "15", "PV + WP"], ["45133", "35", "Nicht angegeben"]];
+    const drafts = buildTerritoryDrafts(younes, detectTerritoryLayout(younes, categories), { categories, fileName: "Younes.xlsx" });
+    expect(drafts.map((draft) => [draft.categoryName, draft.lines])).toEqual([["Photovoltaik", ["55128 30 km Umkreis", "14532 15 km Umkreis"]], ["Wärmepumpe", ["28325 100 km Umkreis", "14532 15 km Umkreis"]], [null, ["45133 35 km Umkreis"]]]);
+    const nox = [["PLZ", "Ort", "Umkreis (km)"], ["67434", "Neustadt an der Weinstraße", "30"]];
+    expect(buildTerritoryDrafts(nox, detectTerritoryLayout(nox))[0].lines).toEqual(["67434 30 km Umkreis"]); // PLZ ist der Mittelpunkt, der Ortsname wird nicht zusätzlich gesucht
   });
 });
 
