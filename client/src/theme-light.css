@@ -1314,6 +1314,12 @@ html:not(.dark) .campaign-lists-remove:hover, html:not(.dark) .recipient-remove:
 html:not(.dark) html:not(.dark) .campaign-lists-count { color: #111318 !important; }
 html:not(.dark) .campaign-lists-leftover p { color: #8a742a !important; }
 html:not(.dark) .email-leads-campaign { border-right: 1px solid #d9dfe7 !important; }
+html:not(.dark) .distribute-reset-button { color: #8a5a5a !important; }
+html:not(.dark) .distribute-reset-button:hover:not(:disabled) { background: #ffffff !important; }
+html:not(.dark) .distribute-reset-confirm { background: #ffffff !important; }
+html:not(.dark) .distribute-reset-confirm strong { color: #0f172a !important; }
+html:not(.dark) .distribute-reset-button.is-sure { background: #c62222 !important; color: #0f172a !important; }
+html:not(.dark) .distribute-reset-button.is-sure:hover:not(:disabled) { background: #a61919 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2699,3 +2705,12 @@ html:not(.dark) .pipeline-order-list li { background: #ffffff !important; border
 html:not(.dark) .pipeline-order-list strong { color: #0f172a !important; }
 html:not(.dark) .pipeline-order-pos { background: #fee2e2 !important; color: #bc001d !important; }
 html:not(.dark) .pipeline-order-move button { border-color: #e2e8f0 !important; color: #334155 !important; }
+/* Kontaktliste: Aktions-Knöpfe (übernehmen, zur Kampagne) – Markenrot mit weißer Schrift statt Schwarz */
+html:not(.dark) .email-leads-push { background: #bc001d !important; color: #ffffff !important; border: 0 !important; }
+html:not(.dark) .email-leads-push:hover:not(:disabled) { background: #9f0018 !important; }
+html:not(.dark) .email-leads-push:disabled { background: #f1b8c1 !important; color: #ffffff !important; opacity: 1; }
+html:not(.dark) .distribute-reset-button { color: #b91c1c !important; border-color: #fecaca !important; background: #ffffff !important; }
+html:not(.dark) .distribute-reset-button:hover:not(:disabled) { background: #fef2f2 !important; }
+html:not(.dark) .distribute-reset-confirm { background: #fef2f2 !important; border-color: #fecaca !important; }
+html:not(.dark) .distribute-reset-confirm strong { color: #991b1b !important; }
+html:not(.dark) .distribute-reset-button.is-sure { background: #dc2626 !important; color: #ffffff !important; border-color: #dc2626 !important; }

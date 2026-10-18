@@ -2364,3 +2364,50 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .email-leads-campaign{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;padding-right:8px;margin-right:2px;border-right:1px solid rgba(129,120,255,.3)}
 .email-leads-push:disabled{opacity:.5;cursor:default}
 @media (max-width:760px){.email-leads-campaign{border-right:0;padding-right:0;width:100%}.email-leads-campaign select{flex:1 1 160px}}
+/* ---------- Vertriebspipeline: kompakter Kopf, Fokus auf den Karten ---------- */
+@media(min-width:761px){
+  .pipeline-page .page-intro{margin-bottom:6px}
+  .pipeline-page .page-intro .eyebrow,.pipeline-page .page-intro p{display:none}
+  .pipeline-page .page-intro h1{font-size:20px;margin:0;letter-spacing:-.4px}
+  .pipeline-page .pipeline-menu{margin-bottom:6px!important;gap:6px 14px}
+  .pipeline-page .source-card{min-width:0;padding:5px 11px;gap:7px;align-items:center;border-radius:10px}
+  .pipeline-page .source-card svg{margin-top:0}
+  .pipeline-page .source-card small{display:none}
+  .pipeline-page .source-card strong{font-size:12.5px}
+  .pipeline-page .email-tabs{margin-bottom:0}
+  .pipeline-page .email-tab{padding:6px 10px 7px;font-size:12.5px;gap:6px}
+  .pipeline-page .dashboard-filters{padding:6px 10px;gap:6px 16px;margin-bottom:6px}
+  .pipeline-page .dashboard-filter-group{gap:6px 8px}
+  .pipeline-page .dashboard-filter-group>.eyebrow{font-size:10px}
+  .pipeline-page .dashboard-segments{padding:2px;gap:2px}
+  .pipeline-page .dashboard-segments button{height:26px;padding:0 9px;font-size:11.5px}
+  .pipeline-page .pipeline-toolbar{margin-top:6px!important;gap:6px 10px}
+  .pipeline-page .pipeline-search{height:32px}
+  .pipeline-page .pipeline-toolbar button{height:32px;font-size:12.5px}
+  .pipeline-page .pipeline-board{margin-top:8px!important}
+}
+/* ---------- Ab 1100 px: immer 4 breite Stufen nebeneinander, weitere Stufen darunter – kein Seitwärts-Scrollen ---------- */
+@media(min-width:1100px){
+  .pipeline-page .pipeline-board{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));grid-auto-flow:row dense;align-items:start;gap:10px;overflow:visible}
+  .pipeline-page .pipeline-column{min-width:0!important;flex:none!important;max-height:max(420px,calc(100vh - var(--board-top,200px) - 14px))}
+  .pipeline-page .pipeline-board .pipeline-column:has(.pipeline-card.is-open){grid-column:span 2;max-height:none}
+  .pipeline-page .pipeline-column.is-folded{min-width:0!important;padding:4px}
+  .pipeline-page .pipeline-fold{flex-direction:row;justify-content:flex-start;min-height:0;height:38px;padding:0 10px;gap:10px}
+  .pipeline-page .pipeline-fold-label{writing-mode:horizontal-tb;transform:none;font-size:13px}
+}
+/* Vertriebler an der Karte: nur Kürzel + Auswahl (Name steht nicht doppelt) */
+.owner-dot-solo{margin-right:0;flex:0 0 auto;width:22px;height:22px}
+.pipeline-card-owner .owner-select{max-width:none!important;flex:1 1 auto!important}
+
+/* Karten verteilen: Rückgängig */
+.distribute-reset{padding-top:12px;border-top:1px dashed rgba(248,113,113,.3)}
+.distribute-reset-button{display:inline-flex;align-items:center;gap:6px;margin-top:8px;height:34px;padding:0 14px;border-radius:9px;border:1px solid rgba(248,113,113,.45);background:transparent;color:#fca5a5;font-size:12.5px;font-weight:700;cursor:pointer}
+.distribute-reset-button:hover:not(:disabled){background:rgba(239,68,68,.14)}
+.distribute-reset-button:disabled{opacity:.45;cursor:default}
+.distribute-reset-confirm{display:grid;gap:8px;margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(239,68,68,.1);border:1px solid rgba(248,113,113,.35)}
+.distribute-reset-confirm strong{font-size:13px;color:#fecaca}
+.distribute-reset-confirm .distribute-reset-button{margin-top:0}
+.distribute-reset-button.is-sure{background:#dc2626;border-color:#dc2626;color:#fff}
+.distribute-reset-button.is-sure:hover:not(:disabled){background:#b91c1c}
+/* Bestätigen-Fenster bleibt anklickbar, auch wenn es aus einem anderen Fenster heraus geöffnet wird */
+.app-confirm-backdrop{pointer-events:auto}

@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
-import { Shuffle } from "lucide-react";
+import { RotateCcw, Shuffle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { splitShares, type OwnerShare, type ShareMode } from "../../../shared/pipeline-extras";
@@ -25,6 +25,11 @@ export default function DistributeCardsDialog({ open, onClose, cards, title, onD
   const [shares, setShares] = useState<Record<string, number>>({});
   const [single, setSingle] = useState<number | null>(null);
   const distribute = trpc.leadops.distributePipelineOwners.useMutation({ onSuccess: (result) => { toast.success(`${result.updated} ${result.updated === 1 ? "Karte" : "Karten"} verteilt.`); onDone?.(); onClose(); }, onError: (error) => toast.error(error.message) });
+  // Rückgängig: alle zugeteilten offenen Karten wieder auf „nicht zugeteilt“ (z. B. nach einer falschen Verteilung)
+  const assigned = useMemo(() => cards.filter((card) => !card.closed && card.ownerUserId), [cards]);
+  const [confirmReset, setConfirmReset] = useState(false);
+  useEffect(() => { if (!open) setConfirmReset(false); }, [open]);
+  const reset = trpc.leadops.assignPipelineOwner.useMutation({ onSuccess: (result) => { toast.success(`Zuteilung aufgehoben: ${result.updated} ${result.updated === 1 ? "Karte ist" : "Karten sind"} wieder nicht zugeteilt.`); onDone?.(); onClose(); }, onError: (error) => toast.error(error.message) });
   const targets = useMemo(() => cards.filter((card) => !card.closed && (scope === "alle" || !card.ownerUserId)), [cards, scope]);
   const shareOf = (userId: number) => shares[String(userId)] ?? (mode === "prozent" ? Math.round(100 / Math.max(1, reps.length)) : 0);
   const ownerShares: OwnerShare[] = mode === "einer" ? (single ? [{ userId: single, value: 100 }] : []) : mode === "gleich" ? reps.map((rep) => ({ userId: rep.userId, value: 1 })) : reps.map((rep) => ({ userId: rep.userId, value: shareOf(rep.userId) })).filter((share) => share.value > 0);
@@ -43,6 +48,7 @@ export default function DistributeCardsDialog({ open, onClose, cards, title, onD
             : mode === "gleich" ? <div className="upload-dist-rows mt-2">{reps.map((rep) => <div key={rep.userId} className="upload-dist-row is-static"><span className="owner-dot">{rep.initials}</span><span className="upload-dist-name">{rep.name}</span><span className="upload-dist-unit">{Math.round(100 / reps.length)} %</span><span className="upload-dist-preview">≈ {preview.find((item) => item.userId === rep.userId)?.count ?? 0} von {targets.length}</span></div>)}</div>
             : <div className="upload-dist-rows mt-2">{reps.map((rep) => <label key={rep.userId} className="upload-dist-row"><span className="owner-dot">{rep.initials}</span><span className="upload-dist-name">{rep.name}</span><input type="number" min={0} max={mode === "prozent" ? 100 : 100000} className="upload-dist-input" value={shareOf(rep.userId)} onChange={(event) => setShares({ ...shares, [String(rep.userId)]: Math.max(0, Number(event.target.value) || 0) })} /><span className="upload-dist-unit">{mode === "prozent" ? "%" : "Karten"}</span><span className="upload-dist-preview">≈ {preview.find((item) => item.userId === rep.userId)?.count ?? 0} von {targets.length}</span></label>)}{mode === "prozent" && ownerShares.reduce((sum, share) => sum + share.value, 0) !== 100 && <p className="upload-dist-hint">Die Prozente ergeben {ownerShares.reduce((sum, share) => sum + share.value, 0)} % – verteilt wird im Verhältnis, das passt trotzdem.</p>}{mode === "anzahl" && unassigned > 0 && <p className="upload-dist-hint">{unassigned} Karten bleiben ohne Zuteilung.</p>}</div>}
         </div>
+        <div className="distribute-block distribute-reset"><span className="eyebrow">RÜCKGÄNGIG</span><p className="mt-1 text-xs text-slate-400">Ist bei der Verteilung etwas schiefgelaufen? Hebt bei allen offenen Karten die Zuteilung auf – danach stehen alle auf „Nicht zugeteilt“ und du kannst neu verteilen.</p>{confirmReset ? <div className="distribute-reset-confirm"><strong>Bei {assigned.length} {assigned.length === 1 ? "Karte" : "Karten"} die Zuteilung wirklich aufheben?</strong><div className="flex gap-2"><button type="button" className="distribute-reset-button is-sure" disabled={reset.isPending} onClick={() => reset.mutate({ publicIds: assigned.map((card) => card.publicId), ownerUserId: null })}><RotateCcw className="h-4 w-4" /> {reset.isPending ? "Wird zurückgesetzt …" : "Ja, aufheben"}</button><Button variant="ghost" onClick={() => setConfirmReset(false)}>Nein</Button></div></div> : <button type="button" className="distribute-reset-button" disabled={!assigned.length} onClick={() => setConfirmReset(true)}><RotateCcw className="h-4 w-4" /> Alle Zuteilungen aufheben ({assigned.length})</button>}</div>
         <div className="distribute-foot"><span className="text-xs text-slate-400">{targets.length === 0 ? "Keine passenden Karten." : `${targets.length} ${targets.length === 1 ? "Karte wird" : "Karten werden"} verteilt.`}</span><div className="flex gap-2"><Button variant="ghost" onClick={onClose}>Abbrechen</Button><Button className="flux-button" disabled={!canSubmit} onClick={() => distribute.mutate({ publicIds: targets.map((card) => card.publicId), userIds: ownerShares.map((share) => share.userId), shares: mode === "gleich" ? undefined : ownerShares, mode: mode === "gleich" ? undefined : shareMode })}><Shuffle className="h-4 w-4" /> {distribute.isPending ? "Verteilt …" : "Jetzt verteilen"}</Button></div></div>
       </div>
     </DialogContent>

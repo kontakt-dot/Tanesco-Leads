@@ -758,3 +758,12 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 ## v163 – Einzelne Kontakte in eine Kampagne
 - `addLeadsToEmailCampaign` (Server + Demo): ausgewählte Kontakte in eine Kampagne aufnehmen (nur neue; ohne E-Mail/gesperrt werden gezählt und übersprungen). Laufend → Versand startet; Entwurf → warten bis Start.
 - Kontakte-Reiter (E-Mail-Kampagnen und Pipeline-Kontakte): in der Auswahl-Leiste Kampagne wählen + „Zur Kampagne hinzufügen“.
+
+## v164 – Vertriebspipeline: Fokus auf den Karten
+- Kopfbereich kompakt (Titel klein, ohne Untertitel; Pipelines/Reiter/Filter in flachen Zeilen) – Wrapper `.pipeline-page`.
+- Ab 1100 px: Board als Raster mit 4 gleich breiten Stufen, weitere Stufen darunter (kein Seitwärts-Scrollen); eingeklappte Stufen als flache Leiste; aufgeklappte Karte belegt 2 Spalten.
+- „Zuklappen“ nur noch einmal unten in der offenen Karte (oberer Knopf und X entfernt; Esc und Klick auf den Kopf gehen weiter).
+- Vertriebler an der Karte: nur Kürzel + Auswahl (Name nicht mehr doppelt).
+- Kontaktliste heller Modus: Aktions-Knöpfe (`.email-leads-push`) Markenrot mit weißer Schrift (war schwarz auf schwarz) – in `theme-light.manual.css`.
+- Karten verteilen: Bereich „Rückgängig“ – „Alle Zuteilungen aufheben (N)“ mit Nachfrage im Fenster; `assignPipelineOwner` nimmt bis 5000 Karten.
+- `.app-confirm-backdrop{pointer-events:auto}`: Bestätigen-Fenster bleibt klickbar, auch über einem offenen Dialog. Entfernen-Bestätigungen sagen „Ja, entfernen“.
