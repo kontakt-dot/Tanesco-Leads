@@ -1133,3 +1133,7 @@ html:not(.dark) .overlap-list li { background: #ffffff !important; border-color:
 html:not(.dark) .overlap-main strong, html:not(.dark) .overlap-plz b { color: #0f172a !important; }
 html:not(.dark) .overlap-main small, html:not(.dark) .overlap-chevron { color: #64748b !important; }
 html:not(.dark) .overlap-plz span { background: #f1f5f9 !important; color: #334155 !important; }
+html:not(.dark) .pipeline-order-list li { background: #ffffff !important; border-color: #e8ecf1 !important; color: #334155 !important; }
+html:not(.dark) .pipeline-order-list strong { color: #0f172a !important; }
+html:not(.dark) .pipeline-order-pos { background: #fee2e2 !important; color: #bc001d !important; }
+html:not(.dark) .pipeline-order-move button { border-color: #e2e8f0 !important; color: #334155 !important; }

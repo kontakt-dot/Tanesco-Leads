@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIcs, callCounterText, callResultOfDialer, CALL_RESULTS, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, ownerSequence, splitShares, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, shareSequence, distributionActive, effectiveDistribution, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
+import { buildIcs, callCounterText, callResultOfDialer, CALL_RESULTS, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, ownerSequence, splitShares, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, normalizeSourceOrder, pickOwner, shareSequence, distributionActive, effectiveDistribution, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
 import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, moveNodeInTree, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
 import { companyFooterText, DEFAULT_DESIGN, linkifyFooter, renderEmailHtml } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
@@ -301,5 +301,10 @@ describe("Anrufzähler und Verteilung beim Listen-Upload", () => {
     expect(sequence.filter((id) => id === 1).length).toBe(7); expect(sequence.filter((id) => id === 2).length).toBe(3);
     expect(sequence.slice(0, 4)).not.toEqual([1, 1, 1, 1]); // abwechselnd, nicht erst alle für einen
     expect(ownerSequence(5, [{ userId: 1, value: 2 }], "anzahl")).toEqual([1, 1, null, null, null]);
+  });
+  it("merkt sich die Reihenfolge der Pipelines – ungültige oder fehlende Einträge werden ergänzt", () => {
+    expect(normalizePipelineSettings({}).sourceOrder).toEqual(["email", "ads", "kaltakquise"]);
+    expect(normalizePipelineSettings({ sourceOrder: ["kaltakquise", "ads", "email"] }).sourceOrder).toEqual(["kaltakquise", "ads", "email"]);
+    expect(normalizeSourceOrder(["ads", "ads", "quatsch"])).toEqual(["ads", "email", "kaltakquise"]);
   });
 });

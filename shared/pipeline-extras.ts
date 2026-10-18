@@ -164,8 +164,16 @@ export type PipelineSettings = {
   appointmentReminderHours: number;
   distribution: DistributionRules;
   dailyTargets: Record<string, DailyTarget>;
+  /** Reihenfolge der Pipeline-Karten oben in der Vertriebspipeline (die erste ist beim Öffnen gewählt). */
+  sourceOrder: PipelineSource[];
 };
-export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {} };
+export const DEFAULT_SOURCE_ORDER: PipelineSource[] = ["email", "ads", "kaltakquise"];
+export function normalizeSourceOrder(value: unknown): PipelineSource[] {
+  const valid = Array.isArray(value) ? (value as unknown[]).filter((item): item is PipelineSource => item === "email" || item === "ads" || item === "kaltakquise") : [];
+  const unique = Array.from(new Set(valid)); for (const source of DEFAULT_SOURCE_ORDER) if (!unique.includes(source)) unique.push(source);
+  return unique;
+}
+export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {}, sourceOrder: ["email", "ads", "kaltakquise"] };
 const numberOrNull = (value: unknown) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.round(number) : null; };
 const numberMap = (value: unknown) => { const out: Record<string, number> = {}; if (value && typeof value === "object" && !Array.isArray(value)) for (const [key, item] of Object.entries(value as Record<string, unknown>)) { const id = numberOrNull(item); if (id) out[key] = id; } return out; };
 export function normalizePipelineSettings(input: unknown): PipelineSettings {
@@ -192,6 +200,7 @@ export function normalizePipelineSettings(input: unknown): PipelineSettings {
     appointmentReminderHours: Math.min(168, Math.max(1, Math.round(Number(raw.appointmentReminderHours ?? 24) || 24))),
     distribution: { mode: modeOf(mode), rules, fallback: distributionRaw.fallback === "ohne" ? "ohne" : "reihum", shares: sharesOf(distributionRaw.shares), perPipeline },
     dailyTargets,
+    sourceOrder: normalizeSourceOrder(raw.sourceOrder),
   };
 }
 
