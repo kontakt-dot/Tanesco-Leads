@@ -47,7 +47,7 @@ export const CallLogForm = CallDialog;
 export function CallLogButton({ lead, onLogged, onDialer, dialerLabel, open, onOpenChange }: { lead: { publicId: string; name: string; phone?: string | null; calls?: { count: number } }; onLogged: () => void; onDialer?: (() => void) | null; dialerLabel?: string | null; open?: boolean; onOpenChange?: (open: boolean) => void }) {
   const [own, setOwn] = useState(false); const isOpen = open ?? own; const setOpen = (value: boolean) => { setOwn(value); onOpenChange?.(value); };
   return <div className="pipeline-card-calllog">
-    <button type="button" className={`calllog-toggle ${isOpen ? "is-open" : ""}`} title="Anrufen und Ergebnis festhalten – zählt den Versuch, auch ohne Dialer" aria-expanded={isOpen} onClick={() => setOpen(!isOpen)}><Phone className="h-3 w-3" /> + Anruf{lead.calls?.count ? ` (${lead.calls.count})` : ""}</button>
+    <button type="button" className={`calllog-toggle ${isOpen ? "is-open" : ""}`} title="Anrufen und Ergebnis festhalten – zählt den Versuch, auch ohne Dialer" aria-expanded={isOpen} onClick={() => setOpen(!isOpen)}><Phone className="h-3 w-3" /> <span className="calllog-label">+ Anruf</span>{lead.calls?.count ? <span className="calllog-count"> ({lead.calls.count})</span> : null}</button>
     {isOpen && <CallDialog publicId={lead.publicId} name={lead.name} phone={lead.phone} onDialer={onDialer} dialerLabel={dialerLabel} onDone={() => { setOpen(false); onLogged(); }} onCancel={() => setOpen(false)} onPhoneSaved={onLogged} />}
   </div>;
 }

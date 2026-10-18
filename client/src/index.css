@@ -1619,7 +1619,7 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .email-leads-check{width:34px;text-align:center}
 .email-leads-table tr.is-picked td{background:rgba(129,120,255,.1)}
 
-.preview-hint{margin:0 0 6px;padding:8px 12px;border-radius:10px;border:1px solid rgba(56,189,248,.28);background:rgba(56,189,248,.08);color:#bae6fd;font-size:12px;line-height:1.55}
+.preview-hint{align-self:start;margin:0 0 6px;padding:8px 12px;border-radius:10px;border:1px solid rgba(56,189,248,.28);background:rgba(56,189,248,.08);color:#bae6fd;font-size:12px;line-height:1.55}
 .preview-hint strong{color:#e0f2fe}
 
 /* Bereichs-Navigation der E-Mail-Kampagnen: Symbol, Name, kurze Erklärung. */
@@ -2247,3 +2247,33 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 .pipeline-order-list strong{flex:1;font-size:13px;color:#fff}
 .pipeline-order-pos{display:grid;place-items:center;width:22px;height:22px;border-radius:999px;background:rgba(130,120,255,.18);font-size:11px;font-weight:700;color:#d8d4ff}
 .pipeline-order-move{display:flex;gap:4px}.pipeline-order-move button{display:grid;place-items:center;width:30px;height:30px;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#c9c5f5}.pipeline-order-move button:disabled{opacity:.3;cursor:default}.pipeline-order-move button:not(:disabled):hover{background:rgba(255,255,255,.06)}
+
+/* Vertriebspipeline: kompakte Ansicht – mehr Karten auf einen Blick (alle Funktionen bleiben, aufgeklappte Karten wie immer) */
+.pipeline-board.is-compact{grid-template-columns:repeat(7,minmax(208px,1fr));gap:8px}
+.pipeline-board.is-compact .pipeline-column{padding:8px;max-height:max(420px,calc(100vh - 190px))}
+.pipeline-board.is-compact .pipeline-hint{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;margin-bottom:6px}
+.pipeline-board.is-compact .pipeline-cards{gap:5px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open){display:flex;flex-wrap:wrap;align-items:center;border-radius:10px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-head{flex:1 1 100%;padding:7px 8px 3px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-title{font-size:12.5px;line-height:1.25;padding-right:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-head small{font-size:10.5px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-meta{margin-top:3px;flex-wrap:nowrap;overflow:hidden}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-meta .dash-pill{height:18px;padding:0 6px;font-size:10px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-platform,.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-source,.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-note{display:none!important}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-flags{margin-top:3px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner{flex:1 1 auto;min-width:0;padding:0 4px 6px 8px;gap:4px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner .owner-select{height:26px;font-size:11px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-calllog{flex:none;padding:0 8px 6px 0}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-calllog button{height:26px;padding:0 8px;font-size:11px}
+.pipeline-board.is-compact .pipeline-card-grip{top:5px;right:5px}.pipeline-board.is-compact .pipeline-card-grip span{display:none}
+main:has(.pipeline-board.is-compact) .dashboard-filters{padding:8px 12px!important;gap:6px 12px!important;margin-top:8px}
+main:has(.pipeline-board.is-compact) .dashboard-filters .dashboard-segments button{min-height:30px;padding-top:4px;padding-bottom:4px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-calls{display:flex!important;align-items:center;gap:4px;white-space:nowrap;overflow:hidden}.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-calls span{overflow:hidden;text-overflow:ellipsis}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner{flex:1 1 0}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner .owner-chip{display:none}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner .owner-select{flex:1 1 auto;max-width:none!important;width:100%}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner .pipeline-card-phone{width:26px;height:26px;flex:none}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .calllog-label{display:none}.pipeline-board.is-compact .pipeline-card:not(.is-open) .calllog-toggle::after{content:"+";font-weight:700;margin-left:1px}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner{flex:1 1 0;min-width:0}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner .owner-select{min-width:0;flex:1 1 56px;width:auto}
