@@ -123,7 +123,7 @@ def convert():
     out = ["/* Automatisch erzeugt (scripts/build-light-theme.py): heller Modus – nur Farben, Layout unverändert. */"]
     out.append(f"html:not(.dark) {{ --background: #ffffff; --foreground: {TEXT_DARK}; --card: #ffffff; --card-foreground: {TEXT_DARK}; --popover: #ffffff; --popover-foreground: {TEXT_DARK}; --primary: {ACCENT}; --primary-foreground: #ffffff; --secondary: {SURFACE_SOFT}; --secondary-foreground: {TEXT_DARK}; --muted: {SURFACE_SOFT}; --muted-foreground: {TEXT_MID}; --accent: {SURFACE_SOFT}; --accent-foreground: {TEXT_DARK}; --destructive: #dc2626; --destructive-foreground: #ffffff; --border: {BORDER}; --input: {BORDER_STRONG}; --ring: {ACCENT}; color-scheme: light; }}")
     out.append(f"html:not(.dark) body {{ background: #ffffff; color: {TEXT_DARK}; }}")
-    out.append('html:not(.dark) input[type="date"] { color-scheme: light; } html:not(.dark) input[type="date"]::-webkit-calendar-picker-indicator { filter: none !important; }')
+    out.append('html:not(.dark) input[type="date"], html:not(.dark) input[type="time"], html:not(.dark) input[type="datetime-local"], html:not(.dark) input[type="month"], html:not(.dark) input[type="week"] { color-scheme: light; } html:not(.dark) input[type="date"]::-webkit-calendar-picker-indicator, html:not(.dark) input[type="time"]::-webkit-calendar-picker-indicator, html:not(.dark) input[type="datetime-local"]::-webkit-calendar-picker-indicator, html:not(.dark) input[type="month"]::-webkit-calendar-picker-indicator, html:not(.dark) input[type="week"]::-webkit-calendar-picker-indicator { filter: none !important; }')
     seen = set()
     for source in SOURCES:
         if not source.exists(): continue

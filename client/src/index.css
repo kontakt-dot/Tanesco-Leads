@@ -9,7 +9,7 @@
 
 :root, .dark { --radius: 1rem; --background: oklch(0.13 0.022 278); --foreground: oklch(0.94 0.012 280); --card: oklch(0.17 0.025 276); --card-foreground: oklch(0.94 0.012 280); --popover: oklch(0.18 0.027 276); --popover-foreground: oklch(0.94 0.012 280); --primary: oklch(0.72 0.17 283); --primary-foreground: oklch(0.99 0.003 286); --secondary: oklch(0.22 0.03 277); --secondary-foreground: oklch(0.88 0.012 280); --muted: oklch(0.22 0.027 276); --muted-foreground: oklch(0.68 0.025 280); --accent: oklch(0.25 0.04 277); --accent-foreground: oklch(0.96 0.01 280); --destructive: oklch(0.67 0.2 24); --destructive-foreground: oklch(0.99 0 0); --border: oklch(0.31 0.035 278 / .8); --input: oklch(0.24 0.03 277); --ring: oklch(0.72 0.17 283); }
 
-@layer base { * { @apply border-border outline-ring/50; } body { @apply bg-background text-foreground; font-family: "DM Sans", system-ui, sans-serif; } button, a { -webkit-tap-highlight-color: transparent; } button:active { transform: scale(.98); } input[type="date"] { color-scheme: dark; } input[type="date"]::-webkit-calendar-picker-indicator { filter: brightness(0) invert(1); opacity: 1; cursor: pointer; } /* ohne !important: im hellen Modus darf das Kalender-Symbol dunkel bleiben (Ebenen-Regel: wichtige Angaben der Basisebene gewinnen sonst) */ }
+@layer base { * { @apply border-border outline-ring/50; } body { @apply bg-background text-foreground; font-family: "DM Sans", system-ui, sans-serif; } button, a { -webkit-tap-highlight-color: transparent; } button:active { transform: scale(.98); } input[type="date"], input[type="time"], input[type="datetime-local"], input[type="month"], input[type="week"] { color-scheme: dark; } input[type="date"]::-webkit-calendar-picker-indicator, input[type="time"]::-webkit-calendar-picker-indicator, input[type="datetime-local"]::-webkit-calendar-picker-indicator, input[type="month"]::-webkit-calendar-picker-indicator, input[type="week"]::-webkit-calendar-picker-indicator { filter: brightness(0) invert(1); opacity: 1; cursor: pointer; } /* ohne !important: im hellen Modus darf das Kalender-Symbol dunkel bleiben (Ebenen-Regel: wichtige Angaben der Basisebene gewinnen sonst) */ }
 
 .flux-shell { min-height:100svh; background:radial-gradient(circle at 95% 0%,rgba(114,103,255,.15),transparent 28rem),linear-gradient(130deg,#141222,#17142c 50%,#131023); display:flex; color:#f1effe; }
 .flux-sidebar { position:sticky; top:0; width:258px; height:100svh; min-height:100svh; overflow:hidden; background:rgba(12,10,25,.74); border-right:1px solid rgba(166,159,255,.14); padding:20px 12px 14px; display:flex; flex-direction:column; flex-shrink:0; backdrop-filter:blur(20px); transition:width .2s cubic-bezier(.23,1,.32,1),padding .2s cubic-bezier(.23,1,.32,1); }
@@ -2281,3 +2281,14 @@ main:has(.pipeline-board.is-compact) .dashboard-filters .dashboard-segments butt
 /* Spalten so hoch wie der Bildschirm – jede Spalte scrollt für sich nach unten */
 .pipeline-board:not(.is-compact) .pipeline-column:not(:has(.pipeline-card.is-open)){max-height:max(460px,calc(100vh - 150px))}
 .pipeline-board .pipeline-cards{overscroll-behavior:contain;scrollbar-width:thin}
+
+/* Listen anhaken (Kampagnen-Zielgruppe, „Liste hinzufügen“) */
+.list-picker-main{display:flex;align-items:flex-start;gap:9px}
+.list-picker-text{display:block;min-width:0}
+.list-picker-check{flex:0 0 auto;display:grid;place-items:center;width:17px;height:17px;margin-top:1px;border-radius:5px;border:1.5px solid rgba(203,213,225,.45);color:#fff}
+.list-picker-check.is-on{background:#7c6cff;border-color:#7c6cff}
+.add-lists{max-height:min(52vh,420px);overflow-y:auto;padding-right:2px}
+.recipient-list{display:inline-block;margin-top:3px;padding:1px 7px;border-radius:999px;background:rgba(245,158,11,.12);color:#fcd34d;font-size:10.5px;font-weight:600}
+html:not(.dark) .list-picker-check{border-color:rgba(71,85,105,.45)!important}
+html:not(.dark) .list-picker-check.is-on{background:#6d5df5!important;border-color:#6d5df5!important}
+html:not(.dark) .recipient-list{background:#fef3c7!important;color:#92400e!important}

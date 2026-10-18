@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceRecipient, canEnroll, eventLabel, maxRunsLabel, maxRunsOf, recipientPath, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, stopsOnReply, validateTree, summarizeCampaign, waitingText } from "../shared/email-campaigns";
+import { advanceRecipient, audienceLists, canEnroll, listAudience, eventLabel, maxRunsLabel, maxRunsOf, recipientPath, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, stopsOnReply, validateTree, summarizeCampaign, waitingText } from "../shared/email-campaigns";
 import { isAutoReply, looksLikeAutoReplySubject } from "../shared/reply-ai";
 import { fillPlaceholders, renderEmailHtml, renderEmailText, starterBlocks, usesSignature } from "../shared/email-design";
 import { renderNode } from "../shared/email-campaigns";
@@ -116,5 +116,15 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
     expect(values.firma).toBe("Hansen Dach"); expect((values as Record<string, string>).branche).toBe("Dachdecker");
     expect(fillPlaceholders("Hallo {{vorname}}, als {{branche}} ({{s2_kontakt}}) – {{unbekannt}}.", values)).toBe("Hallo Peter, als Dachdecker (Frau Koch) – .");
     expect(extraFieldsOf({ felder: { branche: "Dachdecker", leer: "", zahl: 3 } })).toEqual({ branche: "Dachdecker" }); expect(extraFieldsOf(null)).toEqual({}); expect(extraFieldsOf({ felder: [1] })).toEqual({});
+  });
+});
+
+describe("E-Mail-Kampagnen: Zielgruppe aus mehreren Listen", () => {
+  it("liest alte (eine Liste) und neue Kampagnen (mehrere Listen) gleich", () => {
+    expect(audienceLists({ source: "liste", listName: "Alt" })).toEqual(["Alt"]);
+    expect(audienceLists({ source: "liste", listName: "A", listNames: ["A", "B", " B ", ""] })).toEqual(["A", "B"]);
+    expect(audienceLists({ source: "alle", listName: "A" })).toEqual([]);
+    expect(listAudience(["B", "A", "B"])).toEqual({ source: "liste", listName: "B", listNames: ["B", "A"] });
+    expect(listAudience([])).toEqual({ source: "liste", listName: null, listNames: [] });
   });
 });

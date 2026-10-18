@@ -732,3 +732,9 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 ## v157 – Mehr Platz für die Pipeline-Karten
 - Spruch-Banner über der Pipeline ist ausgeblendet (`{false && …}` in `SalesPipelineWorkspace.tsx`, lässt sich wieder einschalten).
 - Spalten sind so hoch wie der Bildschirm (`calc(100vh - 150px)`, mind. 460 px) und scrollen jede für sich; mit aufgeklappter Karte entfällt die Höhenbegrenzung.
+
+## v158 – Mehrere Listen je E-Mail-Kampagne, „Liste hinzufügen“, Uhr-Symbol weiß
+- Zielgruppe „Liste“ hat jetzt `listNames: string[]` (alt: `listName`, wird weiter gelesen). Helfer `audienceLists` / `listAudience` in `shared/email-campaigns.ts`.
+- `addListsToEmailCampaign` (Server + Demo): ergänzt die Zielgruppe; bei aktiver/pausierter/beendeter Kampagne werden die Kontakte der neuen Listen sofort über `enrollRecipients` aufgenommen (gleiche Regeln wie beim Start, keine Doppelten). Beendet + neue Empfänger → wieder aktiv.
+- Oberfläche: Listen anhaken im Editor, „+ Liste“ in der Kampagnenliste, „Liste hinzufügen“ auf der Kampagnenseite, Listenname je Empfänger.
+- Zeitfelder (`input[type=time]` u. a.): Uhr-Symbol im dunklen Modus weiß, im hellen dunkel.

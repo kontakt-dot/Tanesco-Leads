@@ -278,3 +278,15 @@ export function canEnroll(previous: Array<{ status: string; repliedAt?: Date | s
   if (maxRuns !== 0 && completed >= Math.max(1, maxRuns)) return { ok: false, reason: completed === 1 ? "war schon einmal dabei" : `schon ${completed}× dabei` };
   return { ok: true, reason: null };
 }
+
+/** Listen einer Zielgruppe „Liste“: neue Form `listNames` (mehrere), ältere Kampagnen haben nur `listName`. */
+export function audienceLists(audience: { source?: string; listName?: string | null; listNames?: string[] | null } | null | undefined): string[] {
+  if (!audience || audience.source !== "liste") return [];
+  const names = [...(Array.isArray(audience.listNames) ? audience.listNames : []), ...(audience.listName ? [audience.listName] : [])].map((name) => String(name ?? "").trim()).filter(Boolean);
+  return Array.from(new Set(names));
+}
+/** Zielgruppe mit diesen Listen (leer → Liste noch nicht gewählt). */
+export function listAudience(names: string[]): { source: "liste"; listName: string | null; listNames: string[] } {
+  const unique = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+  return { source: "liste", listName: unique[0] ?? null, listNames: unique };
+}

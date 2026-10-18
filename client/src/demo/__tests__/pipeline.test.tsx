@@ -1683,4 +1683,27 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect(overview.campaigns.map((campaign: { campaignName: string }) => campaign.campaignName)).toEqual(expect.arrayContaining(["Liste: Trojaner M. PV", "Liste: Eigene Kontakte"]));
     expect(zweite.created).toBe(2);
   });
+
+  it("E-Mail-Kampagne: mehrere hochgeladene Listen, „Liste hinzufügen“ nimmt Kontakte in die laufende Kampagne auf", async () => {
+    const rows = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => ({ firstName: `${prefix}${i}`, lastName: "Test", company: `${prefix} GmbH ${i}`, email: `${prefix.toLowerCase()}${i}@listen-test.de` }));
+    await call("leadops.importColdList", { listName: "Messe Nord", categoryId: null, toPipeline: false, rows: rows("Nord", 3) });
+    await call("leadops.importColdList", { listName: "Messe Süd", categoryId: null, toPipeline: false, rows: rows("Sued", 2) });
+    await call("leadops.importColdList", { listName: "Messe West", categoryId: null, toPipeline: false, rows: rows("West", 4) });
+    // Zwei Listen zugleich als Zielgruppe
+    expect((await call("leadops.previewEmailAudience", { source: "liste", listName: "Messe Nord", listNames: ["Messe Nord", "Messe Süd"] })).count).toBe(5);
+    const starter = await call("leadops.emailCampaignStarter", { kind: "kaltakquise" });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Messe-Serie", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Messe Nord", listNames: ["Messe Nord", "Messe Süd"] }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" } });
+    expect((await call("leadops.startEmailCampaign", { id: saved.id })).added).toBe(5);
+    // Laufende Kampagne: dritte Liste hinzufügen → sofort aufgenommen
+    const result = await call("leadops.addListsToEmailCampaign", { id: saved.id, listNames: ["Messe West"] });
+    expect(result.running).toBe(true); expect(result.added).toBe(4); expect(result.lists).toEqual(["Messe Nord", "Messe Süd", "Messe West"]);
+    const detail = await call("leadops.getEmailCampaign", { id: saved.id });
+    expect(detail.recipients).toHaveLength(9); expect(detail.recipients.filter((row: any) => row.lead?.listName === "Messe West")).toHaveLength(4);
+    // Noch einmal dieselbe Liste: niemand doppelt
+    const again = await call("leadops.addListsToEmailCampaign", { id: saved.id, listNames: ["Messe West"] }); expect(again.added).toBe(0); expect(again.skipped).toBe(4);
+    // Entwurf: nur zur Zielgruppe, Aufnahme erst beim Start
+    const draft = await call("leadops.saveEmailCampaign", { id: null, name: "Entwurf-Serie", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "alle" }, tree: starter.tree, design: {} });
+    const drafted = await call("leadops.addListsToEmailCampaign", { id: draft.id, listNames: ["Messe Süd"] }); expect(drafted.running).toBe(false); expect(drafted.added).toBe(0);
+    expect((await call("leadops.startEmailCampaign", { id: draft.id })).added).toBe(2);
+  });
 });
