@@ -84,7 +84,8 @@ export async function importColdList(db: Db, tenantId: number, input: { listName
   // Upload-Verlauf festhalten – damit man später sieht, was wann hochgeladen wurde, und es rückgängig machen kann.
   await db.insert(listImports).values({ tenantId, listName, source: toPipeline ? "kaltakquise" : "kampagne", rowCount: input.rows.length, created, updated, duplicates, toPipeline, leadIds, actorUserId: input.actorUserId ?? null });
   if (created || updated) await logActivity(db, tenantId, { kind: "kontakt_neu", title: `Liste „${listName}“ hochgeladen: ${created} neue Kontakte${updated ? `, ${updated} aktualisiert` : ""}${duplicates ? `, ${duplicates} doppelt` : ""}`, detail: toPipeline ? "Kaltakquise – Kontakte stehen in der Vertriebspipeline" : "E-Mail-Kampagnen – Kontakte nur für den E-Mail-Versand", count: Math.max(1, created), actorUserId: input.actorUserId ?? null, refType: "listImport" });
-  return { created, duplicates, updated, tagId: tag.id, listName, leadIds, toPipeline };
+  const campaigns = created || updated ? await enrollListIntoRunningCampaigns(db, tenantId, listName, process.env.APP_URL ?? "").catch((error) => { console.error("[E-Mail-Kampagnen] Nachaufnahme nach Upload:", error instanceof Error ? error.message : error); return [] as Array<{ id: number; name: string; added: number }>; }) : [];
+  return { created, duplicates, updated, tagId: tag.id, listName, leadIds, toPipeline, campaigns };
 }
 export async function listColdLists(db: Db, tenantId: number) {
   const rows = await db.select({ listName: leads.listName, stage: leads.pipelineStage, phone: leads.phone, email: leads.email, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.adPlatform, "kaltakquise")));
@@ -112,7 +113,11 @@ const design = (campaign: EmailCampaign): EmailDesign => ({ ...DEFAULT_DESIGN, .
 export async function listEmailCampaigns(db: Db, tenantId: number) {
   const rows = await db.select().from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId)).orderBy(desc(emailCampaigns.updatedAt));
   const recipients = await db.select({ campaignId: emailCampaignRecipients.campaignId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, variant: emailCampaignRecipients.variant }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
-  return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.audience ?? { source: "alle" }) as Audience, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), sendWindow: sendWindowOf(row), stats: summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) }));
+  const recipientEmails = await db.select({ campaignId: emailCampaignRecipients.campaignId, email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
+  const blocked = await suppressedSet(db, tenantId);
+  const infos = new Map<number, Awaited<ReturnType<typeof audienceInfo>>>();
+  for (const row of rows) if (!row.isTemplate) infos.set(row.id, await audienceInfo(db, tenantId, (row.audience ?? { source: "alle" }) as Audience, new Set(recipientEmails.filter((item) => item.campaignId === row.id).map((item) => item.email.toLowerCase())), blocked));
+  return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.audience ?? { source: "alle" }) as Audience, audienceInfo: infos.get(row.id) ?? null, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), sendWindow: sendWindowOf(row), stats: summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) }));
 }
 export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
   const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
@@ -124,7 +129,8 @@ export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
   const ownerIds = Array.from(new Set(leadRows.map((item) => item.ownerUserId).filter((id): id is number => typeof id === "number")));
   const owners = ownerIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds)) : [];
   const stageOf = (leadId: number | null) => { const lead = leadId ? leadRows.find((item) => item.id === leadId) : null; if (!lead) return null; const stages = stagesForLead(sets, lead); const def = stages.find((stage) => stage.key === lead.pipelineStage); return { publicId: lead.publicId, key: lead.pipelineStage, label: def?.label ?? lead.pipelineStage ?? "–", inPipeline: Boolean(lead.inPipeline), listName: lead.listName ?? null, ownerUserId: lead.ownerUserId ?? null, owner: owners.find((user) => user.id === lead.ownerUserId)?.name?.split(/\s+/)[0] ?? null, closed: lead.pipelineStage === wonStage(stages) || lead.pipelineStage === lostStage(stages) }; };
-  return { ...row, tree: tree(row), design: design(row), audience: (row.audience ?? { source: "alle" }) as Audience, sendWindow: sendWindowOf(row), recipients: recipients.map((item) => ({ id: item.id, email: item.email, name: item.name, company: item.company, status: item.status, nodeId: item.nodeId, nextActionAt: item.nextActionAt, sentCount: item.sentCount, openedAt: item.openedAt, clickedAt: item.clickedAt, repliedAt: item.repliedAt, lead: stageOf(item.leadId), variant: (item.variant ?? null) as "A" | "B" | null, clickedUrls: (Array.isArray(item.clickedUrls) ? item.clickedUrls : []) as string[], bouncedAt: item.bouncedAt, lastError: item.lastError })), events: events.map((event) => ({ id: event.id, recipientId: event.recipientId, kind: event.kind, subject: event.subject, note: event.note, createdAt: event.createdAt })), stats: summarizeCampaign(recipients.map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) };
+  const info = row.isTemplate ? null : await audienceInfo(db, tenantId, (row.audience ?? { source: "alle" }) as Audience, new Set(recipients.map((item) => item.email.toLowerCase())), await suppressedSet(db, tenantId));
+  return { ...row, tree: tree(row), design: design(row), audience: (row.audience ?? { source: "alle" }) as Audience, audienceInfo: info, sendWindow: sendWindowOf(row), recipients: recipients.map((item) => ({ id: item.id, email: item.email, name: item.name, company: item.company, status: item.status, nodeId: item.nodeId, nextActionAt: item.nextActionAt, sentCount: item.sentCount, openedAt: item.openedAt, clickedAt: item.clickedAt, repliedAt: item.repliedAt, lead: stageOf(item.leadId), variant: (item.variant ?? null) as "A" | "B" | null, clickedUrls: (Array.isArray(item.clickedUrls) ? item.clickedUrls : []) as string[], bouncedAt: item.bouncedAt, lastError: item.lastError })), events: events.map((event) => ({ id: event.id, recipientId: event.recipientId, kind: event.kind, subject: event.subject, note: event.note, createdAt: event.createdAt })), stats: summarizeCampaign(recipients.map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))) };
 }
 const sendWindowOf = (campaign: Pick<EmailCampaign, "sendWindow">): SendWindow => resolveSendWindow(campaign.sendWindow as Partial<SendWindow> | null);
 /** Abweichende Zeiten je Wochentag prüfen: nur „0“–„6“ mit gültigen Uhrzeiten, sonst nichts. */
@@ -180,14 +186,28 @@ export async function duplicateEmailCampaign(db: Db, tenantId: number, userId: n
 }
 export async function setEmailCampaignTemplate(db: Db, tenantId: number, id: number, isTemplate: boolean) { await db.update(emailCampaigns).set({ isTemplate }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
 export async function deleteEmailCampaign(db: Db, tenantId: number, id: number) { await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id))); await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id))); await db.delete(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
-async function audienceLeads(db: Db, tenantId: number, audience: Audience) {
+async function audienceContacts(db: Db, tenantId: number, audience: Audience) {
   const conditions = [eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")]; // Zielgruppen bestehen nur aus Vertriebskontakten – nie aus Leads zum Verkauf
   const lists = audienceLists(audience); if (lists.length) conditions.push(inArray(leads.listName, lists));
   if (audience.source === "stufe" && audience.stage) conditions.push(eq(leads.pipelineStage, audience.stage));
   let rows = await db.select({ id: leads.id, firstName: leads.firstName, lastName: leads.lastName, email: leads.email, company: leads.company, city: leads.city, metadata: leads.metadata }).from(leads).where(and(...conditions));
   if (audience.source === "tag" && audience.tagId) { const tagged = new Set((await db.select({ leadId: leadTagAssignments.leadId }).from(leadTagAssignments).where(eq(leadTagAssignments.tagId, audience.tagId))).map((row) => row.leadId)); rows = rows.filter((row) => tagged.has(row.id)); }
-  const blocked = await suppressedSet(db, tenantId);
-  return rows.filter((row) => row.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email) && !blocked.has(row.email.toLowerCase()));
+  return rows;
+}
+const validEmail = (email: string | null | undefined): email is string => Boolean(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+async function audienceLeads(db: Db, tenantId: number, audience: Audience) {
+  const rows = await audienceContacts(db, tenantId, audience); const blocked = await suppressedSet(db, tenantId);
+  return rows.filter((row) => validEmail(row.email) && !blocked.has(row.email!.toLowerCase()));
+}
+/**
+ * Wie steht die Zielgruppe einer Kampagne? Kontakte gesamt, ohne gültige E-Mail, gesperrt – und wie viele noch nicht
+ * aufgenommen sind („warten“), z. B. weil sie nach dem Start in die Liste kamen.
+ */
+async function audienceInfo(db: Db, tenantId: number, audience: Audience, enrolledEmails: Set<string>, blocked: Set<string>) {
+  const rows = await audienceContacts(db, tenantId, audience);
+  let noEmail = 0; let suppressed = 0; let pending = 0; const seen = new Set<string>();
+  for (const row of rows) { if (!validEmail(row.email)) { noEmail += 1; continue; } const key = row.email.toLowerCase(); if (blocked.has(key)) { suppressed += 1; continue; } if (seen.has(key)) continue; seen.add(key); if (!enrolledEmails.has(key)) pending += 1; }
+  return { total: rows.length, noEmail, blocked: suppressed, pending };
 }
 /**
  * Zielgruppe prüfen: Anzahl und die ersten Empfänger – jeweils mit allen Platzhalter-Werten,
@@ -202,15 +222,41 @@ export async function previewAudience(db: Db, tenantId: number, audience: Audien
   return { count: rows.length, sample };
 }
 /** Kontakte in eine Kampagne aufnehmen (ohne Doppelte, Mehrfach-Durchlauf beachten) – beim Start und beim Hinzufügen von Listen. */
-async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaign, rows: Awaited<ReturnType<typeof audienceLeads>>) {
+async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaign, rows: Awaited<ReturnType<typeof audienceLeads>>, options: { onlyNew?: boolean } = {}) {
   const id = campaign.id;
   const previousRows = await db.select({ email: emailCampaignRecipients.email, status: emailCampaignRecipients.status, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id)));
   const previousOf = new Map<string, Array<{ status: string; repliedAt: Date | null }>>(); for (const row of previousRows) { const key = row.email.toLowerCase(); previousOf.set(key, [...(previousOf.get(key) ?? []), row]); }
   const maxRuns = maxRunsOf(campaign); const abTest = hasAbTest(tree(campaign)); let index = previousRows.length;
   let added = 0; let skipped = 0; let repeated = 0;
-  for (const row of rows) { const previous = previousOf.get(row.email!.toLowerCase()) ?? []; if (!canEnroll(previous, maxRuns).ok) { skipped += 1; continue; } if (previous.length) repeated += 1; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); }
+  for (const row of rows) { const previous = previousOf.get(row.email!.toLowerCase()) ?? []; if ((options.onlyNew && previous.length) || !canEnroll(previous, maxRuns).ok) { skipped += 1; continue; } previousOf.set(row.email!.toLowerCase(), [...previous, { status: "wartet", repliedAt: null }]); if (previous.length) repeated += 1; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); }
     await db.insert(emailCampaignRecipients).values({ tenantId, campaignId: id, leadId: row.id, email: row.email!, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: crypto.randomBytes(16).toString("hex"), nodeId: tree(campaign).start, nextActionAt: new Date(Date.now() - 2000), status: "wartet", sentCount: 0, variant: abTest ? abVariantFor(index, campaign.abSplit) : null }); index += 1; added += 1; } /* 2 s in der Vergangenheit: MySQL rundet Sekunden auf */
   return { added, skipped, repeated, maxRuns };
+}
+/** Laufende Kampagne: alle Kontakte der Zielgruppe aufnehmen, die noch nie drin waren (z. B. nach dem Start in die Liste gekommen). */
+export async function syncEmailCampaignAudience(db: Db, tenantId: number, id: number, appUrl: string) {
+  const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
+  if (campaign.isTemplate) throw new Error("Das ist eine Vorlage."); if (campaign.status === "entwurf") throw new Error("Die Kampagne ist noch nicht gestartet – „Starten“ nimmt alle Kontakte auf.");
+  const rows = await audienceLeads(db, tenantId, (campaign.audience ?? { source: "alle" }) as Audience);
+  const result = await enrollRecipients(db, tenantId, campaign, rows, { onlyNew: true });
+  if (result.added) {
+    if (campaign.status === "beendet") await db.update(emailCampaigns).set({ status: "aktiv" }).where(eq(emailCampaigns.id, id));
+    await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${result.added} neue Kontakte aufgenommen`, detail: "Kontakte, die nach dem Start in die Zielgruppe kamen", refType: "emailCampaign", refId: id });
+    if (campaign.status !== "pausiert") void processEmailCampaigns(db, appUrl, { campaignId: id, limit: 25 }).catch((error) => console.error("[E-Mail-Kampagnen] Nachaufnahme:", error instanceof Error ? error.message : error));
+  }
+  return { added: result.added, paused: campaign.status === "pausiert" };
+}
+/** Nach einem Listen-Upload: laufende Kampagnen mit dieser Liste nehmen die neuen Kontakte sofort auf. */
+export async function enrollListIntoRunningCampaigns(db: Db, tenantId: number, listName: string, appUrl: string) {
+  const running = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.status, ["aktiv", "pausiert"])))).filter((row) => !row.isTemplate && audienceLists((row.audience ?? null) as Audience | null).includes(listName));
+  const out: Array<{ id: number; name: string; added: number }> = [];
+  for (const campaign of running) {
+    const rows = await audienceLeads(db, tenantId, listAudience([listName]));
+    const result = await enrollRecipients(db, tenantId, campaign, rows, { onlyNew: true });
+    if (!result.added) continue; out.push({ id: campaign.id, name: campaign.name, added: result.added });
+    await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${result.added} neue Kontakte aus „${listName}“ aufgenommen`, detail: "Automatisch nach dem Listen-Upload", refType: "emailCampaign", refId: campaign.id });
+    if (campaign.status === "aktiv") void processEmailCampaigns(db, appUrl, { campaignId: campaign.id, limit: 25 }).catch((error) => console.error("[E-Mail-Kampagnen] Upload:", error instanceof Error ? error.message : error));
+  }
+  return out;
 }
 /**
  * Hochgeladene Listen zu einer Kampagne hinzufügen. Die Zielgruppe wird um die Listen ergänzt; läuft die Kampagne schon
@@ -226,7 +272,7 @@ export async function addListsToEmailCampaign(db: Db, tenantId: number, input: {
   let enrolled = { added: 0, skipped: 0, repeated: 0, maxRuns: maxRunsOf(campaign) };
   if (running && !campaign.isTemplate) {
     const rows = await audienceLeads(db, tenantId, listAudience(added));
-    enrolled = await enrollRecipients(db, tenantId, { ...campaign, audience }, rows);
+    enrolled = await enrollRecipients(db, tenantId, { ...campaign, audience }, rows, { onlyNew: true });
     if (campaign.status === "beendet" && enrolled.added) await db.update(emailCampaigns).set({ status: "aktiv" }).where(eq(emailCampaigns.id, campaign.id));
     await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${added.length === 1 ? `Liste „${added[0]}“` : `${added.length} Listen`} hinzugefügt`, detail: `${enrolled.added} Empfänger aufgenommen${enrolled.skipped ? ` · ${enrolled.skipped} schon dabei oder gesperrt` : ""}`, refType: "emailCampaign", refId: campaign.id });
     if (enrolled.added && campaign.status !== "pausiert") void processEmailCampaigns(db, appUrl, { campaignId: campaign.id, limit: 25 }).catch((error) => console.error("[E-Mail-Kampagnen] Listen:", error instanceof Error ? error.message : error));

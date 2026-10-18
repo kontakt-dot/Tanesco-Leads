@@ -2226,5 +2226,10 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(resaved.enrolled).toBe(1);
     const detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.recipients).toHaveLength(6);
     expect(detail.recipients.filter((row) => row.lead?.listName === "E2E Liste B")).toHaveLength(3);
+    // Neue Kontakte in Liste A (Kampagne läuft) → gleich aufgenommen; Kontakt ohne E-Mail wird gezählt
+    const more = await owner.leadops.importColdList({ listName: "E2E Liste A", toPipeline: false, rows: [{ firstName: "Neu", lastName: "Liste", email: "neu@listen-e2e.example" }, { firstName: "Ohne", lastName: "Mail", phone: "+49 30 5550101" }] });
+    expect(more.campaigns).toEqual([{ id: saved.id, name: "Listen-Serie", added: 1 }]);
+    const after = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(after.recipients).toHaveLength(7); expect(after.audienceInfo).toMatchObject({ pending: 0, noEmail: 1 });
+    expect((await owner.leadops.syncEmailCampaignAudience({ id: saved.id })).added).toBe(0);
   }, 20000);
 });

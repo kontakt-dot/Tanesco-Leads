@@ -742,3 +742,9 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 ## v159 – Klarer Knopf „Zur Kampagne hinzufügen“ im Kampagnen-Editor
 - Listenauswahl im Editor: je Liste Knopf „Zur Kampagne hinzufügen“ bzw. „In der Kampagne“ + „Entfernen“, oben eine Zusammenfassung der gewählten Listen.
 - `saveEmailCampaign`: läuft die Kampagne schon (nicht Entwurf/Vorlage), werden Kontakte neu hinzugefügter Listen beim Speichern sofort aufgenommen (`addListsToEmailCampaign`); Rückgabe `enrolled`. Server, Demo und e2e-Test 44.
+
+## v160 – Kontakte, die nach dem Start in die Liste kommen; Karte modern zuklappen
+- `importColdList` → `enrollListIntoRunningCampaigns`: laufende (aktiv/pausiert) Kampagnen mit dieser Liste nehmen neue Kontakte sofort auf (nur Kontakte, die noch nie in der Kampagne waren). Rückgabe `campaigns`.
+- `audienceInfo` je Kampagne (Liste + Detail): Kontakte gesamt, ohne gültige E-Mail, gesperrt, noch nicht aufgenommen. `syncEmailCampaignAudience` = Knopf „Jetzt aufnehmen“.
+- `enrollRecipients(…, { onlyNew })`: beim Hinzufügen/Nachaufnehmen nie erneute Durchläufe auslösen.
+- Pipeline-Karte: Knopf „Zuklappen“ oben rechts (sticky, mobil unter der Stufenleiste), „Karte zuklappen“ unten, Esc, weiches Aufklappen; mit offener Karte scrollt die Seite statt der Spalte.

@@ -1708,5 +1708,13 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     // Laufende Kampagne im Editor: Liste dazu → beim Speichern sofort aufgenommen
     const resaved = await call("leadops.saveEmailCampaign", { id: draft.id, name: "Entwurf-Serie", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Messe Süd", listNames: ["Messe Süd", "Messe Nord"] }, tree: starter.tree, design: {} });
     expect(resaved.enrolled).toBe(3); expect((await call("leadops.getEmailCampaign", { id: draft.id })).recipients).toHaveLength(5);
+    // Neue Kontakte in eine Liste einer laufenden Kampagne → automatisch aufgenommen; „warten“-Zähler und „Jetzt aufnehmen“
+    const more = await call("leadops.importColdList", { listName: "Messe Nord", categoryId: null, toPipeline: false, rows: [...rows("Nord", 3), { firstName: "Neu", lastName: "Kontakt", company: "Neu GmbH", email: "neu@listen-test.de" }, { firstName: "Ohne", lastName: "Mail", company: "Ohne GmbH", phone: "+49 30 123456" }] });
+    expect(more.campaigns.map((row: any) => [row.name, row.added])).toEqual(expect.arrayContaining([["Entwurf-Serie", 1]]));
+    const listed = (await call("leadops.listEmailCampaigns")).find((row: any) => row.id === draft.id); expect(listed.audienceInfo).toMatchObject({ pending: 0, noEmail: 1 });
+    getStore().tables.emailCampaignRecipients.splice(0, getStore().tables.emailCampaignRecipients.length, ...getStore().tables.emailCampaignRecipients.filter((row) => !(row.campaignId === draft.id && row.email === "neu@listen-test.de")));
+    expect((await call("leadops.getEmailCampaign", { id: draft.id })).audienceInfo.pending).toBe(1);
+    expect((await call("leadops.syncEmailCampaignAudience", { id: draft.id })).added).toBe(1);
+    expect((await call("leadops.getEmailCampaign", { id: draft.id })).audienceInfo.pending).toBe(0);
   });
 });

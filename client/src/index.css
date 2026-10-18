@@ -2307,3 +2307,40 @@ html:not(.dark) .list-picker-summary strong{color:#0f172a!important}
 html:not(.dark) .list-picker-summary small{color:#64748b!important}
 html:not(.dark) .list-picker-tools .list-picker-add{color:#fff!important}
 html:not(.dark) .list-picker-in{background:#d1fae5!important;color:#065f46!important}
+
+/* Offene Karte: deutlicher „Zuklappen“-Knopf, der beim Scrollen oben mitläuft, unten noch einmal; weiches Aufklappen */
+.pipeline-card.is-open > .pipeline-card-grip{display:none}
+.pipeline-card-collapse-wrap{position:sticky;top:8px;height:0;z-index:4;display:flex;justify-content:flex-end;pointer-events:none}
+.pipeline-card-collapse{pointer-events:auto;transform:translate(-8px,8px);display:inline-flex;align-items:center;gap:4px;height:30px;padding:0 12px 0 9px;border-radius:999px;border:1px solid rgba(167,160,255,.4);background:rgba(36,31,72,.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#e6e3ff;font-size:12px;font-weight:700;box-shadow:0 6px 18px rgba(5,4,20,.45);cursor:pointer;transition:background .15s ease,transform .15s ease}
+.pipeline-card-collapse:hover{background:#6258df;border-color:#8278ff;color:#fff}
+.pipeline-card-collapse:active{transform:translate(-8px,8px) scale(.96)}
+.pipeline-card.is-open .pipeline-card-head{padding-right:118px}
+.pipeline-card-collapse-bottom{display:flex;align-items:center;justify-content:center;gap:6px;width:calc(100% - 24px);margin:4px 12px 12px;height:36px;border-radius:10px;border:1px dashed rgba(167,160,255,.35);background:transparent;color:#c4c0ff;font-size:12.5px;font-weight:700;cursor:pointer;transition:background .15s ease}
+.pipeline-card-collapse-bottom:hover{background:rgba(98,88,223,.18);border-style:solid}
+.pipeline-card.is-open .pipeline-card-body{animation:card-open .22s cubic-bezier(.23,1,.32,1)}
+@keyframes card-open{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.pipeline-card.is-open .pipeline-card-body{animation:none}}
+html:not(.dark) .pipeline-card-collapse{background:rgba(255,255,255,.95)!important;color:#3f37b5!important;border-color:#c7c2ff!important;box-shadow:0 6px 16px rgba(30,27,75,.14)!important}
+html:not(.dark) .pipeline-card-collapse:hover{background:#6258df!important;color:#fff!important}
+html:not(.dark) .pipeline-card-collapse-bottom{color:#4f46e5!important;border-color:#c7c2ff!important}
+
+/* Zielgruppe auf einen Blick: Kontakte, ohne E-Mail, gesperrt, noch nicht aufgenommen */
+.audience-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px}
+.audience-status span{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:rgba(148,163,184,.12);color:#cbd5e1;font-size:11px;font-weight:600;white-space:nowrap}
+.audience-status .is-warn{background:rgba(245,158,11,.14);color:#fcd34d}
+.audience-status .is-muted{background:transparent;color:#94a3b8;padding-left:0}
+.audience-status .is-pending{background:rgba(129,120,255,.18);color:#d4d0ff}
+.audience-sync{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border-radius:999px;border:0;background:linear-gradient(135deg,#8278ff,#6258df);color:#fff;font-size:11.5px;font-weight:700;cursor:pointer}
+.audience-sync:disabled{opacity:.6;cursor:default}
+.audience-status.is-compact span{font-size:10.5px}
+.audience-panel{display:grid;gap:4px;padding:14px 16px}
+.audience-panel strong{font-size:14px;color:#f1f5f9}
+html:not(.dark) .audience-status span{background:#f1f5f9!important;color:#334155!important}
+html:not(.dark) .audience-status .is-warn{background:#fef3c7!important;color:#92400e!important}
+html:not(.dark) .audience-status .is-muted{background:transparent!important;color:#64748b!important}
+html:not(.dark) .audience-status .is-pending{background:#ede9fe!important;color:#4c1d95!important}
+html:not(.dark) .audience-sync{color:#fff!important}
+html:not(.dark) .audience-panel strong{color:#0f172a!important}
+@media (max-width:900px){.pipeline-card-collapse-wrap{top:112px}}
+/* Mit offener Karte scrollt die Seite (nicht die Spalte) – sonst kann der Zuklappen-Knopf nicht oben mitlaufen */
+.pipeline-column:has(.pipeline-card.is-open) .pipeline-cards{overflow:visible!important;max-height:none!important}
