@@ -2239,6 +2239,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Liste C im Editor abwählen und speichern → Empfänger raus
     const resaved2 = await owner.leadops.saveEmailCampaign({ id: saved.id, name: "Listen-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "E2E Liste A", listNames: ["E2E Liste A"] }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown> });
     expect(resaved2).toMatchObject({ enrolled: 0, removed: 1 });
+    // Altfall: Empfänger aus einer Liste, die schon nicht mehr zur Zielgruppe gehört → per Name entfernbar
+    const leftoverImport = await owner.leadops.importColdList({ listName: "E2E Altliste", toPipeline: false, rows: [{ firstName: "Alt", lastName: "Eins", email: "alt1@listen-e2e.example" }] }); expect(leftoverImport.created).toBe(1);
+    await owner.leadops.addListsToEmailCampaign({ id: saved.id, listNames: ["E2E Altliste"] });
+    await owner.leadops.saveEmailCampaign({ id: saved.id, name: "Listen-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "E2E Liste A", listNames: ["E2E Liste A"] }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown> });
+    expect((await owner.leadops.getEmailCampaign({ id: saved.id })).recipients.some((row) => row.lead?.listName === "E2E Altliste")).toBe(false);
     // einzelnen Empfänger entfernen
     const one = (await owner.leadops.getEmailCampaign({ id: saved.id })).recipients[0];
     expect((await owner.leadops.removeEmailRecipients({ campaignId: saved.id, recipientIds: [one.id] })).removed).toBe(1);
