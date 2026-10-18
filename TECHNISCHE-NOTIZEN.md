@@ -777,3 +777,4 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Heiß/Warm/Kalt-Etiketten an Karten, „Einschätzung“ auf der Lead-Seite und Filter „Heiß“ entfernt (Punkte zählten vorhandene Kontaktdaten → frische Kontakte waren sofort „Warm“). Berechnung bleibt intern bestehen.
 - Spruch oben rechts neben „Vertriebspipeline“ (nur Ansicht Pipeline), 40 neue, frechere Sprüche; wechselt alle 5 Min. oder per Klick.
 - Karte aufklappen → `scrollIntoView` (mittig, bei Überhöhe Oberkante unter der Kopfleiste), `scroll-margin` für Kopfleiste/mobile Leisten.
+- Spruch mittig in der Kopfzeile (Raster: Titel links, Spruch Mitte).

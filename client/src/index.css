@@ -2462,3 +2462,8 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .pipeline-head-quote-next{flex:0 0 auto;color:#8f93af;opacity:.7}
 .pipeline-head-quote:hover .pipeline-head-quote-next{opacity:1;color:#d4d0ff}
 @media(max-width:760px){.pipeline-head-quote{max-width:100%;margin-left:0;margin-top:6px}}
+/* Spruch mittig über der Seite (Titel links, Spruch in der Mitte) */
+@media(min-width:761px){
+  .pipeline-page .page-intro:has(.pipeline-head-quote){display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center}
+  .pipeline-page .page-intro .pipeline-head-quote{grid-column:2;justify-self:center;margin:0;max-width:min(620px,52vw)}
+}
