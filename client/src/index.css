@@ -2386,14 +2386,9 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
   .pipeline-page .pipeline-toolbar button{height:32px;font-size:12.5px}
   .pipeline-page .pipeline-board{margin-top:8px!important}
 }
-/* ---------- Ab 1100 px: immer 4 breite Stufen nebeneinander, weitere Stufen darunter – kein Seitwärts-Scrollen ---------- */
-@media(min-width:1100px){
-  .pipeline-page .pipeline-board{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));grid-auto-flow:row dense;align-items:start;gap:10px;overflow:visible}
-  .pipeline-page .pipeline-column{min-width:0!important;flex:none!important;max-height:max(420px,calc(100vh - var(--board-top,200px) - 14px))}
-  .pipeline-page .pipeline-board .pipeline-column:has(.pipeline-card.is-open){grid-column:span 2;max-height:none}
-  .pipeline-page .pipeline-column.is-folded{min-width:0!important;padding:4px}
-  .pipeline-page .pipeline-fold{flex-direction:row;justify-content:flex-start;min-height:0;height:38px;padding:0 10px;gap:10px}
-  .pipeline-page .pipeline-fold-label{writing-mode:horizontal-tb;transform:none;font-size:13px}
+/* Spalten wie gehabt in einer Reihe von links nach rechts – nur etwas breiter (260 px statt ~195 px) */
+@media(min-width:761px){
+  .pipeline-page .pipeline-board .pipeline-column:not(.is-folded):not(:has(.pipeline-card.is-open)){flex:1 0 260px;min-width:260px}
 }
 /* Vertriebler an der Karte: nur Kürzel + Auswahl (Name steht nicht doppelt) */
 .owner-dot-solo{margin-right:0;flex:0 0 auto;width:22px;height:22px}

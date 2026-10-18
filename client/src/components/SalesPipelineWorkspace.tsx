@@ -98,7 +98,7 @@ export default function SalesPipelineWorkspace() {
     verlauf: { label: "Upload-Verlauf", short: "Verlauf", icon: History, hint: "Was wurde wann hochgeladen – und wann wurde etwas aus den Listen gelöscht, von wem und warum." },
     einstellungen: { label: "Einstellungen", icon: Settings2, hint: "Stufen, Team & Ziele, Automatik und die Facebook-Verbindung." },
   };
-  const tabs: View[] = source === "kaltakquise" ? ["board", "kontakte", "termine", "stats", "kaltakquise", "verlauf", "einstellungen"] : ["board", "kontakte", "termine", "stats", "einstellungen"];
+  const tabs: View[] = source === "kaltakquise" ? ["board", "termine", "stats", "kontakte", "kaltakquise", "verlauf", "einstellungen"] : ["board", "termine", "stats", "kontakte", "einstellungen"];
   return <div className={`pipeline-page is-view-${view}`}>
     <header className="page-intro compact"><div><span className="eyebrow">VERTRIEB</span><h1>Vertriebspipeline</h1><p>{TAB_INFO[view]?.hint ?? "Von der ersten Anfrage bis zum Kunden."}</p></div></header>
     <div className="pipeline-menu mb-3 flex flex-wrap items-center justify-between gap-2"><div className="pipeline-menu-sources flex flex-wrap items-center gap-2"><div className="source-cards" role="tablist" aria-label="Pipeline wählen">{([

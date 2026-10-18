@@ -767,3 +767,7 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Kontaktliste heller Modus: Aktions-Knöpfe (`.email-leads-push`) Markenrot mit weißer Schrift (war schwarz auf schwarz) – in `theme-light.manual.css`.
 - Karten verteilen: Bereich „Rückgängig“ – „Alle Zuteilungen aufheben (N)“ mit Nachfrage im Fenster; `assignPipelineOwner` nimmt bis 5000 Karten.
 - `.app-confirm-backdrop{pointer-events:auto}`: Bestätigen-Fenster bleibt klickbar, auch über einem offenen Dialog. Entfernen-Bestätigungen sagen „Ja, entfernen“.
+
+## v165 – Pipeline-Spalten wieder in einer Reihe
+- 4-Spalten-Raster zurückgenommen: Spalten wieder nebeneinander von links nach rechts, je mind. 260 px (vorher ~195 px, im Raster ~330 px). Kompakter Kopf, Name einmal, „Karte zuklappen“ nur unten bleiben.
+- Reiter-Reihenfolge: Pipeline, Termine & Aufgaben, Statistik, Kontakte, Listen, Upload-Verlauf, Einstellungen.
