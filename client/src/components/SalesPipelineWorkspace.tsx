@@ -175,9 +175,9 @@ function PipelineBoard({ stages, stageDefs, staleDays, staleCount, hotCount, onM
   const [action, setAction] = useState<{ lead: CardLead; mode: ActionMode; channel?: MessageChannel } | null>(null);
   const [drag, setDrag] = useState<{ publicId: string; name: string; from: PipelineStage; x: number; y: number; startX: number; startY: number; active: boolean; over: PipelineStage | null } | null>(null);
   const [quote, setQuote] = useState(() => randomQuote());
-  // Kompakte Ansicht (Standard): kleinere Karten, kein Spruch, Spalten so hoch wie der Bildschirm – mehr Karten auf einen Blick; alle Funktionen bleiben
-  const [compact, setCompact] = useState(() => { try { return localStorage.getItem("tanesco-pipeline-compact") !== "0"; } catch { return true; } });
-  const toggleCompact = () => setCompact((value) => { const next = !value; try { localStorage.setItem("tanesco-pipeline-compact", next ? "1" : "0"); } catch { /* ohne Speicher */ } return next; });
+  // Kompakte Ansicht (wahlweise, Standard sind die großen Karten): kleinere Karten, kein Spruch, Spalten so hoch wie der Bildschirm; alle Funktionen bleiben
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem("tanesco-pipeline-compact-v2") === "1"; } catch { return false; } });
+  const toggleCompact = () => setCompact((value) => { const next = !value; try { localStorage.setItem("tanesco-pipeline-compact-v2", next ? "1" : "0"); } catch { /* ohne Speicher */ } return next; });
   useEffect(() => { const timer = window.setInterval(() => setQuote((current) => randomQuote(current.text)), 5 * 60_000); return () => window.clearInterval(timer); }, []);
   const now = useMemo(() => new Date(), [stages]); // eslint-disable-line react-hooks/exhaustive-deps
   const needle = search.trim().toLowerCase();
