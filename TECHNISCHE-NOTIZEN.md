@@ -754,3 +754,7 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - `removeEmailRecipients`: einzelne Empfänger entfernen (Knopf „Entfernen“ je Zeile).
 - Kampagnenseite: Bereich „Listen in dieser Kampagne“ mit „+ Liste hinzufügen“ und „Entfernen“ je Liste.
 - Sicherheit: Zielgruppe „Liste“ ohne Liste = leer (vorher: alle Kontakte!). Server + Demo + Tests.
+
+## v163 – Einzelne Kontakte in eine Kampagne
+- `addLeadsToEmailCampaign` (Server + Demo): ausgewählte Kontakte in eine Kampagne aufnehmen (nur neue; ohne E-Mail/gesperrt werden gezählt und übersprungen). Laufend → Versand startet; Entwurf → warten bis Start.
+- Kontakte-Reiter (E-Mail-Kampagnen und Pipeline-Kontakte): in der Auswahl-Leiste Kampagne wählen + „Zur Kampagne hinzufügen“.

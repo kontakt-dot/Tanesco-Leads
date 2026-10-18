@@ -58,6 +58,17 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
     toast.success(summe ? `${summe} ${summe === 1 ? "Kontakt" : "Kontakte"} in der Pipeline „${result.targetName}“, Stufe „${stageLabel(result.stage, stageDefs)}“ (${teile.join(", ")})${result.already ? ` – ${result.already} standen dort schon so` : ""}.` : `Diese Kontakte stehen schon in der Pipeline „${result.targetName}“ in dieser Stufe.`);
     setPicked([]); refreshAll();
   }, onError: (error) => toast.error(error.message) });
+  // Ausgewählte Kontakte direkt in eine E-Mail-Kampagne nehmen
+  const [addTo, setAddTo] = useState<number | null>(null);
+  const campaignList = trpc.leadops.listEmailCampaigns.useQuery(undefined, { retry: false });
+  const campaignChoices = (campaignList.data ?? []).filter((row) => !row.isTemplate);
+  const addToCampaign = trpc.leadops.addLeadsToEmailCampaign.useMutation({ onSuccess: (result) => {
+    const name = campaignChoices.find((row) => row.id === addTo)?.name ?? "die Kampagne";
+    const extra = [result.already ? `${result.already} waren schon drin` : "", result.noEmail ? `${result.noEmail} ohne E-Mail-Adresse` : "", result.blocked ? `${result.blocked} gesperrt` : ""].filter(Boolean).join(", ");
+    if (result.added) toast.success(`${result.added} ${result.added === 1 ? "Kontakt" : "Kontakte"} zu „${name}“ hinzugefügt${result.status === "entwurf" ? " – sie bekommen die Serie, sobald du die Kampagne startest" : result.status === "pausiert" ? " – die Kampagne ist pausiert, es geht los, sobald du sie fortsetzt" : " – die erste E-Mail geht im Versandfenster raus"}${extra ? ` (${extra})` : ""}.`, { duration: 9000 });
+    else toast.info(`Niemand neu hinzugefügt${extra ? `: ${extra}` : ""}.`);
+    setPicked([]); refreshAll(); utils.leadops.listEmailCampaigns.invalidate(); utils.leadops.getEmailCampaign.invalidate();
+  }, onError: (error) => toast.error(error.message) });
   const removeLeads = trpc.leadops.deleteEmailLeads.useMutation({ onSuccess: (result) => {
     toast.success(`${result.deleted} ${result.deleted === 1 ? "Kontakt" : "Kontakte"} gelöscht${result.keptCustomers ? `, ${result.keptCustomers} Kunden behalten` : ""}.`);
     setPicked([]); refreshAll();
@@ -110,6 +121,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
           <p className="text-xs text-slate-500">{data.data?.total} {data.data?.total === 1 ? "Kontakt" : "Kontakte"}{(data.data?.total ?? 0) > items.length ? ` · die ersten ${items.length} werden gezeigt` : ""}{!pipeline && offen.length ? ` · ${offen.length} noch nicht in der Pipeline` : ""}</p>
           {picked.length > 0 && <div className="email-leads-actions">
             <strong>{picked.length} ausgewählt</strong>
+            <span className="email-leads-campaign"><select className="lead-action-select" aria-label="E-Mail-Kampagne wählen" value={addTo ?? ""} onChange={(event) => setAddTo(event.target.value ? Number(event.target.value) : null)}><option value="">E-Mail-Kampagne wählen …</option>{campaignChoices.map((row) => <option key={row.id} value={row.id}>{row.name}{row.status === "entwurf" ? " (Entwurf)" : row.status === "pausiert" ? " (pausiert)" : ""}</option>)}</select><button type="button" className="email-leads-push" disabled={!addTo || addToCampaign.isPending} title={addTo ? "Die ausgewählten Kontakte bekommen die Serie dieser Kampagne" : "Erst eine Kampagne wählen"} onClick={() => { if (addTo) addToCampaign.mutate({ id: addTo, leadIds: picked }); }}>{addToCampaign.isPending ? "Wird hinzugefügt …" : "Zur Kampagne hinzufügen"}</button></span>
             {pipeline ? <>
               <select className="lead-action-select" aria-label="Ausgewählte in Stufe verschieben" value="" disabled={bulkMove.isPending} onChange={(event) => { if (event.target.value) bulkMove.mutate({ publicIds: pickedRows.map((lead) => lead.publicId), stage: event.target.value }); }}><option value="">Stufe setzen …</option>{stageDefs.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select>
               <select className="lead-action-select" aria-label="Ausgewählte zuteilen an" value="" disabled={bulkAssign.isPending} onChange={(event) => { if (event.target.value) bulkAssign.mutate({ publicIds: pickedRows.map((lead) => lead.publicId), ownerUserId: event.target.value === "ohne" ? null : Number(event.target.value) }); }}><option value="">Zuteilen an …</option>{(owners.data ?? []).map((item) => <option key={item.userId} value={item.userId}>{item.name.split(" ")[0]}</option>)}<option value="ohne">Zuteilung entfernen</option></select>

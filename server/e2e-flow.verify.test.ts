@@ -2270,5 +2270,13 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.recipients.map((row) => row.email)).toEqual([contacts[3].email]); expect(detail.audienceInfo).toMatchObject({ total: 1, pending: 0 });
     expect((await owner.leadops.listColdLists()).find((list) => list.listName === "Lösch-Test")?.contacts).toBe(1);
     expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.flatMap((stage) => stage.leads).some((lead) => String(lead.email ?? "").includes("loesch-e2e"))).toBe(false);
+    // Einzelne Kontakte aus einer Liste in eine laufende Kampagne – ohne die ganze Liste
+    const single = await owner.leadops.importColdList({ listName: "Einzel-Liste", toPipeline: false, rows: [{ firstName: "Eins", lastName: "Einzel", email: "eins@einzel-e2e.example" }, { firstName: "Zwei", lastName: "Einzel", email: "zwei@einzel-e2e.example" }, { firstName: "Ohne", lastName: "Einzel", phone: "+49 30 5551234" }] }); expect(single.created).toBe(3);
+    const singles = (await owner.leadops.emailLeads({ listName: "Einzel-Liste", withoutEmail: true })).items; expect(singles).toHaveLength(3);
+    const eins = singles.find((row) => row.email === "eins@einzel-e2e.example")!; const ohne = singles.find((row) => !row.email)!;
+    expect(await owner.leadops.addLeadsToEmailCampaign({ id: saved.id, leadIds: [eins.id, ohne.id] })).toMatchObject({ added: 1, noEmail: 1, already: 0, status: "aktiv" });
+    expect((await owner.leadops.addLeadsToEmailCampaign({ id: saved.id, leadIds: [eins.id] })).already).toBe(1);
+    const withSingle = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(withSingle.recipients.map((row) => row.email).sort()).toEqual([contacts[3].email, "eins@einzel-e2e.example"].sort());
+    expect(withSingle.audienceInfo).toMatchObject({ pending: 0 }); // „Zwei“ wird nicht automatisch mitgenommen – nur die Liste der Kampagne zählt
   }, 20000);
 });

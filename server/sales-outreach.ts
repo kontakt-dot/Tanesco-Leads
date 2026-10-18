@@ -266,6 +266,26 @@ export async function removeListsFromEmailCampaign(db: Db, tenantId: number, inp
   if (removed || !input.keepAudience) await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${gone.length === 1 ? `Liste „${gone[0]}“` : `${gone.length} Listen`} entfernt`, detail: `${removed} Empfänger herausgenommen`, refType: "emailCampaign", refId: campaign.id });
   return { removed, lists: remaining };
 }
+/**
+ * Einzelne Kontakte (z. B. aus einer Liste) in eine Kampagne nehmen – unabhängig von der Zielgruppe. Läuft die Kampagne,
+ * bekommen sie die Serie sofort; im Entwurf warten sie und starten mit der Kampagne. Ohne E-Mail, gesperrt oder schon drin → übersprungen.
+ */
+export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: { id: number; leadIds: number[] }, appUrl: string) {
+  const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
+  if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst eine Kampagne daraus anlegen.");
+  const ids = Array.from(new Set(input.leadIds)).slice(0, 5000); if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
+  const rows = await db.select({ id: leads.id, firstName: leads.firstName, lastName: leads.lastName, email: leads.email, company: leads.company, city: leads.city, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
+  const blocked = await suppressedSet(db, tenantId);
+  const noEmail = rows.filter((row) => !validEmail(row.email)).length; const suppressed = rows.filter((row) => validEmail(row.email) && blocked.has(row.email.toLowerCase())).length;
+  const usable = rows.filter((row) => validEmail(row.email) && !blocked.has(row.email!.toLowerCase()));
+  const result = await enrollRecipients(db, tenantId, campaign, usable, { onlyNew: true });
+  if (result.added) {
+    if (campaign.status === "beendet") await db.update(emailCampaigns).set({ status: "aktiv" }).where(eq(emailCampaigns.id, campaign.id));
+    await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${result.added} Kontakt${result.added === 1 ? "" : "e"} einzeln hinzugefügt`, refType: "emailCampaign", refId: campaign.id });
+    if (campaign.status === "aktiv" || campaign.status === "beendet") void processEmailCampaigns(db, appUrl, { campaignId: campaign.id, limit: 25 }).catch((error) => console.error("[E-Mail-Kampagnen] Einzeln:", error instanceof Error ? error.message : error));
+  }
+  return { added: result.added, already: result.skipped, noEmail, blocked: suppressed, status: campaign.status };
+}
 /** Laufende Kampagne: alle Kontakte der Zielgruppe aufnehmen, die noch nie drin waren (z. B. nach dem Start in die Liste gekommen). */
 export async function syncEmailCampaignAudience(db: Db, tenantId: number, id: number, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");

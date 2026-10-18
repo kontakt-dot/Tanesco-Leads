@@ -1727,5 +1727,11 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const empty = await call("leadops.getEmailCampaign", { id: saved.id }); expect(empty.recipients).toHaveLength(0); expect(empty.audienceInfo).toMatchObject({ total: 0, pending: 0 });
     expect((await call("leadops.syncEmailCampaignAudience", { id: saved.id })).added).toBe(0);
     expect((await call("leadops.previewEmailAudience", { source: "liste", listName: null, listNames: [] })).count).toBe(0);
+    // Einzelne Kontakte aus der Kontaktliste in eine Kampagne (auch Entwurf)
+    const westLeads = (await call("leadops.emailLeads", { listName: "Messe West" })).items; expect(westLeads.length).toBeGreaterThanOrEqual(2);
+    const one = await call("leadops.addLeadsToEmailCampaign", { id: saved.id, leadIds: [westLeads[0].id] }); expect(one).toMatchObject({ added: 1, already: 0 });
+    expect((await call("leadops.getEmailCampaign", { id: saved.id })).recipients.map((row: any) => row.email)).toEqual([westLeads[0].email]);
+    const draft2 = await call("leadops.saveEmailCampaign", { id: null, name: "Einzel-Entwurf", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: null, listNames: [] }, tree: starter.tree, design: {} });
+    expect(await call("leadops.addLeadsToEmailCampaign", { id: draft2.id, leadIds: [westLeads[1].id] })).toMatchObject({ added: 1, status: "entwurf" });
   });
 });

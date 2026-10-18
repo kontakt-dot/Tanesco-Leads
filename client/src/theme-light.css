@@ -1313,6 +1313,7 @@ html:not(.dark) .campaign-lists-remove, html:not(.dark) .recipient-remove { colo
 html:not(.dark) .campaign-lists-remove:hover, html:not(.dark) .recipient-remove:hover { background: #ffffff !important; }
 html:not(.dark) html:not(.dark) .campaign-lists-count { color: #111318 !important; }
 html:not(.dark) .campaign-lists-leftover p { color: #8a742a !important; }
+html:not(.dark) .email-leads-campaign { border-right: 1px solid #d9dfe7 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
