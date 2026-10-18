@@ -2467,3 +2467,18 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
   .pipeline-page .page-intro:has(.pipeline-head-quote){display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center}
   .pipeline-page .page-intro .pipeline-head-quote{grid-column:2;justify-self:center;margin:0;max-width:min(620px,52vw)}
 }
+
+/* Notiz bearbeiten */
+.pipeline-note-tools{display:inline-flex;gap:2px;margin-left:auto}
+.pipeline-note-list small{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pipeline-note-tools button{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;border:0;background:transparent;color:#9ea3c0;cursor:pointer}
+.pipeline-note-tools button:hover{background:rgba(255,255,255,.08);color:#fff}
+.pipeline-note-list p{cursor:text}
+.pipeline-note-edit{display:grid;gap:6px}
+.pipeline-note-edit textarea{width:100%;resize:vertical;border-radius:9px;border:1px solid rgba(155,147,255,.5);background:#0f1117;color:#f1effe;font-size:12.5px;line-height:1.45;padding:7px 9px}
+.pipeline-note-edit-actions{display:flex;gap:6px}
+.pipeline-note-edit-actions button{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#d6d3f2;font-size:12px;font-weight:600;cursor:pointer}
+.pipeline-note-edit-actions button.is-save{background:#7c6cff;border-color:#7c6cff;color:#fff}
+.pipeline-note-edit-actions button:disabled{opacity:.6}
+/* Leuchten/Rahmen der Karten nicht abschneiden: Kartenbereich bekommt etwas Luft für Rand und Schatten */
+.pipeline-page .pipeline-cards{padding:4px 5px 8px;margin:-4px -5px -8px}

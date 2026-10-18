@@ -1165,3 +1165,8 @@ html:not(.dark) .pipeline-page .pipeline-card-collapse-bottom { color: color-mix
 html:not(.dark) .pipeline-head-quote { background: linear-gradient(90deg, #fff1f2, #ffffff) !important; border-color: #fecdd3 !important; color: #0f172a !important; }
 html:not(.dark) .pipeline-head-quote-mark { color: #bc001d !important; }
 html:not(.dark) .pipeline-head-quote-next { color: #94a3b8 !important; }
+html:not(.dark) .pipeline-note-edit textarea { background: #ffffff !important; color: #0f172a !important; border-color: #c7c2ff !important; }
+html:not(.dark) .pipeline-note-edit-actions button { color: #334155 !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .pipeline-note-edit-actions button.is-save { background: #bc001d !important; border-color: #bc001d !important; color: #ffffff !important; }
+html:not(.dark) .pipeline-note-tools button { color: #64748b !important; }
+html:not(.dark) .pipeline-note-tools button:hover { background: #f1f5f9 !important; color: #0f172a !important; }

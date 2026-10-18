@@ -778,3 +778,11 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Spruch oben rechts neben „Vertriebspipeline“ (nur Ansicht Pipeline), 40 neue, frechere Sprüche; wechselt alle 5 Min. oder per Klick.
 - Karte aufklappen → `scrollIntoView` (mittig, bei Überhöhe Oberkante unter der Kopfleiste), `scroll-margin` für Kopfleiste/mobile Leisten.
 - Spruch mittig in der Kopfzeile (Raster: Titel links, Spruch Mitte).
+- Herkunfts-Etikett (Kaltakquise/E-Mail/Facebook/Instagram) an den Pipeline-Karten entfernt – die Pipeline ist oben gewählt.
+
+## v168 – Absturz behoben, Notizen bearbeiten, Ziehen ohne Aufklappen
+- Absturz (React #300) beim Öffnen eines Leads aus der Pipeline: Spruch-Hooks standen hinter `if (leadWindow) return` → vor das frühe return verschoben.
+- Notizen bearbeiten: `updatePipelineNote` (Server `meta-ads.updateNote`, Demo); Stift-Knopf oder Doppelklick, Strg+Enter speichert, Esc bricht ab.
+- Ziehen: Klick direkt nach dem Loslassen (≤ 450 ms) öffnet keine Karte/Lead-Seite mehr (`lastDragEndAt`).
+- Leuchten/Rahmen der Karten nicht mehr abgeschnitten (`.pipeline-cards` mit Innenabstand).
+- Sprüche: 40 umgedrehte Sprichwörter mit Vertriebs-Pointe.

@@ -1734,4 +1734,13 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const draft2 = await call("leadops.saveEmailCampaign", { id: null, name: "Einzel-Entwurf", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: null, listNames: [] }, tree: starter.tree, design: {} });
     expect(await call("leadops.addLeadsToEmailCampaign", { id: draft2.id, leadIds: [westLeads[1].id] })).toMatchObject({ added: 1, status: "entwurf" });
   });
+
+  it("Pipeline-Notiz bearbeiten: Text ändern, leer ablehnen", async () => {
+    const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const lead = overview.stages.flatMap((stage: any) => stage.leads)[0];
+    await call("leadops.addPipelineNote", { publicId: lead.publicId, text: "Erst Tippfeler", source: "text" });
+    const note = (await call("leadops.listPipelineNotes", { publicId: lead.publicId })).find((row: any) => row.text === "Erst Tippfeler");
+    await call("leadops.updatePipelineNote", { id: note.id, text: "Ohne Tippfehler" });
+    expect((await call("leadops.listPipelineNotes", { publicId: lead.publicId })).some((row: any) => row.id === note.id && row.text === "Ohne Tippfehler")).toBe(true);
+    await expect(call("leadops.updatePipelineNote", { id: note.id, text: "   " })).rejects.toThrow(/leer/);
+  });
 });

@@ -246,6 +246,13 @@ export async function addNote(db: Db, tenantId: number, input: { publicId: strin
   const inserted = await db.insert(pipelineNotes).values({ tenantId, leadId: lead.id, authorUserId: input.authorUserId, text: text.slice(0, 4000), source: input.source });
   return { id: Number(inserted[0]?.insertId) || 0 };
 }
+/** Notiz nachträglich ändern (Tippfehler, Ergänzung) – nur der Text, Zeitpunkt und Autor bleiben. */
+export async function updateNote(db: Db, tenantId: number, id: number, text: string) {
+  const value = text.trim(); if (!value) throw new Error("Die Notiz darf nicht leer sein – zum Entfernen bitte löschen.");
+  const row = (await db.select({ id: pipelineNotes.id }).from(pipelineNotes).where(and(eq(pipelineNotes.id, id), eq(pipelineNotes.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Notiz nicht gefunden.");
+  await db.update(pipelineNotes).set({ text: value.slice(0, 5000) }).where(and(eq(pipelineNotes.id, id), eq(pipelineNotes.tenantId, tenantId)));
+  return { success: true as const };
+}
 export async function deleteNote(db: Db, tenantId: number, id: number) { await db.delete(pipelineNotes).where(and(eq(pipelineNotes.id, id), eq(pipelineNotes.tenantId, tenantId))); return { success: true as const }; }
 export async function noteCounts(db: Db, tenantId: number, leadIds: number[]) { if (!leadIds.length) return new Map<number, { count: number; latest: string | null }>(); const rows = await db.select({ leadId: pipelineNotes.leadId, text: pipelineNotes.text, createdAt: pipelineNotes.createdAt }).from(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, leadIds))).orderBy(desc(pipelineNotes.createdAt)); const map = new Map<number, { count: number; latest: string | null }>(); for (const row of rows) { const entry = map.get(row.leadId) ?? { count: 0, latest: null }; entry.count += 1; if (!entry.latest) entry.latest = row.text.slice(0, 80); map.set(row.leadId, entry); } return map; }
 
