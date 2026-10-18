@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTerritoryDrafts, describePlan, detectHeaderRow, detectTerritoryLayout, matchCategory, parseTerritoryPlan, territoryPlanPrompt, trimTable } from "../shared/territory-import";
+import { buildTerritoryDrafts, fixExcelPlz, describePlan, detectHeaderRow, detectTerritoryLayout, matchCategory, parseTerritoryPlan, territoryPlanPrompt, trimTable } from "../shared/territory-import";
 import { analyzeTerritoryFile } from "./territories";
 
 const categories = [{ id: 1, name: "Photovoltaik" }, { id: 2, name: "Wärmepumpe" }, { id: 3, name: "Fenster & Türen" }];
@@ -45,6 +45,16 @@ describe("KI-Erkennung für Gebietslisten: Regeln", () => {
     const big = trimTable(Array.from({ length: 900 }, () => Array.from({ length: 50 }, () => "x".repeat(200))));
     expect(big).toHaveLength(400); expect(big[0]).toHaveLength(30); expect(big[0][0]).toHaveLength(80);
     const prompt = territoryPlanPrompt(zeilen, "gebiete.xlsx", categories); expect(prompt).toContain("Photovoltaik, Wärmepumpe, Fenster & Türen"); expect(prompt).toContain("0: Kunde | Kategorie | PLZ"); expect(prompt).toContain("gebiete.xlsx");
+  });
+});
+
+describe("Excel-PLZ ohne führende Null", () => {
+  it("macht aus 1067 / 1067.0 wieder 01067 – in PLZ-Spalten, Kunden-Spalten und Ein-Kunde-Listen", () => {
+    expect(fixExcelPlz("1067")).toBe("01067"); expect(fixExcelPlz("1067.0")).toBe("01067"); expect(fixExcelPlz("60311")).toBe("60311"); expect(fixExcelPlz("60")).toBe("60"); expect(fixExcelPlz("Hamburg")).toBe("Hamburg");
+    const rows = [["Kunde", "PLZ"], ["Ost GmbH", "1067"], ["Ost GmbH", "4109.0"]];
+    expect(buildTerritoryDrafts(rows, detectTerritoryLayout(rows))[0].lines).toEqual(["01067", "04109"]);
+    expect(buildTerritoryDrafts([["Ost"], ["1067"]], { layout: "kunden-als-spalten", headerRow: 0, columns: [{ index: 0, role: "plz" }] })[0].lines).toEqual(["01067"]);
+    expect(buildTerritoryDrafts([["1067"], ["60311"]], { layout: "ein-kunde", headerRow: null, columns: [{ index: 0, role: "plz" }] }, { fileName: "x.xlsx" })[0].lines).toEqual(["01067", "60311"]);
   });
 });
 

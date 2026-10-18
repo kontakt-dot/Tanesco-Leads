@@ -19,6 +19,8 @@ const HEADER_ROLES: Array<[RegExp, ColumnRole]> = [
   [/notiz|bemerkung|hinweis|kommentar|info/i, "notiz"],
 ];
 const cell = (value: unknown) => String(value ?? "").replace(/ /g, " ").trim();
+/** PLZ aus Excel: als Zahl gespeichert verliert „01067“ die führende Null („1067“, „1067.0“) – in einer PLZ-Spalte wieder auf 5 Stellen bringen. */
+export const fixExcelPlz = (value: string) => { const text = value.replace(/^(\d+)\.0+$/, "$1"); return /^\d{4}$/.test(text) ? `0${text}` : text; };
 const isPlzLike = (value: string) => /^(D-?)?\d{5}$/.test(value) || /^\d{1,5}\s*(-|bis)\s*\d{1,5}$/i.test(value) || /^\d{1,4}$/.test(value) || /^\d{5}(\s*[,;]\s*\d{5})+$/.test(value);
 const isRadiusLike = (value: string) => /^\d{1,3}\s*(km|kilometer)?$/i.test(value) && Number(value.replace(/\D/g, "")) >= 1 && Number(value.replace(/\D/g, "")) <= 500;
 const looksLikeText = (value: string) => /[A-Za-zÄÖÜäöüß]{2,}/.test(value);
@@ -96,14 +98,14 @@ export function buildTerritoryDrafts(rows: string[][], plan: TerritoryPlan, opti
   const drafts = new Map<string, TerritoryDraft>();
   const draftFor = (name: string, categoryName: string | null) => { const key = `${name.toLowerCase()}|${(categoryName ?? "").toLowerCase()}`; let draft = drafts.get(key); if (!draft) { const category = matchCategory(categoryName, categories); draft = { customerName: name, categoryName: category?.name ?? categoryName, categoryId: category?.id ?? options.defaultCategoryId ?? null, lines: [], rowCount: 0, warnings: [] }; if (categoryName && !category) draft.warnings.push(`Kategorie „${categoryName}“ gibt es noch nicht – bitte zuordnen.`); drafts.set(key, draft); } return draft; };
   const linesOfRow = (row: string[]) => {
-    const lines: string[] = []; const plzCells = roleOf("plz").map((index) => cell(row[index])).filter((value) => /\d/.test(value)); const ortCells = roleOf("ort").map((index) => cell(row[index])).filter(Boolean); const radiusCells = roleOf("umkreis").map((index) => cell(row[index])).filter(Boolean);
+    const lines: string[] = []; const plzCells = roleOf("plz").map((index) => fixExcelPlz(cell(row[index]))).filter((value) => /\d/.test(value)); const ortCells = roleOf("ort").map((index) => cell(row[index])).filter(Boolean); const radiusCells = roleOf("umkreis").map((index) => cell(row[index])).filter(Boolean);
     const km = radiusCells.map((value) => Number(value.replace(/\D/g, ""))).find((value) => value >= 1 && value <= 500) ?? null;
     if (km && (plzCells.length || ortCells.length)) { for (const center of [...plzCells, ...ortCells]) lines.push(`${center} ${km} km Umkreis`); return lines; }
     lines.push(...plzCells); lines.push(...ortCells); return lines;
   };
   if (plan.layout === "kunden-als-spalten") {
     const header = plan.headerRow === null ? [] : rows[plan.headerRow].map(cell);
-    for (const column of plan.columns.filter((item) => item.role === "plz")) { const draft = draftFor(header[column.index] || `Spalte ${column.index + 1}`, null); for (const row of data) { const value = cell(row[column.index]); if (value) { draft.lines.push(value); draft.rowCount += 1; } } }
+    for (const column of plan.columns.filter((item) => item.role === "plz")) { const draft = draftFor(header[column.index] || `Spalte ${column.index + 1}`, null); for (const row of data) { const value = fixExcelPlz(cell(row[column.index])); if (value) { draft.lines.push(value); draft.rowCount += 1; } } }
   } else if (plan.layout === "zeilen") {
     const customerColumns = roleOf("kunde"); const categoryColumns = roleOf("kategorie");
     let lastName = ""; let lastCategory: string | null = null;
@@ -116,7 +118,7 @@ export function buildTerritoryDrafts(rows: string[][], plan: TerritoryPlan, opti
     const name = plan.singleCustomerName?.trim() || fileCustomer; const categoryColumns = roleOf("kategorie");
     const categoryName = data.map((row) => categoryColumns.map((index) => cell(row[index])).find(Boolean)).find(Boolean) ?? null;
     const draft = draftFor(name, categoryName); const plzColumns = roleOf("plz");
-    for (const row of data) { const lines = plzColumns.length || roleOf("ort").length ? linesOfRow(row) : row.map(cell).filter((value) => isPlzLike(value) || /\d{1,3}\s*km/i.test(value)); if (lines.length) { draft.lines.push(...lines); draft.rowCount += 1; } }
+    for (const row of data) { const lines = plzColumns.length || roleOf("ort").length ? linesOfRow(row) : row.map((value) => fixExcelPlz(cell(value))).filter((value) => isPlzLike(value) || /\d{1,3}\s*km/i.test(value)); if (lines.length) { draft.lines.push(...lines); draft.rowCount += 1; } }
   }
   for (const draft of Array.from(drafts.values())) { draft.customerName = draft.customerName.replace(/\s+/g, " ").slice(0, 160); if (!draft.lines.length) draft.warnings.push("Keine PLZ, Orte oder Umkreise gefunden."); }
   return Array.from(drafts.values());
