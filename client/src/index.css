@@ -2292,3 +2292,18 @@ main:has(.pipeline-board.is-compact) .dashboard-filters .dashboard-segments butt
 html:not(.dark) .list-picker-check{border-color:rgba(71,85,105,.45)!important}
 html:not(.dark) .list-picker-check.is-on{background:#6d5df5!important;border-color:#6d5df5!important}
 html:not(.dark) .recipient-list{background:#fef3c7!important;color:#92400e!important}
+
+/* Klare Knöpfe: Liste zur Kampagne hinzufügen */
+.list-picker-summary{display:grid;gap:2px;margin:6px 0 2px;padding:10px 12px;border-radius:10px;border:1px dashed rgba(203,213,225,.25);font-size:12px;color:#cbd5e1}
+.list-picker-summary.is-set{border-style:solid;border-color:rgba(52,211,153,.35);background:rgba(16,185,129,.08)}
+.list-picker-summary strong{color:#f1f5f9;font-size:13px}
+.list-picker-summary small{color:#94a3b8;font-size:11px}
+.list-picker-tools{flex-wrap:wrap;align-items:center}
+.list-picker-tools .list-picker-add{background:linear-gradient(135deg,#8278ff,#6258df);border:0;color:#fff;font-weight:700;font-size:12px;padding:6px 12px;display:inline-flex;align-items:center;gap:5px}
+.list-picker-in{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:7px;background:rgba(16,185,129,.15);color:#6ee7b7;font-size:11.5px;font-weight:700}
+html:not(.dark) .list-picker-summary{color:#334155!important;border-color:#cbd5e1!important}
+html:not(.dark) .list-picker-summary.is-set{background:#ecfdf5!important;border-color:#6ee7b7!important}
+html:not(.dark) .list-picker-summary strong{color:#0f172a!important}
+html:not(.dark) .list-picker-summary small{color:#64748b!important}
+html:not(.dark) .list-picker-tools .list-picker-add{color:#fff!important}
+html:not(.dark) .list-picker-in{background:#d1fae5!important;color:#065f46!important}

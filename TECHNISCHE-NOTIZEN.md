@@ -738,3 +738,7 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - `addListsToEmailCampaign` (Server + Demo): ergänzt die Zielgruppe; bei aktiver/pausierter/beendeter Kampagne werden die Kontakte der neuen Listen sofort über `enrollRecipients` aufgenommen (gleiche Regeln wie beim Start, keine Doppelten). Beendet + neue Empfänger → wieder aktiv.
 - Oberfläche: Listen anhaken im Editor, „+ Liste“ in der Kampagnenliste, „Liste hinzufügen“ auf der Kampagnenseite, Listenname je Empfänger.
 - Zeitfelder (`input[type=time]` u. a.): Uhr-Symbol im dunklen Modus weiß, im hellen dunkel.
+
+## v159 – Klarer Knopf „Zur Kampagne hinzufügen“ im Kampagnen-Editor
+- Listenauswahl im Editor: je Liste Knopf „Zur Kampagne hinzufügen“ bzw. „In der Kampagne“ + „Entfernen“, oben eine Zusammenfassung der gewählten Listen.
+- `saveEmailCampaign`: läuft die Kampagne schon (nicht Entwurf/Vorlage), werden Kontakte neu hinzugefügter Listen beim Speichern sofort aufgenommen (`addListsToEmailCampaign`); Rückgabe `enrolled`. Server, Demo und e2e-Test 44.

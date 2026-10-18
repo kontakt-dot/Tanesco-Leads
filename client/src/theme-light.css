@@ -1285,6 +1285,12 @@ html:not(.dark) .list-picker-check { color: #0f172a !important; }
 html:not(.dark) .list-picker-check.is-on { background: #111318 !important; border-color: #111318 !important; }
 html:not(.dark) .recipient-list { color: #8a742a !important; }
 html:not(.dark) html:not(.dark) .list-picker-check.is-on { background: #111318 !important; border-color: #111318 !important; }
+html:not(.dark) .list-picker-summary { color: #0f172a !important; }
+html:not(.dark) .list-picker-summary strong { color: #0f172a !important; }
+html:not(.dark) .list-picker-summary small { color: #4b5568 !important; }
+html:not(.dark) .list-picker-tools .list-picker-add { background: linear-gradient(135deg, #2a2e3a, #111318) !important; color: #0f172a !important; }
+html:not(.dark) .list-picker-in { color: #3c7f64 !important; }
+html:not(.dark) html:not(.dark) .list-picker-tools .list-picker-add { color: #0f172a !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }

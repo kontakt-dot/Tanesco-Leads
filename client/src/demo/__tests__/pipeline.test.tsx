@@ -1705,5 +1705,8 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const draft = await call("leadops.saveEmailCampaign", { id: null, name: "Entwurf-Serie", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "alle" }, tree: starter.tree, design: {} });
     const drafted = await call("leadops.addListsToEmailCampaign", { id: draft.id, listNames: ["Messe Süd"] }); expect(drafted.running).toBe(false); expect(drafted.added).toBe(0);
     expect((await call("leadops.startEmailCampaign", { id: draft.id })).added).toBe(2);
+    // Laufende Kampagne im Editor: Liste dazu → beim Speichern sofort aufgenommen
+    const resaved = await call("leadops.saveEmailCampaign", { id: draft.id, name: "Entwurf-Serie", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Messe Süd", listNames: ["Messe Süd", "Messe Nord"] }, tree: starter.tree, design: {} });
+    expect(resaved.enrolled).toBe(3); expect((await call("leadops.getEmailCampaign", { id: draft.id })).recipients).toHaveLength(5);
   });
 });

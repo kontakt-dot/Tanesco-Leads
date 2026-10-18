@@ -2213,4 +2213,18 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await expect(invitee.leadops.analyzeTerritoryFile({ rows: [["60311"]] })).rejects.toThrow("nicht zur Verfügung"); // Partner-Zugänge dürfen keine Gebiete analysieren
   }, 20000);
 
+  it("44. E-Mail-Kampagne mit mehreren Listen; „Liste hinzufügen“ und Speichern nehmen Kontakte neuer Listen in die laufende Kampagne auf", async () => {
+    const mk = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => ({ firstName: `${prefix}${i}`, lastName: "Liste", email: `${prefix.toLowerCase()}${i}@listen-e2e.example` }));
+    for (const [name, prefix, n] of [["E2E Liste A", "La", 2], ["E2E Liste B", "Lb", 3], ["E2E Liste C", "Lc", 1]] as const) expect((await owner.leadops.importColdList({ listName: name, toPipeline: false, rows: mk(prefix, n) })).created).toBe(n);
+    expect((await owner.leadops.previewEmailAudience({ source: "liste", listName: "E2E Liste A", listNames: ["E2E Liste A", "E2E Liste B"] })).count).toBe(5);
+    const starter = await owner.leadops.emailCampaignStarter();
+    const saved = await owner.leadops.saveEmailCampaign({ name: "Listen-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "E2E Liste A", listNames: ["E2E Liste A"] }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: true, weekdays: [], from: "09:00", to: "09:01", timezone: "Europe/Berlin" } });
+    expect((await owner.leadops.startEmailCampaign({ id: saved.id })).added).toBe(2);
+    const added = await owner.leadops.addListsToEmailCampaign({ id: saved.id, listNames: ["E2E Liste B"] }); expect(added).toMatchObject({ running: true, added: 3, lists: ["E2E Liste A", "E2E Liste B"] });
+    expect((await owner.leadops.addListsToEmailCampaign({ id: saved.id, listNames: ["E2E Liste B"] })).added).toBe(0); // niemand doppelt
+    const resaved = await owner.leadops.saveEmailCampaign({ id: saved.id, name: "Listen-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "E2E Liste A", listNames: ["E2E Liste A", "E2E Liste B", "E2E Liste C"] }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown> });
+    expect(resaved.enrolled).toBe(1);
+    const detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.recipients).toHaveLength(6);
+    expect(detail.recipients.filter((row) => row.lead?.listName === "E2E Liste B")).toHaveLength(3);
+  }, 20000);
 });

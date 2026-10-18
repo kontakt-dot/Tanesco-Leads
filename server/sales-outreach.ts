@@ -156,8 +156,15 @@ async function tenantDesign(db: Db, tenantId: number): Promise<Partial<EmailDesi
 export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null; stopOnReply?: boolean | null; maxRuns?: number | null }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
   const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.audience, tree: input.tree, design: { ...DEFAULT_DESIGN, ...(await tenantDesign(db, tenantId)), ...input.design }, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}), ...(typeof input.stopOnReply === "boolean" ? { stopOnReply: input.stopOnReply } : {}), ...(typeof input.maxRuns === "number" ? { maxRuns: Math.max(0, Math.min(99, Math.round(input.maxRuns))) } : {}) };
-  if (input.id) { await db.update(emailCampaigns).set(values).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))); return { id: input.id }; }
-  const inserted = await db.insert(emailCampaigns).values(values); return { id: Number(inserted[0]?.insertId) || 0 };
+  if (input.id) {
+    const before = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0];
+    await db.update(emailCampaigns).set(values).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId)));
+    // Läuft die Kampagne schon, kommen Kontakte neu hinzugefügter Listen beim Speichern gleich mit hinein
+    const previous = audienceLists((before?.audience ?? null) as Audience | null); const newLists = audienceLists(input.audience).filter((name) => !previous.includes(name));
+    if (before && newLists.length && before.status !== "entwurf" && !before.isTemplate) { const result = await addListsToEmailCampaign(db, tenantId, { id: input.id, listNames: newLists }, process.env.APP_URL ?? ""); return { id: input.id, enrolled: result.added }; }
+    return { id: input.id, enrolled: 0 };
+  }
+  const inserted = await db.insert(emailCampaigns).values(values); return { id: Number(inserted[0]?.insertId) || 0, enrolled: 0 };
 }
 export function starterCampaign(kind: "kaltakquise" | "angebot" | "aufwecken" = "kaltakquise") {
   if (kind === "angebot") return { tree: followUpTree({ first: starterBlocks("angebot"), second: starterBlocks("nachfassen") }, { firstSubject: "Noch Fragen zu unserem Angebot, {{vorname}}?", secondSubject: "Kurz nachgefragt: unser Angebot für {{firma}}", waitHours: 96 }), design: DEFAULT_DESIGN, name: "Nachfassen nach Angebot" };
