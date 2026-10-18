@@ -1716,5 +1716,16 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.getEmailCampaign", { id: draft.id })).audienceInfo.pending).toBe(1);
     expect((await call("leadops.syncEmailCampaignAudience", { id: draft.id })).added).toBe(1);
     expect((await call("leadops.getEmailCampaign", { id: draft.id })).audienceInfo.pending).toBe(0);
+    // Liste entfernen → Empfänger dieser Liste sind wirklich raus; einzelner Empfänger entfernen
+    const before = (await call("leadops.getEmailCampaign", { id: saved.id })).recipients.length;
+    const removed = await call("leadops.removeListsFromEmailCampaign", { id: saved.id, listNames: ["Messe West"] }); expect(removed.removed).toBe(4); expect(removed.lists).toEqual(["Messe Nord", "Messe Süd"]);
+    const afterRemove = await call("leadops.getEmailCampaign", { id: saved.id }); expect(afterRemove.recipients).toHaveLength(before - 4); expect(afterRemove.recipients.some((row: any) => row.lead?.listName === "Messe West")).toBe(false);
+    expect((await call("leadops.removeEmailRecipients", { campaignId: saved.id, recipientIds: [afterRemove.recipients[0].id] })).removed).toBe(1);
+    expect((await call("leadops.getEmailCampaign", { id: saved.id })).recipients).toHaveLength(before - 5);
+    // Letzte Listen entfernen → Zielgruppe leer, niemals „alle Kontakte“
+    await call("leadops.removeListsFromEmailCampaign", { id: saved.id, listNames: ["Messe Nord", "Messe Süd"] });
+    const empty = await call("leadops.getEmailCampaign", { id: saved.id }); expect(empty.recipients).toHaveLength(0); expect(empty.audienceInfo).toMatchObject({ total: 0, pending: 0 });
+    expect((await call("leadops.syncEmailCampaignAudience", { id: saved.id })).added).toBe(0);
+    expect((await call("leadops.previewEmailAudience", { source: "liste", listName: null, listNames: [] })).count).toBe(0);
   });
 });

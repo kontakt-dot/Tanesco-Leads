@@ -2231,5 +2231,39 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(more.campaigns).toEqual([{ id: saved.id, name: "Listen-Serie", added: 1 }]);
     const after = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(after.recipients).toHaveLength(7); expect(after.audienceInfo).toMatchObject({ pending: 0, noEmail: 1 });
     expect((await owner.leadops.syncEmailCampaignAudience({ id: saved.id })).added).toBe(0);
+    // Liste B wieder entfernen → ihre 3 Empfänger sind wirklich raus, auch nach Versandlauf und „Jetzt aufnehmen“
+    const removedB = await owner.leadops.removeListsFromEmailCampaign({ id: saved.id, listNames: ["E2E Liste B"] }); expect(removedB).toEqual({ removed: 3, lists: ["E2E Liste A", "E2E Liste C"] });
+    await owner.leadops.runEmailCampaigns(); expect((await owner.leadops.syncEmailCampaignAudience({ id: saved.id })).added).toBe(0);
+    const afterB = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(afterB.recipients).toHaveLength(4); expect(afterB.recipients.some((row) => row.lead?.listName === "E2E Liste B")).toBe(false);
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === saved.id)?.stats.total).toBe(4);
+    // Liste C im Editor abwählen und speichern → Empfänger raus
+    const resaved2 = await owner.leadops.saveEmailCampaign({ id: saved.id, name: "Listen-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "E2E Liste A", listNames: ["E2E Liste A"] }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown> });
+    expect(resaved2).toMatchObject({ enrolled: 0, removed: 1 });
+    // einzelnen Empfänger entfernen
+    const one = (await owner.leadops.getEmailCampaign({ id: saved.id })).recipients[0];
+    expect((await owner.leadops.removeEmailRecipients({ campaignId: saved.id, recipientIds: [one.id] })).removed).toBe(1);
+    expect((await owner.leadops.getEmailCampaign({ id: saved.id })).recipients).toHaveLength(2);
+    // Letzte Liste entfernen → leer, „Jetzt aufnehmen“ nimmt niemanden (nie „alle Kontakte“)
+    expect((await owner.leadops.removeListsFromEmailCampaign({ id: saved.id, listNames: ["E2E Liste A"] })).lists).toEqual([]);
+    expect((await owner.leadops.getEmailCampaign({ id: saved.id })).audienceInfo).toMatchObject({ total: 0, pending: 0 });
+    expect((await owner.leadops.syncEmailCampaignAudience({ id: saved.id })).added).toBe(0);
+    expect((await owner.leadops.getEmailCampaign({ id: saved.id })).recipients).toHaveLength(0);
+  }, 20000);
+
+  it("45. Gelöschte Kontakte bleiben gelöscht – Kontakte-Reiter, Pipeline-Karten, Versand, Nachaufnahme, Listen", async () => {
+    const rows = [1, 2, 3, 4].map((n) => ({ firstName: `Weg${n}`, lastName: "Loesch", email: `weg${n}@loesch-e2e.example` }));
+    expect((await owner.leadops.importColdList({ listName: "Lösch-Test", toPipeline: false, rows })).created).toBe(4);
+    const starter = await owner.leadops.emailCampaignStarter();
+    const saved = await owner.leadops.saveEmailCampaign({ name: "Lösch-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Lösch-Test", listNames: ["Lösch-Test"] }, tree: starter.tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: true, weekdays: [], from: "09:00", to: "09:01", timezone: "Europe/Berlin" } });
+    expect((await owner.leadops.startEmailCampaign({ id: saved.id })).added).toBe(4);
+    const contacts = (await owner.leadops.emailLeads({ listName: "Lösch-Test" })).items; expect(contacts).toHaveLength(4);
+    // zwei im Reiter „Kontakte“ löschen, einen als Pipeline-Karte
+    expect((await owner.leadops.deleteEmailLeads({ leadIds: contacts.slice(0, 2).map((row) => row.id) })).deleted).toBe(2);
+    expect((await owner.leadops.deletePipelineLeads({ publicIds: [contacts[2].publicId] })).deleted).toBe(1);
+    await owner.leadops.runEmailCampaigns(); await owner.leadops.syncEmailCampaignAudience({ id: saved.id });
+    expect((await owner.leadops.emailLeads({ listName: "Lösch-Test" })).items.map((row) => row.email)).toEqual([contacts[3].email]);
+    const detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.recipients.map((row) => row.email)).toEqual([contacts[3].email]); expect(detail.audienceInfo).toMatchObject({ total: 1, pending: 0 });
+    expect((await owner.leadops.listColdLists()).find((list) => list.listName === "Lösch-Test")?.contacts).toBe(1);
+    expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.flatMap((stage) => stage.leads).some((lead) => String(lead.email ?? "").includes("loesch-e2e"))).toBe(false);
   }, 20000);
 });

@@ -1306,6 +1306,12 @@ html:not(.dark) .audience-sync { background: linear-gradient(135deg, #2a2e3a, #1
 html:not(.dark) .audience-panel strong { color: #0f172a !important; }
 html:not(.dark) html:not(.dark) .audience-status .is-pending { color: #111318 !important; }
 html:not(.dark) html:not(.dark) .audience-sync { color: #0f172a !important; }
+html:not(.dark) .campaign-lists-rows li { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .campaign-lists-name { color: #0f172a !important; }
+html:not(.dark) .campaign-lists-count { color: #111318 !important; }
+html:not(.dark) .campaign-lists-remove, html:not(.dark) .recipient-remove { color: #8a5a5a !important; }
+html:not(.dark) .campaign-lists-remove:hover, html:not(.dark) .recipient-remove:hover { background: #ffffff !important; }
+html:not(.dark) html:not(.dark) .campaign-lists-count { color: #111318 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }

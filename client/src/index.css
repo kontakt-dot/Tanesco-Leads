@@ -2344,3 +2344,17 @@ html:not(.dark) .audience-panel strong{color:#0f172a!important}
 @media (max-width:900px){.pipeline-card-collapse-wrap{top:112px}}
 /* Mit offener Karte scrollt die Seite (nicht die Spalte) – sonst kann der Zuklappen-Knopf nicht oben mitlaufen */
 .pipeline-column:has(.pipeline-card.is-open) .pipeline-cards{overflow:visible!important;max-height:none!important}
+
+/* Kampagnenseite: Listen hinzufügen / entfernen */
+.campaign-lists{padding:16px 18px}
+.campaign-lists-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.campaign-lists-rows{display:grid;gap:6px;margin-top:12px;padding:0;list-style:none}
+.campaign-lists-rows li{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.025)}
+.campaign-lists-name{flex:1 1 180px;min-width:0;font-weight:700;color:#f1f5f9;font-size:13.5px;overflow-wrap:anywhere}
+.campaign-lists-count{font-size:12px;color:#a5b4fc;font-weight:600}
+.campaign-lists-remove,.recipient-remove{display:inline-flex;align-items:center;gap:4px;height:30px;padding:0 11px;border-radius:8px;border:1px solid rgba(248,113,113,.35)!important;background:transparent;color:#fca5a5!important;font-size:12px;font-weight:700;cursor:pointer}
+.campaign-lists-remove:hover,.recipient-remove:hover{background:rgba(239,68,68,.14)!important}
+html:not(.dark) .campaign-lists-rows li{background:#f8fafc!important;border-color:#e2e8f0!important}
+html:not(.dark) .campaign-lists-name{color:#0f172a!important}
+html:not(.dark) .campaign-lists-count{color:#4338ca!important}
+html:not(.dark) .campaign-lists-remove,html:not(.dark) .recipient-remove{color:#b91c1c!important;border-color:#fecaca!important}

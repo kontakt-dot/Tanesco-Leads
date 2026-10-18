@@ -748,3 +748,9 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - `audienceInfo` je Kampagne (Liste + Detail): Kontakte gesamt, ohne gültige E-Mail, gesperrt, noch nicht aufgenommen. `syncEmailCampaignAudience` = Knopf „Jetzt aufnehmen“.
 - `enrollRecipients(…, { onlyNew })`: beim Hinzufügen/Nachaufnehmen nie erneute Durchläufe auslösen.
 - Pipeline-Karte: Knopf „Zuklappen“ oben rechts (sticky, mobil unter der Stufenleiste), „Karte zuklappen“ unten, Esc, weiches Aufklappen; mit offener Karte scrollt die Seite statt der Spalte.
+
+## v161 – Listen und Empfänger wirklich entfernen
+- `removeListsFromEmailCampaign`: Liste aus der Zielgruppe; Empfänger aus dieser Liste werden gelöscht (Empfänger-Zeile + Verlauf, Posteingang-Verweis gelöst) – außer ihre Liste bleibt in der Kampagne. Auch beim Speichern im Editor (abgewählte Listen) → Rückgabe `removed`.
+- `removeEmailRecipients`: einzelne Empfänger entfernen (Knopf „Entfernen“ je Zeile).
+- Kampagnenseite: Bereich „Listen in dieser Kampagne“ mit „+ Liste hinzufügen“ und „Entfernen“ je Liste.
+- Sicherheit: Zielgruppe „Liste“ ohne Liste = leer (vorher: alle Kontakte!). Server + Demo + Tests.
