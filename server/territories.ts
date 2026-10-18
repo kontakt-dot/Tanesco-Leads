@@ -14,7 +14,21 @@ import type { Db } from "./lead-pipeline";
 const cleanPostcodes = (input: string[]) => Array.from(new Set(input.map((plz) => String(plz).trim()).filter((plz) => /^\d{5}$/.test(plz)))).sort();
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
+/** Doppelte Gebiete (gleicher Kunde + gleiche Kategorie) zu einem zusammenlegen – ein Kunde ist ein Verkauf. */
+async function mergeDuplicateTerritories(db: Db, tenantId: number) {
+  const rows = await db.select({ id: territories.id, customerName: territories.customerName, categoryId: territories.categoryId, postcodes: territories.postcodes, rawCount: territories.rawCount, active: territories.active }).from(territories).where(eq(territories.tenantId, tenantId)).orderBy(asc(territories.id));
+  const groups = new Map<string, typeof rows>();
+  for (const row of rows) { const key = `${row.customerName.trim().toLowerCase()}|${row.categoryId ?? 0}`; groups.set(key, [...(groups.get(key) ?? []), row]); }
+  for (const list of Array.from(groups.values())) {
+    if (list.length < 2) continue;
+    const [keep, ...rest] = list; const postcodes = cleanPostcodes(list.flatMap((row) => (Array.isArray(row.postcodes) ? row.postcodes : []) as string[]));
+    await db.update(territories).set({ postcodes, rawCount: list.reduce((sum, row) => sum + (row.rawCount ?? 0), 0), active: list.some((row) => row.active !== false) }).where(eq(territories.id, keep.id));
+    await db.delete(territories).where(inArray(territories.id, rest.map((row) => row.id)));
+  }
+}
+
 export async function listTerritories(db: Db, tenantId: number) {
+  await mergeDuplicateTerritories(db, tenantId);
   const rows = await db.select({ id: territories.id, customerName: territories.customerName, categoryId: territories.categoryId, color: territories.color, postcodes: territories.postcodes, rawCount: territories.rawCount, note: territories.note, sourceName: territories.sourceName, active: territories.active, createdByUserId: territories.createdByUserId, createdAt: territories.createdAt, updatedAt: territories.updatedAt }).from(territories).where(eq(territories.tenantId, tenantId)).orderBy(asc(territories.customerName), asc(territories.id));
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
   const actorIds = Array.from(new Set(rows.map((row) => row.createdByUserId).filter((id): id is number => typeof id === "number")));
@@ -38,6 +52,14 @@ export async function saveTerritory(db: Db, tenantId: number, input: SaveTerrito
     await db.update(territories).set(values).where(eq(territories.id, row.id));
     await logActivity(db, tenantId, { kind: "sonstiges", title: `Gebiet von „${customerName}“ aktualisiert: ${postcodes.length} PLZ`, actorUserId: input.actorUserId ?? null, refType: "territory", refId: row.id });
     return { id: row.id, postcodes: postcodes.length, created: false as const };
+  }
+  // Gibt es den Kunden in dieser Kategorie schon, kommen die PLZ dazu – kein zweites Gebiet für denselben Kunden
+  const sameCategory = existing.find((row) => row.customerName.toLowerCase() === customerName.toLowerCase() && (row.categoryId ?? null) === (input.categoryId ?? null));
+  if (sameCategory) {
+    const merged = cleanPostcodes([...sameCategory.postcodes, ...postcodes]);
+    await db.update(territories).set({ ...values, postcodes: merged, color: sameCategory.color, rawCount: (sameCategory.rawCount ?? 0) + values.rawCount, note: values.note ?? sameCategory.note, sourceName: values.sourceName ?? sameCategory.sourceName }).where(eq(territories.id, sameCategory.id));
+    await logActivity(db, tenantId, { kind: "sonstiges", title: `Gebiet von „${customerName}“ ergänzt: jetzt ${merged.length} PLZ`, actorUserId: input.actorUserId ?? null, refType: "territory", refId: sameCategory.id });
+    return { id: sameCategory.id, postcodes: merged.length, created: false as const };
   }
   const inserted = await db.insert(territories).values({ tenantId, ...values, createdByUserId: input.actorUserId ?? null });
   const id = Number(inserted[0]?.insertId) || 0;

@@ -49,4 +49,17 @@ describe("Gebietskarte: PLZ-Listen lesen, Überschneidungen rechnen", () => {
     expect(topPlaces(["60311", "60313", "60316", "65183"], placeOf, 2)).toEqual(["Frankfurt am Main", "Wiesbaden"]);
     expect(describePostcodes(["20095", "20097", "60311", "80331", "61118"], placeOf, 2)).toBe("5 PLZ · Hamburg, Bad Vilbel …");
   });
+  it("ein Kunde ist ein Verkauf: zwei Gebiete desselben Kunden in einer Kategorie zählen als EIN Kunde", () => {
+    const list: Territory[] = [
+      { id: 1, customerName: "Younes", categoryId: 1, color: "#111111", postcodes: ["60311", "60313"] },
+      { id: 2, customerName: "younes ", categoryId: 1, color: "#111111", postcodes: ["60311", "61118"] },
+      { id: 3, customerName: "Musterhaus", categoryId: 1, color: "#222222", postcodes: ["60311"] },
+      { id: 4, customerName: "Younes", categoryId: 2, color: "#111111", postcodes: ["60311"] },
+    ];
+    const result = computeOverlaps(list, [{ id: 1, name: "Photovoltaik" }, { id: 2, name: "Wärmepumpe" }]);
+    const pv = result.groups.find((group) => group.categoryId === 1)!;
+    expect(pv.items).toEqual([{ plz: "60311", count: 2, customers: [{ id: 1, customerName: "Younes", color: "#111111" }, { id: 3, customerName: "Musterhaus", color: "#222222" }] }]); // nicht 3×
+    expect(pv.customers).toBe(2); expect(pv.coveredPlz).toBe(3);
+    expect(result.groups.find((group) => group.categoryId === 2)!.items).toEqual([]); // andere Kategorie zählt nicht mit
+  });
 });

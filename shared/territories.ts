@@ -94,7 +94,11 @@ export function computeOverlaps(territories: Territory[], categories: Array<{ id
   const byCategory = new Map<number | null, Territory[]>();
   for (const territory of territories) { const key = territory.categoryId ?? null; byCategory.set(key, [...(byCategory.get(key) ?? []), territory]); }
   const groups: OverlapGroup[] = []; const coveredAll = new Set<string>(); let totalOverlapPlz = 0;
-  for (const [categoryId, list] of Array.from(byCategory.entries())) {
+  for (const [categoryId, rawList] of Array.from(byCategory.entries())) {
+    // Ein Kunde = ein Verkauf: mehrere Gebiete desselben Kunden (gleicher Name) in einer Kategorie zählen als EIN Kunde
+    const merged = new Map<string, Territory>();
+    for (const territory of rawList) { const key = territory.customerName.trim().toLowerCase(); const existing = merged.get(key); if (existing) merged.set(key, { ...existing, postcodes: Array.from(new Set([...existing.postcodes, ...territory.postcodes])) }); else merged.set(key, { ...territory, postcodes: Array.from(new Set(territory.postcodes)) }); }
+    const list = Array.from(merged.values());
     const owners = new Map<string, OverlapCustomer[]>();
     for (const territory of list) for (const plz of territory.postcodes) { coveredAll.add(plz); const current = owners.get(plz) ?? []; if (!current.some((item) => item.id === territory.id)) current.push({ id: territory.id, customerName: territory.customerName, color: territory.color }); owners.set(plz, current); }
     const items = Array.from(owners.entries()).filter(([, customers]) => customers.length >= 2).map(([plz, customers]) => ({ plz, count: customers.length, customers })).sort((a, b) => b.count - a.count || a.plz.localeCompare(b.plz));
