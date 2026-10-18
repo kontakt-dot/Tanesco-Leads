@@ -771,3 +771,9 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 ## v165 – Pipeline-Spalten wieder in einer Reihe
 - 4-Spalten-Raster zurückgenommen: Spalten wieder nebeneinander von links nach rechts, je mind. 260 px (vorher ~195 px, im Raster ~330 px). Kompakter Kopf, Name einmal, „Karte zuklappen“ nur unten bleiben.
 - Reiter-Reihenfolge: Pipeline, Termine & Aufgaben, Statistik, Kontakte, Listen, Upload-Verlauf, Einstellungen.
+
+## v166 – Vertriebspipeline moderne Optik
+- Nur Aussehen (Anordnung, Breiten, Reihenfolge unverändert): Stufenfarbe `--stage` je Spalte (Punkt am Namen, Zähler, Linie oben, Farbstreifen an der Karte), Karten mit weicher Fläche, feinem Rand, Schatten und Hover; ruhigere Etiketten, Auswahl und Anruf-Knöpfe. Heller Modus in `theme-light.manual.css`.
+- Heiß/Warm/Kalt-Etiketten an Karten, „Einschätzung“ auf der Lead-Seite und Filter „Heiß“ entfernt (Punkte zählten vorhandene Kontaktdaten → frische Kontakte waren sofort „Warm“). Berechnung bleibt intern bestehen.
+- Spruch oben rechts neben „Vertriebspipeline“ (nur Ansicht Pipeline), 40 neue, frechere Sprüche; wechselt alle 5 Min. oder per Klick.
+- Karte aufklappen → `scrollIntoView` (mittig, bei Überhöhe Oberkante unter der Kopfleiste), `scroll-margin` für Kopfleiste/mobile Leisten.

@@ -2406,3 +2406,59 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .distribute-reset-button.is-sure:hover:not(:disabled){background:#b91c1c}
 /* Bestätigen-Fenster bleibt anklickbar, auch wenn es aus einem anderen Fenster heraus geöffnet wird */
 .app-confirm-backdrop{pointer-events:auto}
+/* ================= Vertriebspipeline – moderne Optik (nur Aussehen, Anordnung unverändert) =================
+   Jede Stufe hat eine eigene Farbe (--stage): Punkt am Spaltennamen, Zähler, feine Linie oben und ein schmaler
+   Farbstreifen an jeder Karte. Karten ruhiger: weiche Fläche, feiner Rand, leichter Schatten, klarer Hover. */
+.pipeline-page .pipeline-column{--stage:#8b7cff}
+.pipeline-page .pipeline-column.is-neu{--stage:#8b7cff}
+.pipeline-page .pipeline-column.is-in_bearbeitung{--stage:#60a5fa}
+.pipeline-page .pipeline-column.is-kontaktiert{--stage:#22d3ee}
+.pipeline-page .pipeline-column.is-qualifiziert{--stage:#a3e635}
+.pipeline-page .pipeline-column.is-termin{--stage:#fbbf24}
+.pipeline-page .pipeline-column.is-angebot{--stage:#fb923c}
+.pipeline-page .pipeline-column.is-kunde{--stage:#34d399}
+.pipeline-page .pipeline-column.is-verloren{--stage:#fb7185}
+.pipeline-page .pipeline-column{border:1px solid rgba(255,255,255,.06);border-radius:16px;background:linear-gradient(180deg,color-mix(in srgb,var(--stage) 9%,transparent) 0,rgba(255,255,255,.015) 120px);box-shadow:inset 0 2px 0 color-mix(in srgb,var(--stage) 70%,transparent)}
+.pipeline-page .pipeline-column header{gap:6px;padding:2px 2px 0}
+.pipeline-page .pipeline-column header strong{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;letter-spacing:-.01em;color:#f5f3ff}
+.pipeline-page .pipeline-column header strong::before{content:"";flex:0 0 auto;width:8px;height:8px;border-radius:999px;background:var(--stage);box-shadow:0 0 0 3px color-mix(in srgb,var(--stage) 22%,transparent)}
+.pipeline-page .pipeline-column header>span:last-child{background:color-mix(in srgb,var(--stage) 20%,transparent);color:color-mix(in srgb,var(--stage) 65%,#fff);font-variant-numeric:tabular-nums}
+.pipeline-page .pipeline-column-dial,.pipeline-page .pipeline-column-fold{border-radius:8px}
+.pipeline-page .pipeline-hint{color:#8a8fab;font-size:10.5px}
+.pipeline-page .pipeline-card{border:1px solid rgba(255,255,255,.07);border-radius:13px;background:linear-gradient(180deg,rgba(30,27,58,.92),rgba(22,20,44,.92));box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 6px 16px -10px rgba(0,0,0,.6);transition:border-color .15s ease,box-shadow .15s ease}
+.pipeline-page .pipeline-card::after{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;background:var(--stage);opacity:.75;pointer-events:none}
+.pipeline-page .pipeline-card:hover{border-color:color-mix(in srgb,var(--stage) 45%,rgba(255,255,255,.08));box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 10px 24px -12px rgba(0,0,0,.7)}
+.pipeline-page .pipeline-card.is-open{border-color:color-mix(in srgb,var(--stage) 70%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--stage) 18%,transparent),0 14px 30px -14px rgba(0,0,0,.7)}
+.pipeline-page .pipeline-card.is-stale{opacity:.92}
+.pipeline-page .pipeline-card-name{font-size:14px;letter-spacing:-.01em;color:#fbfaff}
+.pipeline-page .pipeline-card-sub{color:#8f94b2}
+.pipeline-page .pipeline-card-meta .dash-pill,.pipeline-page .pipeline-card-meta .pipeline-platform{border-radius:7px;font-size:10.5px;font-weight:650}
+.pipeline-page .pipeline-card-source,.pipeline-page .pipeline-card-note{color:#9ea3c0}
+.pipeline-page .pipeline-card-owner .owner-select{height:30px;border-radius:9px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#e4e2fb;font-size:12px}
+.pipeline-page .pipeline-card-owner .owner-select:hover{border-color:rgba(255,255,255,.16)}
+.pipeline-page .owner-dot-solo{box-shadow:0 0 0 2px rgba(15,14,36,.9)}
+.pipeline-page .pipeline-card-phone{width:32px;height:32px;border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.14);transition:background .15s ease}
+.pipeline-page .pipeline-card-phone:hover{background:rgba(52,211,153,.28)}
+.pipeline-page .calllog-toggle{border-radius:999px;border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:#c9c6ee;transition:background .15s ease,border-color .15s ease}
+.pipeline-page .calllog-toggle:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18)}
+.pipeline-page .pipeline-card-grip{color:#5f6385}
+.pipeline-page .pipeline-card:hover .pipeline-card-grip{color:#a5a9c9}
+.pipeline-page .pipeline-column.is-over{box-shadow:inset 0 2px 0 var(--stage),0 0 0 2px color-mix(in srgb,var(--stage) 45%,transparent)}
+.pipeline-page .pipeline-cards{gap:9px}
+.pipeline-page .pipeline-card-collapse-bottom{border-color:color-mix(in srgb,var(--stage) 40%,transparent);color:color-mix(in srgb,var(--stage) 60%,#fff)}
+.pipeline-page .pipeline-column.is-folded{background:color-mix(in srgb,var(--stage) 8%,rgba(255,255,255,.02))}
+.pipeline-page .pipeline-fold-count{background:color-mix(in srgb,var(--stage) 22%,transparent)!important;color:color-mix(in srgb,var(--stage) 65%,#fff)!important}
+@media (prefers-reduced-motion:reduce){.pipeline-page .pipeline-card,.pipeline-page .pipeline-card-phone,.pipeline-page .calllog-toggle{transition:none}}
+
+/* Aufgeklappte Karte: beim automatischen Scrollen nicht unter der Kopfleiste verschwinden */
+.pipeline-card{scroll-margin-top:76px;scroll-margin-bottom:16px}
+@media(max-width:760px){.pipeline-card{scroll-margin-top:118px;scroll-margin-bottom:90px}}
+/* Spruch oben rechts neben „Vertriebspipeline“ */
+.pipeline-page .page-intro{align-items:center}
+.pipeline-head-quote{display:flex;align-items:center;gap:10px;max-width:min(640px,58%);margin-left:auto;padding:7px 14px 7px 12px;border-radius:12px;border:1px solid rgba(167,160,255,.18);background:linear-gradient(90deg,rgba(129,120,255,.12),rgba(129,120,255,.03));color:#e9e6ff;text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.pipeline-head-quote:hover{border-color:rgba(167,160,255,.4);background:linear-gradient(90deg,rgba(129,120,255,.2),rgba(129,120,255,.05))}
+.pipeline-head-quote-mark{flex:0 0 auto;font-size:28px;line-height:.6;font-weight:800;color:#9d94ff;transform:translateY(5px)}
+.pipeline-head-quote-text{font-size:13px;font-weight:600;line-height:1.35;letter-spacing:-.005em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pipeline-head-quote-next{flex:0 0 auto;color:#8f93af;opacity:.7}
+.pipeline-head-quote:hover .pipeline-head-quote-next{opacity:1;color:#d4d0ff}
+@media(max-width:760px){.pipeline-head-quote{max-width:100%;margin-left:0;margin-top:6px}}

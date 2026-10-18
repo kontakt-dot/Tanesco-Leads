@@ -1320,6 +1320,30 @@ html:not(.dark) .distribute-reset-confirm { background: #ffffff !important; }
 html:not(.dark) .distribute-reset-confirm strong { color: #0f172a !important; }
 html:not(.dark) .distribute-reset-button.is-sure { background: #c62222 !important; color: #0f172a !important; }
 html:not(.dark) .distribute-reset-button.is-sure:hover:not(:disabled) { background: #a61919 !important; }
+html:not(.dark) .pipeline-page .pipeline-column { border: 1px solid #e8ecf1 !important; background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; }
+html:not(.dark) .pipeline-page .pipeline-column header strong { color: #0f172a !important; }
+html:not(.dark) .pipeline-page .pipeline-column header>span:last-child { color: color-mix(in srgb,var(--stage) 65%,#0f172a) !important; }
+html:not(.dark) .pipeline-page .pipeline-hint { color: #8a94a6 !important; }
+html:not(.dark) .pipeline-page .pipeline-card { border: 1px solid #e8ecf1 !important; background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; box-shadow: 0 1px 0 rgba(15, 23, 42, .05) inset,0 6px 16px -10px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .pipeline-page .pipeline-card:hover { border-color: color-mix(in srgb,var(--stage) 45%,#e8ecf1) !important; box-shadow: 0 1px 0 rgba(15, 23, 42, .05) inset,0 10px 24px -12px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open { box-shadow: 0 0 0 3px color-mix(in srgb,var(--stage) 18%,transparent),0 14px 30px -14px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .pipeline-page .pipeline-card-name { color: #0f172a !important; }
+html:not(.dark) .pipeline-page .pipeline-card-sub { color: #8a94a6 !important; }
+html:not(.dark) .pipeline-page .pipeline-card-source, html:not(.dark) .pipeline-page .pipeline-card-note { color: #4b5568 !important; }
+html:not(.dark) .pipeline-page .pipeline-card-owner .owner-select { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .pipeline-page .pipeline-card-owner .owner-select:hover { border-color: #e8ecf1 !important; }
+html:not(.dark) .pipeline-page .owner-dot-solo { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .pipeline-page .calllog-toggle { border-color: #e8ecf1 !important; background: #f8fafb !important; color: #111318 !important; }
+html:not(.dark) .pipeline-page .calllog-toggle:hover { background: #f8fafb !important; border-color: #e8ecf1 !important; }
+html:not(.dark) .pipeline-page .pipeline-card:hover .pipeline-card-grip { color: #4b5568 !important; }
+html:not(.dark) .pipeline-page .pipeline-card-collapse-bottom { color: color-mix(in srgb,var(--stage) 60%,#0f172a) !important; }
+html:not(.dark) .pipeline-page .pipeline-column.is-folded { background: #f8fafb !important; }
+html:not(.dark) .pipeline-page .pipeline-fold-count { color: color-mix(in srgb,var(--stage) 65%,#0f172a) !important; }
+html:not(.dark) .pipeline-head-quote { border: 1px solid #e8ecf1 !important; background: linear-gradient(135deg, rgba(var(--acc1), .14), rgba(var(--acc2), .10)) !important; color: #0f172a !important; }
+html:not(.dark) .pipeline-head-quote:hover { border-color: #d9dfe7 !important; background: linear-gradient(135deg, rgba(var(--acc1), .14), rgba(var(--acc2), .10)) !important; }
+html:not(.dark) .pipeline-head-quote-mark { color: #111318 !important; }
+html:not(.dark) .pipeline-head-quote-next { color: #8a94a6 !important; }
+html:not(.dark) .pipeline-head-quote:hover .pipeline-head-quote-next { color: #0f172a !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2714,3 +2738,22 @@ html:not(.dark) .distribute-reset-button:hover:not(:disabled) { background: #fef
 html:not(.dark) .distribute-reset-confirm { background: #fef2f2 !important; border-color: #fecaca !important; }
 html:not(.dark) .distribute-reset-confirm strong { color: #991b1b !important; }
 html:not(.dark) .distribute-reset-button.is-sure { background: #dc2626 !important; color: #ffffff !important; border-color: #dc2626 !important; }
+/* Vertriebspipeline – moderne Optik, heller Modus */
+html:not(.dark) .pipeline-page .pipeline-column { background: linear-gradient(180deg, color-mix(in srgb, var(--stage) 10%, #ffffff) 0, #f8fafc 120px) !important; border-color: #e6e9f0 !important; box-shadow: inset 0 2px 0 var(--stage) !important; }
+html:not(.dark) .pipeline-page .pipeline-column header strong { color: #0f172a !important; }
+html:not(.dark) .pipeline-page .pipeline-column header > span:last-child { background: color-mix(in srgb, var(--stage) 18%, #ffffff) !important; color: color-mix(in srgb, var(--stage) 55%, #0f172a) !important; }
+html:not(.dark) .pipeline-page .pipeline-hint { color: #64748b !important; }
+html:not(.dark) .pipeline-page .pipeline-card { background: #ffffff !important; border-color: #e5e8ef !important; box-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 6px 16px -12px rgba(15, 23, 42, .25) !important; }
+html:not(.dark) .pipeline-page .pipeline-card:hover { border-color: color-mix(in srgb, var(--stage) 45%, #e5e8ef) !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open { border-color: color-mix(in srgb, var(--stage) 70%, #ffffff) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--stage) 16%, transparent), 0 12px 28px -16px rgba(15, 23, 42, .35) !important; }
+html:not(.dark) .pipeline-page .pipeline-card-name { color: #0f172a !important; }
+html:not(.dark) .pipeline-page .pipeline-card-sub, html:not(.dark) .pipeline-page .pipeline-card-source { color: #64748b !important; }
+html:not(.dark) .pipeline-page .pipeline-card-owner .owner-select { background: #f8fafc !important; border-color: #e2e8f0 !important; color: #0f172a !important; }
+html:not(.dark) .pipeline-page .owner-dot-solo { box-shadow: 0 0 0 2px #ffffff !important; }
+html:not(.dark) .pipeline-page .calllog-toggle { background: #ffffff !important; border-color: #e2e8f0 !important; color: #334155 !important; }
+html:not(.dark) .pipeline-page .calllog-toggle:hover { background: #f1f5f9 !important; }
+html:not(.dark) .pipeline-page .pipeline-card-collapse-bottom { color: color-mix(in srgb, var(--stage) 60%, #0f172a) !important; }
+@media (min-width: 761px) { html:not(.dark) .pipeline-page .page-intro .eyebrow { display: none !important; } }
+html:not(.dark) .pipeline-head-quote { background: linear-gradient(90deg, #fff1f2, #ffffff) !important; border-color: #fecdd3 !important; color: #0f172a !important; }
+html:not(.dark) .pipeline-head-quote-mark { color: #bc001d !important; }
+html:not(.dark) .pipeline-head-quote-next { color: #94a3b8 !important; }
