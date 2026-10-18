@@ -108,7 +108,7 @@
   input,textarea{font-size:16px}
   select{font-size:14px}
 }
-@media(max-width:420px){.page-intro h1{font-size:22px}.metric-card strong{font-size:18px}.top-actions{gap:6px}.top-actions button{width:32px;height:32px}}
+@media(max-width:420px){.page-intro h1{font-size:22px}.metric-card strong{font-size:18px}.top-actions{gap:6px}.top-actions button:not(.activity-panel button):not([role="menu"] button):not([role="dialog"] button){width:32px;height:32px}.top-actions .profile-orb{padding:0!important;justify-content:center}.top-actions .profile-orb>span:first-child{width:32px;height:32px;flex:none}.top-actions .profile-orb-chevron{display:none}}
 .demo-badge-short{display:none}@media(max-width:760px){.demo-badge-short{display:inline}}
 
 /* Aktionen-Spalte ganz rechts (klebt am Rand, geht weich in die Zeile über): „Ansicht“ + „Log“ */
@@ -2218,4 +2218,24 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
   .territory-intro p{display:none}
   .territory-intro>.flex{flex-wrap:nowrap!important;width:100%}.territory-intro>.flex>button{flex:1}
   .territory-btn-long{display:none}
+}
+
+/* Einstellungen mobil: nur der offene Bereich (Liste nur auf der Übersicht), nichts breiter als der Bildschirm */
+@media(max-width:1023px){
+  .settings-layout{grid-template-columns:minmax(0,1fr)}
+  .settings-layout>*{min-width:0}
+  .settings-layout.is-detail>.settings-list{display:none}
+}
+@media(max-width:640px){
+  .settings-backbar{display:grid;grid-template-columns:1fr;gap:8px}
+  .settings-crumb{display:none}
+  .settings-jump{display:flex!important;margin-left:0;width:100%}
+  .settings-jump select{flex:1;max-width:none;height:38px;font-size:14px}
+  .settings-detail{padding:16px!important}
+  .settings-detail input,.settings-detail select,.settings-detail textarea{max-width:100%;min-width:0}
+  .settings-detail pre,.settings-detail code{white-space:pre-wrap;word-break:break-all}
+  .settings-detail .flex{flex-wrap:wrap}
+  .settings-detail .grid>*,.settings-detail section{min-width:0}
+  .settings-detail button[data-slot="button"]{white-space:normal;height:auto;min-height:36px;max-width:100%;padding-top:8px;padding-bottom:8px;line-height:1.3}
+  .settings-detail .grid:not([class*="grid-cols-"]),.settings-detail .grid[class*="md:grid-cols"]:not([class*=" grid-cols-"]),.settings-detail .grid[class*="xl:grid-cols"]:not([class*=" grid-cols-"]){grid-template-columns:minmax(0,1fr)}
 }
