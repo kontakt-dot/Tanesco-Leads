@@ -2398,4 +2398,27 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const after = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
     expect(after.stats).toMatchObject({ total: 3, sent: 3, opened: 2, clicked: 1 }); expect(after.audienceInfo).toMatchObject({ outside: 0 }); expect(after.stats.mails.sent).toBe(4);
   }, 30000);
+
+  it("50. Stufenfarben speichern; gelöschte Kontakte verschwinden komplett aus den Kampagnen-Zahlen", async () => {
+    const current = await owner.leadops.pipelineStages({ source: "kaltakquise" });
+    await owner.leadops.savePipelineStages({ source: "kaltakquise", stages: current.map((stage, index) => (index === 1 ? { ...stage, color: "#FF00AA" } : stage)) });
+    const saved = await owner.leadops.pipelineStages({ source: "kaltakquise" }); expect(saved[1].color).toBe("#ff00aa"); expect(saved[0].color).toBeUndefined();
+    await expect(owner.leadops.savePipelineStages({ source: "kaltakquise", stages: current.map((stage) => ({ ...stage, color: "rot" })) })).rejects.toThrow();
+    await owner.leadops.savePipelineStages({ source: "kaltakquise", stages: current });
+    // Kampagne mit 2 Kontakten, beide geöffnet → einen Kontakt löschen → Zahlen nur noch 1
+    await owner.leadops.importColdList({ listName: "Weg-ist-weg", toPipeline: false, rows: [{ firstName: "Ina", lastName: "Bleibt", email: "ina@weg-ist-weg.example" }, { firstName: "Udo", lastName: "Geht", email: "udo@weg-ist-weg.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Weg ist weg", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Weg-ist-weg" }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const outreach = await import("./sales-outreach");
+    for (const row of await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))) await outreach.trackOpen(db, row.token);
+    let listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(listed.stats).toMatchObject({ total: 2, opened: 2 }); expect(listed.stats.mails.opened).toBe(2);
+    const udo = (await db.select({ publicId: leads.publicId }).from(leads).where(eq(leads.email, "udo@weg-ist-weg.example")))[0];
+    await owner.leadops.deletePipelineLeads({ publicIds: [udo.publicId] });
+    listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+    expect(listed.stats).toMatchObject({ total: 1, sent: 1, opened: 1 }); expect(listed.stats.mails).toMatchObject({ sent: 1, opened: 1 });
+    const orphan = await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.campaignId, campaign.id));
+    const recipientIds = new Set((await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).map((row) => row.id));
+    expect(orphan.every((event) => recipientIds.has(event.recipientId))).toBe(true);
+  }, 30000);
 });

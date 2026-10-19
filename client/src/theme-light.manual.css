@@ -1192,3 +1192,13 @@ html:not(.dark) .audience-prune { background: #fff7e0 !important; color: #8a5a00
 html:not(.dark) .audience-prune-confirm { color: #8a5a00 !important; }
 html:not(.dark) .audience-prune-yes { background: #bc001d !important; color: #fff !important; }
 html:not(.dark) .audience-prune-no { color: #4b4860 !important; }
+html:not(.dark) .card-move-pill { background: #fff1f3 !important; border-color: #f2b8c1 !important; color: #8f0016 !important; }
+html:not(.dark) .card-move-pill:hover { background: #ffe3e8 !important; border-color: #bc001d !important; }
+html:not(.dark) .card-move-pill .card-move-pipeline { background: transparent !important; border: 0 !important; color: #8f0016 !important; }
+html:not(.dark) .campaign-act { background: #ffffff !important; border-color: #e2e8f0 !important; color: #1e293b !important; }
+html:not(.dark) .campaign-act:hover:not(:disabled) { background: #f4f5f9 !important; border-color: #cbd5e1 !important; }
+html:not(.dark) .campaign-act.is-primary { background: #bc001d !important; border-color: #bc001d !important; color: #ffffff !important; }
+html:not(.dark) .campaign-act.is-primary:hover:not(:disabled) { background: #9f0018 !important; }
+html:not(.dark) .campaign-act-menu .campaign-act-danger { color: #be123c !important; }
+html:not(.dark) .stage-editor-color { box-shadow: 0 0 0 2px #e2e8f0 !important; }
+html:not(.dark) .stage-editor-color:hover { box-shadow: 0 0 0 2px #94a3b8 !important; }

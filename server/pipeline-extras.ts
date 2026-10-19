@@ -441,6 +441,7 @@ export async function deleteLead(db: Db, tenantId: number, publicId: string) {
   await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), eq(pipelineEvents.leadId, lead.id)));
   await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), eq(pipelineNotes.leadId, lead.id)));
   await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.leadId, lead.id)));
+  { const gone = (await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.leadId, lead.id)))).map((row) => row.id); if (gone.length) { await db.update(inboxMessages).set({ campaignRecipientId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.campaignRecipientId, gone))); await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.recipientId, gone))); } }
   await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.leadId, lead.id)));
   await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), eq(dialerQueueItems.leadId, lead.id)));
   await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.leadId, lead.id)));

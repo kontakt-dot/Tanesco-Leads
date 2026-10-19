@@ -2542,3 +2542,27 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .audience-prune-confirm{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:#fcd34d}
 .audience-prune-yes{background:#e11d48;color:#fff;border-radius:999px;padding:2px 9px;font-weight:700}
 .audience-prune-no{color:#a5a3c4;padding:2px 6px}
+/* Karte offen: „In Stufe verschieben“ / „In andere Pipeline“ als Knöpfe unten (statt Kontaktiert/Verloren) */
+.card-move-pill{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:9px;border:1px solid rgba(130,120,255,.38);background:rgba(130,120,255,.10);color:#dcd8ff;font-size:12.5px;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s}
+.card-move-pill:hover{background:rgba(130,120,255,.2);border-color:rgba(130,120,255,.6)}
+.card-move-pill:focus-within{outline:2px solid #8278ff;outline-offset:2px}
+.card-move-pill .card-move-pipeline{height:auto;max-width:190px;border:0;background:transparent;color:inherit;font:inherit;padding:0 2px;cursor:pointer;outline:none;appearance:auto}
+.card-move-pill .card-move-pipeline option{color:#0f172a;background:#fff}
+/* Kampagnenliste: kompakte Aktionsleiste – Hauptaktion, Bearbeiten, „⋯“-Menü */
+.campaign-list td.campaign-actions{width:1%;white-space:nowrap}
+.campaign-actbar{display:inline-flex;align-items:center;gap:4px}
+.campaign-act{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#e4e2f5;font-size:12.5px;font-weight:600;transition:background .15s,border-color .15s}
+.campaign-act svg{width:14px;height:14px}
+.campaign-act:hover:not(:disabled){background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.22)}
+.campaign-act.is-primary{background:linear-gradient(135deg,#8278ff,#6258df);border-color:transparent;color:#fff}
+.campaign-act.is-primary:hover:not(:disabled){filter:brightness(1.08)}
+.campaign-act.is-icon{width:30px;padding:0;justify-content:center}
+.campaign-act-menu{min-width:200px}
+.campaign-act-menu [role=menuitem] svg{width:15px;height:15px;opacity:.8}
+.campaign-act-menu .campaign-act-danger{color:#fb7185}
+/* Stufen-Editor: Farbtupfer zum Anklicken (öffnet die Farbauswahl) */
+.stage-editor-row{grid-template-columns:28px 26px minmax(120px,1fr) minmax(160px,2fr) 90px auto}
+.stage-editor-color{position:relative;width:24px;height:24px;border-radius:999px;cursor:pointer;box-shadow:0 0 0 2px rgba(255,255,255,.14),0 0 0 4px transparent;transition:box-shadow .15s}
+.stage-editor-color:hover,.stage-editor-color:focus-within{box-shadow:0 0 0 2px rgba(255,255,255,.5)}
+.stage-editor-color input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0;padding:0}
+@media(max-width:760px){.stage-editor-row{grid-template-columns:24px 26px 1fr auto}}

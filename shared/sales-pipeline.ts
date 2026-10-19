@@ -1,6 +1,15 @@
 /** Vertriebspipeline: Stufen (je Mandant anpassbar) vom Lead bis zum Kunden, Kampagnen-Auswertung (Kosten je Lead/Kunde). */
 export type PipelineStage = string;
-export type StageDef = { key: string; label: string; hint: string; fixed?: "entry" | "won" | "lost" };
+export type StageDef = { key: string; label: string; hint: string; fixed?: "entry" | "won" | "lost"; color?: string };
+/** Standardfarben der Stufen (gleich wie im Board); eigene Stufen bekommen reihum eine Farbe. Eigene Farbe (color) gewinnt. */
+export const STAGE_COLOR_DEFAULTS: Record<string, string> = { neu: "#8b7cff", in_bearbeitung: "#60a5fa", kontaktiert: "#22d3ee", qualifiziert: "#a3e635", termin: "#fbbf24", angebot: "#fb923c", kunde: "#34d399", verloren: "#fb7185" };
+const STAGE_COLOR_CYCLE = ["#8b7cff", "#60a5fa", "#22d3ee", "#a3e635", "#fbbf24", "#fb923c", "#f472b6", "#c084fc", "#2dd4bf", "#facc15"];
+export const isStageColor = (value: unknown): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+export function stageColor(stage: Pick<StageDef, "key" | "color" | "fixed">, index = 0): string {
+  if (isStageColor(stage.color)) return stage.color.toLowerCase();
+  if (stage.fixed === "won") return STAGE_COLOR_DEFAULTS.kunde; if (stage.fixed === "lost") return STAGE_COLOR_DEFAULTS.verloren; if (stage.fixed === "entry") return STAGE_COLOR_DEFAULTS.neu;
+  return STAGE_COLOR_DEFAULTS[stage.key] ?? STAGE_COLOR_CYCLE[index % STAGE_COLOR_CYCLE.length];
+}
 export const PIPELINE_STAGES: StageDef[] = [
   { key: "neu", label: "Neu", hint: "Gerade eingegangen", fixed: "entry" },
   { key: "in_bearbeitung", label: "In Bearbeitung", hint: "Wird gerade angerufen – der Zähler zeigt die Versuche" },
@@ -53,7 +62,7 @@ export const slugStage = (label: string) => `stufe_${label.toLowerCase().replace
 /** Prüft eine Stufenliste: Eintritt, Gewonnen und Verloren müssen vorhanden sein; Schlüssel eindeutig; Labels gesetzt. Gibt die bereinigte Liste zurück. */
 export function normalizeStages(input: Array<Partial<StageDef>>): { stages: StageDef[]; issues: string[] } {
   const issues: string[] = []; const seen = new Set<string>(); const stages: StageDef[] = [];
-  for (const item of input) { const label = String(item.label ?? "").trim(); if (!label) { issues.push("Eine Stufe hat keinen Namen."); continue; } let key = String(item.key ?? "").trim() || slugStage(label); if (seen.has(key)) { issues.push(`Die Stufe „${label}“ ist doppelt.`); continue; } seen.add(key); stages.push({ key, label: label.slice(0, 40), hint: String(item.hint ?? "").trim().slice(0, 120), ...(item.fixed ? { fixed: item.fixed } : {}) }); }
+  for (const item of input) { const label = String(item.label ?? "").trim(); if (!label) { issues.push("Eine Stufe hat keinen Namen."); continue; } let key = String(item.key ?? "").trim() || slugStage(label); if (seen.has(key)) { issues.push(`Die Stufe „${label}“ ist doppelt.`); continue; } seen.add(key); stages.push({ key, label: label.slice(0, 40), hint: String(item.hint ?? "").trim().slice(0, 120), ...(item.fixed ? { fixed: item.fixed } : {}), ...(isStageColor(item.color) ? { color: item.color.toLowerCase() } : {}) }); }
   if (!stages.some((stage) => stage.fixed === "entry")) issues.push("Die Eingangsstufe („Neu“) darf nicht fehlen."); if (!stages.some((stage) => stage.fixed === "won")) issues.push("Die Gewonnen-Stufe („Kunde“) darf nicht fehlen."); if (!stages.some((stage) => stage.fixed === "lost")) issues.push("Die Verloren-Stufe darf nicht fehlen.");
   if (stages.length > 12) issues.push("Höchstens 12 Stufen.");
   const entry = stages.find((stage) => stage.fixed === "entry"); const lost = stages.find((stage) => stage.fixed === "lost");

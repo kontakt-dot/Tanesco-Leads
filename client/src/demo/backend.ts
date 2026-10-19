@@ -1402,6 +1402,7 @@ const procedures: Record<string, Handler> = {
     if (!rows.length) fail("Keine der ausgewählten Karten ist ein Vertriebskontakt – Verkaufs-Leads bitte über die Leads-Seite löschen.");
     const ids = new Set(rows.map((lead) => lead.id));
     demoRecordDeletion(Array.from(ids), `${ids.size === 1 ? "Eine Karte" : `${ids.size} Karten`} aus der Vertriebspipeline gelöscht`);
+    { const gone = new Set(T().emailCampaignRecipients.filter((row) => ids.has(row.leadId)).map((row) => row.id)); remove(store, "emailCampaignEvents", (row) => gone.has(row.recipientId)); }
     for (const table of ["pipelineTasks", "pipelineEvents", "pipelineNotes", "outboundMessages", "emailCampaignRecipients", "dialerQueueItems", "leadStatusEvents"] as const) remove(store, table, (row) => ids.has(row.leadId));
     remove(store, "leadTagAssignments", (row) => ids.has(row.leadId));
     update(store, "inboxMessages", (row) => ids.has(row.leadId), { leadId: null }); update(store, "dialerCalls", (row) => ids.has(row.leadId), { leadId: null });
@@ -1411,6 +1412,7 @@ const procedures: Record<string, Handler> = {
   },
   "leadops.deletePipelineLead": (input) => {
     const lead = requireProspect(input.publicId); const name = leadDisplayName(lead);
+    { const gone = new Set(T().emailCampaignRecipients.filter((row) => row.leadId === lead.id).map((row) => row.id)); remove(store, "emailCampaignEvents", (row) => gone.has(row.recipientId)); }
     for (const table of ["pipelineTasks", "pipelineEvents", "pipelineNotes", "outboundMessages", "emailCampaignRecipients", "dialerQueueItems"] as const) remove(store, table, (row) => row.leadId === lead.id);
     update(store, "inboxMessages", (row) => row.leadId === lead.id, { leadId: null }); update(store, "dialerCalls", (row) => row.leadId === lead.id, { leadId: null });
     remove(store, "leads", (row) => row.id === lead.id);

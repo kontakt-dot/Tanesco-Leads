@@ -2,7 +2,7 @@
  * Vertrieb: Kaltakquise-Listen (CSV → Leads in der Pipeline, Anrufkampagne manuell/power/predictive über den Dialer)
  * und E-Mail-Kampagnen mit Ablauf-Baum (Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst), Tracking per Pixel/Link.
  */
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
@@ -175,7 +175,13 @@ export async function moveLeadsToPipeline(db: Db, tenantId: number, input: { pub
 export type Audience = { source: "liste" | "stufe" | "tag" | "alle"; listName?: string | null; listNames?: string[] | null; stage?: string | null; tagId?: number | null };
 const tree = (campaign: EmailCampaign): EmailTree => (campaign.tree && typeof campaign.tree === "object" ? (campaign.tree as EmailTree) : { start: null, nodes: [] });
 const design = (campaign: EmailCampaign): EmailDesign => ({ ...DEFAULT_DESIGN, ...((campaign.design ?? {}) as Partial<EmailDesign>) });
+/** Verlauf von Empfängern, die es nicht mehr gibt, endgültig löschen – gelöschte Kontakte zählen in keiner Zahl mehr. */
+export async function purgeOrphanCampaignEvents(db: Db, tenantId: number) {
+  const result = await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), sql`${emailCampaignEvents.recipientId} not in (select ${emailCampaignRecipients.id} from ${emailCampaignRecipients} where ${emailCampaignRecipients.tenantId} = ${tenantId})`));
+  return Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
+}
 export async function listEmailCampaigns(db: Db, tenantId: number) {
+  await purgeOrphanCampaignEvents(db, tenantId);
   const rows = await db.select().from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId)).orderBy(desc(emailCampaigns.updatedAt));
   const recipients = await db.select({ campaignId: emailCampaignRecipients.campaignId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, variant: emailCampaignRecipients.variant }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
   const recipientEmails = await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
@@ -624,6 +630,7 @@ export async function removeLeadsCascade(db: Db, tenantId: number, ids: number[]
   await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, ids)));
   await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), inArray(pipelineNotes.leadId, ids)));
   await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.leadId, ids)));
+  { const gone = (await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, ids)))).map((row) => row.id); if (gone.length) { await db.update(inboxMessages).set({ campaignRecipientId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.campaignRecipientId, gone))); await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.recipientId, gone))); } } // gelöscht ist gelöscht: auch Öffnungen/Klicks weg
   await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, ids)));
   await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), inArray(dialerQueueItems.leadId, ids)));
   await db.delete(leadStatusEvents).where(and(eq(leadStatusEvents.tenantId, tenantId), inArray(leadStatusEvents.leadId, ids)));

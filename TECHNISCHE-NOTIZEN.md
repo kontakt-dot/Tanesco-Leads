@@ -815,3 +815,9 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - `summarizeCampaign.opened` = Personen mit openedAt ODER clickedAt ODER repliedAt.
 - `stats.mails` = `campaignMailStats` (gleiche Logik wie Ordner „Gesendet“): Mails gesendet/geöffnet/geklickt/beantwortet.
 - `audienceInfo.outside/outsideIds`: Empfänger, die nicht mehr in der Zielgruppe sind; `pruneEmailCampaignRecipients` entfernt sie samt Verlauf.
+
+## v176 – Karte, Einstellungen, Farben, gelöscht ist gelöscht
+- Geöffnete Karte: Knöpfe „Kontaktiert“ (nächste Stufe) und „Verloren“ entfernt; dafür „In Stufe verschieben“ und „In andere Pipeline“ als Knöpfe unten (`.card-move-pill`).
+- Einstellungen → Stufen: „Pipeline anlegen“ im Block Reihenfolge; Farbe je Stufe (`StageDef.color`, `stageColor()`, Spalte bekommt `--stage` inline).
+- Kampagnenliste: Aktionen kompakt (Hauptaktion, Stift, „⋯“-Menü).
+- Kontakt löschen löscht auch den Kampagnen-Verlauf (Öffnungen/Klicks); `purgeOrphanCampaignEvents` räumt Altlasten beim Laden der Kampagnenliste auf.
