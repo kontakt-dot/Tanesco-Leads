@@ -1349,6 +1349,8 @@ html:not(.dark) .pipeline-note-tools button:hover { background: #f8fafb !importa
 html:not(.dark) .pipeline-note-edit textarea { border: 1px solid #d9dfe7 !important; background: #ffffff !important; color: #0f172a !important; }
 html:not(.dark) .pipeline-note-edit-actions button { border: 1px solid #e8ecf1 !important; color: #0f172a !important; }
 html:not(.dark) .pipeline-note-edit-actions button.is-save { background: #111318 !important; border-color: #111318 !important; color: #0f172a !important; }
+html:not(.dark) .inbox-read-actions .inbox-delete { color: #8a5a5a !important; }
+html:not(.dark) .inbox-read-actions .inbox-delete:hover { background: #ffffff !important; color: #0f172a !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2767,3 +2769,5 @@ html:not(.dark) .pipeline-note-edit-actions button { color: #334155 !important; 
 html:not(.dark) .pipeline-note-edit-actions button.is-save { background: #bc001d !important; border-color: #bc001d !important; color: #ffffff !important; }
 html:not(.dark) .pipeline-note-tools button { color: #64748b !important; }
 html:not(.dark) .pipeline-note-tools button:hover { background: #f1f5f9 !important; color: #0f172a !important; }
+html:not(.dark) .inbox-read-actions .inbox-delete { color: #b91c1c !important; }
+html:not(.dark) .inbox-read-actions .inbox-delete:hover { background: #fef2f2 !important; }

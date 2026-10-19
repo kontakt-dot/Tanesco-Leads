@@ -2279,4 +2279,19 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const withSingle = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(withSingle.recipients.map((row) => row.email).sort()).toEqual([contacts[3].email, "eins@einzel-e2e.example"].sort());
     expect(withSingle.audienceInfo).toMatchObject({ pending: 0 }); // „Zwei“ wird nicht automatisch mitgenommen – nur die Liste der Kampagne zählt
   }, 20000);
+
+  it("46. Posteingang: gelöschte Mails merken (Migration 0079) – einzeln und „Alle Antworten“, IMAP-Abholung lädt sie nicht wieder", async () => {
+    const { inboxDeletedMessages, inboxMessages } = await import("../drizzle/schema");
+    const a = await owner.leadops.storeInboxMessage({ fromEmail: "tester1@loesch-inbox.example", subject: "Test 1", bodyText: "nur ein Test" });
+    const b = await owner.leadops.storeInboxMessage({ fromEmail: "tester2@loesch-inbox.example", subject: "Test 2", bodyText: "noch ein Test" });
+    const ids = [a.id, b.id];
+    const rows = await db.select({ id: inboxMessages.id, messageId: inboxMessages.messageId }).from(inboxMessages).where(sql`${inboxMessages.id} in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`); expect(rows).toHaveLength(2);
+    expect((await owner.leadops.deleteInboxMessages({ ids: [a.id] })).deleted).toBe(1);
+    expect((await owner.leadops.listInbox({ filter: "alle" })).items.some((item) => item.id === a.id)).toBe(false);
+    const remembered = await db.select({ messageId: inboxDeletedMessages.messageId }).from(inboxDeletedMessages);
+    expect(remembered.map((row) => row.messageId)).toContain(rows.find((row) => row.id === a.id)!.messageId);
+    // zweimal löschen schadet nicht; „Alle Antworten“-Aufräumen läuft durch
+    expect((await owner.leadops.deleteInboxMessages({ ids: [a.id, b.id] })).deleted).toBe(1);
+    expect((await owner.leadops.clearInbox({ scope: "antworten" })).scope).toBe("antworten");
+  }, 20000);
 });

@@ -4,7 +4,7 @@
  */
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import crypto from "node:crypto";
-import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leads, mailSettings, outboundMessages, pipelineEvents, pipelineNotes, users } from "../drizzle/schema";
+import { inboxDeletedMessages, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leads, mailSettings, outboundMessages, pipelineEvents, pipelineNotes, users } from "../drizzle/schema";
 import { decideReply, describeAssessment, DEFAULT_REPLY_AI, isAutoReply, matchesAiFilter, type InboxAiFilter, type ReplyAiSettings } from "../shared/reply-ai";
 import { assessReply } from "./reply-ai";
 import { isStage } from "../shared/sales-pipeline";
@@ -27,6 +27,7 @@ export async function syncInbox(db: Db, tenantId: number) {
   const { ImapFlow } = await import("imapflow");
   const client = new ImapFlow({ host: row.imapHost, port: row.imapPort ?? 993, secure: (row.imapPort ?? 993) === 993, auth: { user: row.imapUsername, pass: row.imapPassword }, logger: false });
   const known = new Set((await db.select({ messageId: inboxMessages.messageId }).from(inboxMessages).where(eq(inboxMessages.tenantId, tenantId))).map((item) => item.messageId));
+  for (const item of await db.select({ messageId: inboxDeletedMessages.messageId }).from(inboxDeletedMessages).where(eq(inboxDeletedMessages.tenantId, tenantId))) known.add(item.messageId); // gelöscht = nie wieder einlesen
   // „Nur bekannte Kontakte“ (Standard): Absender muss Kampagnen-Empfänger oder Lead sein – Rechnungen, Newsletter, Fremde bleiben draußen.
   const onlyKnown = (row.imapScope ?? "bekannte") !== "alle";
   const knownSenders = onlyKnown ? new Set([
@@ -58,11 +59,26 @@ export async function syncInbox(db: Db, tenantId: number) {
  * z. B. Rechnungen und Newsletter, die vor dem Umzug auf ein eigenes Kampagnen-Postfach mitgeladen wurden. „alle“ leert den Posteingang komplett.
  * Die Sperrliste bleibt unberührt; gesendete Antworten bleiben im Ordner „Gesendet“.
  */
-export async function clearInbox(db: Db, tenantId: number, scope: "fremde" | "alle") {
-  const condition = scope === "alle" ? eq(inboxMessages.tenantId, tenantId) : and(eq(inboxMessages.tenantId, tenantId), isNull(inboxMessages.leadId), isNull(inboxMessages.campaignRecipientId));
-  const rows = await db.select({ id: inboxMessages.id }).from(inboxMessages).where(condition);
-  if (rows.length) await db.delete(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.id, rows.map((item) => item.id))));
+export async function clearInbox(db: Db, tenantId: number, scope: "fremde" | "antworten" | "alle") {
+  const condition = scope === "alle" ? eq(inboxMessages.tenantId, tenantId) : scope === "antworten" ? and(eq(inboxMessages.tenantId, tenantId), isNotNull(inboxMessages.campaignRecipientId)) : and(eq(inboxMessages.tenantId, tenantId), isNull(inboxMessages.leadId), isNull(inboxMessages.campaignRecipientId));
+  const rows = await db.select({ id: inboxMessages.id, messageId: inboxMessages.messageId }).from(inboxMessages).where(condition);
+  await removeMessages(db, tenantId, rows);
   return { deleted: rows.length, scope };
+}
+/** Mails wirklich löschen und ihre Message-ID merken – sonst holt die nächste IMAP-Abholung sie aus dem Postfach zurück. */
+async function removeMessages(db: Db, tenantId: number, rows: Array<{ id: number; messageId: string }>) {
+  if (!rows.length) return;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    await db.insert(inboxDeletedMessages).values(chunk.map((row) => ({ tenantId, messageId: row.messageId.slice(0, 320) }))).onDuplicateKeyUpdate({ set: { deletedAt: new Date() } });
+    await db.delete(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.id, chunk.map((row) => row.id))));
+  }
+}
+/** Einzelne Mails aus dem Posteingang löschen (z. B. Test-Antworten) – bleiben dauerhaft weg. */
+export async function deleteMessages(db: Db, tenantId: number, ids: number[]) {
+  const rows = ids.length ? await db.select({ id: inboxMessages.id, messageId: inboxMessages.messageId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.id, ids))) : [];
+  await removeMessages(db, tenantId, rows);
+  return { deleted: rows.length };
 }
 /** Eine Mail ablegen (auch ohne IMAP nutzbar, z. B. Test/Webhook) und automatisch verknüpfen. */
 export async function storeMessage(db: Db, tenantId: number, input: { messageId: string; imapUid?: number | null; fromEmail: string; fromName?: string | null; subject?: string | null; bodyText: string; receivedAt: Date }, deps: Parameters<typeof assessReply>[3] = {}) {

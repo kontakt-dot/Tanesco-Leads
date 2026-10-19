@@ -2485,3 +2485,5 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 /* Farbpunkt am Spaltennamen: Leuchtring nicht abschneiden (Name hat overflow:hidden für lange Namen) */
 .pipeline-page .pipeline-column header strong{padding:4px 0 4px 4px;margin:-4px 0 -4px -4px}
 .pipeline-page .pipeline-column header strong::before{align-self:center}
+.inbox-read-actions .inbox-delete{color:#fca5a5}
+.inbox-read-actions .inbox-delete:hover{background:rgba(239,68,68,.14);color:#fecaca}

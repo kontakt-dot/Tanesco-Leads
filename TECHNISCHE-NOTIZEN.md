@@ -787,3 +787,8 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Leuchten/Rahmen der Karten nicht mehr abgeschnitten (`.pipeline-cards` mit Innenabstand).
 - Sprüche: 40 umgedrehte Sprichwörter mit Vertriebs-Pointe.
 - v169: Farbpunkt am Spaltennamen nicht mehr links abgeschnitten (Innenabstand am Namen).
+
+## v170 – Posteingang: Löschen bleibt gelöscht
+- Ursache: gelöschte Mails liegen noch im IMAP-Postfach; die Abholung (letzte 14 Tage) kannte nur vorhandene Message-IDs und lud sie neu.
+- Neue Tabelle `inboxDeletedMessages` (Migration 0079, läuft beim Start auf Railway automatisch): Message-IDs gelöschter Mails; `syncInbox` überspringt sie.
+- `deleteInboxMessages` (einzeln, Knopf „Löschen“ in der geöffneten Mail), `clearInbox` mit neuem Bereich „antworten“ (alle Antworten auf Kampagnen) – alle Löschwege merken sich die IDs.

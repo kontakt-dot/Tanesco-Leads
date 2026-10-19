@@ -1170,3 +1170,5 @@ html:not(.dark) .pipeline-note-edit-actions button { color: #334155 !important; 
 html:not(.dark) .pipeline-note-edit-actions button.is-save { background: #bc001d !important; border-color: #bc001d !important; color: #ffffff !important; }
 html:not(.dark) .pipeline-note-tools button { color: #64748b !important; }
 html:not(.dark) .pipeline-note-tools button:hover { background: #f1f5f9 !important; color: #0f172a !important; }
+html:not(.dark) .inbox-read-actions .inbox-delete { color: #b91c1c !important; }
+html:not(.dark) .inbox-read-actions .inbox-delete:hover { background: #fef2f2 !important; }
