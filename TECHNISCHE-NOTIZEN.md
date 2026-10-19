@@ -831,4 +831,8 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Kampagnenseite (`CampaignDetailView`): Kopf mit Chips + Aktionen, KPI-Karten, Empfängerliste mit Suche, Filtern und Fortschritts-Symbolen, rechts „Letzte Aktivität“. Klick → `CampaignContactDrawer` (Seitenleiste: Meilensteine, Als Nächstes, Verlauf nach Tagen, Aktionen, vor/zurück). `LeadLogDialog` wird hier nicht mehr benutzt.
 - Sheets liegen über der oberen Leiste (`[data-slot=sheet-*]` z 70/71).
 - Pipeline-Ziehen: Fenster-Listener statt Board-Listener (Ziehen über den Rand bricht nicht mehr ab), Zielspalte am Rand geklemmt, Auto-Scroll links/rechts/in der Spalte/Seite, Geist per transform (kein Neuzeichnen), Karte sofort in der Zielspalte (`pendingMoves`), Esc bricht ab.
-- Stufenfarben: `trafficLightColor` – Ampel Rot→Grün über die Stufen (ohne Verloren, das ist grau). Eigene Farbe gewinnt; Knopf „Ampel-Farben“ entfernt eigene Farben.
+- Stufenfarben: Ampel ausprobiert und auf Wunsch wieder zurück zu den Standardfarben (v184). Knopf „Standardfarben“ entfernt eigene Farben.
+
+## v184 – Kampagnenliste als Karten, Stufenfarben zurück
+- Kampagnen-Tab: Tabelle ersetzt durch Karten (`.cl-card`): Name/Infos, Zielgruppe, 5 Kennzahl-Kästchen mit Balken, Status + Aktionen. Kein Quer-Scrollen mehr. Versandfenster kurz (`windowShort`), voll im Hinweis.
+- Stufenfarben wieder die ursprünglichen Standardfarben (Ampel entfernt).

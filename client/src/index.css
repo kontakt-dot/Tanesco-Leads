@@ -2734,3 +2734,26 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 /* Seitenleisten (Sheet) liegen über der oberen Leiste (z 60) */
 [data-slot="sheet-overlay"]{z-index:70!important}
 [data-slot="sheet-content"]{z-index:71!important}
+/* Kampagnenliste als Karten (v184) – keine breite Tabelle mehr, kein Quer-Scrollen */
+.cl-list{list-style:none;margin:0;padding:10px;display:flex;flex-direction:column;gap:8px}
+.cl-card{display:grid;grid-template-columns:minmax(240px,1.4fr) minmax(170px,.8fr) auto auto;align-items:center;gap:18px;padding:14px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.025);transition:border-color .15s,background .15s}
+.cl-card:hover{border-color:rgba(255,255,255,.14);background:rgba(255,255,255,.04)}
+@media(max-width:1320px){.cl-card{grid-template-columns:minmax(0,1fr) minmax(0,1fr);row-gap:12px}.cl-stats{grid-column:1/2}.cl-side{justify-content:flex-end}}
+@media(max-width:760px){.cl-card{grid-template-columns:1fr}.cl-stats,.cl-side{grid-column:auto}.cl-side{justify-content:flex-start}}
+.cl-main{min-width:0}
+.cl-name{display:block;text-align:left;max-width:100%}
+.cl-name strong{display:block;font-size:14.5px;font-weight:700;color:#f5f3ff;line-height:1.3}
+.cl-name:hover strong{text-decoration:underline;text-underline-offset:3px}
+.cl-name small{display:block;font-size:11.5px;color:#8a87a8;margin-top:2px}
+.cl-main .dash-pill{font-size:11px}
+.cl-audience{min-width:0;display:flex;flex-direction:column;gap:5px}
+.cl-audience>small{font-size:11.5px;color:#a5a3c4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cl-stats{display:grid;grid-template-columns:repeat(5,minmax(66px,auto));gap:6px}
+.cl-stat{position:relative;display:flex;flex-direction:column;gap:1px;padding:8px 10px 10px;border-radius:10px;background:rgba(255,255,255,.035);min-width:70px;overflow:hidden}
+.cl-stat span{font-size:10.5px;font-weight:600;color:#8a87a8;white-space:nowrap}
+.cl-stat strong{font-size:16px;font-weight:800;color:#f5f3ff;font-variant-numeric:tabular-nums;line-height:1.2}
+.cl-stat small{font-size:10.5px;color:#8a87a8}
+.cl-stat i{position:absolute;left:0;bottom:0;height:3px;border-radius:0 3px 3px 0;background:var(--bar,#8278ff)}
+.cl-stat.is-open{--bar:#60a5fa}.cl-stat.is-click{--bar:#fbbf24}.cl-stat.is-reply{--bar:#34d399}
+.cl-side{display:flex;align-items:center;gap:10px}
+.cl-side .campaign-actbar{flex-wrap:nowrap}

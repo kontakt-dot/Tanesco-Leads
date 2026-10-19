@@ -1281,3 +1281,13 @@ html:not(.dark) .cj-timeline li.is-reply .cj-dot { background: #059669 !importan
 html:not(.dark) .cj-timeline li.is-bad .cj-dot { background: #e11d48 !important; color: #fff !important; }
 html:not(.dark) .cj-timeline li.is-quiet .cj-event-top strong { color: #475467 !important; }
 html:not(.dark) .cj-runs li { background: #f8fafc !important; }
+/* Kampagnenliste als Karten – hell */
+html:not(.dark) .cl-card { background: #ffffff !important; border-color: #eceef3 !important; box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important; }
+html:not(.dark) .cl-card:hover { border-color: #d0d5dd !important; box-shadow: 0 4px 14px -6px rgba(16, 24, 40, .12) !important; }
+html:not(.dark) .cl-name strong, html:not(.dark) .cl-stat strong { color: #0f172a !important; }
+html:not(.dark) .cl-name small, html:not(.dark) .cl-stat span, html:not(.dark) .cl-stat small { color: #667085 !important; }
+html:not(.dark) .cl-audience > small { color: #475467 !important; }
+html:not(.dark) .cl-stat { background: #f8fafc !important; }
+html:not(.dark) .cl-stat.is-open { --bar: #2563eb; } html:not(.dark) .cl-stat.is-click { --bar: #d97706; } html:not(.dark) .cl-stat.is-reply { --bar: #059669; }
+html:not(.dark) .cl-stat:not(.is-open):not(.is-click):not(.is-reply) { --bar: #bc001d; }
+html:not(.dark) .cl-stat i { background: var(--bar) !important; }
