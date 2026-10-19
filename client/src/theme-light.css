@@ -1380,6 +1380,9 @@ html:not(.dark) .stage-editor-color:hover, html:not(.dark) .stage-editor-color:f
 html:not(.dark) .pipeline-category-filter { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone { color: #0f172a !important; box-shadow: 0 6px 16px -8px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover { background: #127336 !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill { background: #f8fafb !important; border: 1.5px solid color-mix(in srgb,var(--stage,#111318) 55%,transparent) !important; color: #0f172a !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover { background: #111318 !important; border-color: var(--stage,#111318) !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: var(--stage,#111318) !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2835,3 +2838,7 @@ html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone { bac
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover { background: #15803d !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone svg { color: #ffffff !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone.is-missing { background: #d97706 !important; border-color: #d97706 !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill { background: #ffffff !important; border: 1.5px solid color-mix(in srgb, var(--stage, #8b7cff) 60%, #ffffff) !important; color: #1e293b !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover { background: color-mix(in srgb, var(--stage, #8b7cff) 8%, #ffffff) !important; border-color: var(--stage, #8b7cff) !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline { color: #1e293b !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: color-mix(in srgb, var(--stage, #8b7cff) 80%, #000000) !important; }
