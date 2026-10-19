@@ -2566,3 +2566,5 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .stage-editor-color:hover,.stage-editor-color:focus-within{box-shadow:0 0 0 2px rgba(255,255,255,.5)}
 .stage-editor-color input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0;padding:0}
 @media(max-width:760px){.stage-editor-row{grid-template-columns:24px 26px 1fr auto}}
+.pipeline-category-filter{height:32px;min-width:180px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#e4e2f5;font-size:12.5px;padding:0 8px}
+.pipeline-category-filter option{color:#0f172a;background:#fff}

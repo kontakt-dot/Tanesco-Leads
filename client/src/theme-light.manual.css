@@ -1202,3 +1202,4 @@ html:not(.dark) .campaign-act.is-primary:hover:not(:disabled) { background: #9f0
 html:not(.dark) .campaign-act-menu .campaign-act-danger { color: #be123c !important; }
 html:not(.dark) .stage-editor-color { box-shadow: 0 0 0 2px #e2e8f0 !important; }
 html:not(.dark) .stage-editor-color:hover { box-shadow: 0 0 0 2px #94a3b8 !important; }
+html:not(.dark) .pipeline-category-filter { background: #ffffff !important; color: #0f172a !important; border-color: #e2e8f0 !important; }

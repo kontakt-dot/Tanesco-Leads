@@ -820,4 +820,5 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Geöffnete Karte: Knöpfe „Kontaktiert“ (nächste Stufe) und „Verloren“ entfernt; dafür „In Stufe verschieben“ und „In andere Pipeline“ als Knöpfe unten (`.card-move-pill`).
 - Einstellungen → Stufen: „Pipeline anlegen“ im Block Reihenfolge; Farbe je Stufe (`StageDef.color`, `stageColor()`, Spalte bekommt `--stage` inline).
 - Kampagnenliste: Aktionen kompakt (Hauptaktion, Stift, „⋯“-Menü).
+- v177: Lead-Kategorie an der Karte und im Kontakt-Fenster wieder da; Filter „Lead-Kategorie“ im Board (nur Kategorien, die im Board vorkommen, mit Anzahl).
 - Kontakt löschen löscht auch den Kampagnen-Verlauf (Öffnungen/Klicks); `purgeOrphanCampaignEvents` räumt Altlasten beim Laden der Kampagnenliste auf.
