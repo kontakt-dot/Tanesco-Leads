@@ -1750,4 +1750,14 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect(board.stages.find((stage: any) => stage.key === "neu").leads.some((lead: any) => lead.publicId === created.publicId)).toBe(true);
     await expect(call("leadops.createPipelineContact", { source: "kaltakquise", firstName: "Zwilling", phone: "089 1112233" })).rejects.toThrow(/gibt es schon/);
   });
+
+  it("Eigene Pipeline (Demo): anlegen, Liste hochladen, Karte verschieben, löschen", async () => {
+    const created = await call("leadops.createCustomPipeline", { label: "Empfehlungen" });
+    await call("leadops.importColdList", { pipeline: created.key, listName: "Empfehlungen Okt", categoryId: null, rows: [{ firstName: "Eva", lastName: "Empfohlen", phone: "+49 69 4440001" }] });
+    const board = await call("leadops.pipelineOverview", { source: created.key }); const card = board.stages.flatMap((stage: any) => stage.leads)[0]; expect(card.name).toBe("Eva Empfohlen");
+    expect((await call("leadops.moveLeadsToPipeline", { publicIds: [card.publicId], target: "kaltakquise" })).moved).toBe(1);
+    expect((await call("leadops.pipelineOverview", { source: created.key })).stages.flatMap((stage: any) => stage.leads)).toHaveLength(0);
+    expect((await call("leadops.deleteCustomPipeline", { key: created.key })).label).toBe("Empfehlungen");
+    expect((await call("leadops.pipelineSettings")).customPipelines).toEqual([]);
+  });
 });

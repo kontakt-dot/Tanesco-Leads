@@ -5,7 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { callCounterText, callResultLabel } from "../../../shared/pipeline-extras";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
-import { PIPELINE_SOURCE_LABEL, pipelineSourceOf, stageLabel } from "../../../shared/sales-pipeline";
+import { pipelineLabel, pipelineSourceOf, stageLabel, type PipelineSource } from "../../../shared/sales-pipeline";
 
 /**
  * Kontakt-Übersicht als Tabelle – in zwei Rollen:
@@ -27,11 +27,12 @@ const ACTIVITY: Array<{ key: "gesendet" | "geoeffnet" | "geklickt" | "geantworte
   { key: "bounce", label: "Unzustellbar" },
 ];
 const stamp = (value: string | Date | null) => value ? new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" }) : "–";
-export type PipelineSource = "ads" | "kaltakquise" | "email";
+export type { PipelineSource } from "../../../shared/sales-pipeline";
 
 export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = null, onChanged }: { onOpenLead?: (publicId: string) => void; mode?: "email" | "pipeline"; source?: PipelineSource | null; onChanged?: () => void }) {
   const utils = trpc.useUtils();
   const pipeline = mode === "pipeline";
+  const pipelineSettingsForLabels = trpc.leadops.pipelineSettings.useQuery(undefined, { retry: false, staleTime: 60_000 });
   const [picked, setPicked] = useState<number[]>([]);
   const [callFor, setCallFor] = useState<{ publicId: string; name: string; phone: string | null } | null>(null); // Anruf-Fenster aus der Zeile
   const [target, setTarget] = useState<"email" | "kaltakquise">("email"); // Ziel-Pipeline beim Übernehmen
@@ -88,7 +89,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const nameOf = (lead: { firstName: string | null; lastName: string | null; company: string | null; email: string | null; publicId: string }) => [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.email || lead.publicId;
   const herkunft = (lead: { listName: string | null; adCampaignName?: string | null; adPlatform?: string | null }) => lead.listName || (lead.adPlatform !== "kaltakquise" && lead.adPlatform !== "email" ? lead.adCampaignName : null) || "–";
   const canPick = (_lead: { inPipeline: boolean }) => true; // jede Zeile ist wählbar – übernehmen verschiebt auch Kontakte, die schon in einer anderen Pipeline stehen
-  const pipelineName = (lead: { adPlatform?: string | null }) => PIPELINE_SOURCE_LABEL[pipelineSourceOf(lead.adPlatform ?? null)];
+  const pipelineName = (lead: { adPlatform?: string | null }) => pipelineLabel(pipelineSourceOf(lead.adPlatform ?? null), pipelineSettingsForLabels.data?.customPipelines ?? []);
   // Wie die Kampagnen-Spalte heißt, hängt von der Pipeline ab: in der Kaltakquise sind es die Kaltakquise-Kampagnen (E-Mail-Serien an die hochgeladenen Listen).
   const campaignWord = pipeline && source === "kaltakquise" ? "Kaltakquise-Kampagne" : pipeline ? "E-Mail-Kampagne" : "Kampagne";
   const campaignWordPlural = pipeline && source === "kaltakquise" ? "Alle Kaltakquise-Kampagnen" : pipeline ? "Alle E-Mail-Kampagnen" : "Alle Kampagnen";

@@ -13,22 +13,40 @@ export const PIPELINE_STAGES: StageDef[] = [
 ];
 export const STAGE_ORDER: string[] = PIPELINE_STAGES.map((stage) => stage.key);
 /** Die drei Pipelines – jede kann eigene Stufen haben; „alle“ ist der gemeinsame Standard, der gilt, solange eine Pipeline keine eigenen Stufen hat. */
-export type PipelineSource = "ads" | "kaltakquise" | "email";
-export const PIPELINE_SOURCES: PipelineSource[] = ["email", "ads", "kaltakquise"]; // Reihenfolge wie die Karten in der Vertriebspipeline
-export const PIPELINE_SOURCE_LABEL: Record<PipelineSource, string> = { ads: "Meta Ads", kaltakquise: "Kaltakquise", email: "E-Mail-Kampagne" };
+export type BuiltinPipelineSource = "ads" | "kaltakquise" | "email";
+/** Eigene Pipelines (angelegt in der Vertriebspipeline) heißen „p-…“ und funktionieren wie die Kaltakquise. */
+export type CustomPipelineSource = `p-${string}`;
+export type PipelineSource = BuiltinPipelineSource | CustomPipelineSource;
+export const CUSTOM_PIPELINE_RE = /^p-[a-z0-9]{2,14}$/;
+export const isCustomSource = (value: unknown): value is CustomPipelineSource => typeof value === "string" && CUSTOM_PIPELINE_RE.test(value);
+export const isPipelineSource = (value: unknown): value is PipelineSource => value === "ads" || value === "kaltakquise" || value === "email" || isCustomSource(value);
+/** Wie die Kaltakquise: Listen hochladen, anrufen, Kontakte von Hand – gilt für die Kaltakquise und alle eigenen Pipelines. */
+export const isColdLike = (source: unknown) => source === "kaltakquise" || isCustomSource(source);
+/** Welche Plattform-Kennung bekommt ein Kontakt in dieser Pipeline? (Eigene Pipelines: ihre Kennung selbst.) */
+export const platformForSource = (source: PipelineSource) => source === "kaltakquise" ? "kaltakquise" : source === "email" ? "email" : isCustomSource(source) ? source : "facebook";
+/** Neue Kennung aus dem Namen: „p-“ + bis zu 9 Buchstaben/Ziffern + 3 Zufallszeichen (passt in alle Spalten). */
+export const newCustomSourceKey = (label: string) => `p-${(label.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "").slice(0, 9) || "pipe")}${Math.random().toString(36).replace(/[^a-z0-9]/g, "").slice(0, 3).padEnd(3, "x")}` as CustomPipelineSource;
+export const PIPELINE_SOURCES: BuiltinPipelineSource[] = ["email", "ads", "kaltakquise"]; // Reihenfolge wie die Karten in der Vertriebspipeline
+export const PIPELINE_SOURCE_LABEL: Record<BuiltinPipelineSource, string> = { ads: "Meta Ads", kaltakquise: "Kaltakquise", email: "E-Mail-Kampagne" };
+/** Anzeigename einer Pipeline – eigene Pipelines aus der Liste in den Einstellungen. */
+export const pipelineLabel = (source: PipelineSource | null | undefined, custom: Array<{ key: string; label: string }> = []): string => !source ? "Pipeline" : isCustomSource(source) ? custom.find((item) => item.key === source)?.label ?? "Eigene Pipeline" : PIPELINE_SOURCE_LABEL[source];
 /** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board. */
-export const pipelineSourceOf = (adPlatform: string | null | undefined): PipelineSource => adPlatform === "kaltakquise" ? "kaltakquise" : adPlatform === "email" ? "email" : "ads";
-export type StageSets = Record<PipelineSource | "alle", StageDef[]>;
+export const pipelineSourceOf = (adPlatform: string | null | undefined): PipelineSource => adPlatform === "kaltakquise" ? "kaltakquise" : adPlatform === "email" ? "email" : isCustomSource(adPlatform) ? adPlatform : "ads";
+export type StageSets = { alle: StageDef[]; ads: StageDef[]; kaltakquise: StageDef[]; email: StageDef[] } & Record<string, StageDef[]>;
+/** Stufen einer Pipeline – eigene Pipelines ohne eigene Stufen nutzen den Standard. */
+export const stagesOf = (sets: StageSets, source: PipelineSource | "alle" | null | undefined): StageDef[] => sets[source ?? "alle"] ?? sets.alle;
 /** Stufen-Sätze aus gespeicherten Zeilen bauen: „alle“ ist der Standard, jede Pipeline ohne eigene Zeile nutzt ihn. */
 export function buildStageSets(rows: Array<{ source?: string | null; stages: unknown }>, fallback: StageDef[] = PIPELINE_STAGES): StageSets {
   const parse = (row: { stages: unknown } | undefined) => { if (!row || !Array.isArray(row.stages)) return null; const stages = normalizeStages(row.stages as StageDef[]).stages; return stages.length ? stages : null; };
   const base = parse(rows.find((row) => (row.source ?? "alle") === "alle")) ?? fallback;
   const pick = (source: PipelineSource) => parse(rows.find((row) => row.source === source)) ?? base;
-  return { alle: base, ads: pick("ads"), kaltakquise: pick("kaltakquise"), email: pick("email") };
+  const out: StageSets = { alle: base, ads: pick("ads"), kaltakquise: pick("kaltakquise"), email: pick("email") };
+  for (const row of rows) if (isCustomSource(row.source)) { const own = parse(row); if (own) out[row.source] = own; }
+  return out;
 }
-export const stagesForLead = (sets: StageSets, lead: { adPlatform?: string | null }) => sets[pipelineSourceOf(lead.adPlatform)];
+export const stagesForLead = (sets: StageSets, lead: { adPlatform?: string | null }) => stagesOf(sets, pipelineSourceOf(lead.adPlatform));
 /** Alle Stufen aller Pipelines zusammen (für Einstellungen, die pipeline-übergreifend gelten) – gleiche Schlüssel nur einmal. */
-export const unionStages = (sets: StageSets): StageDef[] => { const seen = new Map<string, StageDef>(); for (const list of [sets.alle, sets.ads, sets.kaltakquise, sets.email]) for (const stage of list) if (!seen.has(stage.key)) seen.set(stage.key, stage); return Array.from(seen.values()); };
+export const unionStages = (sets: StageSets): StageDef[] => { const seen = new Map<string, StageDef>(); for (const list of Object.values(sets)) for (const stage of list) if (!seen.has(stage.key)) seen.set(stage.key, stage); return Array.from(seen.values()); };
 export const isStage = (value: unknown, stages: StageDef[] = PIPELINE_STAGES): value is PipelineStage => typeof value === "string" && stages.some((stage) => stage.key === value);
 export const stageLabel = (key: string | null | undefined, stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.key === key)?.label ?? stages[0]?.label ?? "Neu";
 export const slugStage = (label: string) => `stufe_${label.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30) || "neu"}`;

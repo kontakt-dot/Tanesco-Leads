@@ -802,3 +802,16 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - „Kontakt anlegen“-Fenster: höhenbegrenzt und tiefer gesetzt (nicht mehr unter der Kopfleiste). Kartenbereich ohne Minus-Abstand oben (Hinweis unter dem Spaltennamen nicht mehr überdeckt).
 - Hinweis für künftige Migrationen: nach `drizzle-kit generate` den „when“-Wert prüfen (muss größer als der vorige sein).
 - v173: Firmenname als eigene Zeile unter dem Namen an jeder Pipeline-Karte (nicht doppelt, wenn der Name schon die Firma ist).
+
+## v174 – Eigene Pipelines, Stufe in der Karte wählen, eigener Zeitraum
+- Eigene Pipelines (wie Kaltakquise): Kennung `p-…` (shared `isCustomSource`, `isColdLike`, `platformForSource`, `pipelineLabel`, `stagesOf`), gespeichert in `PipelineSettings.customPipelines` (keine Migration). Kontakte einer eigenen Pipeline tragen `adPlatform = p-…`. Server: `createCustomPipeline`/`renameCustomPipeline`/`deleteCustomPipeline` (Löschen → Karten in die Kaltakquise), `moveLeadsToPipeline`, `importColdList({ pipeline })`, `listColdLists({ pipeline })`, `createPipelineContact` für eigene Pipelines; zod `pipelineSourceSchema`. `saveSettings` behält `customPipelines`. Eigene Stufen je Pipeline über `pipelineStageConfigs.source = p-…`.
+- Oberfläche: Karte „+ Pipeline“ neben den Pipelines, Reiter wie Kaltakquise (Listen, Upload-Verlauf), Einstellungen → Stufen: Reihenfolge + Umbenennen/Löschen; in der offenen Karte „In andere Pipeline …“ und „In Stufe verschieben …“.
+- Zeitraum: „90 Tage“ entfernt, „Eigener“ mit von/bis. Lead-Kategorie aus der Pipeline entfernt (Etikett an Karten, Auswahl in „Kontakt anlegen“) – die Kategorie bleibt am Kontakt gespeichert.
+- Tests: e2e 48, Demo „Eigene Pipeline“.
+
+## Tracking-Genauigkeit (v175)
+- `shared/tracking-guard.ts`: Pixel/Klick-Aufrufe von Scannern (User-Agent-Muster, leere Kennung, HEAD) und Aufrufe < 5 s nach `lastSentAt` zählen nicht. Gmail-Proxy zählt. Nur bei echten Web-Aufrufen (Meta übergeben); direkte Server-Aufrufe ohne Meta zählen immer.
+- Klick auf eine noch nicht geöffnete Mail setzt `openedAt` + Ereignis „geöffnet (über Link-Klick erkannt)“. Antwort (IMAP) setzt `openedAt` per coalesce.
+- `summarizeCampaign.opened` = Personen mit openedAt ODER clickedAt ODER repliedAt.
+- `stats.mails` = `campaignMailStats` (gleiche Logik wie Ordner „Gesendet“): Mails gesendet/geöffnet/geklickt/beantwortet.
+- `audienceInfo.outside/outsideIds`: Empfänger, die nicht mehr in der Zielgruppe sind; `pruneEmailCampaignRecipients` entfernt sie samt Verlauf.

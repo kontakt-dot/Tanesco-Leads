@@ -76,3 +76,19 @@ export function countReactions(items: Array<{ tracking: SentTracking | null }>):
   for (const item of items) if (item.tracking) counts[item.tracking.reaction] += 1;
   return counts;
 }
+
+/**
+ * Zahlen je E-Mail (nicht je Person) für eine Kampagne: wie viele Mails gingen raus, wie viele davon wurden
+ * geöffnet / geklickt / beantwortet. Gleiche Logik wie der Ordner „Gesendet“ – dadurch stimmen beide Ansichten überein.
+ * Beispiel: 4 Personen haben geöffnet, eine davon zwei verschiedene Mails → 4 Personen, 5 geöffnete Mails.
+ */
+export function campaignMailStats(events: TrackEvent[], stamps: Map<number, RecipientStamps> = new Map()) {
+  const byRecipient = new Map<number, TrackEvent[]>();
+  for (const event of events) byRecipient.set(event.recipientId, [...(byRecipient.get(event.recipientId) ?? []), event]);
+  let sent = 0; let opened = 0; let clicked = 0; let replied = 0;
+  for (const [recipientId, list] of Array.from(byRecipient.entries())) {
+    const sends = list.filter((event) => event.kind === "gesendet").map((event) => event.createdAt);
+    for (const sentAt of sends) { const tracking = trackingForSend(sentAt, list, sends, stamps.get(recipientId) ?? null); sent += 1; if (tracking.openedAt || tracking.clickedAt || tracking.repliedAt) opened += 1; if (tracking.clickedAt) clicked += 1; if (tracking.repliedAt) replied += 1; }
+  }
+  return { sent, opened, clicked, replied };
+}

@@ -3,7 +3,7 @@
  * Wiedervorlagen/Aufgaben („Heute fällig“), eingeschlafene Karten, Termine (Kalender, ICS-Einladung),
  * Angebotswerte/Pipeline-Wert, Verteilregeln & Tagesziele, CSV-Export, SMS/WhatsApp-Vorlagen.
  */
-import { lostStage, wonStage, type PipelineSource, type StageDef } from "./sales-pipeline";
+import { isCustomSource, lostStage, wonStage, type CustomPipelineSource, type PipelineSource, type StageDef } from "./sales-pipeline";
 
 /* ---------------------------------------------------------------- Aufgaben & Wiedervorlagen */
 export type TaskKind = "anruf" | "email" | "termin" | "aufgabe" | "sms" | "whatsapp";
@@ -166,14 +166,23 @@ export type PipelineSettings = {
   dailyTargets: Record<string, DailyTarget>;
   /** Reihenfolge der Pipeline-Karten oben in der Vertriebspipeline (die erste ist beim Öffnen gewählt). */
   sourceOrder: PipelineSource[];
+  /** Eigene Pipelines (wie Kaltakquise) – Kennung „p-…“ und Name. */
+  customPipelines: CustomPipeline[];
 };
+export type CustomPipeline = { key: CustomPipelineSource; label: string };
 export const DEFAULT_SOURCE_ORDER: PipelineSource[] = ["email", "ads", "kaltakquise"];
-export function normalizeSourceOrder(value: unknown): PipelineSource[] {
-  const valid = Array.isArray(value) ? (value as unknown[]).filter((item): item is PipelineSource => item === "email" || item === "ads" || item === "kaltakquise") : [];
-  const unique = Array.from(new Set(valid)); for (const source of DEFAULT_SOURCE_ORDER) if (!unique.includes(source)) unique.push(source);
+export function normalizeSourceOrder(value: unknown, custom: CustomPipeline[] = []): PipelineSource[] {
+  const allowed = new Set<string>([...DEFAULT_SOURCE_ORDER, ...custom.map((item) => item.key)]);
+  const valid = Array.isArray(value) ? (value as unknown[]).filter((item): item is PipelineSource => typeof item === "string" && allowed.has(item)) : [];
+  const unique = Array.from(new Set(valid)); for (const source of [...DEFAULT_SOURCE_ORDER, ...custom.map((item) => item.key)]) if (!unique.includes(source)) unique.push(source);
   return unique;
 }
-export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {}, sourceOrder: ["email", "ads", "kaltakquise"] };
+export function normalizeCustomPipelines(value: unknown): CustomPipeline[] {
+  const out: CustomPipeline[] = [];
+  if (Array.isArray(value)) for (const item of value as Array<Record<string, unknown>>) { const key = item?.key; const label = String(item?.label ?? "").trim().slice(0, 40); if (isCustomSource(key) && label && !out.some((row) => row.key === key)) out.push({ key, label }); }
+  return out.slice(0, 20);
+}
+export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {}, sourceOrder: ["email", "ads", "kaltakquise"], customPipelines: [] };
 const numberOrNull = (value: unknown) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.round(number) : null; };
 const numberMap = (value: unknown) => { const out: Record<string, number> = {}; if (value && typeof value === "object" && !Array.isArray(value)) for (const [key, item] of Object.entries(value as Record<string, unknown>)) { const id = numberOrNull(item); if (id) out[key] = id; } return out; };
 export function normalizePipelineSettings(input: unknown): PipelineSettings {
@@ -200,7 +209,8 @@ export function normalizePipelineSettings(input: unknown): PipelineSettings {
     appointmentReminderHours: Math.min(168, Math.max(1, Math.round(Number(raw.appointmentReminderHours ?? 24) || 24))),
     distribution: { mode: modeOf(mode), rules, fallback: distributionRaw.fallback === "ohne" ? "ohne" : "reihum", shares: sharesOf(distributionRaw.shares), perPipeline },
     dailyTargets,
-    sourceOrder: normalizeSourceOrder(raw.sourceOrder),
+    sourceOrder: normalizeSourceOrder(raw.sourceOrder, normalizeCustomPipelines(raw.customPipelines)),
+    customPipelines: normalizeCustomPipelines(raw.customPipelines),
   };
 }
 

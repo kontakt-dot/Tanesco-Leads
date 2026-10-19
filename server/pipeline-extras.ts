@@ -10,11 +10,12 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import type { MySqlColumn } from "drizzle-orm/mysql-core";
 import crypto from "node:crypto";
-import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCallAttempts, leadCategories, leads, outboundMessages, phoneNumbers, pipelineEvents, pipelineNotes, pipelineSettings, pipelineTasks, users, type PipelineTask } from "../drizzle/schema";
+import { pipelineStageConfigs, dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCallAttempts, leadCategories, leads, outboundMessages, phoneNumbers, pipelineEvents, pipelineNotes, pipelineSettings, pipelineTasks, users, type PipelineTask } from "../drizzle/schema";
 import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
 import { recipientValues, renderNode, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
+import { newCustomSourceKey, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
 import { contactedStage, entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
@@ -23,7 +24,7 @@ type LeadRow = typeof leads.$inferSelect;
 const metaOf = (lead: { metadata: unknown }) => (lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata) ? (lead.metadata as Record<string, unknown>) : {});
 /** Stufen je Pipeline: wo ein Lead bekannt ist, gelten die Stufen seiner Pipeline; ohne Lead der Standard („alle“). */
 const stageSetsOf = async (db: Db, tenantId: number): Promise<StageSets> => { const { pipelineStageSets } = await import("./meta-ads"); return pipelineStageSets(db, tenantId); };
-const stagesOf = async (db: Db, tenantId: number, source?: PipelineSource | "alle" | null): Promise<StageDef[]> => (await stageSetsOf(db, tenantId))[source ?? "alle"];
+const stagesOf = async (db: Db, tenantId: number, source?: PipelineSource | "alle" | null): Promise<StageDef[]> => stagesOfSets(await stageSetsOf(db, tenantId), source ?? "alle");
 const stagesOfLead = async (db: Db, tenantId: number, lead: { adPlatform?: string | null }) => stagesForLead(await stageSetsOf(db, tenantId), lead);
 const leadByPublicId = async (db: Db, tenantId: number, publicId: string) => { const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, publicId))).limit(1))[0]; if (!lead) throw new Error("Lead nicht gefunden."); return lead; };
 const userName = async (db: Db, userId: number | null | undefined) => { if (!userId) return null; return (await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1))[0]?.name ?? null; };
@@ -35,10 +36,39 @@ export async function loadSettings(db: Db, tenantId: number): Promise<PipelineSe
   return row ? normalizePipelineSettings(row.settings) : { ...DEFAULT_PIPELINE_SETTINGS };
 }
 export async function saveSettings(db: Db, tenantId: number, input: unknown) {
-  const settings = normalizePipelineSettings(input);
+  // Eigene Pipelines werden über eigene Aktionen gepflegt – beim normalen Speichern der Einstellungen bleiben sie erhalten
+  const raw = input && typeof input === "object" ? { ...(input as Record<string, unknown>) } : {};
+  if (!("customPipelines" in raw)) raw.customPipelines = (await loadSettings(db, tenantId)).customPipelines;
+  const settings = normalizePipelineSettings(raw);
   const existing = (await db.select({ id: pipelineSettings.id }).from(pipelineSettings).where(eq(pipelineSettings.tenantId, tenantId)).limit(1))[0];
   if (existing) await db.update(pipelineSettings).set({ settings }).where(eq(pipelineSettings.id, existing.id)); else await db.insert(pipelineSettings).values({ tenantId, settings });
   return settings;
+}
+/** Eigene Pipeline anlegen (funktioniert wie die Kaltakquise) – erscheint als weitere Karte oben in der Vertriebspipeline. */
+export async function createCustomPipeline(db: Db, tenantId: number, label: string) {
+  const name = label.trim().slice(0, 40); if (!name) throw new Error("Bitte einen Namen für die Pipeline angeben.");
+  const settings = await loadSettings(db, tenantId);
+  if (settings.customPipelines.length >= 20) throw new Error("Höchstens 20 eigene Pipelines.");
+  if ([...settings.customPipelines.map((item) => item.label), "Kaltakquise", "E-Mail-Kampagne", "Meta Ads"].some((item) => item.toLowerCase() === name.toLowerCase())) throw new Error(`Eine Pipeline „${name}“ gibt es schon.`);
+  let key = newCustomSourceKey(name); while (settings.customPipelines.some((item) => item.key === key)) key = newCustomSourceKey(name);
+  await saveSettings(db, tenantId, { ...settings, customPipelines: [...settings.customPipelines, { key, label: name }], sourceOrder: [...settings.sourceOrder, key] });
+  return { key, label: name };
+}
+export async function renameCustomPipeline(db: Db, tenantId: number, key: string, label: string) {
+  const name = label.trim().slice(0, 40); if (!name) throw new Error("Bitte einen Namen angeben.");
+  const settings = await loadSettings(db, tenantId); if (!settings.customPipelines.some((item) => item.key === key)) throw new Error("Diese Pipeline gibt es nicht.");
+  await saveSettings(db, tenantId, { ...settings, customPipelines: settings.customPipelines.map((item) => item.key === key ? { ...item, label: name } : item) });
+  return { key, label: name };
+}
+/** Eigene Pipeline löschen: ihre Karten wandern in die Kaltakquise (mit Liste und Verlauf), eigene Stufen werden entfernt. */
+export async function deleteCustomPipeline(db: Db, tenantId: number, key: string, actorUserId: number | null) {
+  const settings = await loadSettings(db, tenantId); const pipeline = settings.customPipelines.find((item) => item.key === key); if (!pipeline) throw new Error("Diese Pipeline gibt es nicht.");
+  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.adPlatform, key)));
+  const { pipelineStageSets } = await import("./meta-ads"); const sets = await pipelineStageSets(db, tenantId); const coldStages = stagesOfSets(sets, "kaltakquise");
+  for (const row of rows) { const stage = row.stage && coldStages.some((item) => item.key === row.stage) ? row.stage : entryStage(coldStages); await db.update(leads).set({ adPlatform: "kaltakquise", pipelineStage: stage, pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId, note: `Pipeline „${pipeline.label}“ gelöscht – Karte in die Kaltakquise verschoben` }); }
+  await db.delete(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, key)));
+  await saveSettings(db, tenantId, { ...settings, customPipelines: settings.customPipelines.filter((item) => item.key !== key), sourceOrder: settings.sourceOrder.filter((item) => item !== key) });
+  return { key, moved: rows.length, label: pipeline.label };
 }
 async function nextCursor(db: Db, tenantId: number) {
   const existing = (await db.select({ id: pipelineSettings.id, cursor: pipelineSettings.distributionCursor }).from(pipelineSettings).where(eq(pipelineSettings.tenantId, tenantId)).limit(1))[0];
@@ -455,7 +485,7 @@ export async function leadDetail(db: Db, tenantId: number, publicId: string, now
 export async function processAutomations(db: Db, tenantId: number, options: { now?: Date; appUrl?: string } = {}) {
   const now = options.now ?? new Date(); const settings = await loadSettings(db, tenantId); const sets = await stageSetsOf(db, tenantId); const stages = unionStages(sets); let enrolled = 0; let reminders = 0;
   if (settings.staleCampaignId && settings.staleDays > 0) {
-    const openKeys = Array.from(new Set([sets.alle, sets.ads, sets.kaltakquise, sets.email].flatMap((list) => list.filter((stage) => stage.fixed !== "won" && stage.fixed !== "lost").map((stage) => stage.key))));
+    const openKeys = Array.from(new Set(Object.values(sets).flatMap((list) => list.filter((stage) => stage.fixed !== "won" && stage.fixed !== "lost").map((stage) => stage.key))));
     const rows = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.pipelineStage, openKeys)))).filter((row) => { const own = stagesForLead(sets, row); const def = own.find((stage) => stage.key === row.pipelineStage); return def && def.fixed !== "won" && def.fixed !== "lost"; });
     const candidates = rows.filter((row) => row.email && !(metaOf(row).staleEnrolledAt) && (row.adCampaignId || row.adPlatform));
     const activity = await lastActivityMap(db, tenantId, candidates.map((row) => row.id));
@@ -506,7 +536,7 @@ export async function autoAssign(db: Db, tenantId: number, leadId: number) { try
 /** Team-Übersicht: Tagesziele und Zählung je Vertriebler (heute / Zeitraum), Umsatz aus gewonnenen Karten. */
 export async function teamOverview(db: Db, tenantId: number, options: { from?: Date; until?: Date; now?: Date } = {}) {
   const now = options.now ?? new Date(); const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()); const from = options.from ?? dayStart; const until = options.until ?? now;
-  const settings = await loadSettings(db, tenantId); const sets = await stageSetsOf(db, tenantId); const wonKeys = new Set([sets.alle, sets.ads, sets.kaltakquise, sets.email].map((list) => wonStage(list))); const lostKeys = new Set([sets.alle, sets.ads, sets.kaltakquise, sets.email].map((list) => lostStage(list)));
+  const settings = await loadSettings(db, tenantId); const sets = await stageSetsOf(db, tenantId); const wonKeys = new Set(Object.values(sets).map((list) => wonStage(list))); const lostKeys = new Set(Object.values(sets).map((list) => lostStage(list)));
   const { pipelineOwners } = await import("./meta-ads"); const owners = await pipelineOwners(db, tenantId);
   const calls = await db.select({ agentUserId: dialerCalls.agentUserId, startedAt: dialerCalls.startedAt, talkSeconds: dialerCalls.talkSeconds, disposition: dialerCalls.disposition, status: dialerCalls.status }).from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), gte(dialerCalls.startedAt, from), lte(dialerCalls.startedAt, until)));
   const events = await db.select({ actorUserId: pipelineEvents.actorUserId, toStage: pipelineEvents.toStage, createdAt: pipelineEvents.createdAt, leadId: pipelineEvents.leadId }).from(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), gte(pipelineEvents.createdAt, from), lte(pipelineEvents.createdAt, until)));

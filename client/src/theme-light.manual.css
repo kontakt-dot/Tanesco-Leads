@@ -1177,3 +1177,18 @@ html:not(.dark) .new-contact-form legend { color: #bc001d !important; }
 html:not(.dark) .new-contact-field > span, html:not(.dark) .new-contact-another { color: #475569 !important; }
 html:not(.dark) .new-contact-field select, html:not(.dark) .new-contact-field textarea { background: #ffffff !important; color: #0f172a !important; border-color: #e2e8f0 !important; }
 html:not(.dark) .pipeline-card-head .pipeline-card-company { color: #3f37b5 !important; }
+html:not(.dark) .source-card-add { color: #bc001d !important; border-color: #fecdd3 !important; }
+html:not(.dark) .card-move-pipeline { background: #ffffff !important; color: #0f172a !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .pipeline-order-own button { color: #334155 !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .pipeline-order-own button.is-danger { color: #b91c1c !important; border-color: #fecaca !important; }
+html:not(.dark) .pipeline-range label { color: #475569 !important; }
+html:not(.dark) .pipeline-range input { background: #ffffff !important; color: #0f172a !important; border-color: #e2e8f0 !important; color-scheme: light !important; }
+/* Neue Aktions-Knöpfe im hellen Modus: Markenrot mit weißer Schrift (statt automatisch Schwarz) */
+html:not(.dark) .audience-sync, html:not(.dark) .list-picker-tools .list-picker-add { background: #bc001d !important; color: #ffffff !important; border: 0 !important; }
+html:not(.dark) .audience-sync:hover:not(:disabled), html:not(.dark) .list-picker-tools .list-picker-add:hover { background: #9f0018 !important; }
+html:not(.dark) .audience-sync svg, html:not(.dark) .list-picker-tools .list-picker-add svg { color: #ffffff !important; }
+html:not(.dark) .campaign-list .stat-mails { color: #6b6880 !important; }
+html:not(.dark) .audience-prune { background: #fff7e0 !important; color: #8a5a00 !important; border-color: #e8c35a !important; }
+html:not(.dark) .audience-prune-confirm { color: #8a5a00 !important; }
+html:not(.dark) .audience-prune-yes { background: #bc001d !important; color: #fff !important; }
+html:not(.dark) .audience-prune-no { color: #4b4860 !important; }

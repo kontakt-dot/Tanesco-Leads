@@ -1346,6 +1346,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const started = await owner.leadops.startEmailCampaign({ id: saved.id }); expect(started.added).toBe(2); if (started.processed < 2) await owner.leadops.runEmailCampaigns(); // Versand kann im Hintergrund laufen
     let detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.status).toBe("aktiv"); expect(detail.stats).toMatchObject({ total: 2, sent: 2, opened: 0 }); expect(detail.recipients.every((recipient) => recipient.status === "wartet" && recipient.sentCount === 1)).toBe(true);
     const tokens = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, saved.id))).map((row) => ({ id: row.id, token: row.token }));
+    await db.update(emailCampaignRecipients).set({ lastSentAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, saved.id)); // Aufrufe direkt nach dem Versand wären Scanner
     const pixel = await fetch(`${apiBase}/api/mail/o/${tokens[0].token}.gif`); expect(pixel.status).toBe(200); expect(pixel.headers.get("content-type")).toContain("image/gif");
     const click = await fetch(`${apiBase}/api/mail/c/${tokens[0].token}?u=${encodeURIComponent("https://tanesco.digital/termin")}`, { redirect: "manual" }); expect(click.status).toBe(302); expect(click.headers.get("location")).toBe("https://tanesco.digital/termin");
     detail = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(detail.stats).toMatchObject({ opened: 1, clicked: 1 });
@@ -1500,6 +1501,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Versandfenster „nachts zu“: fällige Mails warten
     await owner.leadops.saveEmailCampaign({ id: ab.id, name: "A/B-Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Erweiterungen" }, tree: abStarter.tree, design: abStarter.design as unknown as Record<string, unknown>, sendWindow: { enabled: true, weekdays: [new Date().getDay() === 0 ? 1 : 0], from: "01:00", to: "01:30", timezone: "Europe/Berlin" } });
     const abRecipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, ab.id)); const [clicker, other, third] = abRecipients;
+    await db.update(emailCampaignRecipients).set({ lastSentAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, ab.id)); // Aufrufe direkt nach dem Versand wären Scanner
     await fetch(`${apiBase}/api/mail/c/${clicker.token}?u=${encodeURIComponent("https://tanesco.digital/termin")}`, { redirect: "manual" }); await fetch(`${apiBase}/api/mail/c/${other.token}?u=${encodeURIComponent("https://tanesco.digital/preise")}`, { redirect: "manual" });
     expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, clicker.id)))[0].clickedUrls).toEqual(["https://tanesco.digital/termin"]);
     await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, ab.id)); await owner.leadops.runEmailCampaigns();
@@ -2314,4 +2316,86 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const mail = await owner.leadops.createPipelineContact({ source: "email", company: "Nur Firma AG", email: "info@nurfirma-e2e.example" }); expect(mail.publicId).toMatch(/^MAIL-/);
     expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.flatMap((stage) => stage.leads).some((lead) => lead.publicId === mail.publicId)).toBe(true);
   }, 20000);
+
+  it("48. Eigene Pipelines: anlegen, Liste hochladen, Kontakt von Hand, Karten verschieben, umbenennen, löschen (Karten → Kaltakquise)", async () => {
+    const created = await owner.leadops.createCustomPipeline({ label: "Messe 2026" }); expect(created.key).toMatch(/^p-[a-z0-9]{2,14}$/);
+    await expect(owner.leadops.createCustomPipeline({ label: "messe 2026" })).rejects.toThrow(/gibt es schon/);
+    const settings = await owner.leadops.pipelineSettings(); expect(settings.customPipelines).toEqual([{ key: created.key, label: "Messe 2026" }]); expect(settings.sourceOrder).toContain(created.key);
+    // normales Speichern der Einstellungen behält die eigene Pipeline
+    await owner.leadops.savePipelineSettings({ ...settings, staleDays: settings.staleDays });
+    expect((await owner.leadops.pipelineSettings()).customPipelines.map((item) => item.key)).toEqual([created.key]);
+    const imported = await owner.leadops.importColdList({ pipeline: created.key, listName: "Messestand Halle 3", rows: [{ firstName: "Mia", lastName: "Messe", phone: "+49 40 7001001", email: "mia@messe-e2e.example" }, { firstName: "Tom", lastName: "Messe", phone: "+49 40 7001002" }] }); expect(imported.created).toBe(2);
+    const board = await owner.leadops.pipelineOverview({ source: created.key }); const cards = board.stages.flatMap((stage) => stage.leads); expect(cards).toHaveLength(2);
+    expect((await owner.leadops.pipelineOverview({ source: "kaltakquise" })).stages.flatMap((stage) => stage.leads).some((lead) => lead.email === "mia@messe-e2e.example")).toBe(false);
+    expect((await owner.leadops.listColdLists({ pipeline: created.key })).map((list) => list.listName)).toEqual(["Messestand Halle 3"]);
+    expect((await owner.leadops.listColdLists()).some((list) => list.listName === "Messestand Halle 3")).toBe(true); // für E-Mail-Kampagnen sichtbar
+    const hand = await owner.leadops.createPipelineContact({ source: created.key, firstName: "Lea", lastName: "Handmesse", phone: "+49 40 7001003" });
+    expect((await owner.leadops.pipelineOverview({ source: created.key })).stages.flatMap((stage) => stage.leads).some((lead) => lead.publicId === hand.publicId)).toBe(true);
+    // Stufen nur für diese Pipeline
+    const own = [{ key: "neu", label: "Neu", hint: "", fixed: "entry" as const }, { key: "gespraech", label: "Gespräch am Stand", hint: "" }, { key: "kunde", label: "Kunde", hint: "", fixed: "won" as const }, { key: "verloren", label: "Verloren", hint: "", fixed: "lost" as const }];
+    await owner.leadops.savePipelineStages({ source: created.key, stages: own });
+    expect((await owner.leadops.pipelineStages({ source: created.key })).map((stage) => stage.key)).toEqual(["neu", "gespraech", "kunde", "verloren"]);
+    expect((await owner.leadops.pipelineStages({ source: "kaltakquise" })).some((stage) => stage.key === "gespraech")).toBe(false);
+    // verschieben: Messe → E-Mail-Kampagne und zurück
+    const moved = await owner.leadops.moveLeadsToPipeline({ publicIds: [hand.publicId], target: "email" }); expect(moved).toMatchObject({ moved: 1, label: "E-Mail-Kampagne" });
+    expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.flatMap((stage) => stage.leads).some((lead) => lead.publicId === hand.publicId)).toBe(true);
+    expect((await owner.leadops.moveLeadsToPipeline({ publicIds: [hand.publicId], target: created.key })).moved).toBe(1);
+    await owner.leadops.renameCustomPipeline({ key: created.key, label: "Messe Hamburg" }); expect((await owner.leadops.pipelineSettings()).customPipelines[0].label).toBe("Messe Hamburg");
+    const removed = await owner.leadops.deleteCustomPipeline({ key: created.key }); expect(removed.moved).toBe(3);
+    expect((await owner.leadops.pipelineSettings()).customPipelines).toEqual([]);
+    const ids = new Set([...cards.map((lead) => lead.publicId), hand.publicId]);
+    expect((await owner.leadops.pipelineOverview({ source: "kaltakquise" })).stages.flatMap((stage) => stage.leads).filter((lead) => ids.has(lead.publicId))).toHaveLength(3);
+  }, 30000);
+
+  it("49. Tracking ganz genau: Personen vs. Mails, Scanner zählen nicht, Klick = geöffnet, Kontakte außerhalb der Zielgruppe entfernen", async () => {
+    const outreach = await import("./sales-outreach");
+    await owner.leadops.importColdList({ listName: "Tracking-Genau", toPipeline: false, rows: [{ firstName: "Ada", lastName: "Auf", email: "ada@track-genau.example" }, { firstName: "Ben", lastName: "Bot", email: "ben@track-genau.example" }, { firstName: "Cem", lastName: "Klick", email: "cem@track-genau.example" }, { firstName: "Test", lastName: "Kontakt", email: "test@track-genau.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Tracking genau", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Tracking-Genau" }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    expect((await owner.leadops.startEmailCampaign({ id: campaign.id })).added).toBe(4);
+    await owner.leadops.runEmailCampaigns();
+    const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+    const tokenOf = (email: string) => recipients.find((row) => row.email === email)!.token;
+    // „gerade eben gesendet“: Aufruf in den ersten Sekunden ist ein Scanner
+    await outreach.trackOpen(db, tokenOf("ada@track-genau.example"), { userAgent: "Mozilla/5.0 (Macintosh)", method: "GET" });
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).stats.opened).toBe(0);
+    await db.update(emailCampaignRecipients).set({ lastSentAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+    // Scanner / Vorschau / HEAD zählen nicht
+    await outreach.trackOpen(db, tokenOf("ben@track-genau.example"), { userAgent: "Mimecast Security Scanner", method: "GET" });
+    await outreach.trackOpen(db, tokenOf("ben@track-genau.example"), { userAgent: "", method: "GET" });
+    expect(await outreach.trackClick(db, tokenOf("ben@track-genau.example"), "https://tanesco.digital/termin", { userAgent: "Mozilla/5.0", method: "HEAD" })).toBe("https://tanesco.digital/termin");
+    // echte Öffnung (auch über Gmail-Bild-Proxy) zählt – zweimal öffnen bleibt eine Öffnung
+    await outreach.trackOpen(db, tokenOf("ada@track-genau.example"), { userAgent: "Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)", method: "GET" });
+    await outreach.trackOpen(db, tokenOf("ada@track-genau.example"), { userAgent: "Mozilla/5.0 (iPhone)", method: "GET" });
+    // Klick ohne geladene Bilder: zählt als geklickt UND geöffnet
+    await outreach.trackClick(db, tokenOf("cem@track-genau.example"), "https://tanesco.digital/termin", { userAgent: "Mozilla/5.0 (Windows NT 10.0)", method: "GET" });
+    let detail = await owner.leadops.getEmailCampaign({ id: campaign.id });
+    expect(detail.stats).toMatchObject({ total: 4, sent: 4, opened: 2, clicked: 1, openRate: 50 });
+    expect(detail.stats.mails).toEqual({ sent: 4, opened: 2, clicked: 1, replied: 0 });
+    // zweite Mail der Serie an Ada, die sie wieder öffnet → 2 Personen, 3 geöffnete Mails
+    const ada = recipients.find((row) => row.email === "ada@track-genau.example")!;
+    const secondAt = new Date(Date.now() - 30_000);
+    // Zeitachse: erste Mail vor 2 Min., geöffnet vor 50 s, zweite Mail vor 30 s
+    await db.update(emailCampaignEvents).set({ createdAt: new Date(Date.now() - 120_000) }).where(and(eq(emailCampaignEvents.recipientId, ada.id), eq(emailCampaignEvents.kind, "gesendet")));
+    await db.update(emailCampaignEvents).set({ createdAt: new Date(Date.now() - 50_000) }).where(and(eq(emailCampaignEvents.recipientId, ada.id), eq(emailCampaignEvents.kind, "geoeffnet")));
+    await db.update(emailCampaignRecipients).set({ openedAt: new Date(Date.now() - 50_000) }).where(eq(emailCampaignRecipients.id, ada.id));
+    await db.insert(emailCampaignEvents).values({ tenantId: ada.tenantId, campaignId: campaign.id, recipientId: ada.id, nodeId: null, kind: "gesendet", subject: "Nachfass", note: "E-Mail „Nachfass“ gesendet", createdAt: secondAt });
+    await db.update(emailCampaignRecipients).set({ lastSentAt: secondAt, sentCount: 2 }).where(eq(emailCampaignRecipients.id, ada.id));
+    await outreach.trackOpen(db, ada.token, { userAgent: "Mozilla/5.0 (iPhone)", method: "GET" });
+    detail = await owner.leadops.getEmailCampaign({ id: campaign.id });
+    expect(detail.stats.opened).toBe(2); expect(detail.stats.mails).toMatchObject({ sent: 5, opened: 3 });
+    const listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+    expect(listed.stats.mails).toMatchObject({ sent: 5, opened: 3, clicked: 1 });
+    // gleiche Zahl im Ordner „Gesendet“ (je Mail)
+    const sentFolder = await owner.leadops.listSent({ kind: "kampagne", campaignId: campaign.id });
+    expect(sentFolder.items.filter((item) => item.tracking?.openedAt).length).toBe(3);
+    // Testkontakt aus der Liste löschen → „1 nicht mehr in der Liste“ → entfernen → Zahlen stimmen
+    const testLead = (await db.select({ id: leads.id }).from(leads).where(eq(leads.email, "test@track-genau.example")))[0];
+    await db.update(leads).set({ listName: "Anderswo" }).where(eq(leads.id, testLead.id));
+    expect(listed.audienceInfo?.outside ?? 0).toBe(0);
+    const before = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(before.audienceInfo).toMatchObject({ total: 3, outside: 1 });
+    expect(await owner.leadops.pruneEmailCampaignRecipients({ id: campaign.id })).toEqual({ removed: 1 });
+    const after = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+    expect(after.stats).toMatchObject({ total: 3, sent: 3, opened: 2, clicked: 1 }); expect(after.audienceInfo).toMatchObject({ outside: 0 }); expect(after.stats.mails.sent).toBe(4);
+  }, 30000);
 });

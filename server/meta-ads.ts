@@ -9,7 +9,7 @@ import { extraFieldsOf } from "../shared/cold-list";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import crypto from "node:crypto";
 import { adInsights, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
-import { buildStageSets, entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, pipelineSourceOf, stagesForLead, summarizeCampaigns, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
+import { buildStageSets, stagesOf, entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, pipelineSourceOf, stagesForLead, summarizeCampaigns, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
 import { autoAssign, cardExtras, onStageChanged } from "./pipeline-extras";
@@ -148,13 +148,13 @@ export async function syncInsights(db: Db, tenantId: number, options: { days?: n
 }
 
 /* ---------- Pipeline ---------- */
-export type PipelineOverviewOptions = { from?: Date; until?: Date; campaignId?: string | null; source?: "ads" | "kaltakquise" | "email" | "alle"; ownerUserId?: number | "ohne" | null; tagId?: number | null; limitPerStage?: number };
+export type PipelineOverviewOptions = { from?: Date; until?: Date; campaignId?: string | null; source?: PipelineSource | "alle"; ownerUserId?: number | "ohne" | null; tagId?: number | null; limitPerStage?: number };
 export async function pipelineOverview(db: Db, tenantId: number, options: PipelineOverviewOptions = {}) {
   const conditions = [eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")]; if (options.from) conditions.push(gte(leads.createdAt, options.from)); if (options.until) conditions.push(lte(leads.createdAt, options.until));
   const rows = await db.select({ id: leads.id, publicId: leads.publicId, inPipeline: leads.inPipeline, firstName: leads.firstName, lastName: leads.lastName, createdAt: leads.createdAt, pipelineStage: leads.pipelineStage, pipelineUpdatedAt: leads.pipelineUpdatedAt, adCampaignId: leads.adCampaignId, adCampaignName: leads.adCampaignName, adsetName: leads.adsetName, adName: leads.adName, adFormName: leads.adFormName, adPlatform: leads.adPlatform, categoryId: leads.categoryId, categoryName: leadCategories.name, categoryColor: leadCategories.color, categoryEmoji: leadCategories.emoji, categoryShortcode: leadCategories.shortcode, city: leads.city, postcode: leads.postcode, phone: leads.phone, email: leads.email, status: leads.status, ownerUserId: leads.ownerUserId, ownerName: users.name, company: leads.company, followUpAt: leads.followUpAt, appointmentAt: leads.appointmentAt, dealValue: leads.dealValue, metadata: leads.metadata }).from(leads).leftJoin(leadCategories, eq(leadCategories.id, leads.categoryId)).leftJoin(users, eq(users.id, leads.ownerUserId)).where(and(...conditions)).orderBy(desc(leads.createdAt));
   const source = options.source ?? "alle";
   // Kontakte, die nur in der E-Mail-Akquise stecken (inPipeline = false), gehören noch nicht aufs Board.
-  const pipelineLeads = rows.filter((row) => (row as { inPipeline?: boolean }).inPipeline !== false).filter((row) => row.adCampaignId || row.adPlatform || row.pipelineStage).filter((row) => source === "alle" ? true : source === "kaltakquise" ? row.adPlatform === "kaltakquise" : source === "email" ? row.adPlatform === "email" : row.adPlatform !== "kaltakquise" && row.adPlatform !== "email").map((row) => ({ ...row, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || row.publicId }));
+  const pipelineLeads = rows.filter((row) => (row as { inPipeline?: boolean }).inPipeline !== false).filter((row) => row.adCampaignId || row.adPlatform || row.pipelineStage).filter((row) => source === "alle" ? true : pipelineSourceOf(row.adPlatform) === source).map((row) => ({ ...row, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || row.publicId }));
   const byCampaign = options.campaignId ? pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === options.campaignId) : pipelineLeads;
   const scopedByOwner = options.ownerUserId === "ohne" ? byCampaign.filter((lead) => !lead.ownerUserId) : options.ownerUserId ? byCampaign.filter((lead) => lead.ownerUserId === options.ownerUserId) : byCampaign;
   // Tags der Karten: Chips zum Filtern (z. B. „PV“, „Hessen“) – die Liste zeigt alle Tags im aktuellen Ausschnitt mit Anzahl.
@@ -168,7 +168,7 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const insightConditions = [eq(adInsights.tenantId, tenantId)]; if (options.from) insightConditions.push(gte(adInsights.day, options.from.toISOString().slice(0, 10))); if (options.until) insightConditions.push(lte(adInsights.day, options.until.toISOString().slice(0, 10)));
   const insights = await db.select().from(adInsights).where(and(...insightConditions));
   const stagesDef = await pipelineStages(db, tenantId, source === "alle" ? "alle" : source); // Stufen der gewählten Pipeline
-  const campaigns = summarizeCampaigns(pipelineLeads, source === "kaltakquise" || source === "email" ? [] : insights, stagesDef);
+  const campaigns = summarizeCampaigns(pipelineLeads, source === "ads" || source === "alle" ? insights : [], stagesDef);
   const notes = await noteCounts(db, tenantId, scoped.map((lead) => lead.id));
   const { extras, settings } = await cardExtras(db, tenantId, scoped.map((lead) => ({ ...lead, noteCount: notes.get(lead.id)?.count ?? 0 })), stagesDef);
   const limit = options.limitPerStage ?? 60;
@@ -266,13 +266,13 @@ export async function pipelineStageSets(db: Db, tenantId: number): Promise<Stage
 }
 /** Stufen einer Pipeline (ohne Angabe: der Standard). */
 export async function pipelineStages(db: Db, tenantId: number, source?: PipelineSource | "alle" | null): Promise<StageDef[]> {
-  const sets = await pipelineStageSets(db, tenantId); return sets[source ?? "alle"];
+  const sets = await pipelineStageSets(db, tenantId); return stagesOf(sets, source ?? "alle");
 }
 /** Für die Einstellungen: Stufen der Pipeline plus ob sie eigene hat oder den Standard nutzt. */
 export async function pipelineStageSetup(db: Db, tenantId: number, source: PipelineSource | "alle") {
   const rows = await db.select({ source: pipelineStageConfigs.source }).from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId));
   const sets = buildStageSets(await db.select({ source: pipelineStageConfigs.source, stages: pipelineStageConfigs.stages }).from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId)));
-  return { source, stages: sets[source], own: source === "alle" ? rows.some((row) => row.source === "alle") : rows.some((row) => row.source === source), defaultStages: sets.alle, customized: rows.map((row) => row.source) };
+  return { source, stages: stagesOf(sets, source), own: source === "alle" ? rows.some((row) => row.source === "alle") : rows.some((row) => row.source === source), defaultStages: sets.alle, customized: rows.map((row) => row.source) };
 }
 export async function savePipelineStages(db: Db, tenantId: number, input: Array<Partial<StageDef>>, source: PipelineSource | "alle" = "alle") {
   const { stages, issues } = normalizeStages(input); if (issues.length) throw new Error(issues.join(" "));
@@ -289,6 +289,6 @@ export async function resetPipelineStages(db: Db, tenantId: number, source: Pipe
   await db.delete(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, source)));
   const sets = await pipelineStageSets(db, tenantId);
   const rows = await db.select({ id: leads.id, stage: leads.pipelineStage, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
-  for (const lead of rows) { if (pipelineSourceOf(lead.adPlatform) !== source) continue; const own = sets[source]; if (lead.stage && !own.some((stage) => stage.key === lead.stage)) await db.update(leads).set({ pipelineStage: entryStage(own) }).where(eq(leads.id, lead.id)); }
-  return { stages: sets[source], source };
+  for (const lead of rows) { if (pipelineSourceOf(lead.adPlatform) !== source) continue; const own = stagesOf(sets, source); if (lead.stage && !own.some((stage) => stage.key === lead.stage)) await db.update(leads).set({ pipelineStage: entryStage(own) }).where(eq(leads.id, lead.id)); }
+  return { stages: stagesOf(sets, source), source };
 }
