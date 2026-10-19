@@ -1211,7 +1211,4 @@ html:not(.dark) .pipeline-page .card-move-row .card-move-pill { background: #fff
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover, html:not(.dark) .pipeline-page .card-move-row .card-move-pill:focus-within { background: #f8fafc !important; border-color: #cbd5e1 !important; outline: none !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline, html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline:focus { color: #334155 !important; outline: none !important; box-shadow: none !important; border: 0 !important; background: transparent !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: #64748b !important; }
-html:not(.dark) .pipeline-page .pipeline-column-dial { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; color: #ffffff !important; border: 0 !important; box-shadow: 0 4px 12px -4px rgba(220, 38, 38, .5) !important; }
-html:not(.dark) .pipeline-page .pipeline-column-dial:hover { background: linear-gradient(90deg, #9f0018, #e11d48) !important; color: #ffffff !important; }
-html:not(.dark) .pipeline-page .pipeline-column-dial svg { color: #ffffff !important; }
-html:not(.dark) .pipeline-page .pipeline-column header .pipeline-column-dial span { background: none !important; color: #ffffff !important; padding: 0 !important; box-shadow: none !important; }
+
