@@ -2482,3 +2482,6 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .pipeline-note-edit-actions button:disabled{opacity:.6}
 /* Leuchten/Rahmen der Karten nicht abschneiden: Kartenbereich bekommt etwas Luft für Rand und Schatten */
 .pipeline-page .pipeline-cards{padding:4px 5px 8px;margin:-4px -5px -8px}
+/* Farbpunkt am Spaltennamen: Leuchtring nicht abschneiden (Name hat overflow:hidden für lange Namen) */
+.pipeline-page .pipeline-column header strong{padding:4px 0 4px 4px;margin:-4px 0 -4px -4px}
+.pipeline-page .pipeline-column header strong::before{align-self:center}

@@ -786,3 +786,4 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Ziehen: Klick direkt nach dem Loslassen (≤ 450 ms) öffnet keine Karte/Lead-Seite mehr (`lastDragEndAt`).
 - Leuchten/Rahmen der Karten nicht mehr abgeschnitten (`.pipeline-cards` mit Innenabstand).
 - Sprüche: 40 umgedrehte Sprichwörter mit Vertriebs-Pointe.
+- v169: Farbpunkt am Spaltennamen nicht mehr links abgeschnitten (Innenabstand am Namen).
