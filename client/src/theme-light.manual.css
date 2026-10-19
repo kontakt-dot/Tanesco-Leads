@@ -1207,10 +1207,11 @@ html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone { bac
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover { background: #15803d !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone svg { color: #ffffff !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone.is-missing { background: #d97706 !important; border-color: #d97706 !important; }
-html:not(.dark) .pipeline-page .card-move-row .card-move-pill { background: #ffffff !important; border: 1.5px solid color-mix(in srgb, var(--stage, #8b7cff) 60%, #ffffff) !important; color: #1e293b !important; }
-html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover { background: color-mix(in srgb, var(--stage, #8b7cff) 8%, #ffffff) !important; border-color: var(--stage, #8b7cff) !important; }
-html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline { color: #1e293b !important; }
-html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: color-mix(in srgb, var(--stage, #8b7cff) 80%, #000000) !important; }
-html:not(.dark) .pipeline-page .card-move-row .card-move-pill, html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; border: 0 !important; color: #ffffff !important; box-shadow: 0 8px 30px rgba(220, 38, 38, .30) !important; outline: none !important; }
-html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline, html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline:focus { color: #ffffff !important; outline: none !important; box-shadow: none !important; border: 0 !important; background: transparent !important; }
-html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: #ffffff !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill { background: #ffffff !important; border: 1px solid #e2e8f0 !important; color: #334155 !important; box-shadow: none !important; outline: none !important; filter: none !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover, html:not(.dark) .pipeline-page .card-move-row .card-move-pill:focus-within { background: #f8fafc !important; border-color: #cbd5e1 !important; outline: none !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline, html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline:focus { color: #334155 !important; outline: none !important; box-shadow: none !important; border: 0 !important; background: transparent !important; }
+html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: #64748b !important; }
+html:not(.dark) .pipeline-page .pipeline-column-dial { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; color: #ffffff !important; border: 0 !important; box-shadow: 0 4px 12px -4px rgba(220, 38, 38, .5) !important; }
+html:not(.dark) .pipeline-page .pipeline-column-dial:hover { background: linear-gradient(90deg, #9f0018, #e11d48) !important; color: #ffffff !important; }
+html:not(.dark) .pipeline-page .pipeline-column-dial svg { color: #ffffff !important; }
+html:not(.dark) .pipeline-page .pipeline-column header .pipeline-column-dial span { background: none !important; color: #ffffff !important; padding: 0 !important; box-shadow: none !important; }

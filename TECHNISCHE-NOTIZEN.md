@@ -823,5 +823,5 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - v177: Lead-Kategorie an der Karte und im Kontakt-Fenster wieder da; Filter „Lead-Kategorie“ im Board (nur Kategorien, die im Board vorkommen, mit Anzahl).
 - v178: Offene Karte: „Anrufen“-Knopf unten entfernt; der grüne Telefon-Knopf wird in der offenen Karte zum großen grünen „Anrufen“. Verschiebe-Knöpfe nebeneinander (`.card-move-row`).
 - v179: Verschiebe-Knöpfe schlicht (weiß, Rahmen in Stufenfarbe); „+ Pipeline“ oben in der Vertriebspipeline entfernt – Anlegen nur noch unter Einstellungen → Stufen.
-- v180: Verschiebe-Knöpfe im Stil des Hauptknopfs (dunkel Lila, hell Rot), kein Rahmen, kein Fokus-Rahmen.
+- v181: Verschiebe-Knöpfe schlicht wie „+ Anruf“ (weiß, grauer Rahmen). Spalten-Dialer als „⚡ Dialer“-Knopf in Hauptfarbe – startet die Anrufkampagne (manuell/Power/Predictive).
 - Kontakt löschen löscht auch den Kampagnen-Verlauf (Öffnungen/Klicks); `purgeOrphanCampaignEvents` räumt Altlasten beim Laden der Kampagnenliste auf.
