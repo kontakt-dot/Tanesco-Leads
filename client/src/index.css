@@ -2487,3 +2487,18 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .pipeline-page .pipeline-column header strong::before{align-self:center}
 .inbox-read-actions .inbox-delete{color:#fca5a5}
 .inbox-read-actions .inbox-delete:hover{background:rgba(239,68,68,.14);color:#fecaca}
+
+/* Kontakt von Hand anlegen */
+.new-contact-dialog{max-width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 40px);overflow-y:auto}
+.new-contact-form{display:grid;gap:12px}
+.new-contact-form fieldset{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px 10px;margin:0;padding:10px 12px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px}
+.new-contact-form legend{padding:0 6px;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#a5a1d7}
+.new-contact-field{display:grid;gap:4px;min-width:0}
+.new-contact-field>span{font-size:11.5px;font-weight:600;color:#a9adc8}
+.new-contact-field select,.new-contact-field textarea{width:100%;min-height:36px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:#0f1117;color:#f1effe;font-size:13px;padding:6px 9px}
+.new-contact-field.is-small{max-width:120px}
+.new-contact-field.is-wide{grid-column:1/-1}
+.new-contact-row{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px}
+.new-contact-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.new-contact-another{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#a9adc8}
+.pipeline-new-contact{font-weight:700}

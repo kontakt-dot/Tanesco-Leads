@@ -1743,4 +1743,11 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.listPipelineNotes", { publicId: lead.publicId })).some((row: any) => row.id === note.id && row.text === "Ohne Tippfehler")).toBe(true);
     await expect(call("leadops.updatePipelineNote", { id: note.id, text: "   " })).rejects.toThrow(/leer/);
   });
+
+  it("Kontakt von Hand anlegen (Demo) – landet in der gewählten Stufe, Doppelte abgelehnt", async () => {
+    const created = await call("leadops.createPipelineContact", { source: "kaltakquise", firstName: "Erika", lastName: "Demo", phone: "+49 89 1112233", stage: "neu", note: "Erste Notiz" });
+    const board = await call("leadops.pipelineOverview", { source: "kaltakquise" });
+    expect(board.stages.find((stage: any) => stage.key === "neu").leads.some((lead: any) => lead.publicId === created.publicId)).toBe(true);
+    await expect(call("leadops.createPipelineContact", { source: "kaltakquise", firstName: "Zwilling", phone: "089 1112233" })).rejects.toThrow(/gibt es schon/);
+  });
 });

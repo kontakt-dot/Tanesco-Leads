@@ -2,7 +2,7 @@
  * Posteingang: Mails per IMAP abholen (Antworten auf Kampagnen und alles andere), lesen, beantworten und als Lead
  * in die Vertriebspipeline übernehmen (Meta-Ads- oder Kaltakquise-Pipeline).
  */
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { inboxDeletedMessages, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leads, mailSettings, outboundMessages, pipelineEvents, pipelineNotes, users } from "../drizzle/schema";
 import { decideReply, describeAssessment, DEFAULT_REPLY_AI, isAutoReply, matchesAiFilter, type InboxAiFilter, type ReplyAiSettings } from "../shared/reply-ai";
@@ -40,7 +40,7 @@ export async function syncInbox(db: Db, tenantId: number) {
     try {
       const since = new Date(Date.now() - 14 * 86_400_000);
       for await (const message of client.fetch({ since }, { envelope: true, uid: true, source: { maxLength: 200_000 } })) {
-        scanned += 1; const envelope = message.envelope; const messageId = envelope?.messageId ?? `uid-${message.uid}`; if (known.has(messageId)) continue;
+        scanned += 1; const envelope = message.envelope; const messageId = (envelope?.messageId ?? `uid-${message.uid}`).slice(0, 320); if (known.has(messageId)) continue; // gekürzt wie gespeichert – sonst würden lange IDs nie wiedererkannt
         const from = envelope?.from?.[0]; if (!from?.address) continue; const fromEmail = from.address.toLowerCase(); if (fromEmail === (row.fromEmail ?? "").toLowerCase()) continue;
         if (knownSenders && !knownSenders.has(fromEmail)) { skipped += 1; continue; }
         let bodyText = ""; try { const raw = message.source?.toString("utf8") ?? ""; const { simpleParser } = await import("mailparser"); const parsed = await simpleParser(raw); bodyText = parsed.text ?? (parsed.html ? stripHtml(String(parsed.html)) : ""); } catch { bodyText = ""; }
@@ -60,7 +60,7 @@ export async function syncInbox(db: Db, tenantId: number) {
  * Die Sperrliste bleibt unberührt; gesendete Antworten bleiben im Ordner „Gesendet“.
  */
 export async function clearInbox(db: Db, tenantId: number, scope: "fremde" | "antworten" | "alle") {
-  const condition = scope === "alle" ? eq(inboxMessages.tenantId, tenantId) : scope === "antworten" ? and(eq(inboxMessages.tenantId, tenantId), isNotNull(inboxMessages.campaignRecipientId)) : and(eq(inboxMessages.tenantId, tenantId), isNull(inboxMessages.leadId), isNull(inboxMessages.campaignRecipientId));
+  const condition = scope === "alle" ? eq(inboxMessages.tenantId, tenantId) : scope === "antworten" ? and(eq(inboxMessages.tenantId, tenantId), or(isNotNull(inboxMessages.campaignRecipientId), sql`LOWER(${inboxMessages.subject}) REGEXP '^(re|aw|antw|wg|fwd?) ?:'`)) : and(eq(inboxMessages.tenantId, tenantId), isNull(inboxMessages.leadId), isNull(inboxMessages.campaignRecipientId));
   const rows = await db.select({ id: inboxMessages.id, messageId: inboxMessages.messageId }).from(inboxMessages).where(condition);
   await removeMessages(db, tenantId, rows);
   return { deleted: rows.length, scope };

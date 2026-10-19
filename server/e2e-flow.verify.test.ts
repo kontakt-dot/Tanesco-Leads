@@ -2292,6 +2292,26 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(remembered.map((row) => row.messageId)).toContain(rows.find((row) => row.id === a.id)!.messageId);
     // zweimal löschen schadet nicht; „Alle Antworten“-Aufräumen läuft durch
     expect((await owner.leadops.deleteInboxMessages({ ids: [a.id, b.id] })).deleted).toBe(1);
-    expect((await owner.leadops.clearInbox({ scope: "antworten" })).scope).toBe("antworten");
+    // „Alle Antworten“ erfasst auch Antworten auf Test-Mails ohne Kampagne (Betreff „Re:“/„AW:“), Fremde ohne Re: bleiben
+    const testReply = await owner.leadops.storeInboxMessage({ fromEmail: "tester3@loesch-inbox.example", subject: "Re: [Test] Unsere Leads", bodyText: "Test" });
+    const aw = await owner.leadops.storeInboxMessage({ fromEmail: "tester4@loesch-inbox.example", subject: "AW: Angebot", bodyText: "Test" });
+    const other = await owner.leadops.storeInboxMessage({ fromEmail: "newsletter@loesch-inbox.example", subject: "Newsletter Oktober", bodyText: "Hallo" });
+    expect((await owner.leadops.clearInbox({ scope: "antworten" })).deleted).toBeGreaterThanOrEqual(2);
+    const left = (await owner.leadops.listInbox({ filter: "alle" })).items.map((item) => item.id);
+    expect(left).not.toContain(testReply.id); expect(left).not.toContain(aw.id); expect(left).toContain(other.id);
+  }, 20000);
+
+  it("47. Kontakt von Hand in der Pipeline anlegen – alle Infos, Notiz, Liste; Doppelte werden abgelehnt", async () => {
+    const created = await owner.leadops.createPipelineContact({ source: "kaltakquise", salutation: "Herr", firstName: "Max", lastName: "Handanlage", company: "Hand GmbH", phone: "+49 30 9998877", email: "max@hand-e2e.example", street: "Hauptstr. 1", postcode: "10115", city: "Berlin", website: "www.hand.example", stage: "kontaktiert", dealValue: 1500, note: "Will Rückruf am Dienstag", listName: "Messe-Kontakte" });
+    expect(created).toMatchObject({ name: "Max Handanlage", stage: "kontaktiert" }); expect(created.publicId).toMatch(/^KALT-/);
+    const board = await owner.leadops.pipelineOverview({ source: "kaltakquise" });
+    const card = board.stages.find((stage) => stage.key === "kontaktiert")!.leads.find((lead) => lead.publicId === created.publicId)!;
+    expect(card).toBeTruthy(); expect(card.adCampaignName).toBe("Liste: Messe-Kontakte");
+    expect((await owner.leadops.listPipelineNotes({ publicId: created.publicId })).map((note) => note.text)).toContain("Will Rückruf am Dienstag");
+    expect((await owner.leadops.listColdLists()).some((list) => list.listName === "Messe-Kontakte")).toBe(true);
+    await expect(owner.leadops.createPipelineContact({ source: "kaltakquise", firstName: "Doppelt", email: "MAX@hand-e2e.example" })).rejects.toThrow(/gibt es schon/);
+    await expect(owner.leadops.createPipelineContact({ source: "email", firstName: "Ohne" })).rejects.toThrow(/Telefon oder E-Mail/);
+    const mail = await owner.leadops.createPipelineContact({ source: "email", company: "Nur Firma AG", email: "info@nurfirma-e2e.example" }); expect(mail.publicId).toMatch(/^MAIL-/);
+    expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.flatMap((stage) => stage.leads).some((lead) => lead.publicId === mail.publicId)).toBe(true);
   }, 20000);
 });

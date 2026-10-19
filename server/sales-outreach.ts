@@ -106,6 +106,42 @@ export async function startCallCampaign(db: Db, tenantId: number, userId: number
   return { campaignId: saved.id, queued: (queue as { queued?: number; added?: number }).queued ?? (queue as { added?: number }).added ?? 0, mode: input.mode };
 }
 
+/**
+ * Einen Kontakt von Hand in eine Pipeline legen (Knopf „+ Kontakt“): Name/Firma, Telefon und/oder E-Mail, Adresse,
+ * Kategorie, Stufe, Vertriebler, Angebotswert, erste Notiz. Gibt es Telefon oder E-Mail schon, wird nichts doppelt angelegt.
+ */
+export async function createPipelineContact(db: Db, tenantId: number, input: { source: "kaltakquise" | "email" | "ads"; salutation?: string | null; firstName?: string | null; lastName?: string | null; company?: string | null; phone?: string | null; email?: string | null; street?: string | null; postcode?: string | null; city?: string | null; website?: string | null; categoryId?: number | null; stage?: string | null; ownerUserId?: number | null; dealValue?: number | null; note?: string | null; listName?: string | null }, actorUserId: number | null) {
+  const clean = (value: string | null | undefined, max = 160) => (value ?? "").trim().slice(0, max) || null;
+  const firstName = clean(input.firstName, 120); const lastName = clean(input.lastName, 120); const company = clean(input.company, 200);
+  const phone = clean(input.phone, 48); const email = clean(input.email, 320)?.toLowerCase() ?? null;
+  if (!firstName && !lastName && !company) throw new Error("Bitte einen Namen oder eine Firma angeben.");
+  if (!phone && !email) throw new Error("Bitte Telefon oder E-Mail angeben – sonst lässt sich der Kontakt nicht erreichen.");
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Die E-Mail-Adresse sieht nicht gültig aus.");
+  const samePhone = (value: string | null | undefined) => (value ?? "").replace(/\D/g, "").replace(/^(0049|49|0)/, ""); // +49 89 …, 0049 89 … und 089 … sind dieselbe Nummer
+  const phoneKey = samePhone(phone);
+  const existing = await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company, email: leads.email, phone: leads.phone }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
+  const twin = existing.find((row) => (email && (row.email ?? "").toLowerCase() === email) || (phoneKey.length >= 6 && samePhone(row.phone) === phoneKey));
+  if (twin) throw new Error(`Diesen Kontakt gibt es schon: ${[twin.firstName, twin.lastName].filter(Boolean).join(" ") || twin.company || twin.email} (${twin.publicId}) – gleiche ${email && (twin.email ?? "").toLowerCase() === email ? "E-Mail" : "Telefonnummer"}.`);
+  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id ?? null;
+  const stage = clean(input.stage, 40) ?? "neu";
+  const listName = input.source === "kaltakquise" ? (clean(input.listName) ?? "Eigene Kontakte") : null;
+  const platform = input.source === "kaltakquise" ? "kaltakquise" : input.source === "email" ? "email" : "facebook";
+  const campaignId = input.source === "kaltakquise" ? `liste-${listName!.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : input.source === "email" ? "email-manuell" : "manuell";
+  const campaignName = input.source === "kaltakquise" ? `Liste: ${listName}` : "Manuell angelegt";
+  const felder: Record<string, string> = {}; if (clean(input.street, 200)) felder.strasse = clean(input.street, 200)!; if (clean(input.website, 300)) felder.webseite = clean(input.website, 300)!;
+  const publicId = `${input.source === "kaltakquise" ? "KALT" : input.source === "email" ? "MAIL" : "LEAD"}-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
+  const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName, lastName: lastName ?? (firstName ? null : company), email, phone, postcode: clean(input.postcode, 24), city: clean(input.city, 120), country: "DE", supplierName: "Manuell", metadata: { salutation: clean(input.salutation, 40) ?? undefined, manuell: true, ...(listName ? { kaltakquise: { liste: listName } } : {}), ...(Object.keys(felder).length ? { felder } : {}) }, status: "neu", cost: "0.00", pipelineStage: stage, pipelineUpdatedAt: new Date(), adCampaignId: campaignId, adCampaignName: campaignName, adPlatform: platform, company, listName, inPipeline: true, ownerUserId: input.ownerUserId ?? null, dealValue: input.dealValue != null && Number.isFinite(input.dealValue) ? String(Math.max(0, input.dealValue).toFixed(2)) : null });
+  const leadId = Number(inserted[0]?.insertId) || 0;
+  await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: stage, actorUserId, note: "Von Hand angelegt" });
+  await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: null, nextStatus: "neu", actorUserId, note: "Kontakt von Hand in der Vertriebspipeline angelegt" });
+  if (clean(input.note, 5000)) await db.insert(pipelineNotes).values({ tenantId, leadId, authorUserId: actorUserId, text: clean(input.note, 5000)!, source: "text" });
+  if (listName) { const tag = await tagByName(db, tenantId, `Liste: ${listName}`, "#f59e0b"); if (tag) await db.insert(leadTagAssignments).values({ leadId, tagId: tag.id }).catch(() => null); }
+  if (!input.ownerUserId) await autoAssign(db, tenantId, leadId);
+  const name = [firstName, lastName].filter(Boolean).join(" ") || company || email || "Kontakt";
+  await logActivity(db, tenantId, { kind: "kontakt_neu", title: `Kontakt „${name}“ von Hand angelegt`, detail: input.source === "kaltakquise" ? `Kaltakquise · ${campaignName}` : input.source === "email" ? "E-Mail-Kampagne" : "Meta Ads", count: 1, actorUserId, refType: "lead", refId: leadId }).catch(() => null);
+  return { publicId, leadId, name, stage };
+}
+
 /* ---------- E-Mail-Kampagnen ---------- */
 export type Audience = { source: "liste" | "stufe" | "tag" | "alle"; listName?: string | null; listNames?: string[] | null; stage?: string | null; tagId?: number | null };
 const tree = (campaign: EmailCampaign): EmailTree => (campaign.tree && typeof campaign.tree === "object" ? (campaign.tree as EmailTree) : { start: null, nodes: [] });

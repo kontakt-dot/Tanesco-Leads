@@ -792,3 +792,8 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Ursache: gelöschte Mails liegen noch im IMAP-Postfach; die Abholung (letzte 14 Tage) kannte nur vorhandene Message-IDs und lud sie neu.
 - Neue Tabelle `inboxDeletedMessages` (Migration 0079, läuft beim Start auf Railway automatisch): Message-IDs gelöschter Mails; `syncInbox` überspringt sie.
 - `deleteInboxMessages` (einzeln, Knopf „Löschen“ in der geöffneten Mail), `clearInbox` mit neuem Bereich „antworten“ (alle Antworten auf Kampagnen) – alle Löschwege merken sich die IDs.
+
+## v171 – Kontakt von Hand anlegen, Posteingang-Antworten, tiefere Sprüche
+- `createPipelineContact` (Server + Demo): Kontakt mit Anrede, Name, Firma, Telefon, E-Mail, Straße, PLZ, Ort, Webseite, Kategorie, Stufe, Vertriebler, Angebotswert, Notiz, Liste (Kaltakquise, Standard „Eigene Kontakte“). Doppelte über E-Mail oder Telefon (0049/+49/0 gleichgesetzt) werden abgelehnt. Knopf „+ Kontakt“ in der Pipeline-Leiste, Fenster mit „Danach gleich den nächsten anlegen“.
+- Posteingang: „Alle Antworten löschen“ erfasst jetzt auch Antworten auf Test-Mails ohne Kampagne (Betreff Re:/AW:/Antw:/WG:/Fwd:). IMAP-Message-ID beim Vergleich auf 320 Zeichen gekürzt (wie gespeichert).
+- Sprüche: 40 umgedrehte Sprichwörter mit Tiefgang (was ein Anruf im Leben verändern kann).
