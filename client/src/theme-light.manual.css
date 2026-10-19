@@ -1203,3 +1203,7 @@ html:not(.dark) .campaign-act-menu .campaign-act-danger { color: #be123c !import
 html:not(.dark) .stage-editor-color { box-shadow: 0 0 0 2px #e2e8f0 !important; }
 html:not(.dark) .stage-editor-color:hover { box-shadow: 0 0 0 2px #94a3b8 !important; }
 html:not(.dark) .pipeline-category-filter { background: #ffffff !important; color: #0f172a !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone { background: #16a34a !important; border-color: #16a34a !important; color: #ffffff !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover { background: #15803d !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone svg { color: #ffffff !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone.is-missing { background: #d97706 !important; border-color: #d97706 !important; }

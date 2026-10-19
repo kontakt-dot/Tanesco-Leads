@@ -1378,6 +1378,8 @@ html:not(.dark) .campaign-act-menu .campaign-act-danger { color: #8a3e49 !import
 html:not(.dark) .stage-editor-color { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05),0 0 0 4px transparent !important; }
 html:not(.dark) .stage-editor-color:hover, html:not(.dark) .stage-editor-color:focus-within { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .pipeline-category-filter { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone { color: #0f172a !important; box-shadow: 0 6px 16px -8px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover { background: #127336 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -2829,3 +2831,7 @@ html:not(.dark) .campaign-act-menu .campaign-act-danger { color: #be123c !import
 html:not(.dark) .stage-editor-color { box-shadow: 0 0 0 2px #e2e8f0 !important; }
 html:not(.dark) .stage-editor-color:hover { box-shadow: 0 0 0 2px #94a3b8 !important; }
 html:not(.dark) .pipeline-category-filter { background: #ffffff !important; color: #0f172a !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone { background: #16a34a !important; border-color: #16a34a !important; color: #ffffff !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover { background: #15803d !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone svg { color: #ffffff !important; }
+html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone.is-missing { background: #d97706 !important; border-color: #d97706 !important; }

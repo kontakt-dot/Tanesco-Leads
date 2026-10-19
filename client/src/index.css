@@ -2568,3 +2568,14 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 @media(max-width:760px){.stage-editor-row{grid-template-columns:24px 26px 1fr auto}}
 .pipeline-category-filter{height:32px;min-width:180px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#e4e2f5;font-size:12.5px;padding:0 8px}
 .pipeline-category-filter option{color:#0f172a;background:#fff}
+/* Karte offen: beide Verschiebe-Knöpfe nebeneinander, gleich breit, über die ganze Kartenbreite */
+.card-move-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;flex:1 1 100%;min-width:0}
+.card-move-row .card-move-pill{min-width:0;height:34px;padding:0 8px}
+.card-move-row .card-move-pill .card-move-pipeline{max-width:none;width:100%;min-width:0;text-overflow:ellipsis}
+/* Geschlossene Karte: runder grüner Telefon-Knopf. Offene Karte: großer grüner Knopf „Anrufen“. */
+.pipeline-card-phone-label{display:none}
+.pipeline-page .pipeline-card.is-open .pipeline-card-phone{width:auto;height:36px;padding:0 16px;gap:7px;display:inline-flex;align-items:center;border-radius:10px;background:#16a34a;border-color:#16a34a;color:#fff;font-size:13px;font-weight:700;box-shadow:0 6px 16px -8px rgba(22,163,74,.7)}
+.pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover{background:#15803d;border-color:#15803d}
+.pipeline-page .pipeline-card.is-open .pipeline-card-phone svg{width:16px;height:16px}
+.pipeline-page .pipeline-card.is-open .pipeline-card-phone.is-missing{background:#f59e0b;border-color:#f59e0b}
+.pipeline-page .pipeline-card.is-open .pipeline-card-phone-label{display:inline}
