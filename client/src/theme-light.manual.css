@@ -1176,3 +1176,4 @@ html:not(.dark) .new-contact-form fieldset { border-color: #e2e8f0 !important; b
 html:not(.dark) .new-contact-form legend { color: #bc001d !important; }
 html:not(.dark) .new-contact-field > span, html:not(.dark) .new-contact-another { color: #475569 !important; }
 html:not(.dark) .new-contact-field select, html:not(.dark) .new-contact-field textarea { background: #ffffff !important; color: #0f172a !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .pipeline-card-head .pipeline-card-company { color: #3f37b5 !important; }
