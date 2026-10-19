@@ -1,4 +1,4 @@
-/** Vertriebssprüche – umgedrehte Sprichwörter mit Tiefgang: was ein Anruf im Leben verändern kann. Wechseln alle 5 Minuten von allein und per Klick. */
+/** Vertriebssprüche – umgedrehte Sprichwörter mit Tiefgang: was ein Anruf im Leben verändern kann. Wechseln alle 90 Sekunden von allein und per Klick. */
 export const SALES_QUOTES: Array<{ text: string; author?: string }> = [
   { text: "Geld liegt nicht auf der Straße. Es liegt in Spalte „Neu“ – und wartet darauf, dass du dein Leben änderst." },
   { text: "Ein Anruf dauert zwei Minuten. Ein Kunde kann dein ganzes Jahr verändern." },

@@ -85,9 +85,9 @@ export default function SalesPipelineWorkspace() {
   const closeLead = () => { setLeadWindow(null); syncLeadUrl(null); };
   useEffect(() => { const onNavigate = () => { try { const wanted = new URLSearchParams(window.location.search); if (wanted.get("page") === "Vertriebspipeline" && wanted.get("lead")) { const quelle = wanted.get("quelle"); if (quelle === "kaltakquise" || quelle === "email" || quelle === "ads") setSource(quelle); setLeadWindow(wanted.get("lead")); } } catch { /* egal */ } }; window.addEventListener("tanesco:navigate", onNavigate); return () => window.removeEventListener("tanesco:navigate", onNavigate); }, []);
   const stageDefs = data?.stageDefs ?? PIPELINE_STAGES;
-  // Spruch in der Kopfzeile – wechselt alle 5 Minuten oder per Klick
+  // Spruch in der Kopfzeile – wechselt alle 90 Sekunden oder per Klick
   const [headQuote, setHeadQuote] = useState(() => randomQuote());
-  useEffect(() => { const timer = window.setInterval(() => setHeadQuote((current) => randomQuote(current.text)), 5 * 60 * 1000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => { const timer = window.setInterval(() => setHeadQuote((current) => randomQuote(current.text)), 90 * 1000); /* neuer Spruch alle 90 Sekunden */ return () => window.clearInterval(timer); }, []);
   // Achtung: alle Hooks VOR diesem frühen return – sonst stürzt React beim Öffnen eines Leads ab (Fehler #300)
   if (leadWindow) return <>
     <PipelineLeadPage publicId={leadWindow} stageDefs={stageDefs} owners={owners.data ?? []} onClose={closeLead} onChanged={refresh} onDial={onDial} />
@@ -105,7 +105,7 @@ export default function SalesPipelineWorkspace() {
   };
   const tabs: View[] = source === "kaltakquise" ? ["board", "termine", "stats", "kontakte", "kaltakquise", "verlauf", "einstellungen"] : ["board", "termine", "stats", "kontakte", "einstellungen"];
   return <div className={`pipeline-page is-view-${view}`}>
-    <header className="page-intro compact"><div><span className="eyebrow">VERTRIEB</span><h1>Vertriebspipeline</h1><p>{TAB_INFO[view]?.hint ?? "Von der ersten Anfrage bis zum Kunden."}</p></div>{view === "board" && <button type="button" className="pipeline-head-quote" title="Nächster Spruch" onClick={() => setHeadQuote(randomQuote(headQuote.text))}><span className="pipeline-head-quote-mark" aria-hidden="true">“</span><span className="pipeline-head-quote-text">{headQuote.text}</span><RefreshCw className="pipeline-head-quote-next h-3.5 w-3.5" aria-hidden="true" /></button>}</header>
+    <header className="page-intro compact"><div><span className="eyebrow">VERTRIEB</span><h1>Vertriebspipeline</h1><p>{TAB_INFO[view]?.hint ?? "Von der ersten Anfrage bis zum Kunden."}</p></div>{view === "board" && <button type="button" className="pipeline-head-quote" title="Nächster Spruch" onClick={() => setHeadQuote(randomQuote(headQuote.text))}><span className="pipeline-head-quote-mark" aria-hidden="true">“</span><span key={headQuote.text} className="pipeline-head-quote-text">{headQuote.text}</span><RefreshCw className="pipeline-head-quote-next h-3.5 w-3.5" aria-hidden="true" /></button>}</header>
     <div className="pipeline-menu mb-3 flex flex-wrap items-center justify-between gap-2"><div className="pipeline-menu-sources flex flex-wrap items-center gap-2"><div className="source-cards" role="tablist" aria-label="Pipeline wählen">{([
       { key: "email" as const, icon: Mail, label: "E-Mail-Kampagne", hint: "Empfänger und Antworten der Serien" },
       { key: "ads" as const, icon: Facebook, label: "Meta Ads", hint: "Leads aus Facebook & Instagram" },

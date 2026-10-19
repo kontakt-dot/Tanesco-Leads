@@ -2481,7 +2481,7 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .pipeline-note-edit-actions button.is-save{background:#7c6cff;border-color:#7c6cff;color:#fff}
 .pipeline-note-edit-actions button:disabled{opacity:.6}
 /* Leuchten/Rahmen der Karten nicht abschneiden: Kartenbereich bekommt etwas Luft für Rand und Schatten */
-.pipeline-page .pipeline-cards{padding:4px 5px 8px;margin:-4px -5px -8px}
+.pipeline-page .pipeline-cards{padding:4px 5px 8px;margin:0 -5px -8px} /* oben kein Minus-Abstand – sonst rutschen die Karten über den Hinweis unter dem Spaltennamen */
 /* Farbpunkt am Spaltennamen: Leuchtring nicht abschneiden (Name hat overflow:hidden für lange Namen) */
 .pipeline-page .pipeline-column header strong{padding:4px 0 4px 4px;margin:-4px 0 -4px -4px}
 .pipeline-page .pipeline-column header strong::before{align-self:center}
@@ -2502,3 +2502,15 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .new-contact-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
 .new-contact-another{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#a9adc8}
 .pipeline-new-contact{font-weight:700}
+
+/* Spruchwechsel weich einblenden */
+.pipeline-head-quote-text{animation:quote-in .45s ease}
+@keyframes quote-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.pipeline-head-quote-text{animation:none}}
+/* „Kontakt anlegen“ immer ganz im Bild: nicht unter die obere Leiste rutschen, kompakter, innen scrollen */
+.new-contact-dialog{max-height:calc(100vh - 150px)!important;top:calc(50% + 32px)!important;padding-top:18px;padding-bottom:16px}
+.new-contact-form{gap:9px}
+.new-contact-form fieldset{padding:8px 11px 10px;gap:6px 10px}
+.new-contact-field{gap:3px}
+.new-contact-dialog [data-slot="dialog-header"],.new-contact-dialog .flex.flex-col.gap-2{gap:4px}
+@media(max-width:760px){.new-contact-dialog{max-height:calc(100vh - 110px)!important;top:calc(50% + 20px)!important}}
