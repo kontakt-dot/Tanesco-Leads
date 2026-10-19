@@ -825,3 +825,10 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - v179: Verschiebe-Knöpfe schlicht (weiß, Rahmen in Stufenfarbe); „+ Pipeline“ oben in der Vertriebspipeline entfernt – Anlegen nur noch unter Einstellungen → Stufen.
 - v181: Verschiebe-Knöpfe schlicht wie „+ Anruf“ (weiß, grauer Rahmen). Spalten-Dialer bleibt das kleine Telefon (Wunsch), nur der Hinweistext erklärt jetzt die Kampagne (manuell/Power/Predictive).
 - Kontakt löschen löscht auch den Kampagnen-Verlauf (Öffnungen/Klicks); `purgeOrphanCampaignEvents` räumt Altlasten beim Laden der Kampagnenliste auf.
+
+## v183 – E-Mail-Kampagnen neu, Ziehen flüssiger, Ampel-Farben
+- Kampagnen-Tab: `CampaignKpiBar` – Auswahl „Alle Kampagnen“ oder eine Kampagne (gemerkt in localStorage `kampagnen-kpi`), Karten über `KpiCards` (Empfänger, Gesendet, Geöffnet, Geklickt, Geantwortet, Unzustellbar).
+- Kampagnenseite (`CampaignDetailView`): Kopf mit Chips + Aktionen, KPI-Karten, Empfängerliste mit Suche, Filtern und Fortschritts-Symbolen, rechts „Letzte Aktivität“. Klick → `CampaignContactDrawer` (Seitenleiste: Meilensteine, Als Nächstes, Verlauf nach Tagen, Aktionen, vor/zurück). `LeadLogDialog` wird hier nicht mehr benutzt.
+- Sheets liegen über der oberen Leiste (`[data-slot=sheet-*]` z 70/71).
+- Pipeline-Ziehen: Fenster-Listener statt Board-Listener (Ziehen über den Rand bricht nicht mehr ab), Zielspalte am Rand geklemmt, Auto-Scroll links/rechts/in der Spalte/Seite, Geist per transform (kein Neuzeichnen), Karte sofort in der Zielspalte (`pendingMoves`), Esc bricht ab.
+- Stufenfarben: `trafficLightColor` – Ampel Rot→Grün über die Stufen (ohne Verloren, das ist grau). Eigene Farbe gewinnt; Knopf „Ampel-Farben“ entfernt eigene Farben.

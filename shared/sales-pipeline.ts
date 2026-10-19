@@ -5,9 +5,15 @@ export type StageDef = { key: string; label: string; hint: string; fixed?: "entr
 export const STAGE_COLOR_DEFAULTS: Record<string, string> = { neu: "#8b7cff", in_bearbeitung: "#60a5fa", kontaktiert: "#22d3ee", qualifiziert: "#a3e635", termin: "#fbbf24", angebot: "#fb923c", kunde: "#34d399", verloren: "#fb7185" };
 const STAGE_COLOR_CYCLE = ["#8b7cff", "#60a5fa", "#22d3ee", "#a3e635", "#fbbf24", "#fb923c", "#f472b6", "#c084fc", "#2dd4bf", "#facc15"];
 export const isStageColor = (value: unknown): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
-export function stageColor(stage: Pick<StageDef, "key" | "color" | "fixed">, index = 0): string {
+/** Ampel: erste Stufe Rot → Orange → Gelb → letzte (Gewonnen) Grün. „Verloren“ grau. Eigene Farbe (color) gewinnt immer. */
+const hslHex = (h: number, sat: number, light: number) => { const s = sat / 100; const l = light / 100; const k = (n: number) => (n + h / 30) % 12; const a = s * Math.min(l, 1 - l); const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return `#${[f(0), f(8), f(4)].map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("")}`; };
+export const LOST_STAGE_COLOR = "#94a3b8";
+export function trafficLightColor(position: number, count: number): string { const t = count > 1 ? Math.min(1, Math.max(0, position / (count - 1))) : 1; const eased = Math.pow(t, 1.3); return hslHex(Math.round(4 + eased * 138), 76, Math.round(52 - eased * 10)); }
+export function stageColor(stage: Pick<StageDef, "key" | "color" | "fixed">, index = 0, stages?: Array<Pick<StageDef, "key" | "fixed">>): string {
   if (isStageColor(stage.color)) return stage.color.toLowerCase();
-  if (stage.fixed === "won") return STAGE_COLOR_DEFAULTS.kunde; if (stage.fixed === "lost") return STAGE_COLOR_DEFAULTS.verloren; if (stage.fixed === "entry") return STAGE_COLOR_DEFAULTS.neu;
+  if (stage.fixed === "lost") return LOST_STAGE_COLOR;
+  if (stages && stages.length) { const ladder = stages.filter((item) => item.fixed !== "lost"); const position = ladder.findIndex((item) => item.key === stage.key); if (position >= 0) return trafficLightColor(position, ladder.length); }
+  if (stage.fixed === "won") return STAGE_COLOR_DEFAULTS.kunde; if (stage.fixed === "entry") return STAGE_COLOR_DEFAULTS.neu;
   return STAGE_COLOR_DEFAULTS[stage.key] ?? STAGE_COLOR_CYCLE[index % STAGE_COLOR_CYCLE.length];
 }
 export const PIPELINE_STAGES: StageDef[] = [
