@@ -95,11 +95,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const campaignWordPlural = pipeline && source === "kaltakquise" ? "Alle Kaltakquise-Kampagnen" : pipeline ? "Alle E-Mail-Kampagnen" : "Alle Kampagnen";
 
   return <section className="surface-panel operations-panel p-5">
-    <div className="panel-title"><div>
-      <span className="eyebrow">{pipeline ? "KONTAKTE DIESER PIPELINE" : "KONTAKTE DER E-MAIL-AKQUISE"}</span>
-      <h2>{pipeline ? "Alle Kontakte auf einen Blick – als Liste statt Karten" : "Wer steckt in den Serien – und was ist passiert?"}</h2>
-      <p className="text-xs text-slate-500">{pipeline ? "Jede Zeile ein Kontakt dieser Pipeline mit Telefon, E-Mail, Herkunft, letzter Reaktion, Stufe und Vertriebler. Klick auf die Zeile öffnet die Lead-Seite; ankreuzen, um Stufe zu setzen, zuzuteilen oder zu löschen." : "Jede Zeile ein Kontakt: Herkunft, Kampagne, letzte Reaktion und Stufe. Klick auf die Zeile öffnet die Lead-Seite; ankreuzen zum Übernehmen in die Pipeline oder zum Löschen."}</p>
-    </div></div>
+    <div className="xl-head"><div><h2>{pipeline ? "Kontakte dieser Pipeline" : "Kontakte"} <span>{data.data?.total ?? 0}</span></h2><p>{pipeline ? "Alle Kontakte als Liste – Klick öffnet die Lead-Seite, ankreuzen für Stufe, Zuteilung oder Löschen." : "Wer steckt in den Serien und was ist passiert – Klick öffnet die Lead-Seite, ankreuzen für Kampagne, Pipeline oder Löschen."}</p></div></div>
 
     <div className="email-leads-filters">
       <input className="email-leads-search" placeholder={pipeline ? `Suchen: Name, Firma, Telefon, E-Mail, Ort, PLZ, Liste, ${campaignWord}` : "Suchen: Name, Firma, E-Mail, Ort, Liste"} value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -110,9 +106,9 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
       {gefiltert && <button type="button" className="email-leads-reset" onClick={resetAll}>Filter entfernen</button>}
     </div>
 
-    <div className="dashboard-segments mt-3">
-      <button type="button" className={activity === null ? "active" : ""} onClick={() => setActivity(null)}>Alle ({counts.alle ?? 0})</button>
-      {ACTIVITY.map((item) => <button key={item.key} type="button" className={activity === item.key ? "active" : ""} onClick={() => setActivity(activity === item.key ? null : item.key)}>{item.label} ({counts[item.key] ?? 0})</button>)}
+    <div className="cd-filters xl-filters" role="tablist" aria-label="Nach letzter Reaktion filtern">
+      <button type="button" role="tab" aria-selected={activity === null} className={activity === null ? "is-active" : ""} onClick={() => setActivity(null)}>Alle<i>{counts.alle ?? 0}</i></button>
+      {ACTIVITY.filter((item) => (counts[item.key] ?? 0) > 0 || activity === item.key).map((item) => <button key={item.key} type="button" role="tab" aria-selected={activity === item.key} className={`${activity === item.key ? "is-active" : ""} is-${item.key}`} onClick={() => setActivity(activity === item.key ? null : item.key)}><b className={`xl-dot is-${item.key}`} aria-hidden="true" />{item.label}<i>{counts[item.key] ?? 0}</i></button>)}
     </div>
 
     {data.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
@@ -137,13 +133,12 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
           </div>}
         </div>
         <div className="email-leads-scroll"><table className="email-leads-table">
-          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Name</th><th>Firma</th>{pipeline && <th>Telefon</th>}<th>E-Mail</th>{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{campaignWord}</th><th>Zuletzt</th>{pipeline && <th title="Anrufversuche (Zähler der Karte)">Anrufe</th>}<th>Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
+          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Kontakt</th><th>Firma</th>{pipeline && <th>Telefon</th>}{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{campaignWord}</th><th>Zuletzt</th>{pipeline && <th title="Anrufversuche (Zähler der Karte)">Anrufe</th>}<th>Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
           <tbody>{items.map((lead) => <tr key={lead.id} className={`${picked.includes(lead.id) ? "is-picked" : ""} ${onOpenLead ? "is-clickable" : ""}`} title="Klick öffnet die Lead-Seite" onClick={() => onOpenLead?.(lead.publicId)}>
             <td className="email-leads-check" onClick={(event) => event.stopPropagation()}>{canPick(lead) ? <input type="checkbox" aria-label={`${nameOf(lead)} auswählen`} checked={picked.includes(lead.id)} onChange={(event) => setPicked((value) => event.target.checked ? [...value, lead.id] : value.filter((id) => id !== lead.id))} /> : null}</td>
-            <td>{onOpenLead ? <button type="button" className="email-leads-name" onClick={() => onOpenLead(lead.publicId)}>{nameOf(lead)}</button> : nameOf(lead)}</td>
+            <td className="xl-person"><span className="xl-person-in"><span className="cd-avatar" aria-hidden="true">{nameOf(lead).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"}</span><span className="xl-person-text">{onOpenLead ? <button type="button" className="email-leads-name" onClick={() => onOpenLead(lead.publicId)}>{nameOf(lead)}</button> : <strong>{nameOf(lead)}</strong>}<small>{lead.email || "keine E-Mail"}</small></span></span></td>
             <td>{lead.company || "–"}</td>
             {pipeline && <td>{lead.phone || "–"}</td>}
-            <td>{lead.email || "–"}</td>
             {pipeline && <td>{[lead.postcode, lead.city].filter(Boolean).join(" ") || "–"}</td>}
             <td>{pipeline ? herkunft(lead) : lead.listName || "–"}</td>
             <td>{lead.campaigns.length ? lead.campaigns.map((campaign) => campaign.name).join(", ") : <span className="text-slate-500">in keiner</span>}</td>

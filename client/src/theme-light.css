@@ -1489,6 +1489,47 @@ html:not(.dark) .cl-stat span { color: #8a94a6 !important; }
 html:not(.dark) .cl-stat strong { color: #0f172a !important; }
 html:not(.dark) .cl-stat small { color: #8a94a6 !important; }
 html:not(.dark) .cl-stat i { background: #111318 !important; }
+html:not(.dark) .xl-head h2 { color: #0f172a !important; }
+html:not(.dark) .xl-head h2 span { color: #4b5568 !important; background: #f8fafb !important; }
+html:not(.dark) .xl-head p { color: #8a94a6 !important; }
+html:not(.dark) .xl-dot.is-gesendet { background: #111318 !important; }
+html:not(.dark) .xl-dot.is-ohne { background: #ffffff !important; }
+html:not(.dark) .email-leads-scroll { border-color: #e8ecf1 !important; }
+html:not(.dark) .email-leads-table th { background: #ffffff !important; color: #8a94a6 !important; border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .xl-person-text small { color: #8a94a6 !important; }
+html:not(.dark) .xl-person-text strong { color: #0f172a !important; }
+html:not(.dark) .email-leads-table .email-leads-name { color: #0f172a !important; }
+html:not(.dark) .email-leads-state.is-gesendet { background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .email-leads-state.is-geoeffnet { color: #506c8b !important; }
+html:not(.dark) .email-leads-state.is-geklickt { color: #8a742a !important; }
+html:not(.dark) .uh-sum { color: #8b5a60 !important; }
+html:not(.dark) .uh-row { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .uh-icon { background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .uh-row.is-deletion .uh-icon { color: #8b5a60 !important; }
+html:not(.dark) .uh-main strong { color: #0f172a !important; }
+html:not(.dark) .uh-main small { color: #8a94a6 !important; }
+html:not(.dark) .uh-num { background: #f8fafb !important; color: #8a94a6 !important; }
+html:not(.dark) .uh-num b { color: #0f172a !important; }
+html:not(.dark) .uh-num.is-minus b { color: #8b5a60 !important; }
+html:not(.dark) .uh-num.is-muted b { color: #111318 !important; }
+html:not(.dark) .uh-done { color: #8a94a6 !important; }
+html:not(.dark) .sp-hint { color: #8a94a6 !important; }
+html:not(.dark) .sp-list li:hover { background: #f8fafb !important; border-color: #e8ecf1 !important; }
+html:not(.dark) .sp-icon { background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .sp-icon.is-bad { color: #8b5a60 !important; }
+html:not(.dark) .sp-icon.is-warn { color: #8a742a !important; }
+html:not(.dark) .sp-icon.is-info { color: #506c8b !important; }
+html:not(.dark) .sp-main strong { color: #0f172a !important; }
+html:not(.dark) .sp-meta { color: #8a94a6 !important; }
+html:not(.dark) .sp-reason { background: #f8fafb !important; color: #111318 !important; }
+html:not(.dark) .sp-reason.is-bad { color: #8b5a60 !important; }
+html:not(.dark) .sp-reason.is-warn { color: #8a742a !important; }
+html:not(.dark) .sp-reason.is-info { color: #506c8b !important; }
+html:not(.dark) .sp-main small { color: #8a94a6 !important; }
+html:not(.dark) .sp-title { color: #0f172a !important; }
+html:not(.dark) .sp-text { color: #8a94a6 !important; }
+html:not(.dark) .sp-how ul { color: #4b5568 !important; }
+html:not(.dark) .sp-how b { color: #0f172a !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -3028,3 +3069,33 @@ html:not(.dark) .cl-stat { background: #f8fafc !important; }
 html:not(.dark) .cl-stat.is-open { --bar: #2563eb; } html:not(.dark) .cl-stat.is-click { --bar: #d97706; } html:not(.dark) .cl-stat.is-reply { --bar: #059669; }
 html:not(.dark) .cl-stat:not(.is-open):not(.is-click):not(.is-reply) { --bar: #bc001d; }
 html:not(.dark) .cl-stat i { background: var(--bar) !important; }
+/* v185 – Kontakte, Sperrliste, Upload-Verlauf (hell) */
+html:not(.dark) .xl-head h2, html:not(.dark) .xl-person-text strong, html:not(.dark) .email-leads-table .email-leads-name, html:not(.dark) .uh-main strong, html:not(.dark) .uh-num b, html:not(.dark) .sp-main strong, html:not(.dark) .sp-title, html:not(.dark) .sp-how b { color: #0f172a !important; }
+html:not(.dark) .xl-head h2 span { background: #f2f4f7 !important; color: #475467 !important; }
+html:not(.dark) .xl-head p, html:not(.dark) .xl-person-text small, html:not(.dark) .uh-main small, html:not(.dark) .uh-num, html:not(.dark) .uh-done, html:not(.dark) .sp-meta, html:not(.dark) .sp-main small, html:not(.dark) .sp-hint, html:not(.dark) .sp-text { color: #667085 !important; }
+html:not(.dark) .sp-how ul { color: #475467 !important; }
+html:not(.dark) .email-leads-scroll { border-color: #eceef3 !important; }
+html:not(.dark) .email-leads-table th { background: #f8fafc !important; color: #667085 !important; border-color: #eceef3 !important; }
+html:not(.dark) .email-leads-table td { border-color: #f2f4f7 !important; color: #344054 !important; }
+html:not(.dark) .email-leads-table tr.is-clickable:hover td { background: #fafbfc !important; }
+html:not(.dark) .email-leads-state { background: #f2f4f7 !important; color: #475467 !important; }
+html:not(.dark) .email-leads-state.is-gesendet { background: #fde7ea !important; color: #9f0018 !important; }
+html:not(.dark) .email-leads-state.is-geoeffnet { background: #dbeafe !important; color: #1d4ed8 !important; }
+html:not(.dark) .email-leads-state.is-geklickt { background: #fef3c7 !important; color: #b45309 !important; }
+html:not(.dark) .email-leads-state.is-geantwortet { background: #d1fae5 !important; color: #047857 !important; }
+html:not(.dark) .email-leads-state.is-abgemeldet { background: #ffedd5 !important; color: #c2410c !important; }
+html:not(.dark) .email-leads-state.is-bounce { background: #ffe4e6 !important; color: #be123c !important; }
+html:not(.dark) .xl-dot.is-gesendet { background: #bc001d !important; } html:not(.dark) .xl-dot.is-geoeffnet { background: #2563eb !important; } html:not(.dark) .xl-dot.is-geklickt { background: #d97706 !important; } html:not(.dark) .xl-dot.is-geantwortet { background: #059669 !important; }
+html:not(.dark) .cd-filters button.is-active .xl-dot { background: #ffffff !important; }
+html:not(.dark) .uh-row { background: #ffffff !important; border-color: #eceef3 !important; }
+html:not(.dark) .uh-icon { background: #fde7ea !important; color: #bc001d !important; }
+html:not(.dark) .uh-row.is-deletion .uh-icon { background: #ffe4e6 !important; color: #be123c !important; }
+html:not(.dark) .uh-num { background: #f8fafc !important; }
+html:not(.dark) .uh-num.is-minus b, html:not(.dark) .uh-sum { color: #be123c !important; }
+html:not(.dark) .uh-num.is-muted b { color: #475467 !important; }
+html:not(.dark) .sp-list li:hover { background: #f8fafc !important; border-color: #eceef3 !important; }
+html:not(.dark) .sp-icon { background: #f2f4f7 !important; color: #667085 !important; }
+html:not(.dark) .sp-icon.is-bad, html:not(.dark) .sp-reason.is-bad { background: #ffe4e6 !important; color: #be123c !important; }
+html:not(.dark) .sp-icon.is-warn, html:not(.dark) .sp-reason.is-warn { background: #ffedd5 !important; color: #c2410c !important; }
+html:not(.dark) .sp-icon.is-info, html:not(.dark) .sp-reason.is-info { background: #dbeafe !important; color: #1d4ed8 !important; }
+html:not(.dark) .sp-reason { background: #f2f4f7 !important; color: #475467 !important; }

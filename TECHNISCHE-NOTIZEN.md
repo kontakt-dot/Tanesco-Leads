@@ -836,3 +836,4 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 ## v184 – Kampagnenliste als Karten, Stufenfarben zurück
 - Kampagnen-Tab: Tabelle ersetzt durch Karten (`.cl-card`): Name/Infos, Zielgruppe, 5 Kennzahl-Kästchen mit Balken, Status + Aktionen. Kein Quer-Scrollen mehr. Versandfenster kurz (`windowShort`), voll im Hinweis.
 - Stufenfarben wieder die ursprünglichen Standardfarben (Ampel entfernt).
+- v185: Kontakte (Kopf kompakt, Filter-Chips mit Farbpunkt, Name+E-Mail mit Kürzel in einer Spalte, farbige „Zuletzt“-Schilder), Sperrliste (Zeilen statt enger Tabelle, Grund farbig, rechts Formular + Erklärung), Upload-Verlauf (Zeilen mit Symbol, Zahlen-Kästchen, Knöpfe) – gleiche Optik wie die Kampagnenseite. Betrifft auch „Kontakte“ in der Vertriebspipeline.
