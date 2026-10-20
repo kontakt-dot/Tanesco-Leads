@@ -6,9 +6,9 @@
  * Webhook-Adresse (bei Meta eintragen): APP_URL/api/meta/webhook – Verify-Token steht in der Plattform.
  */
 import { extraFieldsOf } from "../shared/cold-list";
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import crypto from "node:crypto";
-import { adInsights, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
+import { adInsights, emailCampaignRecipients, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
 import { buildStageSets, stagesOf, entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, pipelineSourceOf, stagesForLead, summarizeCampaigns, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
@@ -155,7 +155,18 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const source = options.source ?? "alle";
   // Kontakte, die nur in der E-Mail-Akquise stecken (inPipeline = false), gehören noch nicht aufs Board.
   const pipelineLeads = rows.filter((row) => (row as { inPipeline?: boolean }).inPipeline !== false).filter((row) => row.adCampaignId || row.adPlatform || row.pipelineStage).filter((row) => source === "alle" ? true : pipelineSourceOf(row.adPlatform) === source).map((row) => ({ ...row, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || row.publicId }));
-  const byCampaign = options.campaignId ? pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === options.campaignId) : pipelineLeads;
+  // Smarte Listen (E-Mail-Kampagne): „Interesse“ = Antwort im Posteingang, die die KI als interessiert einstuft; „Geöffnet“ = Kampagnen-Mail geöffnet/geklickt/beantwortet
+  const leadIdsAll = pipelineLeads.map((lead) => lead.id);
+  const interestIds = new Set<number>(); const openedIds = new Set<number>();
+  if (leadIdsAll.length) {
+    for (const row of await db.select({ leadId: inboxMessages.leadId, recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.aiKind, "interessiert"), eq(inboxMessages.blocked, false)))) if (row.leadId) interestIds.add(row.leadId);
+    const recipientRows = await db.select({ id: emailCampaignRecipients.id, leadId: emailCampaignRecipients.leadId, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), isNotNull(emailCampaignRecipients.leadId)));
+    const recipientLead = new Map(recipientRows.map((row) => [row.id, row.leadId]));
+    for (const row of await db.select({ recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.aiKind, "interessiert"), isNotNull(inboxMessages.campaignRecipientId)))) { const leadId = row.recipientId ? recipientLead.get(row.recipientId) : null; if (leadId) interestIds.add(leadId); }
+    for (const row of recipientRows) if (row.leadId && (row.openedAt || row.clickedAt || row.repliedAt)) openedIds.add(row.leadId);
+  }
+  const smartLists = { interesse: pipelineLeads.filter((lead) => interestIds.has(lead.id)).length, geoeffnet: pipelineLeads.filter((lead) => openedIds.has(lead.id)).length };
+  const byCampaign = options.campaignId === "__interesse" ? pipelineLeads.filter((lead) => interestIds.has(lead.id)) : options.campaignId === "__geoeffnet" ? pipelineLeads.filter((lead) => openedIds.has(lead.id)) : options.campaignId ? pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === options.campaignId) : pipelineLeads;
   const scopedByOwner = options.ownerUserId === "ohne" ? byCampaign.filter((lead) => !lead.ownerUserId) : options.ownerUserId ? byCampaign.filter((lead) => lead.ownerUserId === options.ownerUserId) : byCampaign;
   // Tags der Karten: Chips zum Filtern (z. B. „PV“, „Hessen“) – die Liste zeigt alle Tags im aktuellen Ausschnitt mit Anzahl.
   const tagRows = await db.select({ leadId: leadTagAssignments.leadId, id: tags.id, name: tags.name, color: tags.color }).from(leadTagAssignments).innerJoin(tags, eq(tags.id, leadTagAssignments.tagId)).where(eq(tags.tenantId, tenantId));
@@ -176,7 +187,7 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const totals = { leads: scoped.length, customers: scoped.filter((lead) => lead.pipelineStage === wonStage(stagesDef)).length, spend: (options.campaignId ? campaigns.filter((c) => c.campaignId === options.campaignId) : campaigns).reduce((sum, c) => sum + c.spend, 0) };
   const value = pipelineValueSummary(scoped.map((lead) => ({ pipelineStage: isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef), dealValue: lead.dealValue, ownerUserId: lead.ownerUserId, ownerName: lead.ownerName })), stagesDef);
   const staleCount = Array.from(extras.values()).filter((extra) => extra.stale).length; const hotCount = scoped.filter((lead) => { const extra = extras.get(lead.id); return extra?.temperature === "heiss" && lead.pipelineStage !== wonStage(stagesDef); }).length; const dueToday = scoped.filter((lead) => lead.followUpAt && lead.followUpAt < new Date(new Date().setHours(24, 0, 0, 0))).length;
-  return { campaigns, stages, stageDefs: stagesDef, tags: tagList, funnel: funnel(scoped, stagesDef), totals: { ...totals, costPerLead: totals.leads ? totals.spend / totals.leads : null, costPerCustomer: totals.customers ? totals.spend / totals.customers : null }, value, staleCount, hotCount, staleDays: settings.staleDays, dueToday };
+  return { campaigns, smartLists, stages, stageDefs: stagesDef, tags: tagList, funnel: funnel(scoped, stagesDef), totals: { ...totals, costPerLead: totals.leads ? totals.spend / totals.leads : null, costPerCustomer: totals.customers ? totals.spend / totals.customers : null }, value, staleCount, hotCount, staleDays: settings.staleDays, dueToday };
 }
 export async function moveStage(db: Db, tenantId: number, input: { publicId: string; stage: PipelineStage; note?: string | null; actorUserId: number | null }) {
   const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, input.publicId))).limit(1))[0]; if (!lead) throw new Error("Lead nicht gefunden.");

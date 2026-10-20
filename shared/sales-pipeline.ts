@@ -80,7 +80,7 @@ export const lostStage = (stages: StageDef[] = PIPELINE_STAGES) => stages.find((
 /** Stufe „In Bearbeitung“ (wird gerade angerufen) – per Schlüssel oder, bei eigenen Stufen, am Namen erkannt. */
 export const workingStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "in_bearbeitung") ?? stages.find((stage) => /bearbeitung|wird angerufen|anrufen/i.test(stage.label) && !stage.fixed))?.key ?? null;
 /** Stufe „Kontaktiert“ (erreicht) – per Schlüssel oder am Namen. */
-export const contactedStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "kontaktiert") ?? stages.find((stage) => /kontaktiert|erreicht/i.test(stage.label) && !stage.fixed))?.key ?? null;
+export const contactedStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "kontaktiert") ?? stages.find((stage) => /kontaktiert|in kontakt|^kontakt$|erreicht|gesprochen/i.test(stage.label.trim()) && !stage.fixed) ?? stages.find((stage) => /kontakt/i.test(stage.key) && !stage.fixed))?.key ?? null;
 export const nextStageKey = (current: string, stages: StageDef[] = PIPELINE_STAGES) => { const index = stages.findIndex((stage) => stage.key === current); if (index < 0) return null; const next = stages[index + 1]; return next && next.fixed !== "lost" ? next.key : null; };
 const stageOf = (value: string | null | undefined, stages: StageDef[]) => (isStage(value, stages) ? value : entryStage(stages));
 

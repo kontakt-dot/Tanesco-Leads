@@ -610,7 +610,7 @@ export async function applyFooterToCampaigns(db: Db, tenantId: number, options: 
 
 /** Vertriebskontakte samt allem, was an ihnen hängt, löschen – eine Stelle für Liste löschen, Upload rückgängig und Kontakte löschen. */
 /** Was beim Löschen festgehalten wird: wer, warum – landet je Liste als Eintrag „gelöscht“ im Upload-Verlauf. */
-export type DeletionMeta = { actorUserId?: number | null; reason?: string | null };
+export type DeletionMeta = { actorUserId?: number | null; reason?: string | null; undo?: boolean };
 /**
  * Löschung im Upload-Verlauf festhalten: je Liste ein Eintrag (Art „loeschung“) mit Anzahl, wer, wann und Grund – damit man
  * später sieht, wann etwas aus einer Liste verschwunden ist. Kontakte ohne Liste laufen unter „ohne Liste“.
@@ -623,8 +623,11 @@ export async function recordDeletion(db: Db, tenantId: number, ids: number[], me
   for (const [listName, group] of Array.from(groups.entries())) await db.insert(listImports).values({ tenantId, listName, source: group.email > group.ids.length / 2 ? "kampagne" : "kaltakquise", kind: "loeschung", note: meta.reason?.slice(0, 240) ?? null, rowCount: group.ids.length, created: 0, updated: 0, duplicates: 0, toPipeline: false, leadIds: group.ids, actorUserId: meta.actorUserId ?? null });
   return groups.size;
 }
-export async function removeLeadsCascade(db: Db, tenantId: number, ids: number[], meta?: DeletionMeta) {
-  if (!ids.length) return;
+export async function removeLeadsCascade(db: Db, tenantId: number, ids: number[], meta?: DeletionMeta): Promise<number> {
+  if (!ids.length) return 0;
+  // Papierkorb: vorher alles sichern, was an den Kontakten hängt – „Rückgängig“ holt es mit denselben IDs zurück
+  let undoId = 0;
+  if (meta?.undo !== false) { try { const { snapshotLeads, recordUndo } = await import("./undo"); const snapshot = await snapshotLeads(db, tenantId, ids); undoId = await recordUndo(db, tenantId, { kind: "loeschen", title: meta?.reason ?? `${ids.length === 1 ? "Ein Kontakt" : `${ids.length} Kontakte`} gelöscht`, count: snapshot.leads.length || ids.length, actorUserId: meta?.actorUserId ?? null, payload: snapshot }); } catch (error) { console.error("[Papierkorb] Sichern fehlgeschlagen:", error instanceof Error ? error.message : error); } }
   if (meta) await recordDeletion(db, tenantId, ids, meta).catch(() => null);
   await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), inArray(pipelineTasks.leadId, ids)));
   await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), inArray(pipelineEvents.leadId, ids)));
@@ -638,6 +641,7 @@ export async function removeLeadsCascade(db: Db, tenantId: number, ids: number[]
   await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.leadId, ids)));
   await db.update(dialerCalls).set({ leadId: null }).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.leadId, ids)));
   await db.delete(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, ids)));
+  return undoId;
 }
 /**
  * Ausgewählte Kontakte der E-Mail-Akquise löschen. Kunden bleiben erhalten und werden gezählt zurückgemeldet.
@@ -648,8 +652,8 @@ export async function deleteEmailLeads(db: Db, tenantId: number, input: { leadId
   const rows = await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
   const keep = (input.keepCustomers ?? true) ? rows.filter((row) => row.stage === "kunde").map((row) => row.id) : [];
   const weg = rows.filter((row) => !keep.includes(row.id)).map((row) => row.id);
-  await removeLeadsCascade(db, tenantId, weg, { actorUserId: input.actorUserId ?? null, reason: input.reason ?? `${weg.length === 1 ? "Ein Kontakt" : `${weg.length} Kontakte`} von Hand gelöscht (Reiter Kontakte)` });
-  return { deleted: weg.length, keptCustomers: keep.length };
+  const undoId = await removeLeadsCascade(db, tenantId, weg, { actorUserId: input.actorUserId ?? null, reason: input.reason ?? `${weg.length === 1 ? "Ein Kontakt" : `${weg.length} Kontakte`} von Hand gelöscht (Reiter Kontakte)` });
+  return { deleted: weg.length, keptCustomers: keep.length, undoId };
 }
 /**
  * Eine hochgeladene Liste löschen – mit allen Kontakten, die daraus entstanden sind.
@@ -664,14 +668,15 @@ export async function deleteColdList(db: Db, tenantId: number, input: { listName
   if (!rows.length) throw new Error(`Zur Liste „${listName}“ gibt es keine Kontakte mehr.`);
   const keep = keepCustomers ? rows.filter((row) => row.stage === "kunde").map((row) => row.id) : [];
   const remove = rows.filter((row) => !keep.includes(row.id)).map((row) => row.id);
+  let undoId = 0;
   if (remove.length) {
-    await removeLeadsCascade(db, tenantId, remove, { actorUserId: input.actorUserId ?? null, reason: `Liste „${listName}“ komplett gelöscht${keep.length ? ` (${keep.length} Kunden behalten)` : ""}` });
+    undoId = await removeLeadsCascade(db, tenantId, remove, { actorUserId: input.actorUserId ?? null, reason: `Liste „${listName}“ komplett gelöscht${keep.length ? ` (${keep.length} Kunden behalten)` : ""}` });
   }
   if (keep.length) await db.update(leads).set({ listName: null }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, keep)));
   // Das Tag „Liste: …“ nur entfernen, wenn es niemand mehr trägt.
   const tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0];
   if (tag) { const used = (await db.select({ leadId: leadTagAssignments.leadId }).from(leadTagAssignments).where(eq(leadTagAssignments.tagId, tag.id)).limit(1))[0]; if (!used) await db.delete(tags).where(eq(tags.id, tag.id)); }
-  return { deleted: remove.length, keptCustomers: keep.length, listName };
+  return { deleted: remove.length, keptCustomers: keep.length, listName, undoId };
 }
 
 /* ---------- Kontakte der E-Mail-Akquise ---------- */
@@ -817,12 +822,13 @@ export async function undoListImport(db: Db, tenantId: number, importId: number,
   const rows = ids.length ? await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids))) : [];
   const keep = rows.filter((item) => item.stage === "kunde").map((item) => item.id);
   const weg = rows.filter((item) => !keep.includes(item.id)).map((item) => item.id);
+  let undoId = 0;
   if (weg.length) {
-    await removeLeadsCascade(db, tenantId, weg, { actorUserId, reason: `Upload vom ${row.createdAt.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })} rückgängig gemacht` });
+    undoId = await removeLeadsCascade(db, tenantId, weg, { actorUserId, reason: `Upload vom ${row.createdAt.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })} rückgängig gemacht` });
   }
   await db.update(listImports).set({ undoneAt: new Date() }).where(eq(listImports.id, row.id));
   await logActivity(db, tenantId, { kind: "upload_rueckgaengig", title: `Upload „${row.listName}“ rückgängig gemacht: ${weg.length} Kontakte entfernt${keep.length ? `, ${keep.length} Kunden behalten` : ""}`, count: 1, refType: "listImport", refId: row.id });
-  return { deleted: weg.length, keptCustomers: keep.length, listName: row.listName };
+  return { deleted: weg.length, keptCustomers: keep.length, listName: row.listName, undoId };
 }
 
 /**

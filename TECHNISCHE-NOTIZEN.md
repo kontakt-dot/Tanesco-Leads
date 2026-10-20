@@ -843,3 +843,12 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - `storeMessage`: Empfänger-Zuordnung zusätzlich über Betreff (Leerzeichen-unabhängig, REGEXP_REPLACE) und Firmen-Domain.
 - Antwort-Adresse: `replyToFor` – ohne eigenes „Antwort an“ geht die Antwort an das Abhol-Postfach (auch beim Hosting-SMTP). `replyRouting` warnt im Posteingang, wenn Antworten woanders landen.
 - Abholen alle 5 statt 15 Minuten, unabhängig davon, ob der Versand über die Mandanten-Einstellung läuft.
+
+## v187 – Rückgängig & Papierkorb, Anruf → „In Kontakt“, smarte Listen
+- Tabelle `undoLog` (Migration 0080, `when` 1792593420000). `server/undo.ts`: recordUndo, snapshotLeads/restoreSnapshot (Kontakte mit alten IDs + Aufgaben, Verlauf, Notizen, Nachrichten, Kampagnen-Empfänger+Ereignisse, Wählliste, Status, Tags, Anrufe; Posteingang/Dialer neu verknüpft), listUndo, undoOperation, deleteCallAttempt, capture/record*Changes.
+- Erfasst: Stufe (einzeln/mehrfach/ziehen), Zuteilung (einzeln, verteilen, Regeln, aufheben), Pipeline wechseln, Kontakt anlegen, Notiz neu/ändern/löschen, Anruf (inkl. automatischer Stufe + Aufgabe), Anruf löschen, jede Löschung über `removeLeadsCascade` (Karten, Kontakte, Liste, Upload rückgängig; `deleteLead` nutzt jetzt auch den Kaskaden-Weg). Einträge > 60 Tage werden aufgeräumt.
+- Routen: listUndo, undoOperation, deleteCallAttempt; Mutationen geben `undoId` zurück. Client: `UndoBridge` global (App), `withUndo()` für Toasts, Reiter „Rückgängig“ (`UndoPanel`), ✕ je Anruf auf der Lead-Seite. Chat-Demo: Schnappschuss des Demo-Bestands je Aktion.
+- Anruf „erreicht“ (oder Rückruf): Karte springt nach `contactedStage` (jetzt auch „In Kontakt“, „Kontakt“, „gesprochen“), wenn sie davor steht.
+- Pipeline „E-Mail-Kampagne“: Filter „Interesse (Antwort)“ (KI: interessiert) und „Geöffnet“; „Liste: …“-Einträge dort ausgeblendet (andere Pipelines unverändert). Interessierte Antworten holen Nur-E-Mail-Kontakte automatisch in die Pipeline.
+- Posteingang: Hinweis „übersprungen“ eingeklappt, mit ✕ wegklickbar (je Absender oder alle); Warnung ebenfalls schließbar.
+- Tracking: „zu früh nach dem Versand“ berücksichtigt MySQL-Sekundenrundung (−2 s).

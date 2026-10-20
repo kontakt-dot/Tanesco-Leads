@@ -374,20 +374,25 @@ export async function logCallAttempt(db: Db, tenantId: number, input: { publicId
   const lead = input.publicId ? await leadByPublicId(db, tenantId, input.publicId) : (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.id, input.leadId ?? 0))).limit(1))[0];
   if (!lead) throw new Error("Lead nicht gefunden.");
   const at = input.at ?? new Date(); const note = input.note?.trim().slice(0, 320) || null;
-  await db.insert(leadCallAttempts).values({ tenantId, leadId: lead.id, userId: input.actorUserId, dialerCallId: input.dialerCallId ?? null, result: input.result, note, at });
+  const attemptInsert = await db.insert(leadCallAttempts).values({ tenantId, leadId: lead.id, userId: input.actorUserId, dialerCallId: input.dialerCallId ?? null, result: input.result, note, at }); const attemptId = Number(attemptInsert[0]?.insertId) || 0;
   const counter = (await callCountsMap(db, tenantId, [lead.id])).get(lead.id) ?? EMPTY_CALLS;
   const label = callResultLabel(input.result);
-  await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "anruf", actorUserId: input.actorUserId, note: `Anruf ${counter.count}: ${label}${note ? ` – ${note}` : ""}`.slice(0, 400), createdAt: at });
+  const eventInsert = await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "anruf", actorUserId: input.actorUserId, note: `Anruf ${counter.count}: ${label}${note ? ` – ${note}` : ""}`.slice(0, 400), createdAt: at }); const eventId = Number(eventInsert[0]?.insertId) || 0;
   // Stufe automatisch: Neu → In Bearbeitung (erster Versuch), erreicht → Kontaktiert
   let moved: string | null = null;
   if (input.move !== false) {
     const stagesDef = await stagesOfLead(db, tenantId, lead); const current = isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef);
     const working = workingStage(stagesDef); const contacted = contactedStage(stagesDef); const reached = CALL_RESULTS.find((item) => item.key === input.result)?.reached ?? false;
-    const target = reached && contacted && (current === entryStage(stagesDef) || current === working) ? contacted : !reached && working && current === entryStage(stagesDef) ? working : null;
+    // Erreicht → immer nach „Kontaktiert“/„In Kontakt“, solange die Karte noch davor steht (nie zurück, nie aus Kunde/Verloren)
+    const position = (key: string | null) => stagesDef.findIndex((stage) => stage.key === key); const currentDef = stagesDef.find((stage) => stage.key === current);
+    const beforeContacted = contacted !== null && !currentDef?.fixed?.match(/won|lost/) && position(current) < position(contacted);
+    const target = reached && contacted && beforeContacted ? contacted : !reached && working && current === entryStage(stagesDef) ? working : null;
     if (target && target !== current) { const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: target, note: reached ? `Erreicht (Anruf ${counter.count})` : `Erster Anrufversuch (${label})`, actorUserId: input.actorUserId }); moved = target; }
   }
-  if (input.followUpAt) await createTask(db, tenantId, { leadId: lead.id, kind: "anruf", title: input.result === "rueckruf" ? "Rückruf wie vereinbart" : "Erneut anrufen", note, dueAt: input.followUpAt, source: "manuell", actorUserId: input.actorUserId });
-  return { count: counter.count, reached: counter.reached, result: input.result, moved };
+  const task = input.followUpAt ? await createTask(db, tenantId, { leadId: lead.id, kind: "anruf", title: input.result === "rueckruf" ? "Rückruf wie vereinbart" : "Erneut anrufen", note, dueAt: input.followUpAt, source: "manuell", actorUserId: input.actorUserId }) : null;
+  const { recordUndo } = await import("./undo");
+  const undoId = await recordUndo(db, tenantId, { kind: "anruf", title: `${leadName(lead)}: Anruf ${counter.count} – ${label}${moved ? " (Stufe geändert)" : ""}`, actorUserId: input.actorUserId, payload: { attemptId, eventId, leadId: lead.id, taskId: task?.id ?? null, movedFrom: moved ? (isStage(lead.pipelineStage, await stagesOfLead(db, tenantId, lead)) ? lead.pipelineStage : null) : null, movedTo: moved } }).catch(() => 0);
+  return { count: counter.count, reached: counter.reached, result: input.result, moved, undoId };
 }
 /** Dialer-Anruf an einem Pipeline-Kontakt beendet → Versuch zählen (ohne doppelten Eintrag). */
 export async function recordDialerAttempt(db: Db, tenantId: number, call: { id: number; leadId: number | null; agentUserId: number | null; status: string; disposition?: string | null; startedAt: Date }) {
@@ -434,20 +439,13 @@ export async function updateLead(db: Db, tenantId: number, input: { publicId: st
   return { success: true as const, changed: notes.length };
 }
 /** Vertriebskontakt löschen (nur Art „vertrieb“): Aufgaben, Verlauf, Notizen, Nachrichten, Serien-Empfänger gehen mit; Posteingang und Anrufe verlieren nur die Verknüpfung. */
-export async function deleteLead(db: Db, tenantId: number, publicId: string) {
+export async function deleteLead(db: Db, tenantId: number, publicId: string, actorUserId: number | null = null) {
   const lead = await leadByPublicId(db, tenantId, publicId);
   if (lead.kind !== "vertrieb") throw new Error("Nur Vertriebskontakte können hier gelöscht werden – Verkaufs-Leads bitte über die Leads-Seite.");
-  await db.delete(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), eq(pipelineTasks.leadId, lead.id)));
-  await db.delete(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), eq(pipelineEvents.leadId, lead.id)));
-  await db.delete(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), eq(pipelineNotes.leadId, lead.id)));
-  await db.delete(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.leadId, lead.id)));
-  { const gone = (await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.leadId, lead.id)))).map((row) => row.id); if (gone.length) { await db.update(inboxMessages).set({ campaignRecipientId: null }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.campaignRecipientId, gone))); await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.recipientId, gone))); } }
-  await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.leadId, lead.id)));
-  await db.delete(dialerQueueItems).where(and(eq(dialerQueueItems.tenantId, tenantId), eq(dialerQueueItems.leadId, lead.id)));
-  await db.update(inboxMessages).set({ leadId: null }).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.leadId, lead.id)));
-  await db.update(dialerCalls).set({ leadId: null }).where(and(eq(dialerCalls.tenantId, tenantId), eq(dialerCalls.leadId, lead.id)));
-  await db.delete(leads).where(eq(leads.id, lead.id));
-  return { success: true as const, name: leadName(lead) };
+  // eine Stelle für alles: sichert vorher in den Papierkorb, löscht dann mit allem, was daran hängt
+  const { removeLeadsCascade } = await import("./sales-outreach");
+  const undoId = await removeLeadsCascade(db, tenantId, [lead.id], { actorUserId, reason: `${leadName(lead)} gelöscht` });
+  return { success: true as const, name: leadName(lead), undoId };
 }
 /** Ausführliches Lead-Fenster: alle Infos zu einer Karte – Kontakt, Herkunft, Aufgaben, Termine, Nachrichten, Anrufe, Serien, Posteingang, Verlauf. */
 export async function leadDetail(db: Db, tenantId: number, publicId: string, now = new Date()) {

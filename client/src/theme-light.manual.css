@@ -1326,3 +1326,17 @@ html:not(.dark) .inbox-notice.is-warn { background: #fffaeb !important; border-c
 html:not(.dark) .inbox-notice strong, html:not(.dark) .inbox-notice-who b { color: #0f172a !important; }
 html:not(.dark) .inbox-notice li { background: #ffffff !important; }
 html:not(.dark) .inbox-notice-who small { color: #667085 !important; }
+html:not(.dark) .undo-list li { background: #ffffff !important; border-color: #eceef3 !important; }
+html:not(.dark) .undo-icon { background: #fde7ea !important; color: #bc001d !important; }
+html:not(.dark) .undo-list li.is-loeschen .undo-icon, html:not(.dark) .undo-list li.is-anruf_weg .undo-icon, html:not(.dark) .undo-list li.is-notiz_weg .undo-icon { background: #ffe4e6 !important; color: #be123c !important; }
+html:not(.dark) .undo-main strong { color: #0f172a !important; }
+html:not(.dark) .undo-main small, html:not(.dark) .undo-done, html:not(.dark) .undo-show-done { color: #667085 !important; }
+html:not(.dark) .cj-btn.is-restore { border-color: #abefc6 !important; color: #067647 !important; }
+html:not(.dark) .call-attempt-delete { color: #98a2b3 !important; }
+html:not(.dark) .call-attempt-delete:hover { background: #ffe4e6 !important; color: #be123c !important; }
+html:not(.dark) .inbox-notice-toggle span { color: #bc001d !important; }
+html:not(.dark) .inbox-notice-close { color: #667085 !important; }
+html:not(.dark) .inbox-notice-close:hover { background: #f2f4f7 !important; color: #0f172a !important; }
+html:not(.dark) .dashboard-segments .smart-list::before { background: #059669 !important; }
+html:not(.dark) .dashboard-segments .smart-list + .smart-list::before { background: #2563eb !important; }
+html:not(.dark) .dashboard-segments .smart-list.active::before { background: #ffffff !important; }

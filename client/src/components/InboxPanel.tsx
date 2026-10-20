@@ -282,14 +282,23 @@ function InboxDeliveryNotice({ onImported }: { onImported: () => void }) {
   const settings = trpc.leadops.getMailSettings.useQuery(undefined, { retry: false, staleTime: 60_000 });
   const skipped = trpc.leadops.inboxSkippedSenders.useQuery(undefined, { retry: false, refetchInterval: 60_000 });
   const utils = trpc.useUtils();
+  // Weggeklickt: diese Absender nicht mehr zeigen (neue unbekannte Absender erscheinen wieder); Warnung bis zur nächsten Änderung aus
+  const readSet = (key: string) => { try { return new Set<string>(JSON.parse(localStorage.getItem(key) ?? "[]") as string[]); } catch { return new Set<string>(); } };
+  const [hidden, setHidden] = useState<Set<string>>(() => readSet("posteingang-uebersprungen-aus"));
+  const [warnHidden, setWarnHidden] = useState<string>(() => { try { return localStorage.getItem("posteingang-warnung-aus") ?? ""; } catch { return ""; } });
+  const [open, setOpen] = useState(false);
   const take = trpc.leadops.syncInbox.useMutation({ onSuccess: (result, variables) => { toast.success(result.added ? `${result.added} E-Mail${result.added === 1 ? "" : "s"} von ${variables?.allowSenders?.join(", ")} übernommen.` : "Keine neue E-Mail von diesem Absender gefunden."); utils.leadops.inboxSkippedSenders.invalidate(); onImported(); }, onError: (error) => toast.error(error.message) });
   const routing = (settings.data as { replyRouting?: { ok: boolean; note: string | null } } | undefined)?.replyRouting;
-  const items = skipped.data?.items ?? [];
-  if ((!routing || routing.ok) && !items.length) return null;
+  const items = (skipped.data?.items ?? []).filter((item) => !hidden.has(item.email));
+  const hide = (emails: string[]) => { const next = new Set([...Array.from(hidden), ...emails]); setHidden(next); try { localStorage.setItem("posteingang-uebersprungen-aus", JSON.stringify(Array.from(next).slice(-500))); } catch { /* egal */ } };
+  const showWarn = routing && !routing.ok && routing.note && warnHidden !== routing.note;
+  if (!showWarn && !items.length) return null;
   return <div className="inbox-notices">
-    {routing && !routing.ok && routing.note && <div className="inbox-notice is-warn"><strong>Antworten kommen evtl. nicht hier an</strong><span>{routing.note} Bitte unter Einstellungen → E-Mail-Versand „Antwort an“ auf das Abhol-Postfach setzen.</span></div>}
-    {items.length > 0 && <div className="inbox-notice"><strong>{items.length} Absender beim Abholen übersprungen</strong><span>Diese Mails kamen von Adressen, die keinem Kontakt gehören. Wenn eine Antwort dabei ist, mit „Übernehmen“ hereinholen.</span>
-      <ul>{items.slice(0, 8).map((item) => <li key={item.email}><span className="inbox-notice-who"><b>{item.name || item.email}</b>{item.name ? <small>{item.email}</small> : null}{item.subject ? <small>„{item.subject}“{item.count > 1 ? ` · ${item.count} Mails` : ""}</small> : null}</span><button type="button" className="cj-btn" disabled={take.isPending} onClick={() => take.mutate({ allowSenders: [item.email] })}>Übernehmen</button></li>)}</ul>
+    {showWarn && <div className="inbox-notice is-warn"><div className="inbox-notice-top"><strong>Antworten kommen evtl. nicht hier an</strong><button type="button" className="inbox-notice-close" aria-label="Hinweis schließen" title="Schließen" onClick={() => { setWarnHidden(routing!.note!); try { localStorage.setItem("posteingang-warnung-aus", routing!.note!); } catch { /* egal */ } }}>✕</button></div><span>{routing!.note} Bitte unter Einstellungen → E-Mail-Versand „Antwort an“ auf das Abhol-Postfach setzen.</span></div>}
+    {items.length > 0 && <div className="inbox-notice">
+      <div className="inbox-notice-top"><button type="button" className="inbox-notice-toggle" aria-expanded={open} onClick={() => setOpen(!open)}><strong>{items.length} Absender beim Abholen übersprungen</strong><span>{open ? "ausblenden" : "anzeigen"}</span></button><button type="button" className="inbox-notice-close" aria-label="Hinweis schließen" title="Schließen – diese Absender nicht mehr anzeigen" onClick={() => hide(items.map((item) => item.email))}>✕</button></div>
+      {open && <><span>Diese Mails kamen von Adressen, die keinem Kontakt gehören. Wenn eine Antwort dabei ist, mit „Übernehmen“ hereinholen.</span>
+      <ul>{items.slice(0, 30).map((item) => <li key={item.email}><span className="inbox-notice-who"><b>{item.name || item.email}</b>{item.name ? <small>{item.email}</small> : null}{item.subject ? <small>„{item.subject}“{item.count > 1 ? ` · ${item.count} Mails` : ""}</small> : null}</span><span className="inbox-notice-actions"><button type="button" className="cj-btn" disabled={take.isPending} onClick={() => take.mutate({ allowSenders: [item.email] })}>Übernehmen</button><button type="button" className="inbox-notice-close" aria-label={`${item.email} ausblenden`} title="Ausblenden" onClick={() => hide([item.email])}>✕</button></span></li>)}</ul></>}
     </div>}
   </div>;
 }

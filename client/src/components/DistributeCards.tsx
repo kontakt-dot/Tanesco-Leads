@@ -1,3 +1,4 @@
+import { undoIdOf, withUndo } from "@/components/UndoPanel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
@@ -24,12 +25,12 @@ export default function DistributeCardsDialog({ open, onClose, cards, title, onD
   const [mode, setMode] = useState<Mode>("gleich");
   const [shares, setShares] = useState<Record<string, number>>({});
   const [single, setSingle] = useState<number | null>(null);
-  const distribute = trpc.leadops.distributePipelineOwners.useMutation({ onSuccess: (result) => { toast.success(`${result.updated} ${result.updated === 1 ? "Karte" : "Karten"} verteilt.`); onDone?.(); onClose(); }, onError: (error) => toast.error(error.message) });
+  const distribute = trpc.leadops.distributePipelineOwners.useMutation({ onSuccess: (result) => { toast.success(`${result.updated} ${result.updated === 1 ? "Karte" : "Karten"} verteilt.`, withUndo(undoIdOf(result))); onDone?.(); onClose(); }, onError: (error) => toast.error(error.message) });
   // Rückgängig: alle zugeteilten offenen Karten wieder auf „nicht zugeteilt“ (z. B. nach einer falschen Verteilung)
   const assigned = useMemo(() => cards.filter((card) => !card.closed && card.ownerUserId), [cards]);
   const [confirmReset, setConfirmReset] = useState(false);
   useEffect(() => { if (!open) setConfirmReset(false); }, [open]);
-  const reset = trpc.leadops.assignPipelineOwner.useMutation({ onSuccess: (result) => { toast.success(`Zuteilung aufgehoben: ${result.updated} ${result.updated === 1 ? "Karte ist" : "Karten sind"} wieder nicht zugeteilt.`); onDone?.(); onClose(); }, onError: (error) => toast.error(error.message) });
+  const reset = trpc.leadops.assignPipelineOwner.useMutation({ onSuccess: (result) => { toast.success(`Zuteilung aufgehoben: ${result.updated} ${result.updated === 1 ? "Karte ist" : "Karten sind"} wieder nicht zugeteilt.`, withUndo(undoIdOf(result))); onDone?.(); onClose(); }, onError: (error) => toast.error(error.message) });
   const targets = useMemo(() => cards.filter((card) => !card.closed && (scope === "alle" || !card.ownerUserId)), [cards, scope]);
   const shareOf = (userId: number) => shares[String(userId)] ?? (mode === "prozent" ? Math.round(100 / Math.max(1, reps.length)) : 0);
   const ownerShares: OwnerShare[] = mode === "einer" ? (single ? [{ userId: single, value: 100 }] : []) : mode === "gleich" ? reps.map((rep) => ({ userId: rep.userId, value: 1 })) : reps.map((rep) => ({ userId: rep.userId, value: shareOf(rep.userId) })).filter((share) => share.value > 0);

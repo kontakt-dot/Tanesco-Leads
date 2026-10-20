@@ -1,3 +1,4 @@
+import { UndoBridge } from "@/components/UndoPanel";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -31,5 +32,5 @@ function DemoBadge() {
 }
 
 export default function DemoApp() {
-  return <ErrorBoundary><ThemeProvider defaultTheme="dark" switchable><TooltipProvider><Toaster richColors theme="dark" position="top-right" /><Home /><DemoBadge /></TooltipProvider></ThemeProvider></ErrorBoundary>;
+  return <ErrorBoundary><ThemeProvider defaultTheme="dark" switchable><TooltipProvider><Toaster richColors theme="dark" position="top-right" /><UndoBridge /><Home /><DemoBadge /></TooltipProvider></ThemeProvider></ErrorBoundary>;
 }

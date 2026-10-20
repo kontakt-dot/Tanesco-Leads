@@ -1760,7 +1760,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.emailLeads({ listName: "Löschliste" })).items).toHaveLength(2); // E-Mail-Akquise: nur mit E-Mail
     expect((await owner.leadops.emailLeads({ source: "ads", inPipeline: true, withoutEmail: true, listName: "Löschliste" })).items).toHaveLength(0);
     const single = await owner.leadops.deletePipelineLead({ publicId: contacts.items[0].publicId }); expect(single.success).toBe(true);
-    const bulk = await owner.leadops.deletePipelineLeads({ publicIds: [contacts.items[1].publicId, contacts.items[2].publicId, "GIBTESNICHT"] }); expect(bulk).toEqual({ deleted: 2, skipped: 1 });
+    const bulk = await owner.leadops.deletePipelineLeads({ publicIds: [contacts.items[1].publicId, contacts.items[2].publicId, "GIBTESNICHT"] }); expect(bulk).toMatchObject({ deleted: 2, skipped: 1 });
     expect((await owner.leadops.emailLeads({ source: "kaltakquise", inPipeline: true, withoutEmail: true, listName: "Löschliste" })).items).toHaveLength(0);
     expect((await db.select().from(leads).where(eq(leads.listName, "Löschliste")))).toHaveLength(0);
     const saleLead = (await db.select({ publicId: leads.publicId }).from(leads).where(ne(leads.kind, "vertrieb")).limit(1))[0];
@@ -2450,4 +2450,45 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(replyRouting({ replyTo: "privat@x.example", fromEmail: "a@firma.example", imapEnabled: true, imapUsername: "a@firma.example" }).ok).toBe(false);
     expect(replyRouting({ replyTo: null, fromEmail: "privat@x.example", imapEnabled: true, imapUsername: "a@firma.example" }).ok).toBe(true);
   }, 30000);
+
+  it("52. Rückgängig & Papierkorb: Anruf erreicht → „In Kontakt“, Anruf/Stufe/Zuteilung/Notiz zurücknehmen, Anruf löschen, Liste löschen und wiederherstellen", async () => {
+    // eigene Stufen mit „In Kontakt“ für die Kaltakquise
+    const current = await owner.leadops.pipelineStages({ source: "kaltakquise" });
+    const own = [{ key: "neu", label: "Neu", hint: "", fixed: "entry" as const }, { key: "angerufen", label: "Angerufen", hint: "" }, { key: "in_kontakt", label: "In Kontakt", hint: "" }, { key: "termin", label: "Termin", hint: "" }, { key: "kunde", label: "Kunde", hint: "", fixed: "won" as const }, { key: "verloren", label: "Verloren", hint: "", fixed: "lost" as const }];
+    await owner.leadops.savePipelineStages({ source: "kaltakquise", stages: own });
+    const imported = await owner.leadops.importColdList({ listName: "Rückgängig-Test", rows: [{ firstName: "Uwe", lastName: "Undo", phone: "+49 30 9100001", email: "uwe@undo-e2e.example" }, { firstName: "Rita", lastName: "Redo", phone: "+49 30 9100002" }] });
+    expect(imported.created).toBe(2);
+    const card = async (name: string) => (await owner.leadops.pipelineOverview({ source: "kaltakquise" })).stages.flatMap((stage) => stage.leads.map((lead) => ({ ...lead, stage: stage.key }))).find((lead) => lead.name.includes(name))!;
+    const uwe = await card("Uwe");
+    // Erreicht → automatisch „In Kontakt“; Rückgängig nimmt Versuch und Stufe zurück
+    const call = await owner.leadops.logCallAttempt({ publicId: uwe.publicId, result: "erreicht" });
+    expect(call.moved).toBe("in_kontakt"); expect((await card("Uwe")).stage).toBe("in_kontakt"); expect(call.undoId).toBeGreaterThan(0);
+    await owner.leadops.undoOperation({ id: call.undoId! });
+    expect((await card("Uwe")).stage).toBe("neu"); expect((await owner.leadops.callAttempts({ publicId: uwe.publicId })).count).toBe(0);
+    await expect(owner.leadops.undoOperation({ id: call.undoId! })).rejects.toThrow(/schon/);
+    // Anruf-Ergebnis löschen (Test) und wiederherstellen
+    await owner.leadops.logCallAttempt({ publicId: uwe.publicId, result: "mailbox", move: false });
+    const attempt = (await owner.leadops.callAttempts({ publicId: uwe.publicId })).attempts[0];
+    const removed = await owner.leadops.deleteCallAttempt({ id: attempt.id }); expect((await owner.leadops.callAttempts({ publicId: uwe.publicId })).count).toBe(0);
+    await owner.leadops.undoOperation({ id: removed.undoId }); expect((await owner.leadops.callAttempts({ publicId: uwe.publicId })).count).toBe(1);
+    // Stufe von Hand + Zuteilung + Notiz zurücknehmen
+    const moved = await owner.leadops.movePipelineStage({ publicId: uwe.publicId, stage: "termin" }); expect((await card("Uwe")).stage).toBe("termin");
+    await owner.leadops.undoOperation({ id: moved.undoId }); expect((await card("Uwe")).stage).toBe("neu");
+    const me = (await owner.leadops.pipelineOwners())[0];
+    const assigned = await owner.leadops.assignPipelineOwner({ publicIds: [uwe.publicId], ownerUserId: me.userId }); expect((await card("Uwe")).ownerUserId).toBe(me.userId);
+    await owner.leadops.undoOperation({ id: assigned.undoId }); expect((await card("Uwe")).ownerUserId ?? null).toBe(uwe.ownerUserId ?? null);
+    const note = await owner.leadops.addPipelineNote({ publicId: uwe.publicId, text: "Nur ein Test" });
+    await owner.leadops.undoOperation({ id: note.undoId }); expect((await owner.leadops.listPipelineNotes({ publicId: uwe.publicId })).some((item: { text: string }) => item.text === "Nur ein Test")).toBe(false);
+    // Liste löschen → Papierkorb → wiederherstellen (mit Anrufen und Verlauf)
+    const gone = await owner.leadops.deleteColdList({ listName: "Rückgängig-Test" }); expect(gone.deleted).toBe(2);
+    expect(await card("Uwe")).toBeUndefined();
+    const trash = (await owner.leadops.listUndo({ kind: "loeschen" })).find((row) => row.id === gone.undoId)!; expect(trash.title).toContain("Rückgängig-Test");
+    const restored = await owner.leadops.undoOperation({ id: gone.undoId }); expect(restored.message).toMatch(/2 Kontakte wiederhergestellt/);
+    const back = await card("Uwe"); expect(back.publicId).toBe(uwe.publicId); expect((await owner.leadops.callAttempts({ publicId: uwe.publicId })).count).toBe(1);
+    expect((await owner.leadops.listColdLists()).some((list) => list.listName === "Rückgängig-Test")).toBe(true);
+    // einzelne Karte löschen → wiederherstellen
+    const single = await owner.leadops.deletePipelineLead({ publicId: uwe.publicId }); expect(await card("Uwe")).toBeUndefined();
+    await owner.leadops.undoOperation({ id: single.undoId }); expect((await card("Uwe")).publicId).toBe(uwe.publicId);
+    await owner.leadops.savePipelineStages({ source: "kaltakquise", stages: current });
+  }, 40000);
 });

@@ -1311,7 +1311,7 @@ describe("Vertriebspipeline: Reiter „Kontakte“ und Karten löschen (Chat-Bui
     const ids = getStore().tables.leads.filter((row) => victims.includes(row.publicId)).map((row) => row.id);
     const ownNotes = getStore().tables.pipelineNotes.filter((row) => ids.includes(row.leadId)).length;
     const ergebnis = await call("leadops.deletePipelineLeads", { publicIds: [...victims, "GIBTESNICHT"] });
-    expect(ergebnis).toEqual({ deleted: 2, skipped: 1 });
+    expect(ergebnis).toMatchObject({ deleted: 2, skipped: 1 });
     expect(getStore().tables.leads.some((row) => victims.includes(row.publicId))).toBe(false);
     expect(getStore().tables.pipelineNotes.length).toBe(notesBefore - ownNotes);
     const after = await call("leadops.emailLeads", { source: "kaltakquise", inPipeline: true, withoutEmail: true });

@@ -1,3 +1,4 @@
+import { undoIdOf, withUndo } from "@/components/UndoPanel";
 import { Button } from "@/components/ui/button";
 import { CallAttemptsSection } from "@/components/CallLog";
 import { Input } from "@/components/ui/input";
@@ -52,10 +53,10 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
   const [master, setMaster] = useState<MasterData | null>(null);
   useEffect(() => { window.scrollTo({ top: 0 }); }, [publicId]);
   useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !action && !document.querySelector(".app-confirm-backdrop")) onClose(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose, action]);
-  const move = trpc.leadops.movePipelineStage.useMutation({ onSuccess: (result) => { toast.success(`${stageLabel(result.from, stageDefs)} → ${stageLabel(result.to, stageDefs)}${result.series ? ` · Serie „${result.series}“ gestartet` : ""}`); refresh(); }, onError: (error) => toast.error(error.message) });
-  const assign = trpc.leadops.assignPipelineOwner.useMutation({ onSuccess: (result) => { toast.success(result.ownerName ? `Gehört jetzt ${result.ownerName.split(" ")[0]}.` : "Zuteilung entfernt."); refresh(); }, onError: (error) => toast.error(error.message) });
+  const move = trpc.leadops.movePipelineStage.useMutation({ onSuccess: (result) => { toast.success(`${stageLabel(result.from, stageDefs)} → ${stageLabel(result.to, stageDefs)}${result.series ? ` · Serie „${result.series}“ gestartet` : ""}`, withUndo(undoIdOf(result))); refresh(); }, onError: (error) => toast.error(error.message) });
+  const assign = trpc.leadops.assignPipelineOwner.useMutation({ onSuccess: (result) => { toast.success(result.ownerName ? `Gehört jetzt ${result.ownerName.split(" ")[0]}.` : "Zuteilung entfernt.", withUndo(undoIdOf(result))); refresh(); }, onError: (error) => toast.error(error.message) });
   const save = trpc.leadops.updatePipelineLead.useMutation({ onSuccess: (result) => { toast.success(result.changed ? `Stammdaten gespeichert (${result.changed} Änderung${result.changed === 1 ? "" : "en"}).` : "Nichts geändert."); setMaster(null); refresh(); }, onError: (error) => toast.error(error.message) });
-  const removeLead = trpc.leadops.deletePipelineLead.useMutation({ onSuccess: (result) => { toast.success(`${result.name} gelöscht.`); onChanged(); onClose(); }, onError: (error) => toast.error(error.message) });
+  const removeLead = trpc.leadops.deletePipelineLead.useMutation({ onSuccess: (result) => { toast.success(`${result.name} gelöscht – liegt im Papierkorb.`, withUndo(undoIdOf(result))); onChanged(); onClose(); }, onError: (error) => toast.error(error.message) });
   const complete = trpc.leadops.completePipelineTask.useMutation({ onSuccess: () => { toast.success("Erledigt."); refresh(); }, onError: (error) => toast.error(error.message) });
   const lead = detail.data;
   const color = lead?.categoryColor ?? "#8278ff";

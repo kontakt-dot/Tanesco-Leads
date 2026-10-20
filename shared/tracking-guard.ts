@@ -22,5 +22,5 @@ export function isMachineRequest(meta: { userAgent?: string | null; method?: str
 export function isTooSoonAfterSend(lastSentAt: Date | string | null | undefined, now: Date = new Date()): boolean {
   if (!lastSentAt) return false;
   const diff = now.getTime() - new Date(lastSentAt).getTime();
-  return diff >= 0 && diff < MACHINE_WINDOW_MS;
+  return diff > -2_000 && diff < MACHINE_WINDOW_MS; // MySQL rundet Sekunden auf – der gespeicherte Versandzeitpunkt kann knapp in der Zukunft liegen
 }

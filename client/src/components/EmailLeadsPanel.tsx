@@ -1,3 +1,4 @@
+import { undoIdOf, withUndo } from "@/components/UndoPanel";
 import { useState } from "react";
 import { Phone } from "lucide-react";
 import { CallDialog } from "@/components/CallLog";
@@ -78,8 +79,8 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
     toast.success(`${result.deleted} ${result.deleted === 1 ? "Kontakt" : "Kontakte"} gelöscht${result.skipped ? `, ${result.skipped} übersprungen` : ""}.`);
     setPicked([]); refreshAll();
   }, onError: (error) => toast.error(error.message) });
-  const bulkMove = trpc.leadops.bulkMovePipelineStage.useMutation({ onSuccess: (result) => { toast.success(`${result.moved} ${result.moved === 1 ? "Kontakt" : "Kontakte"} nach „${result.label}“ verschoben.`); setPicked([]); refreshAll(); }, onError: (error) => toast.error(error.message) });
-  const bulkAssign = trpc.leadops.assignPipelineOwner.useMutation({ onSuccess: (result) => { toast.success(result.ownerName ? `${result.updated} ${result.updated === 1 ? "Kontakt gehört" : "Kontakte gehören"} jetzt ${result.ownerName.split(" ")[0]}.` : `${result.updated} Zuteilungen entfernt.`); setPicked([]); refreshAll(); }, onError: (error) => toast.error(error.message) });
+  const bulkMove = trpc.leadops.bulkMovePipelineStage.useMutation({ onSuccess: (result) => { toast.success(`${result.moved} ${result.moved === 1 ? "Kontakt" : "Kontakte"} nach „${result.label}“ verschoben.`, withUndo(undoIdOf(result))); setPicked([]); refreshAll(); }, onError: (error) => toast.error(error.message) });
+  const bulkAssign = trpc.leadops.assignPipelineOwner.useMutation({ onSuccess: (result) => { toast.success(result.ownerName ? `${result.updated} ${result.updated === 1 ? "Kontakt gehört" : "Kontakte gehören"} jetzt ${result.ownerName.split(" ")[0]}.` : `${result.updated} Zuteilungen entfernt.`, withUndo(undoIdOf(result))); setPicked([]); refreshAll(); }, onError: (error) => toast.error(error.message) });
   const items = data.data?.items ?? [];
   const counts = data.data?.counts ?? {};
   const offen = items.filter((lead) => lead.inPipeline === false).map((lead) => lead.id);
