@@ -2589,8 +2589,9 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 /* ================= E-Mail-Kampagnen: Kennzahlen, Kampagnenseite, Kontakt-Verlauf (v183) ================= */
 .cd-kpibar{margin-bottom:16px}
 .cd-kpibar-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-.cd-kpi-pick{display:inline-flex;align-items:center;gap:10px;min-width:0;max-width:100%;font-size:12.5px;color:#a5a3c4}
-.cd-kpi-pick select{height:34px;min-width:240px;max-width:min(860px,100%);field-sizing:content;padding-right:30px!important;text-overflow:ellipsis;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#f1f0fb;font-size:13px;font-weight:600;padding:0 10px}
+.cd-kpi-pick{position:relative;display:inline-flex;align-items:center;gap:10px;min-width:0;max-width:100%;font-size:12.5px;color:#a5a3c4}
+.cd-kpi-pick::after{content:"";position:absolute;right:14px;top:50%;width:7px;height:7px;border-right:1.75px solid currentColor;border-bottom:1.75px solid currentColor;color:#a5a3c4;transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.cd-kpi-pick select{-webkit-appearance:none;appearance:none;line-height:32px;height:34px;min-width:240px;max-width:min(860px,100%);field-sizing:content;padding-right:36px!important;text-overflow:ellipsis;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#f1f0fb;font-size:13px;font-weight:600;padding:0 10px}
 .cd-kpi-pick select option{color:#0f172a;background:#fff}
 .cd-kpi-open{font-size:12.5px;font-weight:600;color:#b9b3ff}
 .cd-kpi-open:hover{text-decoration:underline}

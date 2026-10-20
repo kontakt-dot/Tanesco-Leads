@@ -1385,6 +1385,7 @@ html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover, html:not(.d
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: #111318 !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline, html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline:focus { color: #111318 !important; }
 html:not(.dark) .cd-kpi-pick { color: #4b5568 !important; }
+html:not(.dark) .cd-kpi-pick::after { color: #4b5568 !important; }
 html:not(.dark) .cd-kpi-pick select { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .cd-kpi-open { color: #111318 !important; }
 html:not(.dark) .cd-kpi { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
@@ -3024,6 +3025,7 @@ html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: #6474
 
 /* E-Mail-Kampagnen v183 – heller Modus */
 html:not(.dark) .cd-kpi-pick { color: #475467 !important; }
+html:not(.dark) .cd-kpi-pick::after { color: #475467 !important; }
 html:not(.dark) .cd-kpi-pick select, html:not(.dark) .cd-search { background: #ffffff !important; border-color: #e2e8f0 !important; color: #0f172a !important; }
 html:not(.dark) .cd-kpi-open { color: #bc001d !important; }
 html:not(.dark) .cd-kpi, html:not(.dark) .cd-panel { background: #ffffff !important; border-color: #eceef3 !important; box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important; }
