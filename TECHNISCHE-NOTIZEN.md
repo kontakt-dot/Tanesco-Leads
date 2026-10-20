@@ -837,3 +837,9 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Kampagnen-Tab: Tabelle ersetzt durch Karten (`.cl-card`): Name/Infos, Zielgruppe, 5 Kennzahl-Kästchen mit Balken, Status + Aktionen. Kein Quer-Scrollen mehr. Versandfenster kurz (`windowShort`), voll im Hinweis.
 - Stufenfarben wieder die ursprünglichen Standardfarben (Ampel entfernt).
 - v185: Kontakte (Kopf kompakt, Filter-Chips mit Farbpunkt, Name+E-Mail mit Kürzel in einer Spalte, farbige „Zuletzt“-Schilder), Sperrliste (Zeilen statt enger Tabelle, Grund farbig, rechts Formular + Erklärung), Upload-Verlauf (Zeilen mit Symbol, Zahlen-Kästchen, Knöpfe) – gleiche Optik wie die Kampagnenseite. Betrifft auch „Kontakte“ in der Vertriebspipeline.
+
+## v186 – Antworten kommen sicher in den Posteingang
+- `syncInbox`: „nur bekannte Kontakte“ akzeptiert jetzt auch dieselbe Firmen-Domain (ohne Freemail) und „Re:/AW:“ auf einen gesendeten Betreff. Adressen werden getrimmt verglichen. Übersprungene Absender je Mandant im Speicher (`skippedSenders`) → Route `inboxSkippedSenders`, „Übernehmen“ = `syncInbox({ allowSenders })`.
+- `storeMessage`: Empfänger-Zuordnung zusätzlich über Betreff (Leerzeichen-unabhängig, REGEXP_REPLACE) und Firmen-Domain.
+- Antwort-Adresse: `replyToFor` – ohne eigenes „Antwort an“ geht die Antwort an das Abhol-Postfach (auch beim Hosting-SMTP). `replyRouting` warnt im Posteingang, wenn Antworten woanders landen.
+- Abholen alle 5 statt 15 Minuten, unabhängig davon, ob der Versand über die Mandanten-Einstellung läuft.

@@ -30,7 +30,7 @@ export async function ensureSettings(db: Db, tenantId: number) {
 }
 export async function getSettings(db: Db, tenantId: number) {
   const row = await ensureSettings(db, tenantId);
-  return { ...row, password: mask(row.password), imapPassword: mask(row.imapPassword), hasPassword: Boolean(row.password), hasImapPassword: Boolean(row.imapPassword), envFallback: Boolean(process.env.SMTP_URL), replyAiAvailable: Boolean(process.env.ANTHROPIC_API_KEY), providers: PROVIDERS.map(({ key, label, host, port, secure, hint, dailyLimit }) => ({ key, label, host, port, secure, hint, dailyLimit })) };
+  return { ...row, replyRouting: replyRouting(row), password: mask(row.password), imapPassword: mask(row.imapPassword), hasPassword: Boolean(row.password), hasImapPassword: Boolean(row.imapPassword), envFallback: Boolean(process.env.SMTP_URL), replyAiAvailable: Boolean(process.env.ANTHROPIC_API_KEY), providers: PROVIDERS.map(({ key, label, host, port, secure, hint, dailyLimit }) => ({ key, label, host, port, secure, hint, dailyLimit })) };
 }
 export async function saveSettings(db: Db, tenantId: number, input: { provider: Provider; host?: string | null; port?: number | null; secure?: boolean; username?: string | null; password?: string | null; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; dailyLimit?: number | null; enabled?: boolean; imapEnabled?: boolean; imapHost?: string | null; imapPort?: number | null; imapUsername?: string | null; imapPassword?: string | null; replyAiEnabled?: boolean; replyAiAutoBlock?: boolean; replyAiInterest?: boolean; imapScope?: "bekannte" | "alle"; signature?: Partial<MailSignature> | null }) {
   const row = await ensureSettings(db, tenantId); const preset = PROVIDERS.find((item) => item.key === input.provider) ?? PROVIDERS[5];
@@ -51,14 +51,33 @@ export async function signatureFor(db: Db, tenantId: number, appUrl?: string | n
   const context: SignatureContext = { companyFooter: settings?.footer ?? COMPANY_FOOTER, logoUrl: base ? `${base}${TANESCO_LOGO_PATH}` : null };
   return { signature, context, html: renderSignatureHtml(signature, context), text: renderSignatureText(signature, context) };
 }
+/**
+ * Antwort-Adresse: eigene Einstellung „Antwort an“ gewinnt. Sonst – wenn die Plattform ein anderes Postfach abholt als die
+ * Absender-Adresse – gehen Antworten an das Abhol-Postfach. So landen sie auf der Plattform und nicht nur im privaten Postfach.
+ */
+export function replyToFor(row: { replyTo?: string | null; fromEmail?: string | null; username?: string | null; imapEnabled?: boolean | null; imapUsername?: string | null }) {
+  if (row.replyTo?.trim()) return row.replyTo.trim();
+  const inbox = (row.imapUsername ?? "").trim().toLowerCase(); const sender = (row.fromEmail ?? row.username ?? "").trim().toLowerCase();
+  if (row.imapEnabled && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inbox) && inbox !== sender) return inbox;
+  return undefined;
+}
+/** Passen Absender, „Antwort an“ und Abhol-Postfach zusammen? Sonst kommen Antworten nicht auf der Plattform an. */
+export function replyRouting(row: { replyTo?: string | null; fromEmail?: string | null; username?: string | null; imapEnabled?: boolean | null; imapUsername?: string | null }) {
+  const inbox = (row.imapUsername ?? "").trim().toLowerCase(); const sender = (row.fromEmail ?? row.username ?? "").trim().toLowerCase(); const replyTo = (row.replyTo ?? "").trim().toLowerCase();
+  if (!row.imapEnabled || !inbox) return { ok: false as const, inbox: null, answersGoTo: replyTo || sender || null, note: "Kein Abhol-Postfach eingerichtet – Antworten kommen nicht auf die Plattform." };
+  const target = replyTo || (inbox.includes("@") && inbox !== sender ? inbox : sender);
+  if (inbox.includes("@") && target !== inbox) return { ok: false as const, inbox, answersGoTo: target, note: `Antworten gehen an ${target}, abgeholt wird aber ${inbox} – diese Antworten erscheinen nicht auf der Plattform.` };
+  return { ok: true as const, inbox, answersGoTo: target, note: null };
+}
 export async function transportFor(db: Db | null, tenantId: number | null) {
   const nodemailer = await import("nodemailer");
+  let tenantRow: typeof mailSettings.$inferSelect | undefined;
   if (db && tenantId) {
-    const row = (await db.select().from(mailSettings).where(eq(mailSettings.tenantId, tenantId)).limit(1))[0];
-    if (row?.enabled && isApiProvider(row.provider) && row.password) { const { brevoTransport } = await import("./brevo-api"); return { transport: brevoTransport(row.password) as MailTransport, from: row.fromName ? `${row.fromName} <${row.fromEmail ?? ""}>` : (row.fromEmail ?? ""), replyTo: row.replyTo ?? undefined, source: "mandant" as const }; }
-    if (row?.enabled && row.host && row.username && row.password) return { transport: nodemailer.createTransport({ host: row.host, port: row.port ?? 587, secure: row.secure, auth: { user: row.username, pass: row.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 }) as unknown as MailTransport, from: row.fromName ? `${row.fromName} <${row.fromEmail ?? row.username}>` : (row.fromEmail ?? row.username), replyTo: row.replyTo ?? undefined, source: "mandant" as const };
+    const row = (await db.select().from(mailSettings).where(eq(mailSettings.tenantId, tenantId)).limit(1))[0]; tenantRow = row;
+    if (row?.enabled && isApiProvider(row.provider) && row.password) { const { brevoTransport } = await import("./brevo-api"); return { transport: brevoTransport(row.password) as MailTransport, from: row.fromName ? `${row.fromName} <${row.fromEmail ?? ""}>` : (row.fromEmail ?? ""), replyTo: replyToFor(row), source: "mandant" as const }; }
+    if (row?.enabled && row.host && row.username && row.password) return { transport: nodemailer.createTransport({ host: row.host, port: row.port ?? 587, secure: row.secure, auth: { user: row.username, pass: row.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 }) as unknown as MailTransport, from: row.fromName ? `${row.fromName} <${row.fromEmail ?? row.username}>` : (row.fromEmail ?? row.username), replyTo: replyToFor(row), source: "mandant" as const };
   }
-  if (process.env.SMTP_URL) return { transport: nodemailer.createTransport({ url: process.env.SMTP_URL, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 } as never) as unknown as MailTransport, from: process.env.SMTP_FROM ?? "Tanesco Leads <no-reply@tanesco.digital>", replyTo: undefined, source: "hosting" as const };
+  if (process.env.SMTP_URL) return { transport: nodemailer.createTransport({ url: process.env.SMTP_URL, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 } as never) as unknown as MailTransport, from: process.env.SMTP_FROM ?? "Tanesco Leads <no-reply@tanesco.digital>", replyTo: tenantRow ? (tenantRow.replyTo?.trim() || (tenantRow.imapEnabled && /@/.test(tenantRow.imapUsername ?? "") ? tenantRow.imapUsername!.trim() : undefined)) : undefined, source: "hosting" as const }; // auch beim Versand über den Hosting-Server: Antworten ins Abhol-Postfach
   return null;
 }
 export async function sendTest(db: Db, tenantId: number, to: string) {
@@ -94,5 +113,5 @@ export async function checkReplies(db: Db, tenantId: number) {
   await db.update(mailSettings).set({ lastReplyCheckAt: new Date() }).where(eq(mailSettings.id, row.id));
   return { scanned, matched };
 }
-export async function tenantsWithImap(db: Db) { return (await db.select({ tenantId: mailSettings.tenantId }).from(mailSettings).where(and(eq(mailSettings.imapEnabled, true), eq(mailSettings.enabled, true)))).map((row) => row.tenantId); }
+export async function tenantsWithImap(db: Db) { return (await db.select({ tenantId: mailSettings.tenantId }).from(mailSettings).where(eq(mailSettings.imapEnabled, true))).map((row) => row.tenantId); } // Abholen unabhängig davon, ob der Versand über die Mandanten-Einstellung läuft
 export { inArray };

@@ -2421,4 +2421,33 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const recipientIds = new Set((await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).map((row) => row.id));
     expect(orphan.every((event) => recipientIds.has(event.recipientId))).toBe(true);
   }, 30000);
+
+  it("51. Antwort von anderer Adresse derselben Firma oder mit „AW:“-Betreff landet beim richtigen Empfänger; Antwort-Adresse = Abhol-Postfach", async () => {
+    await owner.leadops.importColdList({ listName: "Antwort-Test", toPipeline: false, rows: [{ firstName: "Karl", lastName: "Koppen", company: "Koppen GmbH", email: "info@koppen-e2e.example" }, { firstName: "Gina", lastName: "Gmail", email: "gina.antwort@gmail.com" }] });
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Antwort-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Antwort-Test" }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+    const koppen = recipients.find((row) => row.email === "info@koppen-e2e.example")!; const gina = recipients.find((row) => row.email === "gina.antwort@gmail.com")!;
+    const sentSubject = (await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, koppen.id), eq(emailCampaignEvents.kind, "gesendet"))))[0].subject!;
+    // Antwort von einer anderen Adresse derselben Firma → Koppen
+    const fromColleague = await owner.leadops.storeInboxMessage({ fromEmail: "m.koppen@koppen-e2e.example", subject: "Termin nächste Woche?", bodyText: "Hallo, gerne nächste Woche telefonieren." });
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, fromColleague.id)))[0].campaignRecipientId).toBe(koppen.id);
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, koppen.id)))[0].repliedAt).not.toBeNull();
+    // Antwort von privater Gmail-Adresse mit „AW:“ auf den Betreff → über den Betreff zugeordnet
+    const giSubject = (await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, gina.id), eq(emailCampaignEvents.kind, "gesendet"))))[0].subject!;
+    const viaSubject = await owner.leadops.storeInboxMessage({ fromEmail: "gina.privat@gmail.com", subject: `AW: ${giSubject}`, bodyText: "Danke, klingt gut." });
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, viaSubject.id)))[0].campaignRecipientId).toBe(gina.id);
+    // fremde Gmail-Adresse ohne passenden Betreff → keine Zuordnung (nicht raten)
+    const stranger = await owner.leadops.storeInboxMessage({ fromEmail: "irgendwer@gmail.com", subject: "Hallo", bodyText: "Werbung" });
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, stranger.id)))[0].campaignRecipientId).toBeNull();
+    expect(sentSubject.length).toBeGreaterThan(5);
+    // Antwort-Adresse: ohne eigene Einstellung → Abhol-Postfach, wenn es vom Absender abweicht
+    const { replyToFor, replyRouting } = await import("./mail-settings");
+    expect(replyToFor({ replyTo: null, fromEmail: "thomas@privat.example", imapEnabled: true, imapUsername: "antworten@firma.example" })).toBe("antworten@firma.example");
+    expect(replyToFor({ replyTo: "x@firma.example", fromEmail: "thomas@privat.example", imapEnabled: true, imapUsername: "antworten@firma.example" })).toBe("x@firma.example");
+    expect(replyToFor({ replyTo: null, fromEmail: "antworten@firma.example", imapEnabled: true, imapUsername: "antworten@firma.example" })).toBeUndefined();
+    expect(replyRouting({ replyTo: "privat@x.example", fromEmail: "a@firma.example", imapEnabled: true, imapUsername: "a@firma.example" }).ok).toBe(false);
+    expect(replyRouting({ replyTo: null, fromEmail: "privat@x.example", imapEnabled: true, imapUsername: "a@firma.example" }).ok).toBe(true);
+  }, 30000);
 });

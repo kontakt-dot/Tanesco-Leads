@@ -121,6 +121,7 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
   if (filter === "gesendet") return <div className="inbox-shell"><div className="inbox-toolbar">{folderNav}</div><SentMessages onOpenLead={onOpenLead} /></div>;
 
   return <div className={`inbox-shell ${selected ? "has-selection" : ""}`}>
+    <InboxDeliveryNotice onImported={refresh} />
     <div className="inbox-toolbar">
       <div className="inbox-folder-row">{folderNav}<div className="inbox-clean"><Button size="sm" variant="outline" className="inbox-clean-button" disabled={clean.isPending} title="Posteingang aufräumen: Mails von Fremden oder alles entfernen" aria-haspopup="menu" aria-expanded={cleanOpen} onClick={() => setCleanOpen((value) => !value)}><Trash2 /> Aufräumen</Button>{cleanOpen && <div className="inbox-clean-menu" role="menu"><button type="button" role="menuitem" onClick={async () => { if (await confirmAction("Alle Mails entfernen, die zu keinem Kontakt gehören (kein Lead, kein Kampagnen-Empfänger)? Zum Beispiel Rechnungen und Newsletter aus dem alten Postfach. Die Sperrliste bleibt.", { danger: true })) clean.mutate({ scope: "fremde" }); }}><strong>Nur Fremde entfernen</strong><small>Mails ohne Lead und ohne Kampagne – Rechnungen, Newsletter, Unbekannte</small></button><button type="button" role="menuitem" onClick={async () => { if (await confirmAction("Alle Antworten löschen – auf Kampagnen und auf Test-Mails (Betreff „Re:“/„AW:“)? Sie werden auch beim nächsten Abholen nicht wieder geladen. Kontakte und Sperrliste bleiben.", { danger: true })) clean.mutate({ scope: "antworten" }); }}><strong>Alle Antworten löschen</strong><small>Antworten auf Kampagnen und Test-Mails („Re:“, „AW:“) – kommen nicht wieder</small></button><button type="button" role="menuitem" onClick={async () => { if (await confirmAction("Wirklich den kompletten Posteingang leeren? Die gelöschten Mails werden auch beim nächsten Abholen nicht wieder geladen – nur neue Mails kommen dazu. Die Sperrliste bleibt.", { danger: true })) clean.mutate({ scope: "alle" }); }}><strong>Alles entfernen</strong><small>Posteingang komplett leeren – Sperrliste und „Gesendet“ bleiben</small></button></div>}</div><Button size="sm" variant="outline" className="inbox-sync" disabled={sync.isPending} title="Postfach abrufen (IMAP) – neue Antworten laden und von der KI einordnen lassen" onClick={() => sync.mutate()}><RefreshCw className={sync.isPending ? "animate-spin" : ""} /> Aktualisieren</Button></div>
       <div className="inbox-toolbar-tools">
@@ -269,5 +270,26 @@ function SentMailPreview({ id, onClose }: { id: string; onClose: () => void }) {
       <button type="button" className="text-xs text-violet-200 hover:underline" onClick={onClose}>schließen</button>
     </div>
     <iframe title={`Gesendete E-Mail: ${mail.subject}`} className="sent-preview-frame" srcDoc={mail.html} sandbox="allow-same-origin" />
+  </div>;
+}
+
+/**
+ * Hinweise, damit keine Antwort verloren geht:
+ *  - Antworten gehen an eine andere Adresse als das Abhol-Postfach → Warnung mit Weg zur Einstellung.
+ *  - Beim Abholen übersprungene Absender (unbekannt) → Liste mit „Übernehmen“: holt die Mails dieses Absenders sofort herein.
+ */
+function InboxDeliveryNotice({ onImported }: { onImported: () => void }) {
+  const settings = trpc.leadops.getMailSettings.useQuery(undefined, { retry: false, staleTime: 60_000 });
+  const skipped = trpc.leadops.inboxSkippedSenders.useQuery(undefined, { retry: false, refetchInterval: 60_000 });
+  const utils = trpc.useUtils();
+  const take = trpc.leadops.syncInbox.useMutation({ onSuccess: (result, variables) => { toast.success(result.added ? `${result.added} E-Mail${result.added === 1 ? "" : "s"} von ${variables?.allowSenders?.join(", ")} übernommen.` : "Keine neue E-Mail von diesem Absender gefunden."); utils.leadops.inboxSkippedSenders.invalidate(); onImported(); }, onError: (error) => toast.error(error.message) });
+  const routing = (settings.data as { replyRouting?: { ok: boolean; note: string | null } } | undefined)?.replyRouting;
+  const items = skipped.data?.items ?? [];
+  if ((!routing || routing.ok) && !items.length) return null;
+  return <div className="inbox-notices">
+    {routing && !routing.ok && routing.note && <div className="inbox-notice is-warn"><strong>Antworten kommen evtl. nicht hier an</strong><span>{routing.note} Bitte unter Einstellungen → E-Mail-Versand „Antwort an“ auf das Abhol-Postfach setzen.</span></div>}
+    {items.length > 0 && <div className="inbox-notice"><strong>{items.length} Absender beim Abholen übersprungen</strong><span>Diese Mails kamen von Adressen, die keinem Kontakt gehören. Wenn eine Antwort dabei ist, mit „Übernehmen“ hereinholen.</span>
+      <ul>{items.slice(0, 8).map((item) => <li key={item.email}><span className="inbox-notice-who"><b>{item.name || item.email}</b>{item.name ? <small>{item.email}</small> : null}{item.subject ? <small>„{item.subject}“{item.count > 1 ? ` · ${item.count} Mails` : ""}</small> : null}</span><button type="button" className="cj-btn" disabled={take.isPending} onClick={() => take.mutate({ allowSenders: [item.email] })}>Übernehmen</button></li>)}</ul>
+    </div>}
   </div>;
 }

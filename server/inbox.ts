@@ -22,7 +22,20 @@ const stripHtml = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, " 
 export function replyExcerpt(text: string) { const lines = text.split("\n"); const out: string[] = []; for (const line of lines) { if (/^(am .* schrieb|on .* wrote|-{3,} ?(ursprüngliche|original)|von: |from: )/i.test(line.trim()) || line.trim().startsWith(">")) break; out.push(line); } return out.join("\n").trim().slice(0, 4000); }
 
 /** IMAP-Abholung: neue Mails der letzten 14 Tage in den Posteingang, Antworten auf Serien markieren, Leads per E-Mail verknüpfen. */
-export async function syncInbox(db: Db, tenantId: number) {
+/* ---------- Absender-Abgleich ---------- */
+const FREEMAIL = new Set(["gmail.com", "googlemail.com", "gmx.de", "gmx.net", "gmx.at", "gmx.ch", "web.de", "t-online.de", "outlook.com", "outlook.de", "hotmail.com", "hotmail.de", "live.com", "live.de", "msn.com", "yahoo.com", "yahoo.de", "icloud.com", "me.com", "mac.com", "aol.com", "aol.de", "posteo.de", "mailbox.org", "freenet.de", "arcor.de", "online.de", "1und1.de", "ionos.de", "proton.me", "protonmail.com", "vodafone.de", "kabelmail.de", "email.de"]);
+export const normalizeEmail = (value: string) => value.trim().toLowerCase();
+export const domainOf = (email: string) => { const at = email.lastIndexOf("@"); return at > 0 ? email.slice(at + 1).trim().toLowerCase() : null; };
+export const isFreemailDomain = (domain: string) => FREEMAIL.has(domain.toLowerCase());
+const REPLY_PREFIX = /^\s*((re|aw|antw|antwort|wg|fw|fwd|wtr)\s*(\[\d+\])?\s*:\s*)+/i;
+export const isReplySubject = (subject: string | null | undefined) => REPLY_PREFIX.test(subject ?? "");
+export const baseSubject = (subject: string | null | undefined) => (subject ?? "").replace(REPLY_PREFIX, "").replace(/\s+/g, " ").trim().toLowerCase();
+export type SkippedSender = { email: string; name: string | null; subject: string | null; at: Date | null };
+/** Zuletzt übersprungene Absender je Mandant (nur im Speicher) – damit im Posteingang sichtbar ist, was nicht hereingeholt wurde. */
+const lastSkipped = new Map<number, { at: Date; items: SkippedSender[] }>();
+export function skippedSenders(tenantId: number) { const entry = lastSkipped.get(tenantId); if (!entry) return { at: null as Date | null, items: [] as Array<SkippedSender & { count: number }> }; const grouped = new Map<string, SkippedSender & { count: number }>(); for (const item of entry.items) { const current = grouped.get(item.email); if (current) current.count += 1; else grouped.set(item.email, { ...item, count: 1 }); } return { at: entry.at, items: Array.from(grouped.values()) }; }
+
+export async function syncInbox(db: Db, tenantId: number, options: { allowSenders?: string[] } = {}) {
   const row = await ensureSettings(db, tenantId); if (!row.imapEnabled || !row.imapHost || !row.imapUsername || !row.imapPassword) throw new Error("IMAP ist nicht eingerichtet (Einstellungen → E-Mail-Versand → Antworten erkennen).");
   const { ImapFlow } = await import("imapflow");
   const client = new ImapFlow({ host: row.imapHost, port: row.imapPort ?? 993, secure: (row.imapPort ?? 993) === 993, auth: { user: row.imapUsername, pass: row.imapPassword }, logger: false });
@@ -30,10 +43,19 @@ export async function syncInbox(db: Db, tenantId: number) {
   for (const item of await db.select({ messageId: inboxDeletedMessages.messageId }).from(inboxDeletedMessages).where(eq(inboxDeletedMessages.tenantId, tenantId))) known.add(item.messageId); // gelöscht = nie wieder einlesen
   // „Nur bekannte Kontakte“ (Standard): Absender muss Kampagnen-Empfänger oder Lead sein – Rechnungen, Newsletter, Fremde bleiben draußen.
   const onlyKnown = (row.imapScope ?? "bekannte") !== "alle";
+  // Bekannt ist: genau die Adresse eines Kontakts – ODER dieselbe Firmen-Domain (z. B. Antwort von m.koppen@firma.de auf info@firma.de)
+  // ODER eine Antwort („Re:“/„AW:“) auf den Betreff einer gesendeten Kampagnen-/Einzel-Mail. Gmail, GMX, web.de usw. zählen nicht als Firmen-Domain.
   const knownSenders = onlyKnown ? new Set([
-    ...(await db.select({ email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId))).map((item) => item.email.toLowerCase()),
-    ...(await db.select({ email: leads.email }).from(leads).where(and(eq(leads.tenantId, tenantId), isNotNull(leads.email)))).map((item) => (item.email ?? "").toLowerCase()).filter(Boolean),
+    ...(await db.select({ email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId))).map((item) => normalizeEmail(item.email)),
+    ...(await db.select({ email: leads.email }).from(leads).where(and(eq(leads.tenantId, tenantId), isNotNull(leads.email)))).map((item) => normalizeEmail(item.email ?? "")).filter(Boolean),
   ]) : null;
+  const knownDomains = knownSenders ? new Set(Array.from(knownSenders).map(domainOf).filter((domain): domain is string => Boolean(domain) && !isFreemailDomain(domain!))) : null;
+  const sentSubjects = onlyKnown ? new Set([
+    ...(await db.select({ subject: emailCampaignEvents.subject }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet")))).map((item) => baseSubject(item.subject)),
+    ...(await db.select({ subject: outboundMessages.subject }).from(outboundMessages).where(eq(outboundMessages.tenantId, tenantId))).map((item) => baseSubject(item.subject)),
+  ].filter((subject) => subject.length >= 6)) : null;
+  const allow = new Set((options.allowSenders ?? []).map(normalizeEmail));
+  const skippedList: SkippedSender[] = [];
   let scanned = 0; let added = 0; let replies = 0; let skipped = 0;
   try {
     await client.connect(); const lock = await client.getMailboxLock("INBOX");
@@ -42,7 +64,10 @@ export async function syncInbox(db: Db, tenantId: number) {
       for await (const message of client.fetch({ since }, { envelope: true, uid: true, source: { maxLength: 200_000 } })) {
         scanned += 1; const envelope = message.envelope; const messageId = (envelope?.messageId ?? `uid-${message.uid}`).slice(0, 320); if (known.has(messageId)) continue; // gekürzt wie gespeichert – sonst würden lange IDs nie wiedererkannt
         const from = envelope?.from?.[0]; if (!from?.address) continue; const fromEmail = from.address.toLowerCase(); if (fromEmail === (row.fromEmail ?? "").toLowerCase()) continue;
-        if (knownSenders && !knownSenders.has(fromEmail)) { skipped += 1; continue; }
+        if (knownSenders && !allow.has(fromEmail) && !knownSenders.has(fromEmail)) {
+          const domain = domainOf(fromEmail); const replyToSent = isReplySubject(envelope?.subject) && sentSubjects?.has(baseSubject(envelope?.subject));
+          if (!(domain && knownDomains?.has(domain)) && !replyToSent) { skipped += 1; if (skippedList.length < 50) skippedList.push({ email: fromEmail, name: from.name ?? null, subject: envelope?.subject ?? null, at: envelope?.date ?? null }); continue; }
+        }
         let bodyText = ""; try { const raw = message.source?.toString("utf8") ?? ""; const { simpleParser } = await import("mailparser"); const parsed = await simpleParser(raw); bodyText = parsed.text ?? (parsed.html ? stripHtml(String(parsed.html)) : ""); } catch { bodyText = ""; }
         const result = await storeMessage(db, tenantId, { messageId, imapUid: message.uid, fromEmail, fromName: from.name ?? null, subject: envelope?.subject ?? null, bodyText: replyExcerpt(bodyText), receivedAt: envelope?.date ?? new Date() });
         known.add(messageId); added += 1; if (result.replied) replies += 1;
@@ -51,7 +76,8 @@ export async function syncInbox(db: Db, tenantId: number) {
     await client.logout();
   } catch (error) { throw new Error(`Posteingang abholen fehlgeschlagen: ${error instanceof Error ? error.message.slice(0, 200) : "unbekannt"}`); }
   await db.update(mailSettings).set({ lastReplyCheckAt: new Date() }).where(eq(mailSettings.id, row.id));
-  return { scanned, added, replies, skipped };
+  lastSkipped.set(tenantId, { at: new Date(), items: skippedList.filter((item) => !allow.has(item.email)) });
+  return { scanned, added, replies, skipped, skippedSenders: skippedList.slice(0, 20) };
 }
 
 /**
@@ -81,9 +107,26 @@ export async function deleteMessages(db: Db, tenantId: number, ids: number[]) {
   return { deleted: rows.length };
 }
 /** Eine Mail ablegen (auch ohne IMAP nutzbar, z. B. Test/Webhook) und automatisch verknüpfen. */
+/** Empfänger über den Betreff finden: „AW: Mehr Anfragen für Koppen GmbH“ → die Kampagnen-Mail mit genau diesem Betreff (personalisiert, daher eindeutig). */
+async function recipientBySubject(db: Db, tenantId: number, subject: string | null | undefined, fromEmail: string) {
+  if (!isReplySubject(subject)) return null; const base = baseSubject(subject); if (base.length < 6) return null;
+  const hits = await db.select({ recipientId: emailCampaignEvents.recipientId }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), sql`LOWER(TRIM(REGEXP_REPLACE(${emailCampaignEvents.subject}, '[[:space:]]+', ' '))) = ${base}`)).orderBy(desc(emailCampaignEvents.createdAt)).limit(20);
+  const ids = Array.from(new Set(hits.map((hit) => hit.recipientId))); if (!ids.length) return null;
+  const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.id, ids)));
+  const domain = domainOf(fromEmail); const sameDomain = rows.filter((row) => domain && domainOf(row.email) === domain);
+  if (sameDomain.length) return sameDomain[0]; return ids.length === 1 ? rows[0] ?? null : null; // mehrere mit gleichem Betreff und fremder Domain → lieber nicht raten
+}
+/** Empfänger über die Firmen-Domain finden (zuletzt angeschrieben zuerst). */
+async function recipientByDomain(db: Db, tenantId: number, fromEmail: string) {
+  const domain = domainOf(fromEmail); if (!domain || isFreemailDomain(domain)) return null;
+  return (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), sql`LOWER(${emailCampaignRecipients.email}) LIKE ${`%@${domain}`}`))).sort((a, b) => (b.lastSentAt?.getTime() ?? 0) - (a.lastSentAt?.getTime() ?? 0))[0] ?? null;
+}
 export async function storeMessage(db: Db, tenantId: number, input: { messageId: string; imapUid?: number | null; fromEmail: string; fromName?: string | null; subject?: string | null; bodyText: string; receivedAt: Date }, deps: Parameters<typeof assessReply>[3] = {}) {
   const fromEmail = input.fromEmail.toLowerCase();
-  const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.email, fromEmail))).orderBy(desc(emailCampaignRecipients.createdAt)).limit(1))[0] ?? null;
+  const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.email, fromEmail))).orderBy(desc(emailCampaignRecipients.createdAt)).limit(1))[0]
+    ?? await recipientBySubject(db, tenantId, input.subject, fromEmail) // Antwort von anderer Adresse: über den Betreff der gesendeten Mail zuordnen
+    ?? await recipientByDomain(db, tenantId, fromEmail) // … oder über die Firmen-Domain (nicht Gmail, GMX usw.)
+    ?? null;
   const lead = (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.email, fromEmail))).orderBy(desc(leads.createdAt)).limit(1))[0] ?? null; // nur Vertriebskontakte – Leads zum Verkauf werden nie verknüpft
   const alreadyBlocked = await isSuppressed(db, tenantId, fromEmail); // gesperrter Absender → landet direkt unter „Gesperrt“
   // KI-Einordnung (Beschwerde, Abmeldewunsch, Interessiert, Frage, Abwesenheit) – ohne KI greifen die Regeln; daraus folgt sperren / prüfen / markieren

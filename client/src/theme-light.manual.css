@@ -1321,3 +1321,8 @@ html:not(.dark) .sp-icon.is-bad, html:not(.dark) .sp-reason.is-bad { background:
 html:not(.dark) .sp-icon.is-warn, html:not(.dark) .sp-reason.is-warn { background: #ffedd5 !important; color: #c2410c !important; }
 html:not(.dark) .sp-icon.is-info, html:not(.dark) .sp-reason.is-info { background: #dbeafe !important; color: #1d4ed8 !important; }
 html:not(.dark) .sp-reason { background: #f2f4f7 !important; color: #475467 !important; }
+html:not(.dark) .inbox-notice { background: #f8f7ff !important; border-color: #ddd6fe !important; color: #475467 !important; }
+html:not(.dark) .inbox-notice.is-warn { background: #fffaeb !important; border-color: #fedf89 !important; }
+html:not(.dark) .inbox-notice strong, html:not(.dark) .inbox-notice-who b { color: #0f172a !important; }
+html:not(.dark) .inbox-notice li { background: #ffffff !important; }
+html:not(.dark) .inbox-notice-who small { color: #667085 !important; }
