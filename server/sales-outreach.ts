@@ -259,7 +259,7 @@ export function starterCampaign(kind: "kaltakquise" | "angebot" | "aufwecken" = 
 export async function duplicateEmailCampaign(db: Db, tenantId: number, userId: number, input: { id: number; name?: string | null; asTemplate?: boolean }) {
   const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
   const name = (input.name?.trim() || `${row.name} ${input.asTemplate ? "(Vorlage)" : "(Kopie)"}`).slice(0, 160);
-  const inserted = await db.insert(emailCampaigns).values({ tenantId, name, status: "entwurf", fromName: row.fromName, fromEmail: row.fromEmail, replyTo: row.replyTo, audience: row.audience, tree: row.tree, design: row.design, sendWindow: row.sendWindow, isTemplate: Boolean(input.asTemplate), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), createdByUserId: userId });
+  const inserted = await db.insert(emailCampaigns).values({ tenantId, name, status: "entwurf", fromName: row.fromName, fromEmail: row.fromEmail, replyTo: row.replyTo, audience: listAudience([]), /* Listen der alten Kampagne werden nie mitkopiert – auch nicht in Vorlagen */ tree: row.tree, design: row.design, sendWindow: row.sendWindow, isTemplate: Boolean(input.asTemplate), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), createdByUserId: userId });
   return { id: Number(inserted[0]?.insertId) || 0, name };
 }
 export async function setEmailCampaignTemplate(db: Db, tenantId: number, id: number, isTemplate: boolean) { await db.update(emailCampaigns).set({ isTemplate }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
@@ -449,9 +449,10 @@ export async function addListsToEmailCampaign(db: Db, tenantId: number, input: {
 /** Kampagne starten: Empfänger aus der Zielgruppe anlegen (ohne Doppelte) und sofort den ersten Schritt ausführen. */
 export async function startEmailCampaign(db: Db, tenantId: number, id: number, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
+  if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst „Aus Vorlage anlegen“ und dann die Kampagne starten.");
+  if ((campaign.audience as Audience | null)?.source === "liste" && !audienceLists(campaign.audience as Audience).length) throw new Error("Bitte zuerst eine Liste als Zielgruppe wählen – eine neue Kampagne übernimmt keine Listen der alten.");
   const issues = validateTree(tree(campaign)); if (issues.length) throw new Error(issues.join(" "));
   const rows = await audienceLeads(db, tenantId, (campaign.audience ?? { source: "alle" }) as Audience); if (!rows.length) throw new Error("Die Zielgruppe enthält keine Kontakte mit E-Mail-Adresse.");
-  if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst „Aus Vorlage anlegen“ und dann die Kampagne starten.");
   const { added, skipped, repeated, maxRuns } = await enrollRecipients(db, tenantId, campaign, rows);
   await db.update(emailCampaigns).set({ status: "aktiv", startedAt: campaign.startedAt ?? new Date() }).where(eq(emailCampaigns.id, id));
   await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“ gestartet`, detail: `${added} Empfänger aufgenommen${repeated ? ` (${repeated} erneut)` : ""}${skipped ? ` · ${skipped} übersprungen (${maxRunsLabel(maxRuns)})` : ""}`, refType: "emailCampaign", refId: id });
