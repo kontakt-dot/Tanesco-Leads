@@ -1,7 +1,7 @@
 /** E-Mail-Kampagnen mit Ablauf-Baum: Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst … Gemeinsame Logik für Server und Chat-Demo. */
 import { renderEmailHtml, renderEmailText, type EmailBlock, type EmailDesign, usesSignature } from "./email-design";
 export type EmailNode =
-  | { id: string; type: "send"; label?: string; subject: string; subjectB?: string | null; preheader?: string; blocks: EmailBlock[]; next: string | null }
+  | { id: string; type: "send"; label?: string; subject: string; subjectB?: string | null; preheader?: string; blocks: EmailBlock[]; attachments?: CampaignAttachment[]; next: string | null }
   | { id: string; type: "wait"; hours: number; next: string | null }
   | { id: string; type: "condition"; check: "opened" | "clicked" | "replied"; url?: string | null; yes: string | null; no: string | null }
   | { id: string; type: "end"; label?: string };
@@ -54,10 +54,22 @@ export function followUpTree(blocks: { first: EmailBlock[]; second: EmailBlock[]
     { id: end, type: "end", label: "Ende" },
   ] };
 }
+/** Anhang an einer Kampagnen-E-Mail (wird mit jeder E-Mail dieses Schritts verschickt). */
+export type CampaignAttachment = { filename: string; contentType: string; contentBase64: string; size: number };
+export const CAMPAIGN_ATTACHMENT_LIMITS = { maxFiles: 3, maxFileBytes: 5 * 1024 * 1024, maxTotalBytes: 8 * 1024 * 1024 };
+export function attachmentIssue(files: CampaignAttachment[] | undefined | null): string | null {
+  const list = files ?? []; if (!list.length) return null;
+  if (list.length > CAMPAIGN_ATTACHMENT_LIMITS.maxFiles) return `Höchstens ${CAMPAIGN_ATTACHMENT_LIMITS.maxFiles} Anhänge je E-Mail.`;
+  const big = list.find((file) => file.size > CAMPAIGN_ATTACHMENT_LIMITS.maxFileBytes); if (big) return `„${big.filename}“ ist zu groß (höchstens 5 MB je Datei).`;
+  if (list.reduce((sum, file) => sum + file.size, 0) > CAMPAIGN_ATTACHMENT_LIMITS.maxTotalBytes) return "Alle Anhänge zusammen dürfen höchstens 8 MB groß sein.";
+  if (list.some((file) => /\.(exe|bat|cmd|js|vbs|scr|com|msi)$/i.test(file.filename))) return "Programme und Skripte können nicht angehängt werden (werden von Mail-Anbietern blockiert).";
+  return null;
+}
 export function validateTree(tree: EmailTree): string[] {
   const issues: string[] = []; const ids = new Set(tree.nodes.map((node) => node.id));
   if (!tree.start || !ids.has(tree.start)) issues.push("Der Ablauf hat keinen Startpunkt (erste E-Mail).");
   for (const node of tree.nodes) {
+    if (node.type === "send") { const issue = attachmentIssue(node.attachments); if (issue) issues.push(`E-Mail „${node.label?.trim() || node.subject || "ohne Betreff"}“: ${issue}`); }
     if (node.type === "send") { if (!node.subject.trim()) issues.push(`„${node.label ?? "E-Mail"}“ hat keinen Betreff.`); if (!node.blocks.length) issues.push(`„${node.label ?? node.subject}“ hat keinen Inhalt.`); if (node.next && !ids.has(node.next)) issues.push(`„${node.label ?? node.subject}“ zeigt auf einen fehlenden Schritt.`); }
     if (node.type === "wait" && (!Number.isFinite(node.hours) || node.hours <= 0)) issues.push("Eine Wartezeit ist leer oder 0.");
     if (node.type === "condition" && !node.yes && !node.no) issues.push("Eine Wenn-Abfrage hat weder Dann noch Sonst.");

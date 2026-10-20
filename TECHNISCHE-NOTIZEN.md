@@ -852,3 +852,9 @@ Partner-Datensicht (Käufer/Lieferant), UI-Restriktionen, Käufer pausiert, rein
 - Pipeline „E-Mail-Kampagne“: Filter „Interesse (Antwort)“ (KI: interessiert) und „Geöffnet“; „Liste: …“-Einträge dort ausgeblendet (andere Pipelines unverändert). Interessierte Antworten holen Nur-E-Mail-Kontakte automatisch in die Pipeline.
 - Posteingang: Hinweis „übersprungen“ eingeklappt, mit ✕ wegklickbar (je Absender oder alle); Warnung ebenfalls schließbar.
 - Tracking: „zu früh nach dem Versand“ berücksichtigt MySQL-Sekundenrundung (−2 s).
+
+## v188 – E-Mail-Builder: Leads je Schritt, Anhänge; Verlauf & Rückgängig zusammen
+- Builder (`TreeEditor`): je Schritt Pille mit Personen-Symbol und Anzahl der Empfänger, deren nächster Schritt dieser ist (Status wartet/läuft). Klick → Liste (Dialog) → Klick → Kontakt-Verlauf (`CampaignContactDrawer`). Kampagne lädt alle 30 s neu.
+- Anhänge je E-Mail-Schritt (`SendNode.attachments`, `CampaignAttachment`): bis 3 Dateien, je 5 MB, zusammen 8 MB, keine Programme (`attachmentIssue`, auch in `validateTree`). Versand über `deliverMail` (Base64, Brevo/SMTP). Büroklammer am Schritt.
+- Kaltakquise/eigene Pipelines: Reiter „Verlauf & Rückgängig“ = Rückgängig-Liste + Upload-Verlauf. Andere Pipelines: Reiter „Rückgängig“.
+- `pullInterestedIntoPipeline` läuft bei jedem Abholen: auch ältere „Interesse“-Antworten holen Nur-E-Mail-Kontakte in die Pipeline.

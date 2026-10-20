@@ -1340,3 +1340,15 @@ html:not(.dark) .inbox-notice-close:hover { background: #f2f4f7 !important; colo
 html:not(.dark) .dashboard-segments .smart-list::before { background: #059669 !important; }
 html:not(.dark) .dashboard-segments .smart-list + .smart-list::before { background: #2563eb !important; }
 html:not(.dark) .dashboard-segments .smart-list.active::before { background: #ffffff !important; }
+html:not(.dark) .tree-leads { background: #bc001d !important; color: #ffffff !important; box-shadow: 0 0 0 3px rgba(188, 0, 29, .15) !important; }
+html:not(.dark) .tree-leads.is-empty { background: #f2f4f7 !important; color: #98a2b3 !important; box-shadow: none !important; }
+html:not(.dark) .node-leads-list button:hover { background: #f8fafc !important; }
+html:not(.dark) .node-leads-meta em { color: #9f0018 !important; }
+html:not(.dark) .node-leads-meta small { color: #667085 !important; }
+html:not(.dark) .tree-clip { background: #f2f4f7 !important; color: #344054 !important; }
+html:not(.dark) .node-attachments { border-color: #d0d5dd !important; }
+html:not(.dark) .node-attachments-head > span { color: #0f172a !important; }
+html:not(.dark) .node-attachments li { background: #f8fafc !important; color: #344054 !important; }
+html:not(.dark) .node-attachments li small, html:not(.dark) .node-attachments-hint { color: #667085 !important; }
+html:not(.dark) .node-attachments li button { color: #667085 !important; }
+html:not(.dark) .node-attachments li button:hover { background: #ffe4e6 !important; color: #be123c !important; }

@@ -35,6 +35,17 @@ export type SkippedSender = { email: string; name: string | null; subject: strin
 const lastSkipped = new Map<number, { at: Date; items: SkippedSender[] }>();
 export function skippedSenders(tenantId: number) { const entry = lastSkipped.get(tenantId); if (!entry) return { at: null as Date | null, items: [] as Array<SkippedSender & { count: number }> }; const grouped = new Map<string, SkippedSender & { count: number }>(); for (const item of entry.items) { const current = grouped.get(item.email); if (current) current.count += 1; else grouped.set(item.email, { ...item, count: 1 }); } return { at: entry.at, items: Array.from(grouped.values()) }; }
 
+/** Alle Antworten mit „Interesse“ (KI) – auch ältere: Kontakte, die bisher nur in der E-Mail-Akquise standen, kommen in die Pipeline „E-Mail-Kampagne“. */
+export async function pullInterestedIntoPipeline(db: Db, tenantId: number) {
+  const rows = await db.select({ leadId: inboxMessages.leadId, recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.aiKind, "interessiert"), eq(inboxMessages.blocked, false)));
+  const recipientIds = rows.map((row) => row.recipientId).filter((id): id is number => typeof id === "number");
+  const viaRecipient = recipientIds.length ? (await db.select({ leadId: emailCampaignRecipients.leadId }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.id, recipientIds)))).map((row) => row.leadId) : [];
+  const ids = Array.from(new Set([...rows.map((row) => row.leadId), ...viaRecipient].filter((id): id is number => typeof id === "number")));
+  if (!ids.length) return 0;
+  const waiting = await db.select({ id: leads.id, adPlatform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.inPipeline, false), inArray(leads.id, ids)));
+  for (const row of waiting) await db.update(leads).set({ inPipeline: true, adPlatform: row.adPlatform || "email", pipelineStage: row.stage || "neu", pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id));
+  return waiting.length;
+}
 export async function syncInbox(db: Db, tenantId: number, options: { allowSenders?: string[] } = {}) {
   const row = await ensureSettings(db, tenantId); if (!row.imapEnabled || !row.imapHost || !row.imapUsername || !row.imapPassword) throw new Error("IMAP ist nicht eingerichtet (Einstellungen → E-Mail-Versand → Antworten erkennen).");
   const { ImapFlow } = await import("imapflow");
@@ -77,6 +88,7 @@ export async function syncInbox(db: Db, tenantId: number, options: { allowSender
   } catch (error) { throw new Error(`Posteingang abholen fehlgeschlagen: ${error instanceof Error ? error.message.slice(0, 200) : "unbekannt"}`); }
   await db.update(mailSettings).set({ lastReplyCheckAt: new Date() }).where(eq(mailSettings.id, row.id));
   lastSkipped.set(tenantId, { at: new Date(), items: skippedList.filter((item) => !allow.has(item.email)) });
+  await pullInterestedIntoPipeline(db, tenantId).catch(() => null);
   return { scanned, added, replies, skipped, skippedSenders: skippedList.slice(0, 20) };
 }
 
