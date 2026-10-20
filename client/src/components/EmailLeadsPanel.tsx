@@ -75,6 +75,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
     toast.success(`${result.deleted} ${result.deleted === 1 ? "Kontakt" : "Kontakte"} gelöscht${result.keptCustomers ? `, ${result.keptCustomers} Kunden behalten` : ""}.`);
     setPicked([]); refreshAll();
   }, onError: (error) => toast.error(error.message) });
+  const stopFunnel = trpc.leadops.stopLeadsInCampaigns.useMutation({ onSuccess: (result) => { toast.success(result.stopped ? `${result.stopped} laufende E-Mail-Serie${result.stopped === 1 ? "" : "n"} gestoppt – es geht keine weitere E-Mail raus.` : "Keiner der Kontakte steckt in einer laufenden E-Mail-Serie.", withUndo(result.undoId)); setPicked([]); data.refetch(); }, onError: (error) => toast.error(error.message) });
   const removeCards = trpc.leadops.deletePipelineLeads.useMutation({ onSuccess: (result) => {
     toast.success(`${result.deleted} ${result.deleted === 1 ? "Kontakt" : "Kontakte"} gelöscht${result.skipped ? `, ${result.skipped} übersprungen` : ""}.`);
     setPicked([]); refreshAll();
@@ -130,6 +131,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
               <button type="button" className="email-leads-push" disabled={push.isPending} title={pickedRows.every((lead) => lead.inPipeline !== false) ? "Die ausgewählten Kontakte stehen schon in einer Pipeline – sie werden in die gewählte Pipeline und Stufe verschoben" : ""} onClick={() => push.mutate({ leadIds: picked, stage: stageDefs.some((item) => item.key === stage) ? stage : (stageDefs[0]?.key ?? "neu"), target })}>{push.isPending ? "Wird übernommen …" : "In die Vertriebspipeline übernehmen"}</button>
               <button type="button" className="email-leads-delete" disabled={removeLeads.isPending} onClick={async () => { if (await confirmAction(`${picked.length} ${picked.length === 1 ? "Kontakt" : "Kontakte"} löschen? Kunden bleiben erhalten. Das lässt sich nicht rückgängig machen.`, { danger: true })) removeLeads.mutate({ leadIds: picked }); }}>{removeLeads.isPending ? "Wird gelöscht …" : "Löschen"}</button>
             </>}
+            <button type="button" className="email-leads-reset" title="Laufende E-Mail-Serien der ausgewählten Kontakte stoppen – keine weitere E-Mail, die Kontakte bleiben" disabled={stopFunnel.isPending} onClick={async () => { if (await confirmAction(`${picked.length} ${picked.length === 1 ? "Kontakt" : "Kontakte"} aus dem E-Mail-Funnel nehmen? Laufende Serien stoppen sofort.`, { confirmLabel: "Aus Funnel nehmen" })) stopFunnel.mutate({ leadIds: picked }); }}>Aus E-Mail-Funnel nehmen</button>
             <button type="button" className="email-leads-reset" onClick={() => setPicked([])}>Auswahl aufheben</button>
           </div>}
         </div>

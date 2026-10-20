@@ -1352,3 +1352,5 @@ html:not(.dark) .node-attachments li { background: #f8fafc !important; color: #3
 html:not(.dark) .node-attachments li small, html:not(.dark) .node-attachments-hint { color: #667085 !important; }
 html:not(.dark) .node-attachments li button { color: #667085 !important; }
 html:not(.dark) .node-attachments li button:hover { background: #ffe4e6 !important; color: #be123c !important; }
+html:not(.dark) .node-leads-stop { color: #667085 !important; }
+html:not(.dark) .node-leads-stop:hover { background: #ffe4e6 !important; color: #be123c !important; }

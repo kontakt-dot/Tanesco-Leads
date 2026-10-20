@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
-import { ArrowRightLeft, Layers, NotebookPen, Phone, PhoneOff, RotateCcw, Trash2, UserPlus, Users } from "lucide-react";
+import { MailX, ArrowRightLeft, Layers, NotebookPen, Phone, PhoneOff, RotateCcw, Trash2, UserPlus, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -29,9 +29,9 @@ export function UndoBridge() {
   return null;
 }
 
-type Filter = "alle" | "loeschen" | "anruf" | "stufe" | "zuteilung" | "pipeline" | "notiz" | "kontakt_neu";
-const FILTERS: Array<[Filter, string]> = [["alle", "Alles"], ["loeschen", "Gelöscht"], ["anruf", "Anrufe"], ["stufe", "Stufen"], ["zuteilung", "Zuteilung"], ["pipeline", "Pipeline"], ["notiz", "Notizen"], ["kontakt_neu", "Angelegt"]];
-const ICON: Record<string, typeof Phone> = { loeschen: Trash2, anruf: Phone, anruf_weg: PhoneOff, stufe: ArrowRightLeft, zuteilung: Users, pipeline: Layers, notiz_neu: NotebookPen, notiz_text: NotebookPen, notiz_weg: NotebookPen, kontakt_neu: UserPlus };
+type Filter = "alle" | "loeschen" | "anruf" | "stufe" | "zuteilung" | "pipeline" | "notiz" | "kontakt_neu" | "serie";
+const FILTERS: Array<[Filter, string]> = [["alle", "Alles"], ["loeschen", "Gelöscht"], ["anruf", "Anrufe"], ["stufe", "Stufen"], ["zuteilung", "Zuteilung"], ["pipeline", "Pipeline"], ["notiz", "Notizen"], ["kontakt_neu", "Angelegt"], ["serie", "E-Mail-Funnel"]];
+const ICON: Record<string, typeof Phone> = { loeschen: Trash2, anruf: Phone, anruf_weg: PhoneOff, stufe: ArrowRightLeft, zuteilung: Users, pipeline: Layers, notiz_neu: NotebookPen, notiz_text: NotebookPen, notiz_weg: NotebookPen, kontakt_neu: UserPlus, serie: MailX };
 const matches = (kind: string, filter: Filter) => filter === "alle" || (filter === "anruf" ? kind.startsWith("anruf") : filter === "notiz" ? kind.startsWith("notiz") : kind === filter);
 const when = (value: string | Date) => new Date(value).toLocaleString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 

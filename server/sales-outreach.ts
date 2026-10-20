@@ -331,6 +331,32 @@ export async function pruneEmailCampaignRecipients(db: Db, tenantId: number, id:
   const removed = await deleteRecipients(db, tenantId, id, info.outsideIds);
   return { removed };
 }
+/**
+ * Kontakte von Hand aus dem E-Mail-Funnel nehmen: laufende Serien stoppen (keine weitere E-Mail), Verlauf und Zahlen bleiben,
+ * der Kontakt wird nicht wieder automatisch aufgenommen. Lässt sich über „Rückgängig“ zurücknehmen.
+ */
+export async function stopLeadsInCampaigns(db: Db, tenantId: number, input: { leadIds: number[]; campaignId?: number | null; actorUserId?: number | null }) {
+  const ids = Array.from(new Set(input.leadIds)).slice(0, 5000); if (!ids.length) return { stopped: 0, undoId: 0 };
+  const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, ids), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), ...(input.campaignId ? [eq(emailCampaignRecipients.campaignId, input.campaignId)] : [])));
+  return stopRecipientRows(db, tenantId, rows, input.actorUserId ?? null);
+}
+/** Einzelnen Empfänger (z. B. aus der Liste im E-Mail-Builder) aus dem Funnel nehmen. */
+export async function stopRecipientInCampaign(db: Db, tenantId: number, recipientId: number, actorUserId: number | null) {
+  const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.id, recipientId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
+  if (!rows.length) throw new Error("Dieser Kontakt steckt in keiner laufenden Serie mehr.");
+  return stopRecipientRows(db, tenantId, rows, actorUserId);
+}
+async function stopRecipientRows(db: Db, tenantId: number, rows: Array<typeof emailCampaignRecipients.$inferSelect>, actorUserId: number | null) {
+  const items: Array<{ recipientId: number; status: string; nodeId: string | null; nextActionAt: Date | null; eventId: number }> = [];
+  for (const row of rows) {
+    await db.update(emailCampaignRecipients).set({ status: "fertig", nodeId: null, nextActionAt: null }).where(eq(emailCampaignRecipients.id, row.id));
+    const inserted = await db.insert(emailCampaignEvents).values({ tenantId, campaignId: row.campaignId, recipientId: row.id, nodeId: row.nodeId, kind: "beendet", note: "Von Hand aus dem E-Mail-Funnel genommen – keine weitere E-Mail" });
+    items.push({ recipientId: row.id, status: row.status, nodeId: row.nodeId, nextActionAt: row.nextActionAt, eventId: Number(inserted[0]?.insertId) || 0 });
+  }
+  let undoId = 0;
+  if (items.length) { const { recordUndo } = await import("./undo"); const names = rows.length === 1 ? (rows[0].name || rows[0].email) : `${new Set(rows.map((row) => row.leadId)).size} Kontakte`; undoId = await recordUndo(db, tenantId, { kind: "serie", title: `${names}: aus dem E-Mail-Funnel genommen`, count: items.length, actorUserId, payload: { items } }).catch(() => 0); }
+  return { stopped: items.length, undoId };
+}
 export async function removeEmailRecipients(db: Db, tenantId: number, input: { campaignId: number; recipientIds: number[] }) {
   const campaign = (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name }).from(emailCampaigns).where(and(eq(emailCampaigns.id, input.campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   const ids = (await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.id, input.recipientIds)))).map((row) => row.id);

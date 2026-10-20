@@ -2491,4 +2491,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.undoOperation({ id: single.undoId }); expect((await card("Uwe")).publicId).toBe(uwe.publicId);
     await owner.leadops.savePipelineStages({ source: "kaltakquise", stages: current });
   }, 40000);
+
+  it("53. Kontakt von Hand aus dem E-Mail-Funnel nehmen – Serie stoppt, Verlauf bleibt, Rückgängig holt ihn zurück", async () => {
+    await owner.leadops.importColdList({ listName: "Funnel-Stopp", toPipeline: false, rows: [{ firstName: "Fritz", lastName: "Funnel", email: "fritz@funnel-e2e.example" }, { firstName: "Berta", lastName: "Bleibt", email: "berta@funnel-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Funnel-Stopp", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Funnel-Stopp" }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const fritz = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, "fritz@funnel-e2e.example"))))[0];
+    expect(["wartet", "laeuft"]).toContain(fritz.status);
+    const stopped = await owner.leadops.stopLeadsInCampaigns({ leadIds: [fritz.leadId!] }); expect(stopped.stopped).toBe(1);
+    const after = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, fritz.id)))[0]; expect(after.status).toBe("fertig"); expect(after.nextActionAt).toBeNull();
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).stats.sent).toBe(2); // Zahlen bleiben
+    const info = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(info.audienceInfo?.pending ?? 0).toBe(0); // wird nicht wieder aufgenommen
+    await owner.leadops.undoOperation({ id: stopped.undoId }); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, fritz.id)))[0].status).toBe(fritz.status);
+    const single = await owner.leadops.stopRecipientInCampaign({ recipientId: fritz.id }); expect(single.stopped).toBe(1);
+    await expect(owner.leadops.stopRecipientInCampaign({ recipientId: fritz.id })).rejects.toThrow(/keiner laufenden/);
+  }, 30000);
 });

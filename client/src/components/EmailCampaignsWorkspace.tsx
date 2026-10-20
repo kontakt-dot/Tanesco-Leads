@@ -1,3 +1,4 @@
+import { withUndo } from "@/components/UndoPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -356,6 +357,7 @@ function CampaignEditor({ id, starter: starterKind, aiFirst = false, onClose }: 
   const [editingNode, setEditingNode] = useState<string | null>(null); const [showList, setShowList] = useState(false); const [showHistory, setShowHistory] = useState(false); const utils = trpc.useUtils();
   // Wo stehen die Leads gerade? Je Schritt die Empfänger, die dort warten (nächster Schritt = dieser) – Ziffer am Schritt, Klick öffnet die Liste
   const [leadsAt, setLeadsAt] = useState<string | null>(null); const [contactId, setContactId] = useState<number | null>(null);
+  const stopRecipient = trpc.leadops.stopRecipientInCampaign.useMutation({ onSuccess: (result) => { toast.success("Aus dem E-Mail-Funnel genommen – es geht keine weitere E-Mail raus.", withUndo(result.undoId)); void existing.refetch(); }, onError: (error) => toast.error(error.message) });
   const nodeLeads = useMemo(() => { const map = new Map<string, Array<CampaignDetail["recipients"][number]>>(); for (const row of existing.data?.recipients ?? []) { if (!row.nodeId || !(row.status === "wartet" || row.status === "laeuft")) continue; map.set(row.nodeId, [...(map.get(row.nodeId) ?? []), row]); } return map; }, [existing.data]);
   const signaturePreview = trpc.leadops.mailSignaturePreview.useQuery({}, { retry: false, staleTime: 5 * 60_000 }); // Signatur aus den E-Mail-Einstellungen – steht in jeder Vorschau
   const signatureHtml = signaturePreview.data?.html ?? null;
@@ -399,7 +401,7 @@ function CampaignEditor({ id, starter: starterKind, aiFirst = false, onClose }: 
     <Dialog open={leadsAt !== null} onOpenChange={(open) => { if (!open) setLeadsAt(null); }}>
       <DialogContent className="node-leads-dialog">
         <DialogHeader><DialogTitle>Leads bei: {leadsAt ? (() => { const node = form.tree.nodes.find((item) => item.id === leadsAt); return node ? node.type === "send" ? `E-Mail „${node.label?.trim() || node.subject}“` : node.type === "wait" ? `Warten (${node.hours} h)` : node.type === "condition" ? "Abfrage" : "Ende" : "Schritt"; })() : ""}</DialogTitle><DialogDescription>{(leadsAt ? nodeLeads.get(leadsAt)?.length ?? 0 : 0)} Lead(s) stehen gerade hier. Klick öffnet den Lead-Log.</DialogDescription></DialogHeader>
-        <ul className="node-leads-list">{(leadsAt ? nodeLeads.get(leadsAt) ?? [] : []).map((row) => { const name = row.name || row.email; return <li key={row.id}><button type="button" onClick={() => setContactId(row.id)}><span className="cd-avatar" aria-hidden="true">{initialsOf(name)}</span><span className="cd-who"><strong>{name}</strong><small>{row.email}{row.company ? ` · ${row.company}` : ""}</small></span><span className="node-leads-meta">{row.lead?.label && <em>{row.lead.label}</em>}<small>{row.nextActionAt ? `fällig ${stamp(row.nextActionAt)}` : recipientLabel[row.status]}</small></span></button></li>; })}</ul>
+        <ul className="node-leads-list">{(leadsAt ? nodeLeads.get(leadsAt) ?? [] : []).map((row) => { const name = row.name || row.email; return <li key={row.id}><button type="button" className="node-leads-open" onClick={() => setContactId(row.id)}><span className="cd-avatar" aria-hidden="true">{initialsOf(name)}</span><span className="cd-who"><strong>{name}</strong><small>{row.email}{row.company ? ` · ${row.company}` : ""}</small></span><span className="node-leads-meta">{row.lead?.label && <em>{row.lead.label}</em>}<small>{row.nextActionAt ? `fällig ${stamp(row.nextActionAt)}` : recipientLabel[row.status]}</small></span></button><button type="button" className="node-leads-stop" title="Aus dem E-Mail-Funnel nehmen – keine weitere E-Mail" aria-label={`${name} aus dem E-Mail-Funnel nehmen`} disabled={stopRecipient.isPending} onClick={async () => { if (await confirmAction(`${name} aus dem E-Mail-Funnel nehmen? Die Serie stoppt sofort, es geht keine weitere E-Mail raus.`, { confirmLabel: "Aus Funnel nehmen" })) stopRecipient.mutate({ recipientId: row.id }); }}><X className="h-3.5 w-3.5" /></button></li>; })}</ul>
       </DialogContent>
     </Dialog>
     <CampaignContactDrawer recipientId={contactId} onClose={() => setContactId(null)} onChanged={() => { void existing.refetch(); }} />

@@ -18,8 +18,8 @@ import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, inboxMessages, leadCallAttempts, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, pipelineNotes, pipelineTasks, outboundMessages, undoLog, users } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
 
-export type UndoKind = "stufe" | "zuteilung" | "pipeline" | "anruf" | "anruf_weg" | "notiz_neu" | "notiz_text" | "notiz_weg" | "kontakt_neu" | "loeschen";
-export const UNDO_LABEL: Record<UndoKind, string> = { stufe: "Stufe", zuteilung: "Zuteilung", pipeline: "Pipeline", anruf: "Anruf", anruf_weg: "Anruf gelöscht", notiz_neu: "Notiz", notiz_text: "Notiz geändert", notiz_weg: "Notiz gelöscht", kontakt_neu: "Kontakt angelegt", loeschen: "Gelöscht" };
+export type UndoKind = "stufe" | "zuteilung" | "pipeline" | "anruf" | "anruf_weg" | "notiz_neu" | "notiz_text" | "notiz_weg" | "kontakt_neu" | "loeschen" | "serie";
+export const UNDO_LABEL: Record<UndoKind, string> = { stufe: "Stufe", zuteilung: "Zuteilung", pipeline: "Pipeline", anruf: "Anruf", anruf_weg: "Anruf gelöscht", notiz_neu: "Notiz", notiz_text: "Notiz geändert", notiz_weg: "Notiz gelöscht", kontakt_neu: "Kontakt angelegt", loeschen: "Gelöscht", serie: "E-Mail-Funnel" };
 type Row = Record<string, unknown>;
 export type LeadSnapshot = { leads: Row[]; pipelineTasks: Row[]; pipelineEvents: Row[]; pipelineNotes: Row[]; outboundMessages: Row[]; emailCampaignRecipients: Row[]; emailCampaignEvents: Row[]; dialerQueueItems: Row[]; leadStatusEvents: Row[]; leadTagAssignments: Row[]; leadCallAttempts: Row[]; inboxLinks: Array<{ id: number; leadId: number | null; campaignRecipientId: number | null }>; dialerLinks: Array<{ id: number; leadId: number | null }> };
 
@@ -134,6 +134,11 @@ export async function undoOperation(db: Db, tenantId: number, id: number, actorU
     case "notiz_text": { const noteId = Number(payload.noteId) || 0; if (noteId) await db.update(pipelineNotes).set({ text: String(payload.text ?? "") }).where(and(eq(pipelineNotes.tenantId, tenantId), eq(pipelineNotes.id, noteId))); message = "Alter Notiz-Text ist wieder da."; break; }
     case "notiz_weg": { const note = payload.note as Row | undefined; if (note && (await leadExists(Number(note.leadId)))) await insertMissing(db, pipelineNotes, [note]); message = "Notiz wiederhergestellt."; break; }
     case "kontakt_neu": { const leadId = Number(payload.leadId) || 0; if (leadId && (await leadExists(leadId))) { const { removeLeadsCascade } = await import("./sales-outreach"); await removeLeadsCascade(db, tenantId, [leadId], { actorUserId, reason: "Anlegen rückgängig gemacht", undo: false }); } message = "Kontakt wieder entfernt."; break; }
+    case "serie": {
+      const items = (payload.items ?? []) as Array<{ recipientId: number; status: string; nodeId: string | null; nextActionAt: string | null; eventId: number }>; let done = 0;
+      for (const item of items) { await db.update(emailCampaignRecipients).set({ status: item.status as "wartet", nodeId: item.nodeId, nextActionAt: item.nextActionAt ? new Date(item.nextActionAt) : null }).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.id, item.recipientId), eq(emailCampaignRecipients.status, "fertig"))); if (item.eventId) await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.id, item.eventId))); done += 1; }
+      message = `${done === 1 ? "Der Kontakt ist" : `${done} Einträge sind`} wieder im E-Mail-Funnel.`; break;
+    }
     case "loeschen": { const result = await restoreSnapshot(db, tenantId, payload as unknown as LeadSnapshot); message = `${result.restored} ${result.restored === 1 ? "Kontakt" : "Kontakte"} wiederhergestellt – mit Verlauf, Notizen, Anrufen und Kampagnen.`; break; }
     default: throw new Error("Dieser Eintrag lässt sich nicht zurücknehmen.");
   }

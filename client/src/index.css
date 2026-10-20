@@ -2857,8 +2857,8 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .inbox-notice-close:hover{background:rgba(255,255,255,.08);color:#fff}
 .inbox-notice-actions{display:inline-flex;align-items:center;gap:4px}
 /* Smarte Listen in der Pipeline „E-Mail-Kampagne“ */
-.dashboard-segments .smart-list{position:relative;padding-left:22px}
-.dashboard-segments .smart-list::before{content:"";position:absolute;left:10px;top:50%;width:7px;height:7px;margin-top:-3.5px;border-radius:999px;background:#34d399}
+.dashboard-segments .smart-list{display:inline-flex;align-items:center;gap:6px}
+.dashboard-segments .smart-list::before{content:"";display:inline-block;flex:0 0 auto;width:7px;height:7px;border-radius:999px;background:#34d399}
 .dashboard-segments .smart-list+.smart-list::before{background:#60a5fa}
 .dashboard-segments .smart-list.active::before{background:#fff}
 /* E-Mail-Builder: Ziffer „so viele Leads stehen gerade hier“ */
@@ -2883,3 +2883,7 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .node-attachments li small,.node-attachments-hint{font-size:11.5px;color:#8a87a8}
 .node-attachments li button{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;color:#a5a3c4}
 .node-attachments li button:hover{background:rgba(251,113,133,.14);color:#fda4af}
+.node-leads-list li{display:flex;align-items:center;gap:4px}
+.node-leads-list li .node-leads-open{flex:1 1 auto;min-width:0}
+.node-leads-stop{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:#a5a3c4;flex:0 0 auto}
+.node-leads-stop:hover{background:rgba(251,113,133,.14);color:#fda4af}
