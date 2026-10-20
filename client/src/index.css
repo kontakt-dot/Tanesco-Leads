@@ -895,7 +895,7 @@ body.is-card-dragging{user-select:none;cursor:grabbing}
 .inbox-list{display:flex;flex-direction:column;overflow:hidden;max-height:max(560px,calc(100vh - 300px))}
 .inbox-list-head{display:grid;gap:6px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
 .inbox-search-hint{padding:0 4px;font-size:11px;color:#8f93af}
-.inbox-items{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.inbox-items{min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
 .inbox-group-label{position:sticky;top:0;z-index:1;padding:8px 16px 4px;font-size:11px;font-weight:600;color:#8f93af;background:rgba(31,28,51,.96);backdrop-filter:blur(6px)}
 .inbox-item{position:relative;display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;width:100%;min-width:0;padding:10px 14px 10px 16px;border:0;border-bottom:1px solid rgba(255,255,255,.05);background:transparent;color:#f1effe;text-align:left;cursor:pointer;transition:background .12s ease}
 .inbox-item>*{min-width:0}
