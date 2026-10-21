@@ -7,7 +7,7 @@ import { catPill } from "@/lib/colors";
 import { trpc } from "@/lib/trpc";
 import { embedded } from "@/lib/voice";
 import type { inferRouterOutputs } from "@trpc/server";
-import { ArrowLeft, Bell, CalendarDays, Check, Euro, ExternalLink, Mail, MessageSquare, Phone, Trash2, X } from "lucide-react";
+import { ArrowLeft, Ban, Bell, CalendarDays, Check, Euro, ExternalLink, Mail, MessageSquare, Phone, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { AppRouter } from "../../../server/routers";
@@ -18,6 +18,7 @@ import LeadActionDialog, { type ActionLead, type ActionMode } from "@/components
 import type { DialTarget } from "@/components/PipelineDialer";
 import PipelineNotes from "@/components/PipelineNotes";
 import EmailThread, { useEmailThread } from "@/components/EmailThread";
+import BlockContactDialog, { UnblockButton } from "@/components/BlockContactDialog";
 
 /**
  * Lead-Seite (eigene Seite statt Overlay): öffnet sich nur bewusst – über den Namen oder „Öffnen“ an der Karte, über
@@ -67,6 +68,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
   const edit = (patch: Partial<MasterData>) => { if (!form) return; setMaster({ ...form, ...patch }); };
   const saveMaster = () => { if (!lead || !form) return; const phone = form.phone.trim() ? normalizePhone(form.phone) : ""; if (form.phone.trim() && !phone) { toast.error("Das ist keine gültige Telefonnummer."); return; } if (!form.firstName.trim() && !form.lastName.trim()) { toast.error("Bitte mindestens Vor- oder Nachname angeben."); return; } save.mutate({ publicId: lead.publicId, salutation: form.salutation || null, firstName: form.firstName.trim() || null, lastName: form.lastName.trim() || null, company: form.company.trim() || null, phone: phone || null, email: form.email.trim() || null, postcode: form.postcode.trim() || null, city: form.city.trim() || null, categoryId: form.categoryId ? Number(form.categoryId) : null }); };
   const [callOpen, setCallOpen] = useState(false); // Anruf-Fenster (Telefon-App, Dialer, Ergebnis)
+  const [blockOpen, setBlockOpen] = useState(false); // Kontakt sperren (Sperrliste „Manuell“)
   const telephony = trpc.leadops.getTelephonySettings.useQuery(undefined, { retry: false, staleTime: 60_000 }); const dialerLabel = telephony.data?.provider === "sipgate" ? "Über sipgate anrufen" : "Dialer (Simulation)";
   const dial = () => { if (!lead) return; if (!lead.phone) { toast("Erst eine Telefonnummer eintragen – links bei den Stammdaten."); document.getElementById("lead-page-phone")?.focus(); return; } onDial([{ id: lead.id, publicId: lead.publicId, name: lead.name, phone: lead.phone, stage: stage as DialTarget["stage"], company: lead.company, city: lead.city }], 0, "einzel"); };
   const tabs: Array<[Tab, string, number | null]> = lead ? [["verlauf", "Verlauf", lead.history.length], ["notizen", "Notizen", lead.noteCount], ["aufgaben", "Aufgaben & Termine", lead.tasks.filter((task) => !task.doneAt).length], ["nachrichten", "Nachrichten", lead.messages.length], ["anrufe", "Anrufe", lead.calls.length], ["serien", "E-Mail-Serien", lead.campaigns.length], ["emails", "E-Mail-Verlauf", thread.data?.items.length ?? lead.inbox.length]] : [];
@@ -85,6 +87,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
           {lead.appointmentAt && new Date(lead.appointmentAt) >= new Date() && <span className="card-flag is-termin"><CalendarDays className="h-3 w-3" /> {formatAppointment(lead.appointmentAt)}</span>}
           {lead.followUpAt && <span className={`card-flag ${new Date(lead.followUpAt) < new Date() ? "is-overdue" : "is-due"}`}><Bell className="h-3 w-3" /> Wiedervorlage {formatDue(lead.followUpAt)}</span>}
           {lead.dealValue ? <span className="dash-pill pipeline-card-value">{euro(lead.dealValue)}</span> : null}
+          {lead.suppression && <span className="card-flag is-blocked" title={`Auf der Sperrliste (${lead.suppression.label})${lead.suppression.note ? `: ${lead.suppression.note}` : ""}${lead.suppression.source ? ` · ${lead.suppression.source}` : ""}`}><Ban className="h-3 w-3" /> Gesperrt – keine E-Mails{lead.suppression.reason === "manuell" && lead.suppression.note ? `: ${lead.suppression.note}` : ""}</span>}
         </div>
       </div>
       <div className="lead-window-controls">
@@ -101,7 +104,8 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
       <Button size="sm" variant="outline" onClick={() => setAction({ mode: "wert" })}><Euro /> Wert</Button>
       <Button size="sm" variant="outline" disabled={!lead.phone} onClick={() => setAction({ mode: "nachricht", channel: "sms" })}><MessageSquare /> SMS</Button>
       <Button size="sm" variant="outline" disabled={!lead.phone} onClick={() => setAction({ mode: "nachricht", channel: "whatsapp" })}><span aria-hidden="true">🟢</span> WhatsApp</Button>
-      <Button size="sm" variant="outline" disabled={!lead.email} onClick={() => setAction({ mode: "nachricht", channel: "email" })}><Mail /> E-Mail</Button>
+      <Button size="sm" variant="outline" disabled={!lead.email || Boolean(lead.suppression)} title={lead.suppression ? "Gesperrt – diese Adresse bekommt keine E-Mails" : undefined} onClick={() => setAction({ mode: "nachricht", channel: "email" })}><Mail /> E-Mail</Button>
+      {lead.suppression ? <UnblockButton leadIds={[lead.id]} className="lead-block-btn is-unblock" onDone={refresh} /> : <button type="button" className="lead-block-btn" disabled={!lead.email} title={lead.email ? "Keine E-Mails mehr an diesen Kontakt – Sperrliste, laufende Serien stoppen" : "Ohne E-Mail-Adresse gibt es nichts zu sperren"} onClick={() => setBlockOpen(true)}><Ban className="h-3.5 w-3.5" /> Sperren</button>}
       <span className="lead-window-spacer" />
       {next && <Button size="sm" variant="outline" disabled={move.isPending} onClick={() => move.mutate({ publicId: lead.publicId, stage: next })}>→ {stageLabel(next, stageDefs)}</Button>}
       {stage !== won && stage !== lost && <Button size="sm" variant="ghost" disabled={move.isPending} onClick={async () => { if (await confirmAction(`${lead.name} als ${stageLabel(lost, stageDefs).toLowerCase()} markieren?`, { danger: true })) move.mutate({ publicId: lead.publicId, stage: lost, note: `Als ${stageLabel(lost, stageDefs)} markiert` }); }}>{stageLabel(lost, stageDefs)}</Button>}
@@ -144,6 +148,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
         </div>
       </section>
     </div>
+    <BlockContactDialog leadIds={[lead.id]} label={lead.name} source="Vertriebspipeline" open={blockOpen} onClose={() => setBlockOpen(false)} onDone={refresh} />
     {action && actionLead && <LeadActionDialog lead={actionLead} mode={action.mode} initialChannel={action.channel} owners={owners} onClose={() => setAction(null)} onChanged={refresh} />}
   </section>;
 }

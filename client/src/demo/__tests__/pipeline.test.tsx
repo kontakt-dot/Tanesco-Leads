@@ -1760,4 +1760,16 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.deleteCustomPipeline", { key: created.key })).label).toBe("Empfehlungen");
     expect((await call("leadops.pipelineSettings")).customPipelines).toEqual([]);
   });
+
+  it("Kontakt sperren (Demo): Sperrliste „Manuell“, Serie stoppt, Lead-Seite und Kontakte zeigen es, Sperre aufheben", async () => {
+    const lead = getStore().tables.leads.find((row) => row.kind === "vertrieb" && row.email && getStore().tables.emailCampaignRecipients.some((item) => item.leadId === row.id && (item.status === "wartet" || item.status === "laeuft")))!;
+    const result = await call("leadops.blockLeads", { leadIds: [lead.id], note: "Wettbewerber" });
+    expect(result).toMatchObject({ blocked: 1, skipped: 0 }); expect(result.stopped).toBeGreaterThanOrEqual(1);
+    expect(getStore().tables.emailSuppressions.find((row) => row.email === String(lead.email).toLowerCase())).toMatchObject({ reason: "manuell", note: "Wettbewerber" });
+    expect((await call("leadops.pipelineLeadDetail", { publicId: lead.publicId })).suppression).toMatchObject({ reason: "manuell", label: "Von Hand gesperrt" });
+    const blocked = await call("leadops.emailLeads", { blocked: true, withoutEmail: true }); expect(blocked.items.some((row: any) => row.id === lead.id && row.blocked && row.blockedNote === "Wettbewerber")).toBe(true);
+    expect(getStore().tables.pipelineEvents.some((row) => row.leadId === lead.id && /gesperrt/.test(String(row.note)))).toBe(true);
+    expect((await call("leadops.unblockLeads", { leadIds: [lead.id] })).unblocked).toBe(1);
+    expect((await call("leadops.pipelineLeadDetail", { publicId: lead.publicId })).suppression).toBeNull();
+  });
 });

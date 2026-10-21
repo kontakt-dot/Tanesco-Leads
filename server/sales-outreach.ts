@@ -5,8 +5,8 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
-import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { draftToBlocks, dripBudget, resolveDrip, type DripSettings, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
+import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
+import { draftToBlocks, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -748,7 +748,7 @@ export type { PipelineSource } from "../shared/sales-pipeline";
 /** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board (meta-ads.pipelineOverview). */
 export const matchesSource = (adPlatform: string | null | undefined, source: PipelineSource | null | undefined) => !source ? true : source === "kaltakquise" ? adPlatform === "kaltakquise" : source === "email" ? adPlatform === "email" : isCustomSource(source) ? adPlatform === source : adPlatform !== "kaltakquise" && adPlatform !== "email" && !isCustomSource(adPlatform);
 
-export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivity | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null } = {}) {
+export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivity | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null; blocked?: boolean | null } = {}) {
   const limit = Math.min(1000, Math.max(10, options.limit ?? 200));
   const rows = await db.select({
     id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company,
@@ -764,6 +764,8 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
 
   const byLead = new Map<string, typeof recipients>();
   for (const row of recipients) { const key = row.leadId ? `id:${row.leadId}` : `mail:${row.email.toLowerCase()}`; const list = byLead.get(key) ?? []; list.push(row); byLead.set(key, list); }
+  // Sperrliste: gesperrte Adressen bekommen keine E-Mails – mit Grund (manuell, abgemeldet, Bounce, Beschwerde, Posteingang)
+  const suppressions = new Map((await db.select({ email: emailSuppressions.email, reason: emailSuppressions.reason, note: emailSuppressions.note }).from(emailSuppressions).where(eq(emailSuppressions.tenantId, tenantId))).map((row) => [row.email.toLowerCase(), row]));
 
   /** Was ist zuletzt passiert? Die stärkste Reaktion gewinnt: geantwortet vor geklickt vor geöffnet vor gesendet. */
   const activityOf = (entries: typeof recipients): { activity: EmailLeadActivity; at: Date | null } => {
@@ -784,7 +786,8 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
     const { activity, at } = activityOf(entries);
     const campaigns = Array.from(new Map(entries.map((item) => [item.campaignId, { id: item.campaignId, name: item.campaignName }])).values());
     const { metadata, ...rest } = lead;
-    return { ...rest, felder: extraFieldsOf(metadata), campaigns, activity, activityAt: at, mails: entries.reduce((sum, item) => sum + (item.sentCount ?? 0), 0) };
+    const suppression = lead.email ? suppressions.get(lead.email.toLowerCase()) ?? null : null;
+    return { ...rest, felder: extraFieldsOf(metadata), campaigns, activity, activityAt: at, mails: entries.reduce((sum, item) => sum + (item.sentCount ?? 0), 0), blocked: Boolean(suppression), blockedReason: suppression ? SUPPRESSION_LABELS[suppression.reason as SuppressionReason] ?? suppression.reason : null, blockedNote: suppression?.note ?? null };
   });
 
   const search = (options.search ?? "").trim().toLowerCase();
@@ -792,6 +795,7 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
     if (options.listName && item.listName !== options.listName) return false;
     if (options.campaignId && !item.campaigns.some((campaign) => campaign.id === options.campaignId)) return false;
     if (options.activity && item.activity !== options.activity) return false;
+    if (options.blocked === true && !item.blocked) return false; if (options.blocked === false && item.blocked) return false;
     if (options.stage && item.stage !== options.stage) return false;
     if (options.ownerUserId === "ohne" && item.ownerUserId) return false;
     if (typeof options.ownerUserId === "number" && item.ownerUserId !== options.ownerUserId) return false;
@@ -807,7 +811,7 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
   const sortiert = filtered.sort((a, b) => rang[b.activity] - rang[a.activity] || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime());
   // Anrufzähler je Kontakt (Spalte „Anrufe“ im Reiter Kontakte)
   const page = sortiert.slice(0, limit); const { callCountsMap } = await import("./pipeline-extras"); const callMap = await callCountsMap(db, tenantId, page.map((item) => item.id));
-  return { items: page.map((item) => ({ ...item, calls: callMap.get(item.id) ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } })), total: filtered.length, counts, lists, campaigns };
+  return { items: page.map((item) => ({ ...item, calls: callMap.get(item.id) ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } })), total: filtered.length, counts, lists, campaigns, blocked: items.filter((item) => item.blocked).length };
 }
 
 /**

@@ -12,12 +12,13 @@ import type { MySqlColumn } from "drizzle-orm/mysql-core";
 import crypto from "node:crypto";
 import { pipelineStageConfigs, dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCallAttempts, leadCategories, leads, outboundMessages, phoneNumbers, pipelineEvents, pipelineNotes, pipelineSettings, pipelineTasks, users, type PipelineTask } from "../drizzle/schema";
 import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
-import { recipientValues, renderNode, type EmailNode, type EmailTree } from "../shared/email-campaigns";
+import { recipientValues, renderNode, SUPPRESSION_LABELS, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
 import { newCustomSourceKey, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
 import { contactedStage, entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
+import { logActivity } from "./activity";
 import { normalizeMessageId } from "../shared/message-id";
 import type { Db } from "./lead-pipeline";
 
@@ -279,6 +280,41 @@ export async function addSuppression(db: Db, tenantId: number, input: { email: s
 }
 export async function removeSuppressionByEmail(db: Db, tenantId: number, email: string) { await db.delete(emailSuppressions).where(and(eq(emailSuppressions.tenantId, tenantId), eq(emailSuppressions.email, email.trim().toLowerCase()))); return { success: true as const }; }
 export async function removeSuppression(db: Db, tenantId: number, id: number) { await db.delete(emailSuppressions).where(and(eq(emailSuppressions.id, id), eq(emailSuppressions.tenantId, tenantId))); return { success: true as const }; }
+/**
+ * Kontakt sperren (Lead-Seite in der Vertriebspipeline, Reiter „Kontakte“): Adresse auf die Sperrliste (Unterliste „Manuell“),
+ * laufende E-Mail-Serien stoppen, Vermerk im Verlauf der Karte. Der Kontakt bleibt in der Pipeline – er bekommt nur keine E-Mails mehr.
+ */
+export async function blockLeads(db: Db, tenantId: number, actorUserId: number | null, input: { leadIds: number[]; note?: string | null; source?: string | null }) {
+  const ids = Array.from(new Set(input.leadIds)).slice(0, 500); if (!ids.length) return { blocked: 0, skipped: 0, stopped: 0, emails: [] as string[] };
+  const rows = await db.select({ id: leads.id, email: leads.email, pipelineStage: leads.pipelineStage, firstName: leads.firstName, lastName: leads.lastName, company: leads.company }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
+  const reason = input.note?.trim().slice(0, 300) || null; let blocked = 0; let skipped = 0; let stopped = 0; const emails: string[] = [];
+  for (const lead of rows) {
+    if (!lead.email) { skipped += 1; continue; }
+    const result = await addSuppression(db, tenantId, { email: lead.email, reason: "manuell", note: reason ?? "Von Hand gesperrt – keine E-Mails mehr", source: input.source ?? "Vertriebspipeline" });
+    blocked += 1; stopped += result.stopped; emails.push(result.email);
+    await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: lead.pipelineStage, toStage: lead.pipelineStage ?? "gesperrt", actorUserId, note: `Kontakt gesperrt – keine E-Mails mehr${reason ? ` (${reason})` : ""}${result.stopped ? ` · ${result.stopped} laufende Serie${result.stopped === 1 ? "" : "n"} gestoppt` : ""}`.slice(0, 400) });
+  }
+  if (blocked) await logActivity(db, tenantId, { kind: "sonstiges", title: blocked === 1 ? `${[rows[0]?.firstName, rows[0]?.lastName].filter(Boolean).join(" ") || emails[0]} gesperrt – keine E-Mails mehr` : `${blocked} Kontakte gesperrt – keine E-Mails mehr`, detail: reason, actorUserId }).catch(() => null);
+  return { blocked, skipped, stopped, emails };
+}
+/** Sperre aufheben: Adresse von der Sperrliste nehmen, Vermerk im Verlauf. Gestoppte Serien laufen nicht von selbst weiter – „Weiterer Durchlauf“ nimmt den Kontakt wieder auf. */
+export async function unblockLeads(db: Db, tenantId: number, actorUserId: number | null, input: { leadIds: number[] }) {
+  const ids = Array.from(new Set(input.leadIds)).slice(0, 500); if (!ids.length) return { unblocked: 0 };
+  const rows = await db.select({ id: leads.id, email: leads.email, pipelineStage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
+  let unblocked = 0;
+  for (const lead of rows) {
+    if (!lead.email || !(await isSuppressed(db, tenantId, lead.email))) continue;
+    await removeSuppressionByEmail(db, tenantId, lead.email); unblocked += 1;
+    await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: lead.pipelineStage, toStage: lead.pipelineStage ?? "entsperrt", actorUserId, note: "Sperre aufgehoben – E-Mails wieder möglich" });
+  }
+  return { unblocked };
+}
+/** Sperr-Stand einer Adresse (für Lead-Seite und Kontakte): Grund, Vermerk, Quelle, seit wann. */
+export async function suppressionOf(db: Db, tenantId: number, email: string | null | undefined) {
+  if (!email) return null;
+  const row = (await db.select({ reason: emailSuppressions.reason, note: emailSuppressions.note, source: emailSuppressions.source, createdAt: emailSuppressions.createdAt }).from(emailSuppressions).where(and(eq(emailSuppressions.tenantId, tenantId), eq(emailSuppressions.email, email.trim().toLowerCase()))).limit(1))[0];
+  return row ? { reason: row.reason as SuppressionReason, label: SUPPRESSION_LABELS[row.reason as SuppressionReason] ?? row.reason, note: row.note, source: row.source, since: row.createdAt } : null;
+}
 /** Bounce/Beschwerde zu einem Empfänger (Knopf in der Kampagne oder Webhook des Mail-Anbieters): Empfänger stoppen, Adresse sperren. */
 export async function markBounced(db: Db, tenantId: number, input: { recipientId?: number | null; email?: string | null; kind: "bounce" | "beschwerde"; note?: string | null }) {
   const recipient = input.recipientId ? (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.id, input.recipientId), eq(emailCampaignRecipients.tenantId, tenantId))).limit(1))[0] : input.email ? (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.email, input.email.toLowerCase()))).orderBy(desc(emailCampaignRecipients.createdAt)).limit(1))[0] : undefined;
@@ -467,9 +503,9 @@ export async function leadDetail(db: Db, tenantId: number, publicId: string, now
     db.select({ id: inboxMessages.id, subject: inboxMessages.subject, receivedAt: inboxMessages.receivedAt, bodyText: inboxMessages.bodyText, blocked: inboxMessages.blocked }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.leadId, lead.id))).orderBy(desc(inboxMessages.receivedAt)).limit(20),
     (await import("./meta-ads")).pipelineHistory(db, tenantId, publicId),
   ]);
-  const meta = metaOf(lead);
+  const meta = metaOf(lead); const suppression = await suppressionOf(db, tenantId, lead.email);
   return {
-    publicId: lead.publicId, id: lead.id, name: leadName(lead), firstName: lead.firstName, lastName: lead.lastName, company: lead.company, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, salutation: typeof meta.salutation === "string" ? meta.salutation : null, notesFromImport: typeof meta.notes === "string" ? meta.notes : null,
+    suppression, publicId: lead.publicId, id: lead.id, name: leadName(lead), firstName: lead.firstName, lastName: lead.lastName, company: lead.company, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, salutation: typeof meta.salutation === "string" ? meta.salutation : null, notesFromImport: typeof meta.notes === "string" ? meta.notes : null,
     categoryId: lead.categoryId, categoryName: category?.name ?? null, categoryEmoji: category?.emoji ?? null, categoryColor: category?.color ?? null, categoryShortcode: category?.shortcode ?? null,
     source: pipelineSourceOf(lead.adPlatform), stages, adPlatform: lead.adPlatform, adCampaignId: lead.adCampaignId, adCampaignName: lead.adCampaignName, adsetName: lead.adsetName, adName: lead.adName, adFormName: lead.adFormName, listName: lead.listName, supplierName: lead.supplierName,
     pipelineStage: lead.pipelineStage, pipelineUpdatedAt: lead.pipelineUpdatedAt, ownerUserId: lead.ownerUserId, ownerName: owner, dealValue: lead.dealValue, followUpAt: lead.followUpAt, appointmentAt: lead.appointmentAt, appointment: meta.appointment ?? null, createdAt: lead.createdAt, updatedAt: lead.updatedAt, lastCallDisposition: typeof meta.lastCallDisposition === "string" ? meta.lastCallDisposition : null,

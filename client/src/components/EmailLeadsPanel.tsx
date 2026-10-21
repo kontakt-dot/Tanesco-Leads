@@ -1,6 +1,7 @@
 import { undoIdOf, withUndo } from "@/components/UndoPanel";
 import { useState } from "react";
-import { Phone } from "lucide-react";
+import { Ban, Phone } from "lucide-react";
+import BlockContactDialog, { UnblockButton } from "@/components/BlockContactDialog";
 import { CallDialog } from "@/components/CallLog";
 import { trpc } from "@/lib/trpc";
 import { callCounterText, callResultLabel } from "../../../shared/pipeline-extras";
@@ -44,7 +45,9 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const [stageFilter, setStageFilter] = useState<string | null>(null);
   const [activity, setActivity] = useState<typeof ACTIVITY[number]["key"] | null>(null);
   const [owner, setOwner] = useState<number | "ohne" | null>(null);
-  const data = trpc.leadops.emailLeads.useQuery({ search: search.trim() || null, listName, campaignId, activity, stage: stageFilter, ownerUserId: owner, ...(pipeline ? { source, inPipeline: true, withoutEmail: true } : {}) }, { retry: false });
+  const [onlyBlocked, setOnlyBlocked] = useState(false); // nur gesperrte Kontakte (Sperrliste)
+  const [blockFor, setBlockFor] = useState<{ ids: number[]; label: string } | null>(null); // Sperren-Fenster (Zeile oder Auswahl)
+  const data = trpc.leadops.emailLeads.useQuery({ search: search.trim() || null, listName, campaignId, activity, stage: stageFilter, ownerUserId: owner, blocked: onlyBlocked ? true : null, ...(pipeline ? { source, inPipeline: true, withoutEmail: true } : {}) }, { retry: false });
   const owners = trpc.leadops.pipelineOwners.useQuery(undefined, { retry: false });
   const stages = trpc.leadops.pipelineStages.useQuery({ source: pipeline ? source : target }, { retry: false }); // Stufen der jeweiligen Pipeline (E-Mail-Akquise: Stufen der gewählten Ziel-Pipeline)
   const stageDefs = stages.data ?? [];
@@ -86,8 +89,9 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const counts = data.data?.counts ?? {};
   const offen = items.filter((lead) => lead.inPipeline === false).map((lead) => lead.id);
   const pickedRows = items.filter((lead) => picked.includes(lead.id));
-  const resetAll = () => { setSearch(""); setListName(null); setCampaignId(null); setActivity(null); setOwner(null); setStageFilter(null); };
-  const gefiltert = Boolean(search.trim() || listName || campaignId || activity || owner || stageFilter);
+  const resetAll = () => { setSearch(""); setListName(null); setCampaignId(null); setActivity(null); setOwner(null); setStageFilter(null); setOnlyBlocked(false); };
+  const gefiltert = Boolean(search.trim() || listName || campaignId || activity || owner || stageFilter || onlyBlocked);
+  const blockedCount = (data.data as { blocked?: number } | undefined)?.blocked ?? items.filter((lead) => lead.blocked).length;
   const nameOf = (lead: { firstName: string | null; lastName: string | null; company: string | null; email: string | null; publicId: string }) => [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.email || lead.publicId;
   const herkunft = (lead: { listName: string | null; adCampaignName?: string | null; adPlatform?: string | null }) => lead.listName || (lead.adPlatform !== "kaltakquise" && lead.adPlatform !== "email" ? lead.adCampaignName : null) || "–";
   const canPick = (_lead: { inPipeline: boolean }) => true; // jede Zeile ist wählbar – übernehmen verschiebt auch Kontakte, die schon in einer anderen Pipeline stehen
@@ -111,6 +115,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
     <div className="cd-filters xl-filters" role="tablist" aria-label="Nach letzter Reaktion filtern">
       <button type="button" role="tab" aria-selected={activity === null} className={activity === null ? "is-active" : ""} onClick={() => setActivity(null)}>Alle<i>{counts.alle ?? 0}</i></button>
       {ACTIVITY.filter((item) => (counts[item.key] ?? 0) > 0 || activity === item.key).map((item) => <button key={item.key} type="button" role="tab" aria-selected={activity === item.key} className={`${activity === item.key ? "is-active" : ""} is-${item.key}`} onClick={() => setActivity(activity === item.key ? null : item.key)}><b className={`xl-dot is-${item.key}`} aria-hidden="true" />{item.label}<i>{counts[item.key] ?? 0}</i></button>)}
+      {(blockedCount > 0 || onlyBlocked) && <button type="button" role="tab" aria-selected={onlyBlocked} className={`${onlyBlocked ? "is-active" : ""} is-gesperrt`} title="Gesperrte Kontakte: stehen auf der Sperrliste und bekommen keine E-Mails" onClick={() => setOnlyBlocked((value) => !value)}><b className="xl-dot is-gesperrt" aria-hidden="true" />Gesperrt<i>{blockedCount}</i></button>}
     </div>
 
     {data.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
@@ -131,6 +136,8 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
               <button type="button" className="email-leads-push" disabled={push.isPending} title={pickedRows.every((lead) => lead.inPipeline !== false) ? "Die ausgewählten Kontakte stehen schon in einer Pipeline – sie werden in die gewählte Pipeline und Stufe verschoben" : ""} onClick={() => push.mutate({ leadIds: picked, stage: stageDefs.some((item) => item.key === stage) ? stage : (stageDefs[0]?.key ?? "neu"), target })}>{push.isPending ? "Wird übernommen …" : "In die Vertriebspipeline übernehmen"}</button>
               <button type="button" className="email-leads-delete" disabled={removeLeads.isPending} onClick={async () => { if (await confirmAction(`${picked.length} ${picked.length === 1 ? "Kontakt" : "Kontakte"} löschen? Kunden bleiben erhalten. Das lässt sich nicht rückgängig machen.`, { danger: true })) removeLeads.mutate({ leadIds: picked }); }}>{removeLeads.isPending ? "Wird gelöscht …" : "Löschen"}</button>
             </>}
+            <button type="button" className="email-leads-block" title="Keine E-Mails mehr an die ausgewählten Kontakte – Sperrliste, laufende Serien stoppen; die Kontakte bleiben" disabled={!pickedRows.some((lead) => lead.email && !lead.blocked)} onClick={() => setBlockFor({ ids: pickedRows.filter((lead) => lead.email && !lead.blocked).map((lead) => lead.id), label: nameOf(pickedRows[0]) })}><Ban className="h-3.5 w-3.5" /> Sperren</button>
+            {pickedRows.some((lead) => lead.blocked) && <UnblockButton leadIds={pickedRows.filter((lead) => lead.blocked).map((lead) => lead.id)} label={`Sperre aufheben (${pickedRows.filter((lead) => lead.blocked).length})`} className="email-leads-reset" onDone={() => { setPicked([]); data.refetch(); }} />}
             <button type="button" className="email-leads-reset" title="Laufende E-Mail-Serien der ausgewählten Kontakte stoppen – keine weitere E-Mail, die Kontakte bleiben" disabled={stopFunnel.isPending} onClick={async () => { if (await confirmAction(`${picked.length} ${picked.length === 1 ? "Kontakt" : "Kontakte"} aus dem E-Mail-Funnel nehmen? Laufende Serien stoppen sofort.`, { confirmLabel: "Aus Funnel nehmen" })) stopFunnel.mutate({ leadIds: picked }); }}>Aus E-Mail-Funnel nehmen</button>
             <button type="button" className="email-leads-reset" onClick={() => setPicked([])}>Auswahl aufheben</button>
           </div>}
@@ -145,17 +152,18 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
             {pipeline && <td>{[lead.postcode, lead.city].filter(Boolean).join(" ") || "–"}</td>}
             <td>{pipeline ? herkunft(lead) : lead.listName || "–"}</td>
             <td>{lead.campaigns.length ? lead.campaigns.map((campaign) => campaign.name).join(", ") : <span className="text-slate-500">in keiner</span>}</td>
-            <td><span className={`email-leads-state is-${lead.activity}`}>{ACTIVITY.find((item) => item.key === lead.activity)?.label ?? "–"}</span>{lead.activityAt ? <small> {stamp(lead.activityAt)}</small> : null}</td>
+            <td>{lead.blocked ? <span className="email-leads-state is-gesperrt" title={`Gesperrt – keine E-Mails (${lead.blockedReason ?? "Sperrliste"})${lead.blockedNote ? `: ${lead.blockedNote}` : ""}`}><Ban className="h-3 w-3" /> Gesperrt</span> : <span className={`email-leads-state is-${lead.activity}`}>{ACTIVITY.find((item) => item.key === lead.activity)?.label ?? "–"}</span>}{!lead.blocked && lead.activityAt ? <small> {stamp(lead.activityAt)}</small> : null}</td>
             {pipeline && <td>{lead.calls?.count ? <span className={`email-leads-calls ${lead.calls.lastResult === "erreicht" || lead.calls.lastResult === "rueckruf" ? "is-reached" : ""}`} title={callCounterText(lead.calls) ?? ""}>{lead.calls.count}× <small>{callResultLabel(lead.calls.lastResult)}</small></span> : "–"}</td>}
             <td>{lead.mails || "–"}</td>
             <td>{lead.stage ? stageLabel(lead.stage, stageDefs) : "–"}</td>
             <td>{lead.ownerName || <span className="text-slate-500">offen</span>}</td>
             <td>{stamp(lead.createdAt)}</td>
             {!pipeline && <td>{lead.inPipeline === false ? <span className="email-leads-state">nur E-Mail</span> : <span className="email-leads-state is-geoeffnet" title="Steht in dieser Pipeline">{pipelineName(lead)}</span>}</td>}
-            <td className="email-leads-row-tools" onClick={(event) => event.stopPropagation()}>{pipeline && <button type="button" className="email-leads-call" title="Anrufen und Ergebnis festhalten (zählt auch ohne Dialer)" aria-label={`${nameOf(lead)} anrufen`} onClick={() => setCallFor({ publicId: lead.publicId, name: nameOf(lead), phone: lead.phone ?? null })}><Phone className="h-3.5 w-3.5" /></button>}<button type="button" title="Kontakt löschen" aria-label="Kontakt löschen" onClick={async () => { if (await confirmAction(`${nameOf(lead)} löschen?${pipeline ? " Verlauf, Aufgaben und Notizen gehen mit." : " Kunden bleiben erhalten."}`, { danger: true })) { if (pipeline) removeCards.mutate({ publicIds: [lead.publicId] }); else removeLeads.mutate({ leadIds: [lead.id] }); } }}>✕</button></td>
+            <td className="email-leads-row-tools" onClick={(event) => event.stopPropagation()}>{pipeline && <button type="button" className="email-leads-call" title="Anrufen und Ergebnis festhalten (zählt auch ohne Dialer)" aria-label={`${nameOf(lead)} anrufen`} onClick={() => setCallFor({ publicId: lead.publicId, name: nameOf(lead), phone: lead.phone ?? null })}><Phone className="h-3.5 w-3.5" /></button>}{lead.email && (lead.blocked ? <UnblockButton leadIds={[lead.id]} label="Entsperren" className="email-leads-unblock" onDone={() => data.refetch()} /> : <button type="button" className="email-leads-blockrow" title="Sperren – keine E-Mails mehr an diesen Kontakt" aria-label={`${nameOf(lead)} sperren`} onClick={() => setBlockFor({ ids: [lead.id], label: nameOf(lead) })}><Ban className="h-3.5 w-3.5" /></button>)}<button type="button" title="Kontakt löschen" aria-label="Kontakt löschen" onClick={async () => { if (await confirmAction(`${nameOf(lead)} löschen?${pipeline ? " Verlauf, Aufgaben und Notizen gehen mit." : " Kunden bleiben erhalten."}`, { danger: true })) { if (pipeline) removeCards.mutate({ publicIds: [lead.publicId] }); else removeLeads.mutate({ leadIds: [lead.id] }); } }}>✕</button></td>
           </tr>)}</tbody>
         </table></div>
       </>}
+    <BlockContactDialog leadIds={blockFor?.ids ?? []} label={blockFor?.label ?? ""} source={pipeline ? "Vertriebspipeline (Kontakte)" : "E-Mail-Kampagnen (Kontakte)"} open={Boolean(blockFor)} onClose={() => setBlockFor(null)} onDone={() => { setPicked([]); data.refetch(); onChanged?.(); }} />
     {callFor && <CallDialog publicId={callFor.publicId} name={callFor.name} phone={callFor.phone} onDone={() => { setCallFor(null); data.refetch(); onChanged?.(); }} onCancel={() => setCallFor(null)} onPhoneSaved={() => data.refetch()} />}
   </section>;
 }

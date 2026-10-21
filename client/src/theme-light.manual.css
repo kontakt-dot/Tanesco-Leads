@@ -1386,3 +1386,12 @@ html:not(.dark) .cl-daily { color: #667085 !important; }
 html:not(.dark) .cl-daily.is-full { color: #b45309 !important; }
 html:not(.dark) .reply-stop.is-review.is-off-muted { background: #f8fafb !important; border-color: #e5e7ee !important; color: #64748b !important; }
 html:not(.dark) .reply-stop.is-review.is-off-muted svg { color: #94a3b8 !important; }
+html:not(.dark) .lead-block-btn { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #be123c !important; }
+html:not(.dark) .lead-block-btn:hover:not(:disabled) { background: #ffe4e6 !important; }
+html:not(.dark) .lead-block-btn.is-unblock { background: #ecfdf5 !important; border-color: #a7f3d0 !important; color: #047857 !important; }
+html:not(.dark) .card-flag.is-blocked { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #be123c !important; }
+html:not(.dark) .campaign-act.is-danger { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #be123c !important; }
+html:not(.dark) .campaign-act.is-danger:hover:not(:disabled) { background: #ffe4e6 !important; }
+html:not(.dark) .email-leads-state.is-gesperrt { background: #fff1f2 !important; color: #be123c !important; }
+html:not(.dark) .email-leads-block { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #be123c !important; }
+html:not(.dark) .email-leads-row-tools .email-leads-unblock { color: #047857 !important; border-color: #a7f3d0 !important; }

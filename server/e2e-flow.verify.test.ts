@@ -2563,4 +2563,25 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(rootDomain("mail.firma.de")).toBe("firma.de"); expect(rootDomain("firma.co.uk")).toBe("firma.co.uk"); expect(rootDomain("a.b.firma.com")).toBe("firma.com");
     expect(companySlug("Koppen GmbH & Co. KG")).toBe("koppen"); expect(companySlug("Thüga Energie")).toBe("thuegaenergie"); expect(companySlug("AB GmbH")).toBeNull();
   }, 30000);
+
+  it("56. Kontakt sperren (Lead-Seite / Kontakte): Sperrliste „Manuell“ mit Grund, laufende Serie stoppt, Vermerk im Verlauf, Kontakte zeigen „Gesperrt“ – Sperre aufheben", async () => {
+    await owner.leadops.importColdList({ listName: "Sperr-Test", toPipeline: true, rows: [{ firstName: "Sven", lastName: "Sperr", company: "Sperr Solar", email: "sven@sperr-e2e.example" }, { firstName: "Ohne", lastName: "Mail", company: "Ohne Mail GmbH", phone: "+49 30 5550999" }] });
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Sperr-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Sperr-Test" }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const before = (await owner.leadops.emailLeads({ listName: "Sperr-Test", source: "kaltakquise", inPipeline: true, withoutEmail: true })).items; const sven = before.find((row) => row.email === "sven@sperr-e2e.example")!; const ohne = before.find((row) => row.company === "Ohne Mail GmbH")!;
+    expect(sven.blocked).toBe(false);
+    const result = await owner.leadops.blockLeads({ leadIds: [sven.id, ohne.id], note: "Will keine Werbung", source: "Vertriebspipeline" });
+    expect(result).toMatchObject({ blocked: 1, skipped: 1, stopped: 1 });
+    const entry = (await owner.leadops.listEmailSuppressions()).items.find((row) => row.email === "sven@sperr-e2e.example")!; expect(entry.reason).toBe("manuell"); expect(entry.note).toBe("Will keine Werbung"); expect(entry.source).toBe("Vertriebspipeline");
+    expect((await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, "sven@sperr-e2e.example"))))[0].status).toBe("abgemeldet");
+    const detail = await owner.leadops.pipelineLeadDetail({ publicId: sven.publicId }); expect(detail.suppression).toMatchObject({ reason: "manuell", note: "Will keine Werbung" }); expect(detail.history.some((row) => /gesperrt/i.test(row.note ?? ""))).toBe(true);
+    const after = (await owner.leadops.emailLeads({ listName: "Sperr-Test", source: "kaltakquise", inPipeline: true, withoutEmail: true, blocked: true })); expect(after.items.map((row) => row.id)).toEqual([sven.id]); expect(after.blocked).toBeGreaterThanOrEqual(1); expect(after.items[0].blockedReason).toBe("Von Hand gesperrt");
+    // gesperrt → ein neuer Durchlauf nimmt ihn nicht mehr auf
+    await owner.leadops.saveEmailCampaign({ id: campaign.id, name: "Sperr-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Sperr-Test" }, tree: starter.tree, design: {}, maxRuns: 0 } as never);
+    await expect(owner.leadops.startEmailCampaign({ id: campaign.id })).rejects.toThrow(/keine Kontakte/); // der einzige Kontakt mit E-Mail ist gesperrt
+    expect((await owner.leadops.unblockLeads({ leadIds: [sven.id, ohne.id] })).unblocked).toBe(1);
+    expect((await owner.leadops.pipelineLeadDetail({ publicId: sven.publicId })).suppression).toBeNull();
+    expect((await owner.leadops.emailLeads({ listName: "Sperr-Test", source: "kaltakquise", inPipeline: true, withoutEmail: true, blocked: true })).items).toHaveLength(0);
+  }, 30000);
 });
