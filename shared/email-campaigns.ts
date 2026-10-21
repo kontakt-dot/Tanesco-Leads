@@ -346,3 +346,18 @@ export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[
   const keep = original.filter((block) => block.type === "button" || block.type === "signature");
   return [{ id: "draft-text", type: "text", text: text.trim() }, ...keep];
 }
+
+/* ── Drei Ansätze je Erst-E-Mail: Individuell, Drittanbieter, Freier Vorschlag ─────────────────── */
+export type DraftApproach = "individuell" | "drittanbieter" | "frei";
+export type DraftOption = { key: DraftApproach; label: string; subject: string; text: string };
+export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: string }> = [
+  { key: "individuell", label: "Individueller Ansatz", hint: "Greift etwas Konkretes der Firma auf (Webseite, Standorte, Leistungen) und spiegelt es auf unser Angebot – kurz, persönlich, ohne Aufzählung." },
+  { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Unsere Leads kommen schon über Drittpartner bei der Firma an – wir sind die direkte Quelle und bieten die direkte Zusammenarbeit an." },
+  { key: "frei", label: "Freier Vorschlag", hint: "Eigene Idee der KI – ein anderer Einstieg, aber genauso persönlich auf die Firma zugeschnitten." },
+];
+export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? "Entwurf";
+/** Ohne KI: der Drittanbieter-Ansatz als feste Vorlage mit den Daten der Firma. */
+export function thirdPartyTemplate(values: Record<string, string | null | undefined>): { subject: string; text: string } {
+  const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = values.nachname && values.anrede ? `Sehr geehrte${values.anrede === "Frau" ? "" : "r"} ${values.anrede} ${values.nachname},` : "Sehr geehrte Damen und Herren,";
+  return { subject: `Direkte Zusammenarbeit statt Umweg über Drittpartner – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich Photovoltaik und Wärmepumpen, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nUns ist bekannt geworden, dass von uns generierte Leads bereits regelmäßig über Drittpartner bei ${firma} eingeliefert werden. Da wir die direkte Quelle dieser Interessenten sind, würden wir gerne die Möglichkeit einer unmittelbaren Zusammenarbeit mit Ihnen besprechen.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n\nEine direkte Partnerschaft verkürzt die Lieferkette und bringt mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWir freuen uns über Ihre Rückmeldung und die Möglichkeit eines persönlichen Telefonats.\n\nMit freundlichen Grüßen` };
+}

@@ -1,15 +1,16 @@
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
-import { Check, ChevronRight, ExternalLink, MailX, PenLine, RefreshCw, Sparkles, X } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, Globe, MailX, PenLine, RefreshCw, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { DRAFT_APPROACHES, type DraftApproach } from "../../../shared/email-campaigns";
 
 /**
  * Erst-E-Mails einzeln schreiben & freigeben: links alle Kontakte, deren erste E-Mail noch nicht raus ist, rechts der
  * Entwurf (KI oder Vorlage) zum Lesen, Ändern und Freigeben. Freigegebene E-Mails gehen im Minutentakt raus –
  * innerhalb von Versandfenster, Drip und Tageslimit.
  */
-type Item = { id: number; email: string; name: string | null; company: string | null; city: string | null; listName: string | null; publicId: string | null; draftSubject: string | null; draftText: string | null; draftState: "entwurf" | "freigegeben" | null; draftSource: string | null; draftAt: string | Date | null };
+type Item = { id: number; email: string; name: string | null; company: string | null; city: string | null; listName: string | null; publicId: string | null; website?: string | null; draftSubject: string | null; draftText: string | null; draftState: "entwurf" | "freigegeben" | null; draftSource: string | null; draftOptions?: Array<{ key: DraftApproach; label: string; subject: string; text: string }>; draftApproach?: DraftApproach | null; draftAt: string | Date | null };
 type Filter = "alle" | "offen" | "entwurf" | "freigegeben";
 const FILTERS: Array<[Filter, string]> = [["alle", "Alle"], ["offen", "Ohne Entwurf"], ["entwurf", "Zu prüfen"], ["freigegeben", "Freigegeben"]];
 const initialsOf = (text: string) => text.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
@@ -27,6 +28,7 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
   const [filter, setFilter] = useState<Filter>("alle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [subject, setSubject] = useState(""); const [text, setText] = useState(""); const loadedSig = useRef<string | null>(null);
+  const [approach, setApproach] = useState<DraftApproach | null>(null); const edits = useRef<Record<string, { subject: string; text: string }>>({}); // je Ansatz die eigenen Änderungen merken
   const [generatingIds, setGeneratingIds] = useState<Set<number>>(new Set());
   const items = useMemo(() => (queue.data?.items ?? []) as Item[], [queue.data]);
   const visible = items.filter((item) => filter === "alle" || stateOf(item) === filter);
@@ -36,16 +38,17 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
   // Auswahl: erster Kontakt, der noch nicht freigegeben ist
   useEffect(() => { if (selectedId !== null && items.some((item) => item.id === selectedId)) return; const next = items.find((item) => item.draftState !== "freigegeben") ?? items[0] ?? null; setSelectedId(next?.id ?? null); }, [items, selectedId]);
   // Entwurf in die Felder laden, sobald ein anderer Kontakt gewählt wird oder sein Entwurf ankommt
-  useEffect(() => { if (!selected) return; const sig = `${selected.id}|${String(selected.draftAt ?? "")}|${selected.draftSubject ?? ""}|${(selected.draftText ?? "").length}`; if (loadedSig.current !== sig) { loadedSig.current = sig; setSubject(selected.draftSubject ?? ""); setText(selected.draftText ?? ""); } }, [selected]);
+  useEffect(() => { if (!selected) return; const sig = `${selected.id}|${String(selected.draftAt ?? "")}|${selected.draftSubject ?? ""}|${(selected.draftText ?? "").length}`; if (loadedSig.current !== sig) { loadedSig.current = sig; edits.current = {}; setApproach(selected.draftApproach ?? selected.draftOptions?.[0]?.key ?? null); setSubject(selected.draftSubject ?? ""); setText(selected.draftText ?? ""); } }, [selected]);
   // Ohne Entwurf: KI schreibt ihn beim Auswählen – und die nächsten zwei gleich mit, damit es flüssig weitergeht
   const generateFor = (ids: number[]) => { const fresh = ids.filter((id) => !generatingIds.has(id)); if (!fresh.length) return; setGeneratingIds((current) => { const next = new Set(current); for (const id of fresh) next.add(id); return next; }); generate.mutate({ campaignId, recipientIds: fresh }, { onSettled: () => setGeneratingIds((current) => { const next = new Set(current); for (const id of fresh) next.delete(id); return next; }) }); };
   useEffect(() => { if (!selected || queue.isFetching) return; const pending = [selected, ...items.filter((item) => item.id !== selected.id && !item.draftState).slice(0, 2)].filter((item) => !item.draftState && !generatingIds.has(item.id)).map((item) => item.id); if (pending.length) generateFor(pending); }, [selected?.id, queue.isFetching]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty = selected ? subject !== (selected.draftSubject ?? "") || text !== (selected.draftText ?? "") : false;
   const goNext = () => { const index = visible.findIndex((item) => item.id === selectedId); const next = visible.slice(index + 1).find((item) => item.draftState !== "freigegeben") ?? visible.find((item) => item.id !== selectedId && item.draftState !== "freigegeben") ?? null; setSelectedId(next?.id ?? null); };
-  const approve = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: true }, { onSuccess: () => { toast.success(`Freigegeben – geht an ${selected.name || selected.email} raus.`); refresh(); goNext(); } }); };
-  const keep = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: false }, { onSuccess: () => { toast.success("Entwurf gespeichert."); refresh(); } }); };
-  const unapprove = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: false }, { onSuccess: () => { toast.success("Freigabe zurückgenommen – die E-Mail wartet wieder."); refresh(); } }); };
+  const switchTo = (key: DraftApproach) => { if (!selected || key === approach) return; if (approach) edits.current[approach] = { subject, text }; const option = selected.draftOptions?.find((item) => item.key === key); const kept = edits.current[key]; setApproach(key); setSubject(kept?.subject ?? option?.subject ?? ""); setText(kept?.text ?? option?.text ?? ""); };
+  const approve = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: true, approach }, { onSuccess: () => { toast.success(`Freigegeben – geht an ${selected.name || selected.email} raus.`); refresh(); goNext(); } }); };
+  const keep = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: false, approach }, { onSuccess: () => { toast.success("Entwurf gespeichert."); refresh(); } }); };
+  const unapprove = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: false, approach }, { onSuccess: () => { toast.success("Freigabe zurückgenommen – die E-Mail wartet wieder."); refresh(); } }); };
   const isGenerating = selected ? generatingIds.has(selected.id) : false;
 
   return <section className="rv-panel" aria-label="Erst-E-Mails freigeben">
@@ -67,12 +70,13 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
       <div className="rv-editor">
         {!selected ? <p className="cd-empty">Links einen Kontakt wählen.</p> : <>
           <div className="rv-editor-head">
-            <div className="rv-editor-who"><strong>{selected.name || selected.email}</strong><small>{selected.email}{selected.company ? ` · ${selected.company}` : ""}{selected.city ? ` · ${selected.city}` : ""}{selected.listName ? ` · Liste „${selected.listName}“` : ""}</small></div>
+            <div className="rv-editor-who"><strong>{selected.name || selected.email}</strong><small>{selected.email}{selected.company ? ` · ${selected.company}` : ""}{selected.city ? ` · ${selected.city}` : ""}{selected.listName ? ` · Liste „${selected.listName}“` : ""}{selected.website ? ` · ${selected.website.replace(/^https?:\/\//i, "").replace(/\/$/, "")}` : ""}</small></div>
             <div className="rv-editor-tools">{selected.publicId && onOpenLead && <button type="button" className="cj-btn" title="Karte in der Pipeline öffnen" onClick={() => onOpenLead(selected.publicId!)}><ExternalLink className="h-3.5 w-3.5" /> Karte</button>}<button type="button" className="cj-btn" disabled={isGenerating || save.isPending} title="Die KI schreibt einen neuen Entwurf für diesen Kontakt" onClick={() => generateFor([selected.id])}><RefreshCw className={`h-3.5 w-3.5 ${isGenerating ? "animate-spin" : ""}`} /> {selected.draftState ? "KI neu schreiben" : "KI-Entwurf"}</button><button type="button" className="cj-btn is-danger" disabled={stop.isPending} title="Aus dem E-Mail-Funnel nehmen – keine E-Mail an diesen Kontakt" onClick={async () => { if (await confirmAction(`${selected.name || selected.email} aus dem E-Mail-Funnel nehmen? Es geht keine E-Mail raus.`, { confirmLabel: "Aus Funnel nehmen" })) stop.mutate({ recipientId: selected.id }); }}><MailX className="h-3.5 w-3.5" /></button></div>
           </div>
           {selected.draftState === "freigegeben" && <p className="rv-note is-ok"><Check className="h-3.5 w-3.5" /> Freigegeben – geht beim nächsten Versandlauf raus (Versandfenster, Drip und Tageslimit gelten). Änderungen hier nehmen die Freigabe zurück.</p>}
-          {isGenerating && !selected.draftText && <p className="rv-note is-busy"><Sparkles className="h-3.5 w-3.5" /> Die KI schreibt gerade die persönliche E-Mail für {selected.company || selected.name || "diesen Kontakt"} …</p>}
-          {selected.draftSource === "vorlage" && selected.draftState && <p className="rv-note">Entwurf aus der Vorlage mit den Daten des Kontakts – ohne KI-Schlüssel schreibt die KI nicht selbst. Du kannst den Text hier frei anpassen.</p>}
+          {isGenerating && !selected.draftText && <p className="rv-note is-busy"><Sparkles className="h-3.5 w-3.5" /> Die KI {selected.website ? "liest die Webseite und " : ""}schreibt gerade die persönliche E-Mail für {selected.company || selected.name || "diesen Kontakt"} …</p>}
+          {selected.draftSource === "kiweb" && selected.website && <p className="rv-note is-web"><Globe className="h-3.5 w-3.5" /> Die KI hat dafür die Webseite <a href={/^https?:/i.test(selected.website) ? selected.website : `https://${selected.website}`} target="_blank" rel="noreferrer">{selected.website.replace(/^https?:\/\//i, "").replace(/\/$/, "")}</a> gelesen – bitte kurz prüfen, ob die Angaben stimmen.</p>}{selected.draftSource === "ki" && selected.draftState && <p className="rv-note">{selected.website ? <>Die Webseite {selected.website.replace(/^https?:\/\//i, "")} war nicht erreichbar – Entwurf nur aus den Daten des Kontakts.</> : "Keine Webseite bekannt – Entwurf nur aus den Daten des Kontakts. Tipp: Spalte „Webseite“ in der Liste mitgeben."}</p>}{selected.draftSource === "vorlage" && selected.draftState && <p className="rv-note">Entwurf aus der Vorlage mit den Daten des Kontakts – ohne KI-Schlüssel schreibt die KI nicht selbst. Du kannst den Text hier frei anpassen.</p>}
+          {(selected.draftOptions?.length ?? 0) > 1 && <div className="rv-approaches" role="tablist" aria-label="Ansatz wählen">{DRAFT_APPROACHES.filter((item) => selected.draftOptions?.some((option) => option.key === item.key)).map((item) => <button key={item.key} type="button" role="tab" aria-selected={approach === item.key} className={approach === item.key ? "is-active" : ""} title={item.hint} onClick={() => switchTo(item.key)}><strong>{item.label}</strong><small>{item.hint}</small></button>)}</div>}
           <label className="rv-field">Betreff<input value={subject} placeholder="Betreff der Erst-E-Mail" onChange={(event) => setSubject(event.target.value)} /></label>
           <label className="rv-field">E-Mail-Text<textarea value={text} rows={14} placeholder={isGenerating ? "KI schreibt …" : "Persönlicher Text für diesen Kontakt – Grußformel ohne Namen, die Signatur hängt das System an."} onChange={(event) => setText(event.target.value)} /></label>
           <div className="rv-editor-foot">

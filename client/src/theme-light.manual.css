@@ -1399,3 +1399,9 @@ html:not(.dark) .card-panel-head-actions button.card-block:hover { color: #be123
 html:not(.dark) .card-panel-head-actions button.card-block.is-blocked { color: #be123c !important; border-color: #fecdd3 !important; background: #fff1f2 !important; }
 html:not(.dark) .card-panel-head-actions button.card-block.is-blocked:hover { color: #047857 !important; border-color: #a7f3d0 !important; background: #ecfdf5 !important; }
 html:not(.dark) .pipeline-card-blocked { color: #be123c !important; }
+html:not(.dark) .rv-note.is-web { background: #f0f9ff !important; color: #075985 !important; }
+html:not(.dark) .rv-approaches button { background: #ffffff !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .rv-approaches button strong { color: #0f172a !important; }
+html:not(.dark) .rv-approaches button small { color: #667085 !important; }
+html:not(.dark) .rv-approaches button:hover { background: #f8fafc !important; }
+html:not(.dark) .rv-approaches button.is-active { border-color: #bc001d !important; background: #fff1f2 !important; }

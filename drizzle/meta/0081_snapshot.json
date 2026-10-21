@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "5325d885-4a53-4964-b8b8-a7ac82bbde17",
+  "id": "5f0e5cfd-ed63-4735-86ae-352e8b14c44e",
   "prevId": "d2665c61-28c4-4fde-835b-ef8e99f2c729",
   "tables": {
     "activityLog": {
@@ -4320,6 +4320,20 @@
         "draftAt": {
           "name": "draftAt",
           "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "draftOptions": {
+          "name": "draftOptions",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "draftApproach": {
+          "name": "draftApproach",
+          "type": "varchar(16)",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

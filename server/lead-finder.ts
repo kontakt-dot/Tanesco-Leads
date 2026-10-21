@@ -54,6 +54,24 @@ export async function findCompanies(db: Db, tenantId: number, input: { query: st
   return { provider, found: candidates.length, created, ids, center: center ? { lat: center.lat, lng: center.lng, label: center.label } : null };
 }
 async function fetchPage(url: string): Promise<string | null> { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 12000); try { const response = await fetch(url, { signal: controller.signal, headers: { "user-agent": UA, accept: "text/html" }, redirect: "follow" }); if (!response.ok) return null; const reader = response.body?.getReader(); if (!reader) return (await response.text()).slice(0, 400_000); let html = ""; const decoder = new TextDecoder(); while (html.length < 400_000) { const { done, value } = await reader.read(); if (done) break; html += decoder.decode(value, { stream: true }); } reader.cancel().catch(() => undefined); return html; } catch { return null; } finally { clearTimeout(timer); } }
+/**
+ * Webseite eines Kontakts lesen (Startseite + bis zu zwei Unterseiten wie Leistungen/Über uns) – als Text für die KI,
+ * z. B. für persönliche Erst-E-Mails. Kurze Zeitbegrenzung, damit das Schreiben nicht hängt; nichts Erreichbares → leer.
+ */
+export async function readWebsiteText(website: string, options: { maxPages?: number; maxChars?: number; timeoutMs?: number } = {}): Promise<{ url: string; text: string; pages: number } | null> {
+  const maxPages = options.maxPages ?? 3; const maxChars = options.maxChars ?? 9000; const timeoutMs = options.timeoutMs ?? 8000;
+  let base: URL; try { base = new URL(/^https?:\/\//i.test(website.trim()) ? website.trim() : `https://${website.trim().replace(/^\/+/, "")}`); } catch { return null; }
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(base.hostname) || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(base.hostname)) return null;
+  const grab = async (url: string) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs); try { const response = await fetch(url, { signal: controller.signal, headers: { "user-agent": UA, accept: "text/html" }, redirect: "follow" }); if (!response.ok || !/text\/html/i.test(response.headers.get("content-type") ?? "text/html")) return null; const reader = response.body?.getReader(); if (!reader) return (await response.text()).slice(0, 300_000); let html = ""; const decoder = new TextDecoder(); while (html.length < 300_000) { const { done, value } = await reader.read(); if (done) break; html += decoder.decode(value, { stream: true }); } reader.cancel().catch(() => undefined); return html; } catch { return null; } finally { clearTimeout(timer); } };
+  let home = await grab(base.toString()); if (!home && base.protocol === "https:") { base.protocol = "http:"; home = await grab(base.toString()); } if (!home) return null;
+  const title = /<title[^>]*>([^<]{1,200})<\/title>/i.exec(home)?.[1]?.trim() ?? ""; const description = /<meta[^>]+name=["']description["'][^>]+content=["']([^"']{1,400})["']/i.exec(home)?.[1]?.trim() ?? "";
+  const texts: string[] = [[title, description].filter(Boolean).join(" – "), stripHtml(home).slice(0, Math.floor(maxChars * 0.6))];
+  const links = Array.from(new Set(Array.from(home.matchAll(/href=["']([^"'#?]+)["']/gi)).map((match) => match[1]).filter((href) => /leistung|service|angebot|ueber-uns|über-uns|unternehmen|about|referenz|projekt/i.test(href)))).slice(0, 6);
+  const subpages: string[] = []; for (const href of links) { try { const url = new URL(href, base); if (url.origin === base.origin && url.toString() !== base.toString()) subpages.push(url.toString()); } catch { /* Link ignorieren */ } if (subpages.length >= maxPages - 1) break; }
+  const extra = await Promise.all(subpages.map(async (url) => { const html = await grab(url); return html ? stripHtml(html).slice(0, Math.floor(maxChars * 0.3)) : ""; }));
+  const text = [...texts, ...extra].filter((part) => part.trim()).join("\n\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").slice(0, maxChars).trim();
+  return text.length >= 80 ? { url: base.toString(), text, pages: 1 + extra.filter(Boolean).length } : null;
+}
 /** Webseite + Impressum/Kontakt lesen, Profil extrahieren, optional per KI zusammenfassen. */
 export async function enrichProspect(db: Db, tenantId: number, id: number) {
   const row = (await db.select().from(companyProspects).where(and(eq(companyProspects.id, id), eq(companyProspects.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Firma nicht gefunden.");

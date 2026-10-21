@@ -33,3 +33,32 @@ describe("Message-IDs", () => {
     expect(messageIdsIn("<a@x.de> <B@y.de>")).toEqual(["a@x.de", "b@y.de"]); expect(messageIdsIn(["<a@x.de>", "c@z.de"])).toEqual(["a@x.de", "c@z.de"]); expect(messageIdsIn("c@z.de")).toEqual(["c@z.de"]); expect(messageIdsIn("")).toEqual([]);
   });
 });
+
+describe("Webseite des Kontakts", () => {
+  it("nimmt das Feld aus der Liste, sonst die Firmen-Domain der E-Mail – nie Gmail & Co.", async () => {
+    const { websiteOf } = await import("./campaign-review");
+    expect(websiteOf({ felder: { Webseite: "www.koppen-solar.de" } }, "info@koppen.de")).toBe("www.koppen-solar.de");
+    expect(websiteOf({ website: "https://firma.de" }, null)).toBe("https://firma.de");
+    expect(websiteOf({}, "info@koppen.de")).toBe("koppen.de");
+    expect(websiteOf({}, "max@gmail.com")).toBeNull();
+    expect(websiteOf({ felder: { Homepage: "keine" } }, "hans@web.de")).toBeNull();
+  });
+});
+
+describe("Webseite lesen", () => {
+  it("liest Startseite und Leistungen-Seite als Text, blockt interne Adressen", async () => {
+    const { vi } = await import("vitest");
+    const pages: Record<string, string> = {
+      "https://koppen-solar.de/": `<html><head><title>Koppen Solar – PV aus Kassel</title><meta name="description" content="Photovoltaik und Speicher für Privat und Gewerbe"></head><body><nav><a href="/leistungen">Leistungen</a><a href="/impressum">Impressum</a></nav><h1>Ihr Solarteur in Nordhessen</h1><p>Seit 2009 planen und montieren wir Photovoltaikanlagen mit eigenem Montageteam.</p><script>var x=1</script></body></html>`,
+      "https://koppen-solar.de/leistungen": `<html><body><h2>Leistungen</h2><ul><li>PV-Anlagen</li><li>Batteriespeicher</li><li>Wallboxen</li></ul></body></html>`,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { const html = pages[url]; return html ? new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }) : new Response("nope", { status: 404 }); }));
+    try {
+      const { readWebsiteText } = await import("./lead-finder");
+      const site = await readWebsiteText("koppen-solar.de");
+      expect(site?.url).toBe("https://koppen-solar.de/"); expect(site?.pages).toBe(2);
+      expect(site?.text).toContain("Koppen Solar – PV aus Kassel"); expect(site?.text).toContain("eigenem Montageteam"); expect(site?.text).toContain("Batteriespeicher"); expect(site?.text).not.toContain("var x");
+      expect(await readWebsiteText("localhost:3000")).toBeNull(); expect(await readWebsiteText("192.168.0.1")).toBeNull(); expect(await readWebsiteText("gibts-nicht.de")).toBeNull();
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
