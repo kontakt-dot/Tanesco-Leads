@@ -410,7 +410,7 @@ export async function syncEmailCampaignAudience(db: Db, tenantId: number, id: nu
   if (result.added) {
     if (campaign.status === "beendet") await db.update(emailCampaigns).set({ status: "aktiv" }).where(eq(emailCampaigns.id, id));
     await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${result.added} neue Kontakte aufgenommen`, detail: "Kontakte, die nach dem Start in die Zielgruppe kamen", refType: "emailCampaign", refId: id });
-    if (campaign.status !== "pausiert") void processEmailCampaigns(db, appUrl, { campaignId: id, limit: 25 }).catch((error) => console.error("[E-Mail-Kampagnen] Nachaufnahme:", error instanceof Error ? error.message : error));
+    if (campaign.status !== "pausiert") void processEmailCampaigns(db, appUrl, { campaignId: id, limit: 1000 }).catch((error) => console.error("[E-Mail-Kampagnen] Nachaufnahme:", error instanceof Error ? error.message : error));
   }
   return { added: result.added, paused: campaign.status === "pausiert" };
 }
@@ -459,7 +459,7 @@ export async function startEmailCampaign(db: Db, tenantId: number, id: number, a
   await db.update(emailCampaigns).set({ status: "aktiv", startedAt: campaign.startedAt ?? new Date() }).where(eq(emailCampaigns.id, id));
   await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“ gestartet`, detail: `${added} Empfänger aufgenommen${repeated ? ` (${repeated} erneut)` : ""}${skipped ? ` · ${skipped} übersprungen (${maxRunsLabel(maxRuns)})` : ""}`, refType: "emailCampaign", refId: id });
   // Versand läuft im Hintergrund (SMTP kann dauern) – die Anfrage kehrt sofort zurück; der Zeitplaner nimmt den Rest.
-  const processed = await Promise.race([processEmailCampaigns(db, appUrl, { campaignId: id, limit: 25 }).catch((error) => { console.error("[E-Mail-Kampagnen] Start:", error instanceof Error ? error.message : error); return 0; }), new Promise<number>((resolve) => setTimeout(() => resolve(-1), 4000))]);
+  const processed = await Promise.race([processEmailCampaigns(db, appUrl, { campaignId: id, limit: 1000 }).catch((error) => { console.error("[E-Mail-Kampagnen] Start:", error instanceof Error ? error.message : error); return 0; }), new Promise<number>((resolve) => setTimeout(() => resolve(-1), 4000))]);
   return { added, repeated, skipped, maxRuns, processed: Math.max(processed, 0), background: processed < 0 };
 }
 export async function setEmailCampaignStatus(db: Db, tenantId: number, id: number, status: "aktiv" | "pausiert" | "beendet") { await db.update(emailCampaigns).set({ status }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
@@ -474,6 +474,9 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
     const signature = await signatureFor(db, campaign.tenantId, base).then((result) => ({ html: result.html, text: result.text })).catch(() => null); // Signatur aus den E-Mail-Einstellungen – hängt an jeder Kampagnen-Mail
     const due = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), or(isNull(emailCampaignRecipients.nextActionAt), lte(emailCampaignRecipients.nextActionAt, horizon)))).limit(options.limit ?? 100);
     for (const recipient of due) {
+      // Empfänger kurz „reservieren“: nur wer ihn hier bekommt, verschickt – zwei gleichzeitige Durchläufe (Start + Minutentakt, zwei Server) senden nie doppelt
+      const claim = await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(now.getTime() + 10 * 60_000) }).where(and(eq(emailCampaignRecipients.id, recipient.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), recipient.nextActionAt ? eq(emailCampaignRecipients.nextActionAt, recipient.nextActionAt) : isNull(emailCampaignRecipients.nextActionAt)));
+      const claimed = (claim as unknown as [{ affectedRows?: number }] | undefined)?.[0]?.affectedRows; if (claimed === 0) continue;
       const lead = recipient.leadId ? (await db.select().from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] : null;
       const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: extraFieldsOf(lead?.metadata) }, `${base}/api/mail/u/${recipient.token}`);
       const state: RecipientState = { nodeId: recipient.nodeId, nextActionAt: recipient.nextActionAt && recipient.nextActionAt <= horizon ? null : recipient.nextActionAt, status: recipient.status as RecipientState["status"], sentCount: recipient.sentCount, openedAt: recipient.openedAt, clickedAt: recipient.clickedAt, repliedAt: recipient.repliedAt, lastSentAt: recipient.lastSentAt, variant: (recipient.variant ?? null) as RecipientState["variant"], clickedUrls: (Array.isArray(recipient.clickedUrls) ? recipient.clickedUrls : []) as string[] };

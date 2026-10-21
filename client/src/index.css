@@ -2869,8 +2869,8 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .tree-leads.is-empty{background:rgba(255,255,255,.06);color:#8a87a8;box-shadow:none;cursor:default}
 .node-leads-dialog{max-width:min(560px,94vw)!important}
 .node-leads-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-height:60vh;overflow:auto}
-.node-leads-list button{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:10px;text-align:left}
-.node-leads-list button:hover{background:rgba(255,255,255,.05)}
+.node-leads-list .node-leads-open{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:10px;text-align:left}
+.node-leads-list .node-leads-open:hover{background:rgba(255,255,255,.05)}
 .node-leads-meta{display:flex;flex-direction:column;align-items:flex-end}
 .node-leads-meta em{font-style:normal;font-size:11px;font-weight:600;color:#c4bfff}
 .node-leads-meta small{font-size:11px;color:#8a87a8;white-space:nowrap}
@@ -2885,7 +2885,17 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .node-attachments li small,.node-attachments-hint{font-size:11.5px;color:#8a87a8}
 .node-attachments li button{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;color:#a5a3c4}
 .node-attachments li button:hover{background:rgba(251,113,133,.14);color:#fda4af}
-.node-leads-list li{display:flex;align-items:center;gap:4px}
+.node-leads-list li{display:grid;grid-template-columns:minmax(0,1fr) 30px;align-items:center;gap:4px}
+.node-leads-open .cd-who{min-width:0;display:grid}.node-leads-open .cd-who strong,.node-leads-open .cd-who small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .node-leads-list li .node-leads-open{flex:1 1 auto;min-width:0}
-.node-leads-stop{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:#a5a3c4;flex:0 0 auto}
+.node-leads-list .node-leads-stop{display:grid;place-items:center;width:28px;padding:0;height:28px;border-radius:8px;color:#a5a3c4;flex:0 0 auto}
 .node-leads-stop:hover{background:rgba(251,113,133,.14);color:#fda4af}
+/* Filter nach Liste (Kampagnen-Übersicht + Empfänger) und Startdatum */
+.cd-list-filter{position:relative;display:inline-flex;align-items:center;min-width:0;max-width:100%}
+.cd-list-filter::after{content:"";position:absolute;right:12px;top:50%;width:6px;height:6px;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;color:#a5a3c4;transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.cd-list-filter select{-webkit-appearance:none;appearance:none;height:34px;line-height:32px;max-width:min(360px,100%);padding:0 32px 0 12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#f1f0fb;font-size:12.5px;font-weight:600;text-overflow:ellipsis}
+.cd-list-filter select option{color:#0f172a;background:#fff}
+.cl-filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 18px 0}
+.cl-filter-count{font-size:12px;color:#a5a3c4}
+.cl-name small.cl-started{display:block;margin-top:2px;font-size:11.5px;color:#8f93af}
+.cd-panel-head{flex-wrap:wrap}
