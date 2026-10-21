@@ -1610,6 +1610,10 @@ html:not(.dark) .email-leads-block { color: #8b5a60 !important; }
 html:not(.dark) .email-leads-row-tools .email-leads-blockrow:hover { color: #8b5a60 !important; }
 html:not(.dark) .email-leads-row-tools .email-leads-unblock { color: #3c7f64 !important; }
 html:not(.dark) .email-leads-row-tools .email-leads-unblock:hover { color: #4e846c !important; }
+html:not(.dark) .card-panel-head-actions button.card-block:hover { color: #8b5a60 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block.is-blocked { color: #8b5a60 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block.is-blocked:hover { color: #3c7f64 !important; }
+html:not(.dark) .pipeline-card-blocked { color: #8b5a60 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -3253,3 +3257,7 @@ html:not(.dark) .campaign-act.is-danger:hover:not(:disabled) { background: #ffe4
 html:not(.dark) .email-leads-state.is-gesperrt { background: #fff1f2 !important; color: #be123c !important; }
 html:not(.dark) .email-leads-block { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #be123c !important; }
 html:not(.dark) .email-leads-row-tools .email-leads-unblock { color: #047857 !important; border-color: #a7f3d0 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block:hover { color: #be123c !important; border-color: #fecdd3 !important; background: #fff1f2 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block.is-blocked { color: #be123c !important; border-color: #fecdd3 !important; background: #fff1f2 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block.is-blocked:hover { color: #047857 !important; border-color: #a7f3d0 !important; background: #ecfdf5 !important; }
+html:not(.dark) .pipeline-card-blocked { color: #be123c !important; }

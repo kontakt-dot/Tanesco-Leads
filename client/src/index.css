@@ -2976,3 +2976,7 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .email-leads-row-tools .email-leads-blockrow:hover{border-color:rgba(251,113,133,.5);color:#fda4af}
 .email-leads-row-tools .email-leads-unblock{width:auto;padding:0 6px;margin-right:2px;font-size:10.5px;font-weight:600;color:#6ee7b7;border-color:rgba(52,211,153,.35)}
 .email-leads-row-tools .email-leads-unblock:hover{border-color:rgba(52,211,153,.6);color:#8ff0c6}
+.card-panel-head-actions button.card-block:hover{color:#fda4af;border-color:rgba(251,113,133,.6);background:rgba(251,113,133,.12)}
+.card-panel-head-actions button.card-block.is-blocked{color:#fda4af;border-color:rgba(251,113,133,.5);background:rgba(251,113,133,.12)}
+.card-panel-head-actions button.card-block.is-blocked:hover{color:#6ee7b7;border-color:rgba(52,211,153,.6);background:rgba(52,211,153,.12)}
+.pipeline-card-blocked{display:inline-flex;align-items:center;gap:3px;color:#fda4af;font-size:10.5px;font-weight:700}

@@ -592,7 +592,7 @@ function demoCardExtras(rows: Row[], noteCounts: Map<number, number>, now = new 
     const replied = T().inboxMessages.some((item) => item.leadId === row.id && !item.blocked);
     const meta = metadataOf(row);
     const scored = leadScore({ phone: row.phone ?? null, email: row.email ?? null, company: row.company ?? null, pipelineStage: row.pipelineStage ?? null, stages: stagesDef, dealValue: row.dealValue ?? null, appointmentAt: row.appointmentAt ?? null, createdAt: row.createdAt, lastActivityAt: last, stale: stale.stale, staleDays: settings.staleDays, noteCount: noteCounts.get(row.id) ?? 0, openTasks: tasks.length, mail: mailReactionOf(recipients, replied), lastCallDisposition: typeof meta.lastCallDisposition === "string" ? meta.lastCallDisposition : null }, now);
-    out.set(row.id, { openTasks: tasks.length, nextTask: tasks[0] ? { title: tasks[0].title, dueAt: tasks[0].dueAt, kind: tasks[0].kind } : null, lastActivityAt: last, staleDays: stale.days, stale: stale.stale, score: scored.score, temperature: scored.temperature, scoreLabel: scored.label, scoreReasons: scored.reasons, calls: demoCallCounter(row.id) });
+    out.set(row.id, { openTasks: tasks.length, nextTask: tasks[0] ? { title: tasks[0].title, dueAt: tasks[0].dueAt, kind: tasks[0].kind } : null, lastActivityAt: last, staleDays: stale.days, stale: stale.stale, score: scored.score, temperature: scored.temperature, scoreLabel: scored.label, scoreReasons: scored.reasons, calls: demoCallCounter(row.id), blocked: Boolean(row.email && demoSuppressionOf(String(row.email))) });
   }
   return { extras: out, settings };
 }

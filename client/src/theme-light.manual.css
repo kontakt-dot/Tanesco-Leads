@@ -1395,3 +1395,7 @@ html:not(.dark) .campaign-act.is-danger:hover:not(:disabled) { background: #ffe4
 html:not(.dark) .email-leads-state.is-gesperrt { background: #fff1f2 !important; color: #be123c !important; }
 html:not(.dark) .email-leads-block { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #be123c !important; }
 html:not(.dark) .email-leads-row-tools .email-leads-unblock { color: #047857 !important; border-color: #a7f3d0 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block:hover { color: #be123c !important; border-color: #fecdd3 !important; background: #fff1f2 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block.is-blocked { color: #be123c !important; border-color: #fecdd3 !important; background: #fff1f2 !important; }
+html:not(.dark) .card-panel-head-actions button.card-block.is-blocked:hover { color: #047857 !important; border-color: #a7f3d0 !important; background: #ecfdf5 !important; }
+html:not(.dark) .pipeline-card-blocked { color: #be123c !important; }
