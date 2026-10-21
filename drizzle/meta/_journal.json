@@ -568,6 +568,13 @@
       "when": 1792593420000,
       "tag": "0080_rueckgaengig",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "5",
+      "when": 1792680000000,
+      "tag": "0081_einzeln_freigeben",
+      "breakpoints": true
     }
   ]
 }

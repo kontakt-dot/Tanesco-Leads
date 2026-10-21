@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-process.env.EMAIL_DRIP_OFF = "1"; // Drip-Versand im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigener Test unten in campaign-drip.test.ts)
+process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
 import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
@@ -2507,5 +2507,60 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.undoOperation({ id: stopped.undoId }); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, fritz.id)))[0].status).toBe(fritz.status);
     const single = await owner.leadops.stopRecipientInCampaign({ recipientId: fritz.id }); expect(single.stopped).toBe(1);
     await expect(owner.leadops.stopRecipientInCampaign({ recipientId: fritz.id })).rejects.toThrow(/keiner laufenden/);
+  }, 30000);
+
+  it("54. Erst-E-Mail einzeln freigeben: nichts geht ohne Freigabe raus, Entwurf (Vorlage) wird persönlich, freigegebener Text wird gesendet; Tageslimit für alle Kampagnen zusammen", async () => {
+    await owner.leadops.importColdList({ listName: "Freigabe-Test", toPipeline: false, rows: [{ firstName: "Rita", lastName: "Review", company: "Review Dach GmbH", city: "Kassel", email: "rita@review-e2e.example" }, { firstName: "Olaf", lastName: "Offen", company: "Offen Solar", email: "olaf@offen-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Freigabe-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Freigabe-Test" }, tree: starter.tree, design: {}, reviewFirst: true, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).reviewFirst).toBe(true);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+    expect(recipients.every((row) => row.sentCount === 0)).toBe(true); // ohne Freigabe geht nichts raus
+    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0 });
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toEqual({ offen: 2, entwurf: 0, freigegeben: 0 });
+    const rita = queue.items.find((item) => item.email === "rita@review-e2e.example")!; expect(rita.city).toBe("Kassel");
+    const drafts = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [rita.id] }); // ohne KI-Schlüssel: Vorlage mit den Daten des Kontakts
+    expect(drafts.drafts).toHaveLength(1); expect(drafts.drafts[0].subject).toContain("Review Dach GmbH"); expect(drafts.drafts[0].text).not.toContain("{{"); expect(drafts.drafts[0].text).not.toMatch(/ {2}/); expect(drafts.drafts[0].text).toContain("Review,");
+    expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).counts).toEqual({ offen: 1, entwurf: 1, freigegeben: 0 });
+    await owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "Persönlich für Review Dach", text: "Guten Tag Frau Review,\n\nIhr Betrieb in Kassel ist uns aufgefallen. Kurz telefonieren?\n\nViele Grüße", approve: false });
+    await owner.leadops.runEmailCampaigns(); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, rita.id)))[0].sentCount).toBe(0); // gespeichert ≠ freigegeben
+    await owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "Persönlich für Review Dach", text: "Guten Tag Frau Review,\n\nIhr Betrieb in Kassel ist uns aufgefallen. Kurz telefonieren?\n\nViele Grüße", approve: true });
+    await owner.leadops.runEmailCampaigns();
+    const ritaRow = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, rita.id)))[0]; expect(ritaRow.sentCount).toBe(1);
+    const sentEvent = (await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, rita.id), eq(emailCampaignEvents.kind, "gesendet"))))[0]; expect(sentEvent.subject).toBe("Persönlich für Review Dach");
+    const olaf = recipients.find((row) => row.email === "olaf@offen-e2e.example")!; expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, olaf.id)))[0].sentCount).toBe(0);
+    await expect(owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "x", text: "schon raus", approve: true })).rejects.toThrow(/schon raus/);
+    // Tageslimit (alle Kampagnen zusammen): heute wurden schon viele gesendet → mit Limit 1 geht Olaf nicht mehr raus
+    delete process.env.EMAIL_THROTTLE_OFF;
+    try {
+      await owner.leadops.setCampaignDailyLimit({ limit: 1 }); const status = await owner.leadops.campaignDailyStatus(); expect(status.limit).toBe(1); expect(status.left).toBe(0);
+      await owner.leadops.saveCampaignDraft({ recipientId: olaf.id, subject: "Für Offen Solar", text: "Guten Tag Herr Offen, kurze Frage zu Ihrem Bedarf.", approve: true });
+      await owner.leadops.runEmailCampaigns(); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, olaf.id)))[0].sentCount).toBe(0);
+      await owner.leadops.setCampaignDailyLimit({ limit: 2000 }); expect((await owner.leadops.campaignDailyStatus()).left).toBeGreaterThan(0);
+    } finally { process.env.EMAIL_THROTTLE_OFF = "1"; }
+    await owner.leadops.runEmailCampaigns(); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, olaf.id)))[0].sentCount).toBe(1);
+    expect((await owner.leadops.saveMailSettings({ provider: "smtp", campaignDailyLimit: 50 } as never)).success).toBe(true); expect((await owner.leadops.campaignDailyStatus()).limit).toBe(50);
+  }, 40000);
+
+  it("55. Antworten sicher zuordnen: über die Message-ID der gesendeten Mail (In-Reply-To), über „Antworten an“ und über die Firmen-Domain mit Unter-Domain", async () => {
+    await owner.leadops.importColdList({ listName: "Zuordnung-Test", toPipeline: false, rows: [{ firstName: "Zoe", lastName: "Zuordnung", company: "Zuordnung Energie GmbH", email: "info@zuordnung-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter({ kind: "kaltakquise" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Zuordnung-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Zuordnung-Test" }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const zoe = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)))[0];
+    await db.update(emailCampaignEvents).set({ messageId: "abc123@tanesco-test.example" }).where(and(eq(emailCampaignEvents.recipientId, zoe.id), eq(emailCampaignEvents.kind, "gesendet"))); // simulierter Versand hat keine Message-ID – hier nachgetragen
+    // 1. ganz andere Adresse und anderer Betreff, aber In-Reply-To passt → Zoe
+    const viaReference = await owner.leadops.storeInboxMessage({ fromEmail: "chef@ganz-andere-firma.example", subject: "Rückruf", bodyText: "Bitte um Rückruf.", references: ["<ABC123@tanesco-test.example>"] });
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, viaReference.id)))[0].campaignRecipientId).toBe(zoe.id);
+    // 2. Absender ist ein Ticketsystem, „Antworten an“ ist die Firmenadresse → Zoe
+    const viaReplyTo = await owner.leadops.storeInboxMessage({ fromEmail: "noreply@ticketsystem.example", subject: "Ticket #4711", bodyText: "Wir melden uns.", replyAddresses: ["info@zuordnung-e2e.example"] });
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, viaReplyTo.id)))[0].campaignRecipientId).toBe(zoe.id);
+    // 3. Unter-Domain derselben Firma → Zoe
+    const viaSubdomain = await owner.leadops.storeInboxMessage({ fromEmail: "hallo@mail.zuordnung-e2e.example", subject: "Interesse", bodyText: "Klingt interessant." });
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, viaSubdomain.id)))[0].campaignRecipientId).toBe(zoe.id);
+    const { rootDomain, companySlug } = await import("./inbox");
+    expect(rootDomain("mail.firma.de")).toBe("firma.de"); expect(rootDomain("firma.co.uk")).toBe("firma.co.uk"); expect(rootDomain("a.b.firma.com")).toBe("firma.com");
+    expect(companySlug("Koppen GmbH & Co. KG")).toBe("koppen"); expect(companySlug("Thüga Energie")).toBe("thuegaenergie"); expect(companySlug("AB GmbH")).toBeNull();
   }, 30000);
 });

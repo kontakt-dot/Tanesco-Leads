@@ -1362,3 +1362,27 @@ html:not(.dark) .drip-box { border-color: #e2e8f0 !important; background: #f8faf
 html:not(.dark) .drip-box.is-on { border-color: #a7f3d0 !important; background: #ecfdf5 !important; }
 html:not(.dark) .drip-head strong { color: #0f172a !important; }
 html:not(.dark) .drip-head small, html:not(.dark) .drip-hint { color: #475467 !important; }
+html:not(.dark) .rv-panel, html:not(.dark) .rv-editor { background: #ffffff !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .rv-head h2, html:not(.dark) .rv-editor-who strong, html:not(.dark) .rv-banner strong { color: #0f172a !important; }
+html:not(.dark) .rv-head p, html:not(.dark) .rv-editor-who small, html:not(.dark) .rv-editor-foot > small, html:not(.dark) .rv-state small, html:not(.dark) .rv-field { color: #667085 !important; }
+html:not(.dark) .rv-limit { background: #fffbeb !important; border-color: #fcd34d !important; color: #92400e !important; }
+html:not(.dark) .rv-item:hover { background: #f8fafc !important; }
+html:not(.dark) .rv-item.is-active { background: #fff1f2 !important; border-color: #bc001d !important; }
+html:not(.dark) .rv-state em { background: #f1f5f9 !important; color: #475467 !important; }
+html:not(.dark) .rv-state em.is-ok { background: #ecfdf5 !important; color: #047857 !important; }
+html:not(.dark) .rv-state em.is-draft { background: #fffbeb !important; color: #b45309 !important; }
+html:not(.dark) .rv-state em.is-busy { background: #ffe4e6 !important; color: #9f0018 !important; }
+html:not(.dark) .rv-note { background: #f8fafc !important; color: #475467 !important; }
+html:not(.dark) .rv-note.is-ok { background: #ecfdf5 !important; color: #047857 !important; }
+html:not(.dark) .rv-note.is-busy { background: #ffe4e6 !important; color: #9f0018 !important; }
+html:not(.dark) .rv-field input, html:not(.dark) .rv-field textarea { background: #ffffff !important; border-color: #e2e8f0 !important; color: #0f172a !important; }
+html:not(.dark) .rv-field input:focus, html:not(.dark) .rv-field textarea:focus { outline-color: #bc001d !important; }
+html:not(.dark) .rv-banner { background: #fff1f2 !important; border-color: #fecdd3 !important; }
+html:not(.dark) .rv-banner p { color: #9f0018 !important; }
+html:not(.dark) .reply-stop.is-review.is-on { background: #fffbeb !important; border-color: #fcd34d !important; color: #92400e !important; }
+html:not(.dark) .reply-stop.is-review.is-on svg { color: #d97706 !important; }
+html:not(.dark) .dash-pill.is-amber { background: #fffbeb !important; border-color: #fcd34d !important; color: #92400e !important; }
+html:not(.dark) .cl-daily { color: #667085 !important; }
+html:not(.dark) .cl-daily.is-full { color: #b45309 !important; }
+html:not(.dark) .reply-stop.is-review.is-off-muted { background: #f8fafb !important; border-color: #e5e7ee !important; color: #64748b !important; }
+html:not(.dark) .reply-stop.is-review.is-off-muted svg { color: #94a3b8 !important; }

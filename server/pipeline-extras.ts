@@ -18,6 +18,7 @@ import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELI
 import { newCustomSourceKey, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
 import { contactedStage, entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
+import { normalizeMessageId } from "../shared/message-id";
 import type { Db } from "./lead-pipeline";
 
 type LeadRow = typeof leads.$inferSelect;
@@ -197,7 +198,7 @@ export async function sendLeadMessage(db: Db, tenantId: number, input: MessageIn
       const rendered = renderNode(node, { ...DEFAULT_DESIGN, ...((campaign.design ?? {}) as Partial<EmailDesign>) }, values, { logoBase: (input.appUrl ?? process.env.APP_URL ?? "").replace(/\/+$/, ""), unsubscribeUrl: null, signature: campaignSignature });
       subject = rendered.subject; html = rendered.html; text = rendered.text;
     } else { subject = fillMessage(input.subject?.trim() || "Nachricht von Tanesco Digital", values); if (!text) throw new Error("Bitte einen Text eingeben."); const { signatureFor } = await import("./mail-settings"); const signature = await signatureFor(db, tenantId, input.appUrl ?? null); html = `<p style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6">${text.replace(/\n/g, "<br>")}</p>${signature.html}`; text = `${text}${signature.text}`; } // freie E-Mail aus der Karte bekommt die Signatur wie eine Posteingangs-Antwort
-    const result = await deliverMail({ to: lead.email, subject, html, text }, { db, tenantId }); status = result.status; providerName = "smtp"; providerSid = result.messageId ?? null; error = result.ok ? null : result.note ?? null;
+    const result = await deliverMail({ to: lead.email, subject, html, text }, { db, tenantId }); status = result.status; providerName = "smtp"; providerSid = normalizeMessageId(result.messageId) ?? result.messageId ?? null; error = result.ok ? null : result.note ?? null;
   } else {
     const phone = normalizePhone(lead.phone); if (!phone) throw new Error("Der Kontakt hat keine gültige Telefonnummer.");
     if (!text) throw new Error("Bitte einen Text eingeben."); if (text.length > SMS_LIMIT) throw new Error(`Die Nachricht ist zu lang (max. ${SMS_LIMIT} Zeichen).`);

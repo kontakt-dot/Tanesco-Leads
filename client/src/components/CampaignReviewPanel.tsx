@@ -1,0 +1,89 @@
+import { trpc } from "@/lib/trpc";
+import { confirmAction } from "@/lib/confirm";
+import { Check, ChevronRight, ExternalLink, MailX, PenLine, RefreshCw, Sparkles, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+
+/**
+ * Erst-E-Mails einzeln schreiben & freigeben: links alle Kontakte, deren erste E-Mail noch nicht raus ist, rechts der
+ * Entwurf (KI oder Vorlage) zum Lesen, Ändern und Freigeben. Freigegebene E-Mails gehen im Minutentakt raus –
+ * innerhalb von Versandfenster, Drip und Tageslimit.
+ */
+type Item = { id: number; email: string; name: string | null; company: string | null; city: string | null; listName: string | null; publicId: string | null; draftSubject: string | null; draftText: string | null; draftState: "entwurf" | "freigegeben" | null; draftSource: string | null; draftAt: string | Date | null };
+type Filter = "alle" | "offen" | "entwurf" | "freigegeben";
+const FILTERS: Array<[Filter, string]> = [["alle", "Alle"], ["offen", "Ohne Entwurf"], ["entwurf", "Zu prüfen"], ["freigegeben", "Freigegeben"]];
+const initialsOf = (text: string) => text.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
+const stateOf = (item: Item): Filter => item.draftState === "freigegeben" ? "freigegeben" : item.draftState === "entwurf" ? "entwurf" : "offen";
+const STATE_LABEL: Record<Filter, string> = { alle: "", offen: "Kein Entwurf", entwurf: "Zu prüfen", freigegeben: "Freigegeben – geht raus" };
+
+export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }: { campaignId: number; onClose: () => void; onOpenLead?: (publicId: string) => void }) {
+  const utils = trpc.useUtils();
+  const queue = trpc.leadops.campaignReviewQueue.useQuery({ campaignId }, { retry: false, refetchInterval: 20_000 });
+  const daily = trpc.leadops.campaignDailyStatus.useQuery(undefined, { retry: false, refetchInterval: 60_000 });
+  const refresh = () => { void utils.leadops.campaignReviewQueue.invalidate({ campaignId }); void utils.leadops.getEmailCampaign.invalidate({ id: campaignId }); void utils.leadops.listEmailCampaigns.invalidate(); };
+  const generate = trpc.leadops.generateCampaignDrafts.useMutation({ onSuccess: (result) => { refresh(); if (result.failed) toast.error(`${result.failed} Entwurf${result.failed === 1 ? "" : "e"} konnte${result.failed === 1 ? "" : "n"} nicht geschrieben werden.`); }, onError: (error) => toast.error(error.message) });
+  const save = trpc.leadops.saveCampaignDraft.useMutation({ onError: (error) => toast.error(error.message) });
+  const stop = trpc.leadops.stopRecipientInCampaign.useMutation({ onSuccess: () => { toast.success("Aus dem E-Mail-Funnel genommen."); refresh(); }, onError: (error) => toast.error(error.message) });
+  const [filter, setFilter] = useState<Filter>("alle");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [subject, setSubject] = useState(""); const [text, setText] = useState(""); const loadedSig = useRef<string | null>(null);
+  const [generatingIds, setGeneratingIds] = useState<Set<number>>(new Set());
+  const items = useMemo(() => (queue.data?.items ?? []) as Item[], [queue.data]);
+  const visible = items.filter((item) => filter === "alle" || stateOf(item) === filter);
+  const selected = items.find((item) => item.id === selectedId) ?? null;
+  const counts = queue.data?.counts ?? { offen: 0, entwurf: 0, freigegeben: 0 };
+
+  // Auswahl: erster Kontakt, der noch nicht freigegeben ist
+  useEffect(() => { if (selectedId !== null && items.some((item) => item.id === selectedId)) return; const next = items.find((item) => item.draftState !== "freigegeben") ?? items[0] ?? null; setSelectedId(next?.id ?? null); }, [items, selectedId]);
+  // Entwurf in die Felder laden, sobald ein anderer Kontakt gewählt wird oder sein Entwurf ankommt
+  useEffect(() => { if (!selected) return; const sig = `${selected.id}|${String(selected.draftAt ?? "")}|${selected.draftSubject ?? ""}|${(selected.draftText ?? "").length}`; if (loadedSig.current !== sig) { loadedSig.current = sig; setSubject(selected.draftSubject ?? ""); setText(selected.draftText ?? ""); } }, [selected]);
+  // Ohne Entwurf: KI schreibt ihn beim Auswählen – und die nächsten zwei gleich mit, damit es flüssig weitergeht
+  const generateFor = (ids: number[]) => { const fresh = ids.filter((id) => !generatingIds.has(id)); if (!fresh.length) return; setGeneratingIds((current) => { const next = new Set(current); for (const id of fresh) next.add(id); return next; }); generate.mutate({ campaignId, recipientIds: fresh }, { onSettled: () => setGeneratingIds((current) => { const next = new Set(current); for (const id of fresh) next.delete(id); return next; }) }); };
+  useEffect(() => { if (!selected || queue.isFetching) return; const pending = [selected, ...items.filter((item) => item.id !== selected.id && !item.draftState).slice(0, 2)].filter((item) => !item.draftState && !generatingIds.has(item.id)).map((item) => item.id); if (pending.length) generateFor(pending); }, [selected?.id, queue.isFetching]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dirty = selected ? subject !== (selected.draftSubject ?? "") || text !== (selected.draftText ?? "") : false;
+  const goNext = () => { const index = visible.findIndex((item) => item.id === selectedId); const next = visible.slice(index + 1).find((item) => item.draftState !== "freigegeben") ?? visible.find((item) => item.id !== selectedId && item.draftState !== "freigegeben") ?? null; setSelectedId(next?.id ?? null); };
+  const approve = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: true }, { onSuccess: () => { toast.success(`Freigegeben – geht an ${selected.name || selected.email} raus.`); refresh(); goNext(); } }); };
+  const keep = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: false }, { onSuccess: () => { toast.success("Entwurf gespeichert."); refresh(); } }); };
+  const unapprove = () => { if (!selected) return; save.mutate({ recipientId: selected.id, subject, text, approve: false }, { onSuccess: () => { toast.success("Freigabe zurückgenommen – die E-Mail wartet wieder."); refresh(); } }); };
+  const isGenerating = selected ? generatingIds.has(selected.id) : false;
+
+  return <section className="rv-panel" aria-label="Erst-E-Mails freigeben">
+    <header className="rv-head">
+      <div><h2><PenLine className="h-4 w-4" aria-hidden="true" /> Erst-E-Mails freigeben</h2><p>{items.length ? <>{counts.entwurf + counts.offen} warten auf dich · {counts.freigegeben} freigegeben{daily.data ? <> · heute {daily.data.sent} von {daily.data.limit} Kampagnen-Mails gesendet</> : null}</> : "Alle Erst-E-Mails sind freigegeben oder schon raus."}</p></div>
+      <div className="rv-head-actions">{counts.offen > 0 && <button type="button" className="campaign-act" disabled={generate.isPending} onClick={() => generate.mutate({ campaignId, limit: 5 })}><Sparkles className="h-3.5 w-3.5" /> {generate.isPending ? "KI schreibt …" : `Nächste ${Math.min(5, counts.offen)} Entwürfe schreiben`}</button>}<button type="button" className="campaign-act" onClick={onClose}><X className="h-3.5 w-3.5" /> Schließen</button></div>
+    </header>
+    {daily.data && daily.data.left === 0 && <p className="rv-limit">Das Tageslimit von {daily.data.limit} E-Mails ist für heute erreicht – freigegebene E-Mails gehen ab morgen raus. Das Limit änderst du unter Einstellungen → E-Mail-Versand.</p>}
+    <div className="cd-filters" role="tablist" aria-label="Nach Stand filtern">{FILTERS.map(([key, label]) => { const count = key === "alle" ? items.length : counts[key]; return <button key={key} type="button" role="tab" aria-selected={filter === key} className={filter === key ? "is-active" : ""} onClick={() => setFilter(key)}>{label}<i>{count}</i></button>; })}</div>
+    <div className="rv-grid">
+      <ol className="rv-list">
+        {!visible.length && <li className="cd-empty">{queue.isLoading ? "Wird geladen …" : "Niemand in dieser Gruppe."}</li>}
+        {visible.map((item) => { const name = item.name || item.email; const state = stateOf(item); return <li key={item.id}><button type="button" className={`rv-item ${item.id === selectedId ? "is-active" : ""} is-${state}`} onClick={() => setSelectedId(item.id)}>
+          <span className="cd-avatar" aria-hidden="true">{initialsOf(name)}</span>
+          <span className="cd-who"><strong>{name}</strong><small>{[item.company, item.city].filter(Boolean).join(" · ") || item.email}</small></span>
+          <span className="rv-state">{generatingIds.has(item.id) ? <em className="is-busy"><Sparkles className="h-3 w-3" /> KI schreibt …</em> : state === "freigegeben" ? <em className="is-ok"><Check className="h-3 w-3" /> Freigegeben</em> : state === "entwurf" ? <em className="is-draft">Zu prüfen</em> : <em className="is-none">Kein Entwurf</em>}{item.listName && <small>{item.listName}</small>}</span>
+        </button></li>; })}
+      </ol>
+      <div className="rv-editor">
+        {!selected ? <p className="cd-empty">Links einen Kontakt wählen.</p> : <>
+          <div className="rv-editor-head">
+            <div className="rv-editor-who"><strong>{selected.name || selected.email}</strong><small>{selected.email}{selected.company ? ` · ${selected.company}` : ""}{selected.city ? ` · ${selected.city}` : ""}{selected.listName ? ` · Liste „${selected.listName}“` : ""}</small></div>
+            <div className="rv-editor-tools">{selected.publicId && onOpenLead && <button type="button" className="cj-btn" title="Karte in der Pipeline öffnen" onClick={() => onOpenLead(selected.publicId!)}><ExternalLink className="h-3.5 w-3.5" /> Karte</button>}<button type="button" className="cj-btn" disabled={isGenerating || save.isPending} title="Die KI schreibt einen neuen Entwurf für diesen Kontakt" onClick={() => generateFor([selected.id])}><RefreshCw className={`h-3.5 w-3.5 ${isGenerating ? "animate-spin" : ""}`} /> {selected.draftState ? "KI neu schreiben" : "KI-Entwurf"}</button><button type="button" className="cj-btn is-danger" disabled={stop.isPending} title="Aus dem E-Mail-Funnel nehmen – keine E-Mail an diesen Kontakt" onClick={async () => { if (await confirmAction(`${selected.name || selected.email} aus dem E-Mail-Funnel nehmen? Es geht keine E-Mail raus.`, { confirmLabel: "Aus Funnel nehmen" })) stop.mutate({ recipientId: selected.id }); }}><MailX className="h-3.5 w-3.5" /></button></div>
+          </div>
+          {selected.draftState === "freigegeben" && <p className="rv-note is-ok"><Check className="h-3.5 w-3.5" /> Freigegeben – geht beim nächsten Versandlauf raus (Versandfenster, Drip und Tageslimit gelten). Änderungen hier nehmen die Freigabe zurück.</p>}
+          {isGenerating && !selected.draftText && <p className="rv-note is-busy"><Sparkles className="h-3.5 w-3.5" /> Die KI schreibt gerade die persönliche E-Mail für {selected.company || selected.name || "diesen Kontakt"} …</p>}
+          {selected.draftSource === "vorlage" && selected.draftState && <p className="rv-note">Entwurf aus der Vorlage mit den Daten des Kontakts – ohne KI-Schlüssel schreibt die KI nicht selbst. Du kannst den Text hier frei anpassen.</p>}
+          <label className="rv-field">Betreff<input value={subject} placeholder="Betreff der Erst-E-Mail" onChange={(event) => setSubject(event.target.value)} /></label>
+          <label className="rv-field">E-Mail-Text<textarea value={text} rows={14} placeholder={isGenerating ? "KI schreibt …" : "Persönlicher Text für diesen Kontakt – Grußformel ohne Namen, die Signatur hängt das System an."} onChange={(event) => setText(event.target.value)} /></label>
+          <div className="rv-editor-foot">
+            <small>{text.trim().split(/\s+/).filter(Boolean).length} Wörter{dirty ? " · ungespeichert" : ""}</small>
+            <div className="rv-editor-buttons">
+              {selected.draftState === "freigegeben" ? <button type="button" className="campaign-act" disabled={save.isPending} onClick={unapprove}>Freigabe zurücknehmen</button> : <button type="button" className="campaign-act" disabled={save.isPending || !dirty} onClick={keep}>Speichern</button>}
+              <button type="button" className="campaign-act is-primary" disabled={save.isPending || isGenerating || !subject.trim() || text.trim().length < 10} onClick={approve}><Check className="h-3.5 w-3.5" /> {selected.draftState === "freigegeben" && !dirty ? "Weiter" : "Freigeben & weiter"} <ChevronRight className="h-3.5 w-3.5" /></button>
+            </div>
+          </div>
+        </>}
+      </div>
+    </div>
+  </section>;
+}

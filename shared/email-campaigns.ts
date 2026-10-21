@@ -319,3 +319,30 @@ export function listAudience(names: string[]): { source: "liste"; listName: stri
   const unique = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
   return { source: "liste", listName: unique[0] ?? null, listNames: unique };
 }
+
+/* ── Einzeln schreiben & freigeben (Erst-E-Mail je Lead) ─────────────────────────────────────────── */
+/** Zustand des Entwurfs je Empfänger: noch keiner → „entwurf“ (KI/Vorlage geschrieben, wartet auf dich) → „freigegeben“ (geht raus). */
+export type DraftState = "entwurf" | "freigegeben";
+/** Kampagnen-Mails pro Tag für alle Kampagnen zusammen (Schutz der Absender-Adresse). */
+export const DEFAULT_CAMPAIGN_DAILY_LIMIT = 50;
+/** Beginn des heutigen Tages in der Zeitzone (für das Tageslimit). */
+export function dayStartIn(now: Date, timezone = "Europe/Berlin"): Date {
+  const { minutes } = zonedParts(now, timezone);
+  return new Date(now.getTime() - minutes * 60_000 - now.getUTCSeconds() * 1000 - now.getUTCMilliseconds());
+}
+/** Erste E-Mail des Ablaufs (vom Start aus, über Warten/Abfragen hinweg dem „Ja“-Zweig folgend). */
+export function firstSendNode(tree: EmailTree): Extract<EmailNode, { type: "send" }> | null {
+  let id: string | null | undefined = tree.start; const seen = new Set<string>();
+  while (id && !seen.has(id)) { seen.add(id); const node = tree.nodes.find((item) => item.id === id); if (!node) return null; if (node.type === "send") return node; id = node.type === "condition" ? node.yes : node.type === "end" ? null : node.next; }
+  return null;
+}
+/** Bausteine einer E-Mail als Fließtext (für den persönlichen Entwurf) – Platzhalter gefüllt; Überschrift, Knöpfe, Bilder und Signatur weggelassen (wie von Hand geschrieben). */
+export function blocksToPlainText(blocks: EmailBlock[], values: Record<string, string | null | undefined>): string {
+  const fill = (text: string) => fillPlaceholdersSafe(text, values);
+  return blocks.map((block) => block.type === "text" ? fill(block.text) : block.type === "bullets" ? block.items.map((item) => `• ${fill(item)}`).join("\n") : "").filter((text) => text.trim()).join("\n\n").replace(/[ \t]{2,}/g, " ").replace(/ ,/g, ",").trim(); // leere Platzhalter (z. B. fehlende Anrede) hinterlassen keine Doppel-Leerzeichen
+}
+/** Freigegebener Entwurf → Bausteine: der Text ersetzt Überschrift/Text/Aufzählung, Knopf und Signatur der Vorlage bleiben. */
+export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[] {
+  const keep = original.filter((block) => block.type === "button" || block.type === "signature");
+  return [{ id: "draft-text", type: "text", text: text.trim() }, ...keep];
+}

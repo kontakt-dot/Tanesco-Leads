@@ -16,6 +16,7 @@ import type { Db } from "./lead-pipeline";
 import { ensureSettings, signatureFor } from "./mail-settings";
 import { checkAttachments, type MailAttachmentInput } from "../shared/email-signature";
 import { logActivity } from "./activity";
+import { messageIdsIn, normalizeMessageId } from "../shared/message-id";
 
 const stripHtml = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 /** Antworttext ohne zitierte Vornachricht („Am … schrieb …“, „>“-Zeilen). */
@@ -27,6 +28,11 @@ const FREEMAIL = new Set(["gmail.com", "googlemail.com", "gmx.de", "gmx.net", "g
 export const normalizeEmail = (value: string) => value.trim().toLowerCase();
 export const domainOf = (email: string) => { const at = email.lastIndexOf("@"); return at > 0 ? email.slice(at + 1).trim().toLowerCase() : null; };
 export const isFreemailDomain = (domain: string) => FREEMAIL.has(domain.toLowerCase());
+/** Firmen-Domain ohne Unter-Domain: „mail.firma.de“ → „firma.de“ (bei .co.uk u. ä. bleiben drei Teile). */
+export const rootDomain = (domain: string | null | undefined) => { if (!domain) return null; const parts = domain.toLowerCase().split(".").filter(Boolean); if (parts.length <= 2) return parts.join("."); const second = parts[parts.length - 2]; return (second.length <= 3 && ["co", "com", "net", "org", "ac", "gov"].includes(second) ? parts.slice(-3) : parts.slice(-2)).join("."); };
+/** Firmenname als Suchwort für Domains: „Koppen GmbH & Co. KG“ → „koppen“ (Rechtsformen und Sonderzeichen weg; zu kurze Namen ergeben nichts). */
+export const companySlug = (company: string | null | undefined) => { const value = (company ?? "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/\b(gmbh|ag|kg|ohg|gbr|ug|mbh|co|e\.?v|se|inc|ltd|haftungsbeschraenkt|und|and)\b/g, " ").replace(/[^a-z0-9]+/g, ""); return value.length >= 6 ? value : null; };
+const domainWords = (domain: string) => domain.toLowerCase().split(".").slice(0, -1).join("").replace(/[^a-z0-9]+/g, "");
 const REPLY_PREFIX = /^\s*((re|aw|antw|antwort|wg|fw|fwd|wtr)\s*(\[\d+\])?\s*:\s*)+/i;
 export const isReplySubject = (subject: string | null | undefined) => REPLY_PREFIX.test(subject ?? "");
 export const baseSubject = (subject: string | null | undefined) => (subject ?? "").replace(REPLY_PREFIX, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -60,7 +66,11 @@ export async function syncInbox(db: Db, tenantId: number, options: { allowSender
     ...(await db.select({ email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId))).map((item) => normalizeEmail(item.email)),
     ...(await db.select({ email: leads.email }).from(leads).where(and(eq(leads.tenantId, tenantId), isNotNull(leads.email)))).map((item) => normalizeEmail(item.email ?? "")).filter(Boolean),
   ]) : null;
-  const knownDomains = knownSenders ? new Set(Array.from(knownSenders).map(domainOf).filter((domain): domain is string => Boolean(domain) && !isFreemailDomain(domain!))) : null;
+  const knownDomains = knownSenders ? new Set(Array.from(knownSenders).map((email) => rootDomain(domainOf(email))).filter((domain): domain is string => Boolean(domain) && !isFreemailDomain(domain!))) : null;
+  // Firmenname im Absender: Antwort von „hallo@koppen-gmbh.de“ auf eine Mail an „info@koppen.de“ – der Firmenname des Kontakts steckt in der Domain
+  const companySlugs = onlyKnown ? new Set([...(await db.select({ company: leads.company }).from(leads).where(and(eq(leads.tenantId, tenantId), isNotNull(leads.company)))).map((item) => companySlug(item.company)), ...(await db.select({ company: emailCampaignRecipients.company }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId))).map((item) => companySlug(item.company))].filter((slug): slug is string => Boolean(slug))) : null;
+  // Sicherste Zuordnung: Antworten tragen die Message-ID unserer gesendeten Mail (In-Reply-To/References) – egal von welcher Adresse sie kommen
+  const sentIds = new Set([...(await db.select({ messageId: emailCampaignEvents.messageId }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), isNotNull(emailCampaignEvents.messageId)))).map((item) => item.messageId), ...(await db.select({ messageId: outboundMessages.providerSid }).from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email"), isNotNull(outboundMessages.providerSid)))).map((item) => item.messageId)].map((id) => normalizeMessageId(id)).filter((id): id is string => Boolean(id)));
   const sentSubjects = onlyKnown ? new Set([
     ...(await db.select({ subject: emailCampaignEvents.subject }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet")))).map((item) => baseSubject(item.subject)),
     ...(await db.select({ subject: outboundMessages.subject }).from(outboundMessages).where(eq(outboundMessages.tenantId, tenantId))).map((item) => baseSubject(item.subject)),
@@ -75,12 +85,17 @@ export async function syncInbox(db: Db, tenantId: number, options: { allowSender
       for await (const message of client.fetch({ since }, { envelope: true, uid: true, source: { maxLength: 200_000 } })) {
         scanned += 1; const envelope = message.envelope; const messageId = (envelope?.messageId ?? `uid-${message.uid}`).slice(0, 320); if (known.has(messageId)) continue; // gekürzt wie gespeichert – sonst würden lange IDs nie wiedererkannt
         const from = envelope?.from?.[0]; if (!from?.address) continue; const fromEmail = from.address.toLowerCase(); if (fromEmail === (row.fromEmail ?? "").toLowerCase()) continue;
-        if (knownSenders && !allow.has(fromEmail) && !knownSenders.has(fromEmail)) {
-          const domain = domainOf(fromEmail); const replyToSent = isReplySubject(envelope?.subject) && sentSubjects?.has(baseSubject(envelope?.subject));
-          if (!(domain && knownDomains?.has(domain)) && !replyToSent) { skipped += 1; if (skippedList.length < 50) skippedList.push({ email: fromEmail, name: from.name ?? null, subject: envelope?.subject ?? null, at: envelope?.date ?? null }); continue; }
+        // Antwort-Adressen der Mail: Absender, „Antworten an“ und „Sender“ – Ticketsysteme schicken z. B. von noreply@, antworten aber für hallo@firma.de
+        const candidates = Array.from(new Set([fromEmail, ...(envelope?.replyTo ?? []).map((item) => item.address?.toLowerCase() ?? ""), ...(envelope?.sender ?? []).map((item) => item.address?.toLowerCase() ?? "")].filter(Boolean)));
+        let bodyText = ""; let references: string[] = [];
+        try { const raw = message.source?.toString("utf8") ?? ""; const { simpleParser } = await import("mailparser"); const parsed = await simpleParser(raw); bodyText = parsed.text ?? (parsed.html ? stripHtml(String(parsed.html)) : ""); references = messageIdsIn([parsed.inReplyTo ?? "", ...(Array.isArray(parsed.references) ? parsed.references : parsed.references ? [parsed.references] : [])]); } catch { bodyText = ""; }
+        if (!references.length && envelope?.inReplyTo) references = messageIdsIn(envelope.inReplyTo);
+        if (knownSenders && !candidates.some((email) => allow.has(email) || knownSenders.has(email))) {
+          const replyToSent = (isReplySubject(envelope?.subject) && sentSubjects?.has(baseSubject(envelope?.subject))) || references.some((id) => sentIds.has(id));
+          const sameCompany = candidates.some((email) => { const domain = domainOf(email); const root = rootDomain(domain); if (!domain || isFreemailDomain(domain) || (root && isFreemailDomain(root))) return false; if (root && knownDomains?.has(root)) return true; const words = domainWords(domain); return Boolean(companySlugs && words.length >= 6 && Array.from(companySlugs).some((slug) => words.includes(slug) || slug.includes(words))); });
+          if (!sameCompany && !replyToSent) { skipped += 1; if (skippedList.length < 50) skippedList.push({ email: fromEmail, name: from.name ?? null, subject: envelope?.subject ?? null, at: envelope?.date ?? null }); continue; }
         }
-        let bodyText = ""; try { const raw = message.source?.toString("utf8") ?? ""; const { simpleParser } = await import("mailparser"); const parsed = await simpleParser(raw); bodyText = parsed.text ?? (parsed.html ? stripHtml(String(parsed.html)) : ""); } catch { bodyText = ""; }
-        const result = await storeMessage(db, tenantId, { messageId, imapUid: message.uid, fromEmail, fromName: from.name ?? null, subject: envelope?.subject ?? null, bodyText: replyExcerpt(bodyText), receivedAt: envelope?.date ?? new Date() });
+        const result = await storeMessage(db, tenantId, { messageId, imapUid: message.uid, fromEmail, fromName: from.name ?? null, subject: envelope?.subject ?? null, bodyText: replyExcerpt(bodyText), receivedAt: envelope?.date ?? new Date(), references, replyAddresses: candidates });
         known.add(messageId); added += 1; if (result.replied) replies += 1;
       }
     } finally { lock.release(); }
@@ -130,16 +145,27 @@ async function recipientBySubject(db: Db, tenantId: number, subject: string | nu
 }
 /** Empfänger über die Firmen-Domain finden (zuletzt angeschrieben zuerst). */
 async function recipientByDomain(db: Db, tenantId: number, fromEmail: string) {
-  const domain = domainOf(fromEmail); if (!domain || isFreemailDomain(domain)) return null;
-  return (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), sql`LOWER(${emailCampaignRecipients.email}) LIKE ${`%@${domain}`}`))).sort((a, b) => (b.lastSentAt?.getTime() ?? 0) - (a.lastSentAt?.getTime() ?? 0))[0] ?? null;
+  const domain = domainOf(fromEmail); const root = rootDomain(domain); if (!domain || !root || isFreemailDomain(domain) || isFreemailDomain(root)) return null;
+  const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), sql`LOWER(${emailCampaignRecipients.email}) LIKE ${`%${root}`}`));
+  return rows.filter((row) => rootDomain(domainOf(row.email)) === root).sort((a, b) => (b.lastSentAt?.getTime() ?? 0) - (a.lastSentAt?.getTime() ?? 0))[0] ?? null;
 }
-export async function storeMessage(db: Db, tenantId: number, input: { messageId: string; imapUid?: number | null; fromEmail: string; fromName?: string | null; subject?: string | null; bodyText: string; receivedAt: Date }, deps: Parameters<typeof assessReply>[3] = {}) {
+/** Empfänger über die Message-ID unserer gesendeten Mail finden (In-Reply-To/References der Antwort) – die sicherste Zuordnung. */
+async function recipientByReference(db: Db, tenantId: number, references: string[] | null | undefined) {
+  const ids = (references ?? []).filter(Boolean).slice(0, 20); if (!ids.length) return null;
+  const hit = (await db.select({ recipientId: emailCampaignEvents.recipientId }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.messageId, ids))).orderBy(desc(emailCampaignEvents.createdAt)).limit(1))[0];
+  return hit ? (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.id, hit.recipientId))).limit(1))[0] ?? null : null;
+}
+export async function storeMessage(db: Db, tenantId: number, input: { messageId: string; imapUid?: number | null; fromEmail: string; fromName?: string | null; subject?: string | null; bodyText: string; receivedAt: Date; references?: string[] | null; replyAddresses?: string[] | null }, deps: Parameters<typeof assessReply>[3] = {}) {
   const fromEmail = input.fromEmail.toLowerCase();
-  const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.email, fromEmail))).orderBy(desc(emailCampaignRecipients.createdAt)).limit(1))[0]
-    ?? await recipientBySubject(db, tenantId, input.subject, fromEmail) // Antwort von anderer Adresse: über den Betreff der gesendeten Mail zuordnen
-    ?? await recipientByDomain(db, tenantId, fromEmail) // … oder über die Firmen-Domain (nicht Gmail, GMX usw.)
-    ?? null;
-  const lead = (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.email, fromEmail))).orderBy(desc(leads.createdAt)).limit(1))[0] ?? null; // nur Vertriebskontakte – Leads zum Verkauf werden nie verknüpft
+  const addresses = Array.from(new Set([fromEmail, ...(input.replyAddresses ?? []).map((email) => email.toLowerCase())].filter(Boolean)));
+  const references = Array.from(new Set((input.references ?? []).flatMap((ref) => messageIdsIn(ref)))); // mit oder ohne spitze Klammern, Groß/Klein egal
+  let recipient = await recipientByReference(db, tenantId, references); // 1. Message-ID unserer Mail in der Antwort (sicher, egal von welcher Adresse)
+  for (const email of addresses) recipient = recipient ?? (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.email, email))).orderBy(desc(emailCampaignRecipients.createdAt)).limit(1))[0] ?? null; // 2. genau die Adresse (auch „Antworten an“)
+  recipient = recipient ?? await recipientBySubject(db, tenantId, input.subject, fromEmail); // 3. Betreff der gesendeten Mail („AW: …“)
+  for (const email of addresses) recipient = recipient ?? await recipientByDomain(db, tenantId, email); // 4. dieselbe Firmen-Domain (nicht Gmail, GMX usw.) – auch mit Unter-Domain
+  const viaSingleMail = references.length ? (await db.select({ leadId: outboundMessages.leadId }).from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email"), inArray(outboundMessages.providerSid, references.slice(0, 20)))).orderBy(desc(outboundMessages.createdAt)).limit(1))[0] ?? null : null; // Antwort auf eine Einzel-Mail aus der Karte (Message-ID)
+  let lead: { id: number } | null = viaSingleMail?.leadId ? { id: viaSingleMail.leadId } : null;
+  for (const email of addresses) lead = lead ?? (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.email, email))).orderBy(desc(leads.createdAt)).limit(1))[0] ?? null; // nur Vertriebskontakte – Leads zum Verkauf werden nie verknüpft
   const alreadyBlocked = await isSuppressed(db, tenantId, fromEmail); // gesperrter Absender → landet direkt unter „Gesperrt“
   // KI-Einordnung (Beschwerde, Abmeldewunsch, Interessiert, Frage, Abwesenheit) – ohne KI greifen die Regeln; daraus folgt sperren / prüfen / markieren
   const settings = await replyAiSettings(db, tenantId);
