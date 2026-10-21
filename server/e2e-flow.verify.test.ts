@@ -15,6 +15,7 @@ import type { AddressInfo } from "node:net";
 import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+process.env.EMAIL_DRIP_OFF = "1"; // Drip-Versand im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigener Test unten in campaign-drip.test.ts)
 import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";

@@ -15,7 +15,24 @@ export type StepEvent = { kind: "gesendet" | "gewartet" | "verzweigt" | "beendet
  * `days` sind Ausnahmen je Wochentag – z. B. freitags nur bis 13 Uhr. Was dort nicht steht, nutzt von/bis.
  */
 export type SendDay = { from: string; to: string };
-export type SendWindow = { enabled: boolean; weekdays: number[]; from: string; to: string; timezone: string; days?: Record<string, SendDay> | null };
+/** Drip-Versand: E-Mails nicht alle auf einmal, sondern verteilt – höchstens `perHour` pro Stunde, dazwischen ein zufälliger Abstand um `gapSeconds`. Bessere Zustellbarkeit (kein Massenversand-Muster). */
+export type DripSettings = { enabled: boolean; perHour: number; gapSeconds: number };
+export const DEFAULT_DRIP: DripSettings = { enabled: true, perHour: 40, gapSeconds: 90 };
+export const DRIP_PER_HOUR = [10, 20, 30, 40, 60, 100];
+export const DRIP_GAPS: Array<[number, string]> = [[30, "30 Sek."], [60, "1 Min."], [90, "1,5 Min."], [120, "2 Min."], [300, "5 Min."]];
+export function resolveDrip(value: Partial<DripSettings> | null | undefined): DripSettings {
+  const raw = value ?? {}; const perHour = Math.round(Number(raw.perHour)); const gap = Math.round(Number(raw.gapSeconds));
+  return { enabled: raw.enabled === undefined ? DEFAULT_DRIP.enabled : Boolean(raw.enabled), perHour: Number.isFinite(perHour) && perHour >= 1 ? Math.min(500, perHour) : DEFAULT_DRIP.perHour, gapSeconds: Number.isFinite(gap) && gap >= 10 ? Math.min(3600, gap) : DEFAULT_DRIP.gapSeconds };
+}
+/** Wie viele E-Mails darf diese Kampagne jetzt verschicken? `sentLastHour` = in den letzten 60 Min. gesendet, `lastSentAt` = letzte E-Mail der Kampagne, `jitter` 0…1 (Zufall). */
+export function dripBudget(drip: DripSettings, sentLastHour: number, lastSentAt: Date | null, now: Date, jitter = Math.random()): number {
+  if (!drip.enabled) return Number.POSITIVE_INFINITY;
+  const left = Math.max(0, drip.perHour - sentLastHour); if (!left) return 0;
+  const gap = drip.gapSeconds * (0.7 + jitter * 0.6) * 1000; // ±30 % – kein starres Muster
+  if (lastSentAt && now.getTime() - lastSentAt.getTime() < gap) return 0;
+  return Math.min(left, Math.max(1, Math.floor(60 / drip.gapSeconds))); // je Minuten-Durchlauf höchstens so viele, wie der Abstand zulässt
+}
+export type SendWindow = { enabled: boolean; weekdays: number[]; from: string; to: string; timezone: string; days?: Record<string, SendDay> | null; drip?: DripSettings | null };
 /** Standard für neue Kampagnen: werktags 7:30–17:00 Uhr, freitags nur bis 13:00 Uhr (Berlin). Fällige E-Mails außerhalb warten bis zum nächsten Fenster. */
 export const DEFAULT_SEND_WINDOW: SendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } } };
 /** Gespeichertes Fenster einer Kampagne auflösen: fehlende Felder mit dem Standard füllen; ohne gespeichertes Fenster (ältere Kampagnen) bleibt der Versand rund um die Uhr. */

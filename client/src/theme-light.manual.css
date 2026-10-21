@@ -1358,3 +1358,7 @@ html:not(.dark) .node-leads-stop:hover { background: #ffe4e6 !important; color: 
 html:not(.dark) .cd-list-filter::after { color: #475467 !important; }
 html:not(.dark) .cd-list-filter select { background: #ffffff !important; border-color: #e2e8f0 !important; color: #0f172a !important; }
 html:not(.dark) .cl-filter-count, html:not(.dark) .cl-name small.cl-started { color: #667085 !important; }
+html:not(.dark) .drip-box { border-color: #e2e8f0 !important; background: #f8fafc !important; }
+html:not(.dark) .drip-box.is-on { border-color: #a7f3d0 !important; background: #ecfdf5 !important; }
+html:not(.dark) .drip-head strong { color: #0f172a !important; }
+html:not(.dark) .drip-head small, html:not(.dark) .drip-hint { color: #475467 !important; }

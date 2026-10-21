@@ -2,11 +2,11 @@
  * Vertrieb: Kaltakquise-Listen (CSV → Leads in der Pipeline, Anrufkampagne manuell/power/predictive über den Dialer)
  * und E-Mail-Kampagnen mit Ablauf-Baum (Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst), Tracking per Pixel/Link.
  */
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
+import { dripBudget, resolveDrip, type DripSettings, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -223,7 +223,7 @@ function normalizeSendDays(input: unknown): Record<string, SendDay> | null {
 }
 export function normalizeSendWindow(input: unknown): SendWindow {
   const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {}; const time = (value: unknown, fallback: string) => (/^\d{2}:\d{2}$/.test(String(value ?? "")) ? String(value) : fallback);
-  return { enabled: Boolean(raw.enabled), weekdays: Array.isArray(raw.weekdays) ? (raw.weekdays as unknown[]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : DEFAULT_SEND_WINDOW.weekdays, from: time(raw.from, DEFAULT_SEND_WINDOW.from), to: time(raw.to, DEFAULT_SEND_WINDOW.to), timezone: String(raw.timezone ?? DEFAULT_SEND_WINDOW.timezone).slice(0, 60) || DEFAULT_SEND_WINDOW.timezone, days: normalizeSendDays(raw.days) };
+  return { enabled: Boolean(raw.enabled), weekdays: Array.isArray(raw.weekdays) ? (raw.weekdays as unknown[]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : DEFAULT_SEND_WINDOW.weekdays, from: time(raw.from, DEFAULT_SEND_WINDOW.from), to: time(raw.to, DEFAULT_SEND_WINDOW.to), timezone: String(raw.timezone ?? DEFAULT_SEND_WINDOW.timezone).slice(0, 60) || DEFAULT_SEND_WINDOW.timezone, days: normalizeSendDays(raw.days), drip: resolveDrip(raw.drip as Partial<DripSettings> | null) };
 }
 /**
  * Fußzeile des Mandanten (Einstellungen → Branding): Anschrift, Webseite und Terminlink.
@@ -464,16 +464,27 @@ export async function startEmailCampaign(db: Db, tenantId: number, id: number, a
 }
 export async function setEmailCampaignStatus(db: Db, tenantId: number, id: number, status: "aktiv" | "pausiert" | "beendet") { await db.update(emailCampaigns).set({ status }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
 /** Zeitplaner: fällige Empfänger aller aktiven Kampagnen weiterführen. */
-export async function processEmailCampaigns(db: Db, appUrl: string, options: { campaignId?: number; limit?: number } = {}) {
+export async function processEmailCampaigns(db: Db, appUrl: string, options: { campaignId?: number; limit?: number; ignoreDrip?: boolean } = {}) {
   const now = new Date(); const horizon = new Date(now.getTime() + 1500); const base = appUrl.replace(/\/+$/, ""); /* horizon: Toleranz für Sekundenrundung der DB */
   const campaignConditions = [eq(emailCampaigns.status, "aktiv")]; if (options.campaignId) campaignConditions.push(eq(emailCampaigns.id, options.campaignId));
   const active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
   await enforceReplyStop(db, Array.from(new Set(active.map((campaign) => campaign.tenantId)))).catch((error) => console.error("[E-Mail-Kampagnen] Antwort-Stopp:", error instanceof Error ? error.message : error)); // Sicherheitsnetz: geantwortet → beendet, bevor etwas rausgeht
   for (const campaign of active) {
     let sentInRun = 0; let failedInRun = 0; let lastFailure: string | null = null;
+    // Drip-Versand: verteilt statt alles auf einmal (Zustellbarkeit) – höchstens X pro Stunde, mit zufälligem Abstand
+    const drip = resolveDrip(sendWindowOf(campaign).drip);
+    let budget = Number.POSITIVE_INFINITY;
+    if (drip.enabled && !options.ignoreDrip && process.env.EMAIL_DRIP_OFF !== "1") { // EMAIL_DRIP_OFF=1 nur für Tests
+      const hourAgo = new Date(now.getTime() - 3_600_000);
+      const [{ sent }] = await db.select({ sent: sql<number>`count(*)` }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet"), gte(emailCampaignEvents.createdAt, hourAgo)));
+      const last = (await db.select({ at: emailCampaignRecipients.lastSentAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), isNotNull(emailCampaignRecipients.lastSentAt))).orderBy(desc(emailCampaignRecipients.lastSentAt)).limit(1))[0]?.at ?? null;
+      budget = dripBudget(drip, Number(sent) || 0, last, now);
+      if (budget <= 0) continue;
+    }
     const signature = await signatureFor(db, campaign.tenantId, base).then((result) => ({ html: result.html, text: result.text })).catch(() => null); // Signatur aus den E-Mail-Einstellungen – hängt an jeder Kampagnen-Mail
     const due = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), or(isNull(emailCampaignRecipients.nextActionAt), lte(emailCampaignRecipients.nextActionAt, horizon)))).limit(options.limit ?? 100);
     for (const recipient of due) {
+      if (sentInRun >= budget) break; // Drip: für diesen Durchlauf genug – der Rest folgt in den nächsten Minuten
       // Empfänger kurz „reservieren“: nur wer ihn hier bekommt, verschickt – zwei gleichzeitige Durchläufe (Start + Minutentakt, zwei Server) senden nie doppelt
       const claim = await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(now.getTime() + 10 * 60_000) }).where(and(eq(emailCampaignRecipients.id, recipient.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), recipient.nextActionAt ? eq(emailCampaignRecipients.nextActionAt, recipient.nextActionAt) : isNull(emailCampaignRecipients.nextActionAt)));
       const claimed = (claim as unknown as [{ affectedRows?: number }] | undefined)?.[0]?.affectedRows; if (claimed === 0) continue;

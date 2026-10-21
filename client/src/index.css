@@ -2899,3 +2899,13 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-filter-count{font-size:12px;color:#a5a3c4}
 .cl-name small.cl-started{display:block;margin-top:2px;font-size:11.5px;color:#8f93af}
 .cd-panel-head{flex-wrap:wrap}
+/* Drip-Versand */
+.drip-box{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.02)}
+.drip-box.is-on{border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.06)}
+.drip-head{display:flex;align-items:flex-start;gap:10px;cursor:pointer}
+.drip-head input{margin-top:3px;flex:none}
+.drip-head span{display:grid;gap:2px}
+.drip-head strong{font-size:13px;color:#f1f0fb}
+.drip-head small{font-size:12px;line-height:1.45;color:#a5a3c4}
+.drip-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}
+.drip-hint{grid-column:1/-1;margin:0;font-size:12px;color:#a5a3c4}
