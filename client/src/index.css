@@ -3003,3 +3003,18 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .inbox-item.is-picked .inbox-pick-box{display:grid;background:#8278ff;border:2px solid #8278ff}
 .inbox-item.is-picked{background:rgba(130,120,255,.1)}
 .inbox-tag.is-answered{color:#6ee7b7;background:rgba(52,211,153,.12)}
+/* Posteingang am Handy: Ordner als eine wischbare Zeile, Knöpfe darunter nebeneinander, Filter in voller Breite */
+@media(max-width:760px){
+.inbox-shell,.inbox-shell>*,.inbox-toolbar,.inbox-folder-row{min-width:0;max-width:100%}
+.inbox-folder-row{flex-wrap:wrap;gap:8px}
+.inbox-folder-row .inbox-folders{flex:1 1 100%;width:100%;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px}
+.inbox-folders button{flex:0 0 auto;white-space:nowrap;height:34px;padding:0 11px}
+.inbox-folder-row .inbox-clean,.inbox-folder-row .inbox-sync{flex:1 1 calc(50% - 4px);min-width:0}
+.inbox-folder-row .inbox-clean .inbox-clean-button,.inbox-folder-row .inbox-sync{width:100%;justify-content:center}
+.inbox-clean-menu{left:0;right:auto;width:min(340px,calc(100vw - 48px))}
+.inbox-toolbar-tools{gap:6px}
+.inbox-toolbar-tools > label,.inbox-toolbar-tools .inbox-campaign-filter,.inbox-toolbar-tools .inbox-ai-filter,.inbox-toolbar-tools .inbox-period,.inbox-toolbar-tools .inbox-sort{flex:1 1 calc(50% - 3px);max-width:none;min-width:0}
+.inbox-period-custom{flex:1 1 100%}
+.inbox-bulk-actions button{height:30px;padding:0 9px}
+.inbox-list-head{padding:10px}
+}
