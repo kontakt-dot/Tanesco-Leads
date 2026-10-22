@@ -12,7 +12,7 @@
 import express from "express";
 import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import { and, desc, eq, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
@@ -2583,5 +2583,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.unblockLeads({ leadIds: [sven.id, ohne.id] })).unblocked).toBe(1);
     expect((await owner.leadops.pipelineLeadDetail({ publicId: sven.publicId })).suppression).toBeNull();
     expect((await owner.leadops.emailLeads({ listName: "Sperr-Test", source: "kaltakquise", inPipeline: true, withoutEmail: true, blocked: true })).items).toHaveLength(0);
+  }, 30000);
+
+  it("57. Posteingang: mehrere Mails auf einmal – ungelesen, archivieren, Absender sperren, löschen (kommen nicht wieder)", async () => {
+    const made = [] as number[]; for (const [i, from] of ["bulk1@bulk-e2e.example", "bulk2@bulk-e2e.example", "bulk3@bulk-e2e.example"].entries()) made.push((await owner.leadops.storeInboxMessage({ fromEmail: from, subject: `Test ${i}`, bodyText: "Hallo" })).id);
+    expect((await owner.leadops.inboxBulkAction({ ids: made, action: "gelesen" })).count).toBe(3);
+    expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, made[0])))[0].isRead).toBe(true);
+    expect((await owner.leadops.inboxBulkAction({ ids: [made[0]], action: "archivieren" })).count).toBe(1);
+    expect((await owner.leadops.inboxBulkAction({ ids: [made[1], made[1]], action: "sperren" })).count).toBe(1);
+    expect((await owner.leadops.listEmailSuppressions()).items.some((row) => row.email === "bulk2@bulk-e2e.example")).toBe(true);
+    expect((await owner.leadops.inboxBulkAction({ ids: made, action: "loeschen" })).count).toBe(3);
+    expect(await db.select().from(inboxMessages).where(inArray(inboxMessages.id, made))).toHaveLength(0);
   }, 30000);
 });

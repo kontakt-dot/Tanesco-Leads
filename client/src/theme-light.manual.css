@@ -1405,3 +1405,12 @@ html:not(.dark) .rv-approaches button strong { color: #0f172a !important; }
 html:not(.dark) .rv-approaches button small { color: #667085 !important; }
 html:not(.dark) .rv-approaches button:hover { background: #f8fafc !important; }
 html:not(.dark) .rv-approaches button.is-active { border-color: #bc001d !important; background: #fff1f2 !important; }
+html:not(.dark) .inbox-bulk-all { color: #667085 !important; }
+html:not(.dark) .inbox-bulk.is-active .inbox-bulk-all { color: #0f172a !important; }
+html:not(.dark) .inbox-bulk-actions button { background: #ffffff !important; border-color: #e2e8f0 !important; color: #334155 !important; }
+html:not(.dark) .inbox-bulk-actions button:hover:not(:disabled) { background: #f8fafc !important; }
+html:not(.dark) .inbox-bulk-actions button.is-warn { color: #b45309 !important; border-color: #fcd34d !important; }
+html:not(.dark) .inbox-bulk-actions button.is-danger { color: #be123c !important; border-color: #fecdd3 !important; }
+html:not(.dark) .inbox-item:hover .inbox-pick-box, html:not(.dark) .inbox-item.is-picking .inbox-pick-box { background: rgba(255,255,255,.85) !important; border-color: #cbd5e1 !important; color: #bc001d !important; }
+html:not(.dark) .inbox-item.is-picked .inbox-pick-box { background: #bc001d !important; border-color: #bc001d !important; color: #fff !important; }
+html:not(.dark) .inbox-item.is-picked { background: #fff1f2 !important; }

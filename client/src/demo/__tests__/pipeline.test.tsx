@@ -1772,4 +1772,12 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.unblockLeads", { leadIds: [lead.id] })).unblocked).toBe(1);
     expect((await call("leadops.pipelineLeadDetail", { publicId: lead.publicId })).suppression).toBeNull();
   });
+
+  it("Posteingang: mehrere Mails auswählen – gelesen, archivieren, sperren, löschen", async () => {
+    const ids = getStore().tables.inboxMessages.filter((row) => !row.blocked && !row.archived).slice(0, 3).map((row) => row.id);
+    expect((await call("leadops.inboxBulkAction", { ids, action: "ungelesen" })).count).toBe(3); expect(getStore().tables.inboxMessages.filter((row) => ids.includes(row.id)).every((row) => !row.isRead)).toBe(true);
+    expect((await call("leadops.inboxBulkAction", { ids: ids.slice(0, 1), action: "archivieren" })).count).toBe(1); expect(getStore().tables.inboxMessages.find((row) => row.id === ids[0])?.archived).toBe(true);
+    expect((await call("leadops.inboxBulkAction", { ids: ids.slice(1, 2), action: "sperren" })).count).toBe(1); expect(getStore().tables.inboxMessages.find((row) => row.id === ids[1])?.blocked).toBe(true);
+    expect((await call("leadops.inboxBulkAction", { ids, action: "loeschen" })).count).toBe(3); expect(getStore().tables.inboxMessages.some((row) => ids.includes(row.id))).toBe(false);
+  });
 });

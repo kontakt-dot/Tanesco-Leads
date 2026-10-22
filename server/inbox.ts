@@ -254,6 +254,20 @@ export async function unblockSender(db: Db, tenantId: number, input: { messageId
 }
 /** „Prüfen“-Markierung der KI erledigen (Absender ist in Ordnung) – die Einordnung bleibt sichtbar, die Nachricht verschwindet aus dem Ordner „Prüfen“. */
 export async function resolveCheck(db: Db, tenantId: number, id: number) { await db.update(inboxMessages).set({ aiAction: "geprueft" }).where(and(eq(inboxMessages.id, id), eq(inboxMessages.tenantId, tenantId))); return { success: true as const }; }
+/** Mehrere Mails auf einmal (Posteingang ankreuzen): gelesen/ungelesen, archivieren/zurückholen, Absender sperren, löschen. */
+export async function bulkAction(db: Db, tenantId: number, input: { ids: number[]; action: "gelesen" | "ungelesen" | "archivieren" | "zurueck" | "sperren" | "loeschen" }) {
+  const ids = Array.from(new Set(input.ids)).slice(0, 2000); if (!ids.length) return { count: 0 };
+  const rows = await db.select({ id: inboxMessages.id, fromEmail: inboxMessages.fromEmail, blocked: inboxMessages.blocked }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.id, ids)));
+  if (!rows.length) return { count: 0 };
+  const own = rows.map((row) => row.id);
+  if (input.action === "loeschen") return { count: (await deleteMessages(db, tenantId, own)).deleted };
+  if (input.action === "gelesen" || input.action === "ungelesen") { await db.update(inboxMessages).set({ isRead: input.action === "gelesen" }).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.id, own))); return { count: own.length }; }
+  if (input.action === "archivieren" || input.action === "zurueck") { for (const id of own) await archive(db, tenantId, id, input.action === "archivieren"); return { count: own.length }; }
+  // sperren: je Absender einmal
+  const seen = new Set<string>(); let count = 0;
+  for (const row of rows) { const email = row.fromEmail.toLowerCase(); if (row.blocked || seen.has(email)) continue; seen.add(email); await blockSender(db, tenantId, { messageId: row.id, note: "Im Posteingang gesperrt (mehrere ausgewählt)" }); count += 1; }
+  return { count };
+}
 export async function markRead(db: Db, tenantId: number, id: number, isRead: boolean) { await db.update(inboxMessages).set({ isRead }).where(and(eq(inboxMessages.id, id), eq(inboxMessages.tenantId, tenantId))); return { success: true as const }; }
 export async function archive(db: Db, tenantId: number, id: number, archived: boolean) { await db.update(inboxMessages).set({ archived, isRead: true }).where(and(eq(inboxMessages.id, id), eq(inboxMessages.tenantId, tenantId))); return { success: true as const }; }
 /** Absender als Lead in die Pipeline übernehmen (oder bestehenden Lead in die gewählte Pipeline/Stufe setzen). */

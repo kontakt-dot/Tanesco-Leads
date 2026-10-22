@@ -2988,3 +2988,17 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .rv-approaches button small{font-size:11px;line-height:1.35;color:#8a87a8;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rv-approaches button:hover{background:rgba(255,255,255,.05)}
 .rv-approaches button.is-active{border-color:#8278ff;background:rgba(130,120,255,.12)}
+/* Posteingang: Mehrfachauswahl */
+.inbox-bulk{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;min-height:28px}
+.inbox-bulk-all{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:#a5a3c4;cursor:pointer}
+.inbox-bulk.is-active .inbox-bulk-all{color:#f1f0fb}
+.inbox-bulk-actions{display:flex;flex-wrap:wrap;gap:4px}
+.inbox-bulk-actions button{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 8px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#d6d3f0;font-size:11.5px;font-weight:600}
+.inbox-bulk-actions button:hover:not(:disabled){background:rgba(255,255,255,.06)}
+.inbox-bulk-actions button.is-warn{color:#fde68a;border-color:rgba(251,191,36,.35)}
+.inbox-bulk-actions button.is-danger{color:#fda4af;border-color:rgba(251,113,133,.4)}
+.inbox-pick{position:relative;cursor:pointer}
+.inbox-pick-box{position:absolute;inset:0;display:none;place-items:center;border-radius:inherit;background:#8278ff;color:#fff}
+.inbox-item:hover .inbox-pick-box,.inbox-item.is-picking .inbox-pick-box{display:grid;background:rgba(15,23,42,.55);border:2px solid #fff}
+.inbox-item.is-picked .inbox-pick-box{display:grid;background:#8278ff;border:2px solid #8278ff}
+.inbox-item.is-picked{background:rgba(130,120,255,.1)}
