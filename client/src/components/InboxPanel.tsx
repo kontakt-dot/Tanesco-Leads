@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 
-type Filter = "alle" | "antworten" | "unbekannt" | "ungelesen" | "pruefen" | "gesendet" | "archiv" | "gesperrt";
+type Filter = "alle" | "antworten" | "geantwortet" | "unbekannt" | "ungelesen" | "pruefen" | "gesendet" | "archiv" | "gesperrt";
 /** Sortierung der Liste: nach Zeit oder nach KI-Einordnung (dann gruppiert von Interesse bis Beschwerde – oder umgekehrt). */
 type InboxSort = "neu" | "alt" | "interesse" | "beschwerde";
 const SORT_KEY = "tanesco.inbox-sort";
@@ -23,6 +23,7 @@ const FOLDERS: Array<{ key: Filter; label: string; hint: string }> = [
   { key: "alle", label: "Alle", hint: "Alle Nachrichten im Posteingang" },
   { key: "ungelesen", label: "Ungelesen", hint: "Noch nicht geöffnete Nachrichten" },
   { key: "antworten", label: "Antworten", hint: "Antworten auf E-Mail-Kampagnen" },
+  { key: "geantwortet", label: "Geantwortet", hint: "E-Mails, auf die wir schon geantwortet haben – mit Zeitpunkt der letzten Antwort" },
   { key: "unbekannt", label: "Nicht zugeordnet", hint: "Absender, die noch keinem Lead in der Pipeline zugeordnet sind – mit „Als Lead in Pipeline“ zuordnen" },
   { key: "pruefen", label: "Prüfen", hint: "Die KI ist sich nicht sicher: möglicherweise eine Beschwerde oder ein Abmeldewunsch – bitte kurz ansehen" },
   { key: "gesendet", label: "Gesendet", hint: "Alles, was wir verschickt haben: Kampagnen-Mails, Antworten aus dem Posteingang und Einzel-E-Mails" },
@@ -157,7 +158,7 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
               <span className="inbox-item-head"><strong>{item.fromName || item.fromEmail}</strong><time dateTime={new Date(item.receivedAt).toISOString()} title={stamp(item.receivedAt)}>{shortWhen(item.receivedAt, now)}</time></span>
               <span className="inbox-item-subject">{item.subject || "(kein Betreff)"}</span>
               <span className="inbox-item-preview">{item.bodyText.replace(/\s+/g, " ").slice(0, 110) || "(kein Text)"}</span>
-              <span className="inbox-item-tags">{item.blocked ? <i className="inbox-tag is-blocked">Gesperrt</i> : item.optOut ? <i className="inbox-tag is-optout">Abgemeldet</i> : null}{item.campaignName && <i className="inbox-tag is-reply" title={`Antwort auf „${item.campaignName}“`}>Antwort: {item.campaignName}</i>}{item.lead ? <i className="inbox-tag is-lead" title={`In der Pipeline${item.lead.owner ? ` bei ${item.lead.owner}` : ""}`}>{item.lead.stage ? stageLabel(item.lead.stage, stagesList) : "Lead"}{item.lead.owner ? ` (${item.lead.owner})` : ""}</i> : !item.blocked ? <i className="inbox-tag is-open" title="Noch keinem Lead in der Pipeline zugeordnet">Nicht zugeordnet</i> : null}{aiTag(item.ai)}</span>
+              <span className="inbox-item-tags">{item.answeredAt ? <i className="inbox-tag is-answered" title={`Von uns beantwortet am ${stamp(item.answeredAt)}`}>Beantwortet {shortWhen(item.answeredAt, now)}</i> : null}{item.blocked ? <i className="inbox-tag is-blocked">Gesperrt</i> : item.optOut ? <i className="inbox-tag is-optout">Abgemeldet</i> : null}{item.campaignName && <i className="inbox-tag is-reply" title={`Antwort auf „${item.campaignName}“`}>Antwort: {item.campaignName}</i>}{item.lead ? <i className="inbox-tag is-lead" title={`In der Pipeline${item.lead.owner ? ` bei ${item.lead.owner}` : ""}`}>{item.lead.stage ? stageLabel(item.lead.stage, stagesList) : "Lead"}{item.lead.owner ? ` (${item.lead.owner})` : ""}</i> : !item.blocked ? <i className="inbox-tag is-open" title="Noch keinem Lead in der Pipeline zugeordnet">Nicht zugeordnet</i> : null}{aiTag(item.ai)}</span>
             </span>
           </button>)}</div>)}
         </div>

@@ -3002,3 +3002,4 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .inbox-item:hover .inbox-pick-box,.inbox-item.is-picking .inbox-pick-box{display:grid;background:rgba(15,23,42,.55);border:2px solid #fff}
 .inbox-item.is-picked .inbox-pick-box{display:grid;background:#8278ff;border:2px solid #8278ff}
 .inbox-item.is-picked{background:rgba(130,120,255,.1)}
+.inbox-tag.is-answered{color:#6ee7b7;background:rgba(52,211,153,.12)}

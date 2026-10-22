@@ -1630,6 +1630,7 @@ html:not(.dark) .inbox-pick-box { background: #111318 !important; color: #0f172a
 html:not(.dark) .inbox-item:hover .inbox-pick-box, html:not(.dark) .inbox-item.is-picking .inbox-pick-box { background: #ffffff !important; border: 2px solid #d9dfe7 !important; }
 html:not(.dark) .inbox-item.is-picked .inbox-pick-box { background: #111318 !important; border: 2px solid #111318 !important; }
 html:not(.dark) .inbox-item.is-picked { background: #f8fafb !important; }
+html:not(.dark) .inbox-tag.is-answered { color: #3c7f64 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -3292,3 +3293,4 @@ html:not(.dark) .inbox-bulk-actions button.is-danger { color: #be123c !important
 html:not(.dark) .inbox-item:hover .inbox-pick-box, html:not(.dark) .inbox-item.is-picking .inbox-pick-box { background: rgba(255,255,255,.85) !important; border-color: #cbd5e1 !important; color: #bc001d !important; }
 html:not(.dark) .inbox-item.is-picked .inbox-pick-box { background: #bc001d !important; border-color: #bc001d !important; color: #fff !important; }
 html:not(.dark) .inbox-item.is-picked { background: #fff1f2 !important; }
+html:not(.dark) .inbox-tag.is-answered { color: #047857 !important; background: #ecfdf5 !important; }

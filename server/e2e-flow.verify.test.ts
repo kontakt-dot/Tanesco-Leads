@@ -2588,6 +2588,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
   it("57. Posteingang: mehrere Mails auf einmal – ungelesen, archivieren, Absender sperren, löschen (kommen nicht wieder)", async () => {
     const made = [] as number[]; for (const [i, from] of ["bulk1@bulk-e2e.example", "bulk2@bulk-e2e.example", "bulk3@bulk-e2e.example"].entries()) made.push((await owner.leadops.storeInboxMessage({ fromEmail: from, subject: `Test ${i}`, bodyText: "Hallo" })).id);
     expect((await owner.leadops.inboxBulkAction({ ids: made, action: "gelesen" })).count).toBe(3);
+    await owner.leadops.replyInboxMessage({ messageId: made[2], text: "Danke für Ihre Nachricht." }); const answered = await owner.leadops.listInbox({ filter: "geantwortet" }); expect(answered.items.some((item) => item.id === made[2] && item.answeredAt)).toBe(true); expect(answered.items.some((item) => item.id === made[0])).toBe(false); expect(answered.counts.geantwortet).toBeGreaterThanOrEqual(1);
     expect((await db.select().from(inboxMessages).where(eq(inboxMessages.id, made[0])))[0].isRead).toBe(true);
     expect((await owner.leadops.inboxBulkAction({ ids: [made[0]], action: "archivieren" })).count).toBe(1);
     expect((await owner.leadops.inboxBulkAction({ ids: [made[1], made[1]], action: "sperren" })).count).toBe(1);
