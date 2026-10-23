@@ -873,7 +873,7 @@ html:not(.dark) .mail-tabs button:hover { color: #0f172a !important; background:
 html:not(.dark) .mail-tabs button.active { color: #4b5568 !important; border-bottom-color: #111318 !important; background: linear-gradient(135deg, rgba(var(--acc1), .14), rgba(var(--acc2), .10)) !important; }
 html:not(.dark) .mail-tabs button i { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .mail-tabs button.active i { background: #111318 !important; color: #0f172a !important; }
-html:not(.dark) .email-leads-actions { border: 1px solid #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .email-leads-actions { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
 html:not(.dark) .email-leads-actions strong { color: #4b5568 !important; }
 html:not(.dark) .email-leads-push { background: #111318 !important; color: #0f172a !important; }
 html:not(.dark) .email-leads-table tr.is-picked td { background: #f8fafb !important; }
@@ -1632,7 +1632,7 @@ html:not(.dark) .inbox-item.is-picked .inbox-pick-box { background: #111318 !imp
 html:not(.dark) .inbox-item.is-picked { background: #f8fafb !important; }
 html:not(.dark) .inbox-tag.is-answered { color: #3c7f64 !important; }
 html:not(.dark) .cd-rows li.is-picked { background: #f8fafb !important; }
-html:not(.dark) .cd-bulk { border: 1px dashed #d9dfe7 !important; }
+html:not(.dark) .cd-bulk:has(strong) { border-color: #e8ecf1 !important; background: #f8fafb !important; }
 html:not(.dark) .inbox-bulk.is-active { border-color: #d9dfe7 !important; background: #f8fafb !important; }
 html:not(.dark) .inbox-bulk-lead { border-top: 1px dashed #d9dfe7 !important; }
 html:not(.dark) .inbox-bulk-actions button.is-lead { color: #4b5568 !important; border-color: #d9dfe7 !important; }
@@ -3313,3 +3313,8 @@ html:not(.dark) .inbox-bulk { background: transparent !important; border-color: 
 html:not(.dark) .inbox-bulk.is-active { background: #f5f4ff !important; border-color: #ddd9ff !important; }
 html:not(.dark) .inbox-bulk-actions button.is-lead { color: #5f55e0 !important; border-color: #c9c3ff !important; }
 html:not(.dark) .inbox-bulk-lead { border-top-color: #ddd9ff !important; color: #475467 !important; }
+
+/* Kontakte: Auswahl-Leisten ganz dezent in Hell */
+html:not(.dark) .email-leads-actions { background: #fbfaff !important; border-color: #e7e4fb !important; }
+html:not(.dark) .email-leads-actions strong { color: #5f55e0 !important; }
+html:not(.dark) .cd-bulk:has(strong) { background: #fbfaff !important; border-color: #e7e4fb !important; }

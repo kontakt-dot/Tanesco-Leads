@@ -1429,3 +1429,8 @@ html:not(.dark) .inbox-bulk { background: transparent !important; border-color: 
 html:not(.dark) .inbox-bulk.is-active { background: #f5f4ff !important; border-color: #ddd9ff !important; }
 html:not(.dark) .inbox-bulk-actions button.is-lead { color: #5f55e0 !important; border-color: #c9c3ff !important; }
 html:not(.dark) .inbox-bulk-lead { border-top-color: #ddd9ff !important; color: #475467 !important; }
+
+/* Kontakte: Auswahl-Leisten ganz dezent in Hell */
+html:not(.dark) .email-leads-actions { background: #fbfaff !important; border-color: #e7e4fb !important; }
+html:not(.dark) .email-leads-actions strong { color: #5f55e0 !important; }
+html:not(.dark) .cd-bulk:has(strong) { background: #fbfaff !important; border-color: #e7e4fb !important; }
