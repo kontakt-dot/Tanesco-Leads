@@ -1423,3 +1423,9 @@ html:not(.dark) .email-leads-table th { background: #ffffff !important; color: #
 html:not(.dark) .email-leads-table td { border-color: #f6f7fa !important; }
 html:not(.dark) .email-leads-table tr.is-clickable:hover td { background: #f8f9fd !important; }
 html:not(.dark) .email-leads-table .cd-avatar { background: #eef1ff !important; color: #6a63d8 !important; }
+
+/* Posteingang: Auswahl-Leiste hell – dezent, erst bei Auswahl farbig */
+html:not(.dark) .inbox-bulk { background: transparent !important; border-color: transparent !important; }
+html:not(.dark) .inbox-bulk.is-active { background: #f5f4ff !important; border-color: #ddd9ff !important; }
+html:not(.dark) .inbox-bulk-actions button.is-lead { color: #5f55e0 !important; border-color: #c9c3ff !important; }
+html:not(.dark) .inbox-bulk-lead { border-top-color: #ddd9ff !important; color: #475467 !important; }

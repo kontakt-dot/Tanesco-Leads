@@ -305,6 +305,20 @@ export async function createLeadFromMessage(db: Db, tenantId: number, input: { m
   const linked = await linkThread(db, tenantId, leadId, message.fromEmail);
   return { leadId, publicId, created: true, linked };
 }
+/**
+ * Mehrere Posteingangs-Nachrichten auf einmal als Leads in die Pipeline übernehmen (Mehrfachauswahl).
+ * Gleiche Logik wie einzeln: bestehende Kontakte werden in die Stufe gesetzt und verknüpft, neue angelegt
+ * (Name aus Absender geraten), gesperrte Absender werden übersprungen. Dieselbe Adresse entsteht nur einmal –
+ * die zweite Nachricht findet den gerade angelegten Lead und zählt als „aktualisiert“.
+ */
+export async function createLeadsFromMessages(db: Db, tenantId: number, input: { messageIds: number[]; pipeline: "ads" | "kaltakquise" | "email"; stage: string; ownerUserId?: number | null; categoryId?: number | null; actorUserId: number | null }) {
+  let created = 0; let updated = 0; const skipped: string[] = [];
+  for (const messageId of input.messageIds) {
+    try { const result = await createLeadFromMessage(db, tenantId, { messageId, pipeline: input.pipeline, stage: input.stage, ownerUserId: input.ownerUserId ?? null, categoryId: input.categoryId ?? null, actorUserId: input.actorUserId }); if (result.created) created += 1; else updated += 1; }
+    catch (error) { skipped.push(error instanceof Error ? error.message : "Nachricht übersprungen"); }
+  }
+  return { created, updated, skipped: skipped.length, skippedNote: skipped[0] ?? null };
+}
 /** Antwort aus dem Posteingang schicken (über den eingerichteten Versand). */
 export async function reply(db: Db, tenantId: number, input: { messageId: number; text: string; actorUserId?: number | null; attachments?: MailAttachmentInput[] | null; appUrl?: string | null }) {
   const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");

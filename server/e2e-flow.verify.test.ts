@@ -2593,6 +2593,13 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.inboxBulkAction({ ids: [made[0]], action: "archivieren" })).count).toBe(1);
     expect((await owner.leadops.inboxBulkAction({ ids: [made[1], made[1]], action: "sperren" })).count).toBe(1);
     expect((await owner.leadops.listEmailSuppressions()).items.some((row) => row.email === "bulk2@bulk-e2e.example")).toBe(true);
+    // Mehrfachauswahl → als Leads in die Pipeline: neue Absender werden angelegt, gesperrte übersprungen, zweiter Lauf setzt nur die Stufe
+    const toLead = [] as number[]; for (const from of ["neu1@bulk-e2e.example", "neu2@bulk-e2e.example"]) toLead.push((await owner.leadops.storeInboxMessage({ fromEmail: from, fromName: "Nina Neu", subject: "Interesse", bodyText: "Bitte Infos" })).id);
+    const madeLeads = await owner.leadops.createLeadsFromInbox({ messageIds: [...toLead, made[1]], pipeline: "email", stage: "kontaktiert" });
+    expect(madeLeads.created).toBe(2); expect(madeLeads.skipped).toBe(1); // bulk2 ist gesperrt
+    const again = await owner.leadops.createLeadsFromInbox({ messageIds: toLead, pipeline: "email", stage: "termin" });
+    expect(again.created).toBe(0); expect(again.updated).toBe(2); // schon da → nur Stufe
+    const neuLead = (await db.select().from(leads).where(and(eq(leads.email, "neu1@bulk-e2e.example"), eq(leads.kind, "vertrieb"))))[0]; expect(neuLead?.pipelineStage).toBe("termin"); expect(neuLead?.lastName).toBe("Neu");
     expect((await owner.leadops.inboxBulkAction({ ids: made, action: "loeschen" })).count).toBe(3);
     expect(await db.select().from(inboxMessages).where(inArray(inboxMessages.id, made))).toHaveLength(0);
   }, 30000);

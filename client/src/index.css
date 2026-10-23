@@ -3083,8 +3083,15 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .email-leads-table tr:hover .email-leads-row-tools button{opacity:1}
 
 /* Posteingang moderner: Auswahl-Leiste über der ganzen Breite, Lesefenster mit angenehmer Textbreite in der Mitte */
-.inbox-bulk{margin:0 0 10px;padding:7px 12px;border:1px solid rgba(148,163,184,.14);border-radius:12px;background:rgba(148,163,184,.04)}
-.inbox-bulk.is-active{border-color:rgba(129,120,255,.4);background:rgba(129,120,255,.08);box-shadow:0 8px 24px -18px rgba(129,120,255,.8)}
+.inbox-bulk{margin:0 0 8px;padding:2px 4px;border:1px solid transparent;border-radius:12px;background:transparent}
+.inbox-bulk .inbox-bulk-all{opacity:.75}
+.inbox-bulk.is-active{padding:7px 12px;border-color:rgba(129,120,255,.3);background:rgba(129,120,255,.07)}
+.inbox-bulk.is-active .inbox-bulk-all{opacity:1}
+.inbox-bulk-lead{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;margin-top:8px;padding-top:8px;border-top:1px dashed rgba(129,120,255,.3);font-size:12px}
+.inbox-bulk-lead .lead-action-select{height:30px}
+.inbox-bulk-lead .inbox-bulk-go{height:30px;padding:0 14px}
+.inbox-bulk-lead small{flex-basis:100%;opacity:.65}
+.inbox-bulk-actions button.is-lead{color:#c7c2ff;border-color:rgba(129,120,255,.45)}
 .inbox-bulk-all input{width:15px;height:15px;accent-color:#8178ff;cursor:pointer}
 .inbox-bulk-actions button{height:28px;padding:0 10px;border-radius:999px;font-size:12px}
 .inbox-read-scroll{display:flex;flex-direction:column}
