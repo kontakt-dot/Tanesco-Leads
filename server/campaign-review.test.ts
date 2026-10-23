@@ -51,13 +51,15 @@ describe("Webseite lesen", () => {
     const pages: Record<string, string> = {
       "https://koppen-solar.de/": `<html><head><title>Koppen Solar – PV aus Kassel</title><meta name="description" content="Photovoltaik und Speicher für Privat und Gewerbe"></head><body><nav><a href="/leistungen">Leistungen</a><a href="/impressum">Impressum</a></nav><h1>Ihr Solarteur in Nordhessen</h1><p>Seit 2009 planen und montieren wir Photovoltaikanlagen mit eigenem Montageteam.</p><script>var x=1</script></body></html>`,
       "https://koppen-solar.de/leistungen": `<html><body><h2>Leistungen</h2><ul><li>PV-Anlagen</li><li>Batteriespeicher</li><li>Wallboxen</li></ul></body></html>`,
+      "https://koppen-solar.de/impressum": `<html><body><h1>Impressum</h1><p>Koppen Solar GmbH, Kassel. Geschäftsführer: Stefan Koppen. HRB 12345.</p></body></html>`,
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => { const html = pages[url]; return html ? new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }) : new Response("nope", { status: 404 }); }));
     try {
       const { readWebsiteText } = await import("./lead-finder");
       const site = await readWebsiteText("koppen-solar.de");
-      expect(site?.url).toBe("https://koppen-solar.de/"); expect(site?.pages).toBe(2);
+      expect(site?.url).toBe("https://koppen-solar.de/"); expect(site?.pages).toBe(3); // Startseite + Impressum + Leistungen
       expect(site?.text).toContain("Koppen Solar – PV aus Kassel"); expect(site?.text).toContain("eigenem Montageteam"); expect(site?.text).toContain("Batteriespeicher"); expect(site?.text).not.toContain("var x");
+      expect(site?.text).toContain("Impressum:"); expect(site?.text).toContain("Geschäftsführer: Stefan Koppen"); // daraus nimmt die KI die Anrede, wenn die Liste keinen Ansprechpartner hat
       expect(await readWebsiteText("localhost:3000")).toBeNull(); expect(await readWebsiteText("192.168.0.1")).toBeNull(); expect(await readWebsiteText("gibts-nicht.de")).toBeNull();
     } finally { vi.unstubAllGlobals(); }
   });

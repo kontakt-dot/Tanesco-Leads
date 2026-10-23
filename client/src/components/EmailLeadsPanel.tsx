@@ -19,12 +19,12 @@ import { pipelineLabel, pipelineSourceOf, stageLabel, type PipelineSource } from
  *   auch ohne E-Mail-Adresse – mit Telefon und Ort, Stufe setzen, zuteilen und löschen für die Auswahl.
  * Gefiltert wird wie auf der Leads-Seite.
  */
-const ACTIVITY: Array<{ key: "gesendet" | "geoeffnet" | "geklickt" | "geantwortet" | "abgemeldet" | "bounce" | "ohne"; label: string }> = [
+const ACTIVITY: Array<{ key: "gesendet" | "geoeffnet" | "geklickt" | "geantwortet" | "abgemeldet" | "bounce" | "ohne"; label: string; hint?: string }> = [
   { key: "geantwortet", label: "Geantwortet" },
   { key: "geklickt", label: "Geklickt" },
   { key: "geoeffnet", label: "Geöffnet" },
-  { key: "gesendet", label: "Gesendet" },
-  { key: "ohne", label: "Noch nichts" },
+  { key: "gesendet", label: "Nicht geöffnet", hint: "Angeschrieben, aber bisher nicht geöffnet, nicht geklickt und keine Antwort – gut, um sie auszuwählen und noch einmal in eine Kampagne zu stecken" },
+  { key: "ohne", label: "Noch nichts", hint: "Noch keine E-Mail bekommen" },
   { key: "abgemeldet", label: "Abgemeldet" },
   { key: "bounce", label: "Unzustellbar" },
 ];
@@ -114,7 +114,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
 
     <div className="cd-filters xl-filters" role="tablist" aria-label="Nach letzter Reaktion filtern">
       <button type="button" role="tab" aria-selected={activity === null} className={activity === null ? "is-active" : ""} onClick={() => setActivity(null)}>Alle<i>{counts.alle ?? 0}</i></button>
-      {ACTIVITY.filter((item) => (counts[item.key] ?? 0) > 0 || activity === item.key).map((item) => <button key={item.key} type="button" role="tab" aria-selected={activity === item.key} className={`${activity === item.key ? "is-active" : ""} is-${item.key}`} onClick={() => setActivity(activity === item.key ? null : item.key)}><b className={`xl-dot is-${item.key}`} aria-hidden="true" />{item.label}<i>{counts[item.key] ?? 0}</i></button>)}
+      {ACTIVITY.filter((item) => (counts[item.key] ?? 0) > 0 || activity === item.key).map((item) => <button key={item.key} type="button" role="tab" aria-selected={activity === item.key} title={item.hint} className={`${activity === item.key ? "is-active" : ""} is-${item.key}`} onClick={() => setActivity(activity === item.key ? null : item.key)}><b className={`xl-dot is-${item.key}`} aria-hidden="true" />{item.label}<i>{counts[item.key] ?? 0}</i></button>)}
       {(blockedCount > 0 || onlyBlocked) && <button type="button" role="tab" aria-selected={onlyBlocked} className={`${onlyBlocked ? "is-active" : ""} is-gesperrt`} title="Gesperrte Kontakte: stehen auf der Sperrliste und bekommen keine E-Mails" onClick={() => setOnlyBlocked((value) => !value)}><b className="xl-dot is-gesperrt" aria-hidden="true" />Gesperrt<i>{blockedCount}</i></button>}
     </div>
 

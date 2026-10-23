@@ -65,12 +65,17 @@ export async function readWebsiteText(website: string, options: { maxPages?: num
   const grab = async (url: string) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs); try { const response = await fetch(url, { signal: controller.signal, headers: { "user-agent": UA, accept: "text/html" }, redirect: "follow" }); if (!response.ok || !/text\/html/i.test(response.headers.get("content-type") ?? "text/html")) return null; const reader = response.body?.getReader(); if (!reader) return (await response.text()).slice(0, 300_000); let html = ""; const decoder = new TextDecoder(); while (html.length < 300_000) { const { done, value } = await reader.read(); if (done) break; html += decoder.decode(value, { stream: true }); } reader.cancel().catch(() => undefined); return html; } catch { return null; } finally { clearTimeout(timer); } };
   let home = await grab(base.toString()); if (!home && base.protocol === "https:") { base.protocol = "http:"; home = await grab(base.toString()); } if (!home) return null;
   const title = /<title[^>]*>([^<]{1,200})<\/title>/i.exec(home)?.[1]?.trim() ?? ""; const description = /<meta[^>]+name=["']description["'][^>]+content=["']([^"']{1,400})["']/i.exec(home)?.[1]?.trim() ?? "";
-  const texts: string[] = [[title, description].filter(Boolean).join(" – "), stripHtml(home).slice(0, Math.floor(maxChars * 0.6))];
-  const links = Array.from(new Set(Array.from(home.matchAll(/href=["']([^"'#?]+)["']/gi)).map((match) => match[1]).filter((href) => /leistung|service|angebot|ueber-uns|über-uns|unternehmen|about|referenz|projekt/i.test(href)))).slice(0, 6);
-  const subpages: string[] = []; for (const href of links) { try { const url = new URL(href, base); if (url.origin === base.origin && url.toString() !== base.toString()) subpages.push(url.toString()); } catch { /* Link ignorieren */ } if (subpages.length >= maxPages - 1) break; }
-  const extra = await Promise.all(subpages.map(async (url) => { const html = await grab(url); return html ? stripHtml(html).slice(0, Math.floor(maxChars * 0.3)) : ""; }));
-  const text = [...texts, ...extra].filter((part) => part.trim()).join("\n\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").slice(0, maxChars).trim();
-  return text.length >= 80 ? { url: base.toString(), text, pages: 1 + extra.filter(Boolean).length } : null;
+  const texts: string[] = [[title, description].filter(Boolean).join(" – "), stripHtml(home).slice(0, Math.floor(maxChars * 0.55))];
+  const hrefs = Array.from(new Set(Array.from(home.matchAll(/href=["']([^"'#?]+)["']/gi)).map((match) => match[1])));
+  const links = hrefs.filter((href) => /leistung|service|angebot|ueber-uns|über-uns|unternehmen|about|referenz|projekt/i.test(href)).slice(0, 6);
+  const toUrl = (href: string) => { try { const url = new URL(href, base); return url.origin === base.origin && url.toString() !== base.toString() ? url.toString() : null; } catch { return null; } };
+  // Impressum zuerst: dort stehen Geschäftsführer/Inhaber – die KI spricht diese Person an, wenn die Liste keinen Ansprechpartner hat
+  const legal = hrefs.filter((href) => /impressum|imprint|legal-notice/i.test(href)).map(toUrl).find((url): url is string => Boolean(url)) ?? null;
+  const subpages: string[] = []; for (const href of links) { const url = toUrl(href); if (url && url !== legal) subpages.push(url); if (subpages.length >= maxPages - 1) break; }
+  const legalText = legal ? await grab(legal).then((html) => html ? `Impressum:\n${stripHtml(html).slice(0, 1600)}` : "") : "";
+  const extra = await Promise.all(subpages.map(async (url) => { const html = await grab(url); return html ? stripHtml(html).slice(0, Math.floor(maxChars * 0.25)) : ""; }));
+  const text = [...texts, legalText, ...extra].filter((part) => part.trim()).join("\n\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").slice(0, maxChars).trim();
+  return text.length >= 80 ? { url: base.toString(), text, pages: 1 + (legalText ? 1 : 0) + extra.filter(Boolean).length } : null;
 }
 /** Webseite + Impressum/Kontakt lesen, Profil extrahieren, optional per KI zusammenfassen. */
 export async function enrichProspect(db: Db, tenantId: number, id: number) {
