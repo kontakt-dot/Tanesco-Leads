@@ -882,9 +882,11 @@ html:not(.dark) .pipeline-fold-label { color: #101828 !important; }
 html:not(.dark) .pipeline-column-fold { color: #98a2b3 !important; }
 html:not(.dark) .pipeline-column-fold:hover { background: #eef0f4 !important; color: #101828 !important; }
 html:not(.dark) .flux-table.campaign-list td.campaign-actions { background: #ffffff !important; box-shadow: -10px 0 14px -10px rgba(16, 24, 40, .12) !important; }
+@media(min-width:761px) and (max-width:1480px){
 html:not(.dark) .email-leads-table th:nth-child(2), html:not(.dark) .email-leads-table td:nth-child(2) { background: #ffffff !important; box-shadow: 10px 0 14px -10px rgba(16, 24, 40, .12) !important; }
 html:not(.dark) .email-leads-table tr:hover td:nth-child(2) { background: #f7f8fa !important; }
 html:not(.dark) .email-leads-table tr.is-picked td:nth-child(2), html:not(.dark) .email-leads-table tr.is-picked:hover td:nth-child(2) { background: #f5f3ff !important; }
+}
 html:not(.dark) .agent-total { border-color: #e8ecf1 !important; background: #ffffff !important; }
 html:not(.dark) .agent-total strong { color: #101828 !important; }
 html:not(.dark) .agent-total small, html:not(.dark) .agent-table td small, html:not(.dark) .raw-report td small, html:not(.dark) .agent-rank, html:not(.dark) .agent-name small, html:not(.dark) .raw-flow-legend { color: #667085 !important; }
@@ -1415,3 +1417,9 @@ html:not(.dark) .inbox-item:hover .inbox-pick-box, html:not(.dark) .inbox-item.i
 html:not(.dark) .inbox-item.is-picked .inbox-pick-box { background: #bc001d !important; border-color: #bc001d !important; color: #fff !important; }
 html:not(.dark) .inbox-item.is-picked { background: #fff1f2 !important; }
 html:not(.dark) .inbox-tag.is-answered { color: #047857 !important; background: #ecfdf5 !important; }
+
+/* Kontakte-Tabelle: weicher – zarte Trennlinien, luftige Zeilen, ruhiger Kopf, sanftes Schweben */
+html:not(.dark) .email-leads-table th { background: #ffffff !important; color: #98a2b3 !important; border-bottom: 1px solid #eef0f4 !important; font-size: 10.5px !important; text-transform: uppercase; letter-spacing: .04em; }
+html:not(.dark) .email-leads-table td { border-color: #f6f7fa !important; }
+html:not(.dark) .email-leads-table tr.is-clickable:hover td { background: #f8f9fd !important; }
+html:not(.dark) .email-leads-table .cd-avatar { background: #eef1ff !important; color: #6a63d8 !important; }
