@@ -3081,3 +3081,16 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .email-leads-table .email-leads-state{padding:2px 8px;font-weight:600}
 .email-leads-row-tools button{opacity:.55}
 .email-leads-table tr:hover .email-leads-row-tools button{opacity:1}
+
+/* Posteingang moderner: Auswahl-Leiste über der ganzen Breite, Lesefenster mit angenehmer Textbreite in der Mitte */
+.inbox-bulk{margin:0 0 10px;padding:7px 12px;border:1px solid rgba(148,163,184,.14);border-radius:12px;background:rgba(148,163,184,.04)}
+.inbox-bulk.is-active{border-color:rgba(129,120,255,.4);background:rgba(129,120,255,.08);box-shadow:0 8px 24px -18px rgba(129,120,255,.8)}
+.inbox-bulk-all input{width:15px;height:15px;accent-color:#8178ff;cursor:pointer}
+.inbox-bulk-actions button{height:28px;padding:0 10px;border-radius:999px;font-size:12px}
+.inbox-read-scroll{display:flex;flex-direction:column}
+.inbox-read-head,.inbox-body{width:100%}
+.inbox-read-head{max-width:860px;margin:0 auto}
+.inbox-body{max-width:760px;margin:0 auto;padding:18px 24px 24px;font-size:15px;line-height:1.75}
+.inbox-read-head h2{font-size:18px;letter-spacing:-.2px}
+.inbox-compose{max-width:760px;width:calc(100% - 32px);margin:0 auto 12px}
+@media (max-width:1100px){.inbox-body,.inbox-read-head,.inbox-compose{max-width:none}}
