@@ -472,7 +472,7 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
   const active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
   await enforceReplyStop(db, Array.from(new Set(active.map((campaign) => campaign.tenantId)))).catch((error) => console.error("[E-Mail-Kampagnen] Antwort-Stopp:", error instanceof Error ? error.message : error)); // Sicherheitsnetz: geantwortet → beendet, bevor etwas rausgeht
   const throttleOff = process.env.EMAIL_THROTTLE_OFF === "1"; // nur für Tests: kein Drip, kein Tageslimit
-  // Tageslimit für alle Kampagnen eines Mandanten zusammen (Standard 50/Tag) – schützt die Absender-Adresse
+  // Tageslimit für alle Kampagnen eines Mandanten zusammen (Standard 80/Tag) – schützt die Absender-Adresse
   const dayLeft = new Map<number, number>();
   const dailyLeft = async (tenantId: number) => { if (throttleOff) return Number.POSITIVE_INFINITY; if (!dayLeft.has(tenantId)) { const status = await campaignDailyStatus(db, tenantId); dayLeft.set(tenantId, status.left); } return dayLeft.get(tenantId) ?? 0; };
   for (const campaign of active) {

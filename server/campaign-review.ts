@@ -2,7 +2,7 @@
  * Einzeln schreiben & freigeben: Bei Kampagnen mit „Erst-E-Mail einzeln freigeben“ bekommt jeder Lead eine eigene
  * Erst-E-Mail. Die KI schreibt einen Entwurf (Firma, Ort, Branche, Liste), du liest, änderst und gibst frei – erst dann
  * geht sie raus. Nachfass-Mails laufen danach automatisch aus der Vorlage.
- * Dazu das Tageslimit für alle Kampagnen zusammen (Standard 50 E-Mails am Tag).
+ * Dazu das Tageslimit für alle Kampagnen zusammen (Standard 80 E-Mails am Tag).
  */
 import { and, asc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";

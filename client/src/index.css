@@ -3018,3 +3018,16 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .inbox-bulk-actions button{height:30px;padding:0 9px}
 .inbox-list-head{padding:10px}
 }
+
+/* Kontakte-Tabelle kompakter: Reaktion („Zuletzt“) direkt neben dem Namen, enge Zellen, lange Texte gekürzt */
+.email-leads-table th{padding:7px 8px}
+.email-leads-table td{padding:5px 8px}
+.email-leads-table .cd-avatar{width:24px;height:24px;font-size:10px}
+.email-leads-table .xl-person-text small{font-size:10.5px}
+.email-leads-zuletzt{min-width:118px}
+.email-leads-zuletzt small{display:block;margin-top:1px;font-size:10.5px}
+.xl-cut{max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.xl-cut.is-firma{max-width:170px}
+/* „Neue Kampagne“-Menü: kompakt, nie länger als der Bildschirm */
+.starter-menu{max-height:min(430px,70vh);overflow-y:auto}
+.starter-menu button.is-templates strong{display:flex;align-items:center;gap:6px}

@@ -361,7 +361,7 @@ export function listAudience(names: string[]): { source: "liste"; listName: stri
 /** Zustand des Entwurfs je Empfänger: noch keiner → „entwurf“ (KI/Vorlage geschrieben, wartet auf dich) → „freigegeben“ (geht raus). */
 export type DraftState = "entwurf" | "freigegeben";
 /** Kampagnen-Mails pro Tag für alle Kampagnen zusammen (Schutz der Absender-Adresse). */
-export const DEFAULT_CAMPAIGN_DAILY_LIMIT = 50;
+export const DEFAULT_CAMPAIGN_DAILY_LIMIT = 80;
 /** Beginn des heutigen Tages in der Zeitzone (für das Tageslimit). */
 export function dayStartIn(now: Date, timezone = "Europe/Berlin"): Date {
   const { minutes } = zonedParts(now, timezone);
