@@ -3024,6 +3024,12 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .email-leads-table td{padding:5px 8px}
 .email-leads-table .cd-avatar{width:24px;height:24px;font-size:10px}
 .email-leads-table .xl-person-text small{font-size:10.5px}
+/* Spalte „Kontakt“ schmal: Name und E-Mail werden gekürzt, alles bleibt in einer Zeile im Bild */
+.email-leads-table .xl-person{min-width:0;max-width:190px}
+.email-leads-table .xl-person-in{gap:7px}
+.email-leads-table .xl-person-text{max-width:150px}
+.email-leads-table .xl-person-text strong,.email-leads-table .xl-person-text small,.email-leads-table .email-leads-name{display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.email-leads-table .email-leads-name{font-size:12.5px}
 .email-leads-zuletzt{min-width:118px}
 .email-leads-zuletzt small{display:block;margin-top:1px;font-size:10.5px}
 .xl-cut{max-width:200px;overflow:hidden;text-overflow:ellipsis}
@@ -3031,3 +3037,36 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 /* „Neue Kampagne“-Menü: kompakt, nie länger als der Bildschirm */
 .starter-menu{max-height:min(430px,70vh);overflow-y:auto}
 .starter-menu button.is-templates strong{display:flex;align-items:center;gap:6px}
+
+/* Posteingang: Lesefenster größer – schmalere Liste, mehr Höhe, kompakter Kopf, mehr Text ohne Scrollen */
+.inbox-grid{grid-template-columns:minmax(250px,290px) minmax(0,1fr)}
+.inbox-read{height:max(560px,calc(100vh - 295px));max-height:max(560px,calc(100vh - 295px))}
+.inbox-list{max-height:max(560px,calc(100vh - 295px))}
+.inbox-read-head{padding:10px 18px 10px}
+.inbox-read-head h2{margin:8px 0 0;font-size:17px}
+.inbox-read-context{margin-top:6px}
+.inbox-read-actions{margin-top:8px}
+.inbox-body{padding:12px 18px;font-size:14.5px;line-height:1.65}
+.inbox-compose{margin:0 12px 10px;padding:8px 10px}
+.inbox-compose-text{min-height:44px}
+@media (max-width:900px){.inbox-read{height:auto;max-height:none}.inbox-list{max-height:none}}
+/* Empfänger einer Kampagne auswählen und gemeinsam in eine Pipeline-Stufe setzen */
+.cd-rows li{display:flex;align-items:stretch}
+.cd-rows li .cd-row{flex:1;min-width:0}
+.cd-pick{display:flex;align-items:center;padding:0 0 0 10px;cursor:pointer}
+.cd-pick input{width:14px;height:14px;accent-color:#8178ff;cursor:pointer}
+.cd-rows li.is-picked{background:rgba(129,120,255,.08);border-radius:10px}
+.cd-bulk{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:8px 0 2px;padding:7px 10px;border:1px dashed rgba(129,120,255,.35);border-radius:10px;font-size:12px}
+.cd-bulk strong{font-size:12px}
+.cd-bulk-all{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:inherit}
+.cd-bulk-all input{width:14px;height:14px;accent-color:#8178ff;cursor:pointer}
+/* Kontakte-Tabelle: noch enger, Vertriebler nur Vorname, Liste gekürzt – alles passt ohne Seitwärts-Scrollen */
+.email-leads-table th{padding:5px 6px}
+.email-leads-table td{padding:4px 6px;font-size:11.5px}
+.xl-cut{max-width:145px}
+.xl-cut.is-firma{max-width:135px}
+.xl-cut.is-liste{max-width:105px}
+.email-leads-zuletzt{min-width:100px}
+.email-leads-table .xl-person{max-width:168px}
+.email-leads-table td:last-child{padding-left:2px;padding-right:4px}
+.email-leads-table .xl-person-text,.email-leads-table .xl-person-text strong,.email-leads-table .xl-person-text small,.email-leads-table .email-leads-name{max-width:140px}

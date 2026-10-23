@@ -151,12 +151,12 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
             <td className="xl-cut is-firma" title={lead.company ?? ""}>{lead.company || "–"}</td>
             {pipeline && <td>{lead.phone || "–"}</td>}
             {pipeline && <td>{[lead.postcode, lead.city].filter(Boolean).join(" ") || "–"}</td>}
-            <td>{pipeline ? herkunft(lead) : lead.listName || "–"}</td>
+            <td className="xl-cut is-liste" title={pipeline ? "" : lead.listName ?? ""}>{pipeline ? herkunft(lead) : lead.listName || "–"}</td>
             <td className="xl-cut" title={lead.campaigns.map((campaign) => campaign.name).join(", ")}>{lead.campaigns.length ? lead.campaigns.map((campaign) => campaign.name).join(", ") : <span className="text-slate-500">in keiner</span>}</td>
             {pipeline && <td>{lead.calls?.count ? <span className={`email-leads-calls ${lead.calls.lastResult === "erreicht" || lead.calls.lastResult === "rueckruf" ? "is-reached" : ""}`} title={callCounterText(lead.calls) ?? ""}>{lead.calls.count}× <small>{callResultLabel(lead.calls.lastResult)}</small></span> : "–"}</td>}
             <td>{lead.mails || "–"}</td>
             <td>{lead.stage ? stageLabel(lead.stage, stageDefs) : "–"}</td>
-            <td>{lead.ownerName || <span className="text-slate-500">offen</span>}</td>
+            <td title={lead.ownerName ?? ""}>{lead.ownerName ? lead.ownerName.split(/\s+/)[0] : <span className="text-slate-500">offen</span>}</td>
             <td>{stamp(lead.createdAt)}</td>
             {!pipeline && <td>{lead.inPipeline === false ? <span className="email-leads-state">nur E-Mail</span> : <span className="email-leads-state is-geoeffnet" title="Steht in dieser Pipeline">{pipelineName(lead)}</span>}</td>}
             <td className="email-leads-row-tools" onClick={(event) => event.stopPropagation()}>{pipeline && <button type="button" className="email-leads-call" title="Anrufen und Ergebnis festhalten (zählt auch ohne Dialer)" aria-label={`${nameOf(lead)} anrufen`} onClick={() => setCallFor({ publicId: lead.publicId, name: nameOf(lead), phone: lead.phone ?? null })}><Phone className="h-3.5 w-3.5" /></button>}{lead.email && (lead.blocked ? <UnblockButton leadIds={[lead.id]} label="Entsperren" className="email-leads-unblock" onDone={() => data.refetch()} /> : <button type="button" className="email-leads-blockrow" title="Sperren – keine E-Mails mehr an diesen Kontakt" aria-label={`${nameOf(lead)} sperren`} onClick={() => setBlockFor({ ids: [lead.id], label: nameOf(lead) })}><Ban className="h-3.5 w-3.5" /></button>)}<button type="button" title="Kontakt löschen" aria-label="Kontakt löschen" onClick={async () => { if (await confirmAction(`${nameOf(lead)} löschen?${pipeline ? " Verlauf, Aufgaben und Notizen gehen mit." : " Kunden bleiben erhalten."}`, { danger: true })) { if (pipeline) removeCards.mutate({ publicIds: [lead.publicId] }); else removeLeads.mutate({ leadIds: [lead.id] }); } }}>✕</button></td>

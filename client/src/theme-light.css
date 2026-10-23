@@ -1631,6 +1631,8 @@ html:not(.dark) .inbox-item:hover .inbox-pick-box, html:not(.dark) .inbox-item.i
 html:not(.dark) .inbox-item.is-picked .inbox-pick-box { background: #111318 !important; border: 2px solid #111318 !important; }
 html:not(.dark) .inbox-item.is-picked { background: #f8fafb !important; }
 html:not(.dark) .inbox-tag.is-answered { color: #3c7f64 !important; }
+html:not(.dark) .cd-rows li.is-picked { background: #f8fafb !important; }
+html:not(.dark) .cd-bulk { border: 1px dashed #d9dfe7 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
