@@ -12,7 +12,7 @@
 import express from "express";
 import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
@@ -2118,7 +2118,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const detail = await owner.leadops.getEmailCampaign({ id: log.id }); expect(detail.recipients.every((row) => row.lead?.key === "neu" && row.lead.label === "Neu")).toBe(true); // Stufe je Empfänger
     const lena = detail.recipients.find((row) => row.email === "lena@log-test.example")!;
     const lenaLog = await owner.leadops.emailRecipientLog({ recipientId: lena.id });
-    expect(lenaLog.recipient.sentCount).toBe(1); expect(lenaLog.lead?.stage?.label).toBe("Neu"); expect(lenaLog.waiting).toMatch(/^wartet noch 1 Tag 23 Std\.|^wartet noch 2 Tage/); expect(lenaLog.steps.map((step) => step.state)).toEqual(["erledigt", "erledigt", "aktuell", "offen"]); expect(lenaLog.events.map((event) => event.kind)).toEqual(["gesendet", "gewartet"]); expect(lenaLog.errors).toEqual([]);
+    expect(lenaLog.recipient.sentCount).toBe(1); expect(lenaLog.lead?.stage?.label).toBe("Neu"); expect(lenaLog.waiting).toMatch(/^wartet noch 1 Tag 23 Std\.|^wartet noch 2 Tage/); expect(lenaLog.steps.map((step) => step.state)).toEqual(["erledigt", "aktuell", "offen", "offen"]); // steht während der Wartezeit am Warten-Schritt expect(lenaLog.events.map((event) => event.kind)).toEqual(["gesendet", "gewartet"]); expect(lenaLog.errors).toEqual([]);
     // Versandfehler: Adresse unzustellbar simulieren (lastError + Ereignis) → Fehler im Log, Fehler-Chip in der Liste, Glocke
     const max = detail.recipients.find((row) => row.email === "max@log-test.example")!;
     await db.update(emailCampaignRecipients).set({ status: "fehler", nextActionAt: null, lastError: "SMTP: 550 Mailbox unavailable" }).where(eq(emailCampaignRecipients.id, max.id));
@@ -2596,4 +2596,38 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.inboxBulkAction({ ids: made, action: "loeschen" })).count).toBe(3);
     expect(await db.select().from(inboxMessages).where(inArray(inboxMessages.id, made))).toHaveLength(0);
   }, 30000);
+  it("58. Wartezeit: Leads stehen am Warten-Schritt, Ablaufänderungen gelten für Wartende, alte Einträge rücken nach, keine E-Mail doppelt", async () => {
+    const { repairWaitingRecipients } = await import("./sales-outreach"); const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "Warte-Test", toPipeline: false, rows: [{ firstName: "Wanda", lastName: "Wartet", company: "Wartet Dach", email: "wanda@warte-e2e.example" }, { firstName: "Alt", lastName: "Eintrag", company: "Alt Solar", email: "alt@warte-e2e.example" }, { firstName: "Doro", lastName: "Doppelt", company: "Doppelt Bau", email: "doro@warte-e2e.example" }] });
+    // Ablauf beim Start: Erste → 1 Std. warten → Ende
+    const before = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste an {{vorname}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "e1" }, { id: "e1", type: "end" as const, label: "Ende" }] };
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Warte-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Warte-Test" }, tree: before, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    expect((await owner.leadops.startEmailCampaign({ id: campaign.id })).added).toBe(3); await owner.leadops.runEmailCampaigns();
+    const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+    expect((await rows()).every((row) => row.sentCount === 1 && row.status === "wartet" && row.nodeId === "w1")).toBe(true); // alle warten AM Warten-Schritt
+    const detail = await owner.leadops.getEmailCampaign({ id: campaign.id }); expect(detail.recipients.every((row) => row.nodeId === "w1")).toBe(true);
+    const wanda = (await rows()).find((row) => row.email === "wanda@warte-e2e.example")!; const alt = (await rows()).find((row) => row.email === "alt@warte-e2e.example")!; const doro = (await rows()).find((row) => row.email === "doro@warte-e2e.example")!;
+    const wandaLog = await owner.leadops.emailRecipientLog({ recipientId: wanda.id }); expect(wandaLog.currentStep?.id).toBe("w1"); expect(wandaLog.steps.map((step) => step.state)).toEqual(["erledigt", "aktuell", "offen"]);
+    // Alter Eintrag (vor dieser Logik): stand schon am Schritt NACH dem Warten – hier am Ende → nach dem Serverstart rückt er auf den Warten-Schritt
+    await db.update(emailCampaignRecipients).set({ nodeId: "e1" }).where(eq(emailCampaignRecipients.id, alt.id));
+    expect(await repairWaitingRecipients(db)).toBeGreaterThanOrEqual(1); expect((await rows()).find((row) => row.id === alt.id)?.nodeId).toBe("w1"); expect(await repairWaitingRecipients(db)).toBe(0); // zweiter Lauf: nichts mehr zu tun
+    // Während alle warten, wird hinter dem Warten eine „Kurze Nachfrage“ eingefügt → nach der Wartezeit bekommen sie die Nachfrage statt direkt ans Ende zu springen
+    const after = { start: "m1", nodes: [before.nodes[0], { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Kurze Nachfrage", blocks: starterBlocks("nachfassen"), next: "e1" }, before.nodes[2]] };
+    await owner.leadops.saveEmailCampaign({ id: campaign.id, name: "Warte-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Warte-Test" }, tree: after, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.runEmailCampaigns(); expect((await rows()).every((row) => row.sentCount === 1)).toBe(true); // Wartezeit läuft noch
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(inArray(emailCampaignRecipients.id, [wanda.id, alt.id])); // Wartezeit um (Wanda neu, Alt nachgerückt)
+    await owner.leadops.runEmailCampaigns();
+    for (const id of [wanda.id, alt.id]) { const row = (await rows()).find((item) => item.id === id)!; expect(row.sentCount).toBe(2); expect(row.status).toBe("fertig"); const events = await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, id)); expect(events.filter((event) => event.kind === "gesendet").map((event) => event.nodeId)).toEqual(["m1", "m2"]); }
+    expect((await rows()).find((row) => row.id === doro.id)?.sentCount).toBe(1); // Doro wartet noch
+    // Doppelversand-Schutz: Doro steht (z. B. nach einem Umbau) wieder vor der Ersten – die hat sie laut Verlauf schon → übersprungen, es geht mit der Nachfrage weiter
+    await db.update(emailCampaignRecipients).set({ nodeId: "m1", status: "laeuft", nextActionAt: null }).where(eq(emailCampaignRecipients.id, doro.id));
+    await owner.leadops.runEmailCampaigns();
+    const doroWaits = (await rows()).find((row) => row.id === doro.id)!; expect(doroWaits.sentCount).toBe(1); expect(doroWaits).toMatchObject({ status: "wartet", nodeId: "w1" }); // Erste übersprungen, Wartezeit beginnt neu
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, doro.id)); await owner.leadops.runEmailCampaigns();
+    const doroRow = (await rows()).find((row) => row.id === doro.id)!; expect(doroRow.sentCount).toBe(2); expect(doroRow.status).toBe("fertig");
+    const doroEvents = await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, doro.id)).orderBy(asc(emailCampaignEvents.id));
+    expect(doroEvents.filter((event) => event.kind === "gesendet").map((event) => event.nodeId)).toEqual(["m1", "m2"]); expect(doroEvents.some((event) => event.kind === "verzweigt" && /^Übersprungen/.test(event.note ?? ""))).toBe(true);
+    const doroLog = await owner.leadops.emailRecipientLog({ recipientId: doro.id }); expect(doroLog.events.map((event) => event.label)).toContain("E-Mail übersprungen (schon gesendet)");
+  }, 40000);
 });

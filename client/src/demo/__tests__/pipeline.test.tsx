@@ -738,6 +738,26 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     const events = getStore().tables.emailCampaignEvents.filter((row) => row.campaignId === saved.id && row.kind === "verzweigt");
     expect(events.find((row) => row.recipientId === recipients[0].id)!.note).toContain("ja → Dann-Zweig"); expect(events.find((row) => row.recipientId === recipients[1].id)!.note).toContain("nein → Sonst-Zweig");
   });
+  it("Wartezeit: Leads stehen am Warten-Schritt, Ablaufänderungen gelten für Wartende, keine E-Mail doppelt", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Warte-Demo", rows: [{ firstName: "Wanda", lastName: "Wartet", company: "Wartet Dach", email: "wanda@warte-demo.example" }] });
+    const before = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "e1" }, { id: "e1", type: "end", label: "Ende" }] };
+    const base = { id: null, name: "Warte-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Warte-Demo" }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 };
+    const saved = await call("leadops.saveEmailCampaign", { ...base, tree: before }); expect((await call("leadops.startEmailCampaign", { id: saved.id })).added).toBe(1); await call("leadops.runEmailCampaigns");
+    const row = () => getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === saved.id)!;
+    expect(row()).toMatchObject({ sentCount: 1, status: "wartet", nodeId: "w1" }); // wartet AM Warten-Schritt
+    const detail = await call("leadops.getEmailCampaign", { id: saved.id }); expect(detail.recipients[0].nodeId).toBe("w1");
+    // Während sie wartet, kommt hinter das Warten eine Nachfrage → nach der Wartezeit bekommt sie die Nachfrage (statt direkt ans Ende)
+    const after = { start: "m1", nodes: [before.nodes[0], { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Kurze Nachfrage", blocks: starterBlocks("nachfassen"), next: "e1" }, before.nodes[2]] };
+    await call("leadops.saveEmailCampaign", { ...base, id: saved.id, tree: after });
+    await call("leadops.runEmailCampaigns"); expect(row().sentCount).toBe(1); // Wartezeit läuft noch
+    row().nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns");
+    expect(row()).toMatchObject({ sentCount: 2, status: "fertig" }); expect(getStore().tables.emailCampaignEvents.filter((event) => event.recipientId === row().id && event.kind === "gesendet").map((event) => event.nodeId)).toEqual(["m1", "m2"]);
+    // Doppelversand-Schutz: wieder vor die Erste gesetzt → übersprungen, keine zweite „Erste“
+    getStore().tables.emailCampaigns.find((item) => item.id === saved.id)!.status = "aktiv"; row().nodeId = "m1"; row().status = "laeuft"; row().nextActionAt = null; await call("leadops.runEmailCampaigns");
+    expect(row().sentCount).toBe(2); expect(row()).toMatchObject({ status: "wartet", nodeId: "w1" }); expect(getStore().tables.emailCampaignEvents.some((event) => event.recipientId === row().id && event.kind === "verzweigt" && /^Übersprungen/.test(event.note ?? ""))).toBe(true);
+    const log = await call("leadops.emailRecipientLog", { recipientId: row().id }); expect(log.events.map((event: any) => event.label)).toContain("E-Mail übersprungen (schon gesendet)");
+  });
 });
 
 describe("Dialer für Leads aus dem Posteingang & KI-Vorlagen-Builder (Chat-Build)", () => {
@@ -1596,7 +1616,7 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const log = await call("leadops.saveEmailCampaign", { ...base, name: "Log-Serie" }); expect((await call("leadops.startEmailCampaign", { id: log.id })).added).toBe(3);
     const detail = await call("leadops.getEmailCampaign", { id: log.id }); expect(detail.recipients.every((row: any) => row.lead?.label === "Neu")).toBe(true);
     const lena = detail.recipients.find((row: any) => row.email === "lena@log-demo.example"); const lenaLog = await call("leadops.emailRecipientLog", { recipientId: lena.id });
-    expect(lenaLog.steps.map((step: any) => step.state)).toEqual(["erledigt", "erledigt", "aktuell", "offen"]); expect(lenaLog.waiting).toMatch(/wartet noch/); expect(lenaLog.lead.stage.label).toBe("Neu"); expect(lenaLog.events.map((event: any) => event.kind)).toEqual(["gesendet", "gewartet"]);
+    expect(lenaLog.steps.map((step: any) => step.state)).toEqual(["erledigt", "aktuell", "offen", "offen"]); // steht während der Wartezeit am Warten-Schritt expect(lenaLog.waiting).toMatch(/wartet noch/); expect(lenaLog.lead.stage.label).toBe("Neu"); expect(lenaLog.events.map((event: any) => event.kind)).toEqual(["gesendet", "gewartet"]);
     const max = getStore().tables.emailCampaignRecipients.find((row) => row.id === detail.recipients.find((item: any) => item.email === "max@log-demo.example").id)!; max.status = "fehler"; max.nextActionAt = null; (max as any).lastError = "SMTP: 550 Mailbox unavailable";
     const maxLog = await call("leadops.emailRecipientLog", { recipientId: max.id }); expect(maxLog.errors.map((item: any) => item.note)).toContain("SMTP: 550 Mailbox unavailable"); expect((await call("leadops.listEmailCampaigns")).find((row: any) => row.id === log.id).stats.failed).toBe(1);
     await call("leadops.storeInboxMessage", { fromEmail: "nora@log-demo.example", fromName: "Nora Log", subject: "Re: Erste Mail", bodyText: "Ja, gern." });

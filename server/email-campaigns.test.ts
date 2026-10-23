@@ -1,9 +1,65 @@
 import { describe, expect, it } from "vitest";
-import { advanceRecipient, audienceLists, canEnroll, listAudience, eventLabel, maxRunsLabel, maxRunsOf, recipientPath, recipientValues, REPLY_STOP_NOTE, starterTree, stoppedByReply, stopsOnReply, validateTree, summarizeCampaign, waitingText } from "../shared/email-campaigns";
+import { advanceRecipient, audienceLists, canEnroll, listAudience, eventLabel, maxRunsLabel, maxRunsOf, recipientPath, recipientValues, REPLY_STOP_NOTE, resolveWaiting, starterTree, stoppedByReply, stopsOnReply, validateTree, summarizeCampaign, waitingText } from "../shared/email-campaigns";
 import { isAutoReply, looksLikeAutoReplySubject } from "../shared/reply-ai";
 import { fillPlaceholders, renderEmailHtml, renderEmailText, starterBlocks, usesSignature } from "../shared/email-design";
 import { renderNode } from "../shared/email-campaigns";
 import { detectMapping, extraFieldsOf, parseColdList, placeholderKey } from "../shared/cold-list";
+
+describe("E-Mail-Kampagnen: Wartezeit – Leads stehen am Warten-Schritt, Ablaufänderungen gelten für Wartende", () => {
+  const blocks = starterBlocks("kaltakquise"); const start = { nodeId: null, nextActionAt: null, status: "wartet" as const, sentCount: 0, openedAt: null, clickedAt: null, repliedAt: null, lastSentAt: null };
+  const t0 = new Date("2026-10-01T09:00:00");
+  it("während der Wartezeit steht der Lead am Warten-Schritt – was danach kommt, wird erst am Ende der Wartezeit nachgesehen", async () => {
+    // Ablauf beim Start: Erste → 7 Tage warten → Ende. Vier Leads bekommen die Erste und warten.
+    const before = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste", blocks, next: "w1" }, { id: "w1", type: "wait" as const, hours: 168, next: "e1" }, { id: "e1", type: "end" as const, label: "Ende" }] };
+    const sent: string[] = []; const send = async (node: { subject: string }) => { sent.push(node.subject); return true; };
+    const waiting = await advanceRecipient(before, start, t0, send);
+    expect(sent).toEqual(["Erste"]); expect(waiting.state).toMatchObject({ status: "wartet", nodeId: "w1", waitingAt: "w1", sentNodeIds: ["m1"] }); expect(waiting.state.nextActionAt?.getTime()).toBe(t0.getTime() + 168 * 3_600_000);
+    expect(waiting.events.map((event) => event.kind)).toEqual(["gesendet", "gewartet"]); expect(waiting.events[1].nodeId).toBe("w1");
+    // Inzwischen wird hinter dem Warten eine „Kurze Nachfrage“ eingefügt (oder das Warten davor geschoben) – die Wartenden bekommen sie, statt direkt ans Ende zu springen
+    const after = { start: "m1", nodes: [before.nodes[0], { id: "w1", type: "wait" as const, hours: 168, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Kurze Nachfrage", blocks: starterBlocks("nachfassen"), next: "e1" }, before.nodes[2]] };
+    const tooEarly = await advanceRecipient(after, waiting.state, new Date(t0.getTime() + 100 * 3_600_000), send); expect(sent).toEqual(["Erste"]); expect(tooEarly.state.nodeId).toBe("w1");
+    const due = await advanceRecipient(after, waiting.state, new Date(t0.getTime() + 169 * 3_600_000), send);
+    expect(sent).toEqual(["Erste", "Kurze Nachfrage"]); expect(due.state.status).toBe("fertig"); expect(due.state.sentCount).toBe(2); expect(due.events.map((event) => event.kind)).toEqual(["gesendet", "beendet"]);
+    // Unverändert (Ende direkt hinter dem Warten): nach der Wartezeit fertig, keine weitere E-Mail
+    const unchanged = await advanceRecipient(before, waiting.state, new Date(t0.getTime() + 169 * 3_600_000), send); expect(sent).toHaveLength(2); expect(unchanged.state.status).toBe("fertig"); expect(unchanged.events).toEqual([{ kind: "beendet", nodeId: "e1", note: "Ende" }]);
+    // Warten ohne weiteren Schritt dahinter: nach der Wartezeit fertig – nie wieder von vorn
+    const open = { start: "m1", nodes: [before.nodes[0], { id: "w1", type: "wait" as const, hours: 168, next: null }] };
+    const w = await advanceRecipient(open, start, t0, send); expect(w.state).toMatchObject({ status: "wartet", nodeId: "w1" });
+    const done = await advanceRecipient(open, w.state, new Date(t0.getTime() + 169 * 3_600_000), send); expect(done.state.status).toBe("fertig"); expect(done.events[0].note).toContain("kein weiterer Schritt"); expect(sent).toHaveLength(3);
+    // Ohne Schritt, aber schon E-Mails bekommen → fertig statt Neustart (Doppelversand-Schutz)
+    const orphan = await advanceRecipient(before, { ...start, nodeId: null, sentCount: 1, lastSentAt: t0 }, new Date(t0.getTime() + 200 * 3_600_000), send); expect(orphan.state.status).toBe("fertig"); expect(sent).toHaveLength(3);
+  });
+  it("dieselbe E-Mail geht in einem Durchlauf nie zweimal raus – auch wenn der Ablauf umgebaut wurde", async () => {
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste", blocks, next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Zweite", subject: "Zweite", blocks, next: null }] };
+    const sent: string[] = []; const send = async (node: { subject: string }) => { sent.push(node.subject); return true; };
+    // Der Lead steht nach einem Umbau wieder vor der Ersten, hat sie laut Verlauf aber schon bekommen → übersprungen, weiter mit dem Rest
+    const result = await advanceRecipient(tree, { ...start, nodeId: "m1", sentCount: 1, lastSentAt: t0, sentNodeIds: ["m1"] }, new Date(t0.getTime() + 60_000), send);
+    expect(sent).toEqual([]); expect(result.state).toMatchObject({ status: "wartet", nodeId: "w1" }); expect(result.events[0]).toMatchObject({ kind: "verzweigt", nodeId: "m1" }); expect(result.events[0].note).toContain("Übersprungen"); expect(eventLabel(result.events[0])).toBe("E-Mail übersprungen (schon gesendet)");
+    const later = await advanceRecipient(tree, result.state, new Date(t0.getTime() + 2 * 3_600_000), send); expect(sent).toEqual(["Zweite"]); expect(later.state.status).toBe("fertig");
+  });
+  it("resolveWaiting: Wartezeit-Stand aus dem Verlauf – alte Einträge rücken auf den Warten-Schritt, Versandfenster-Pausen bleiben", () => {
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste", blocks, next: "w1" }, { id: "w1", type: "wait" as const, hours: 168, next: "m2" }, { id: "m2", type: "send" as const, label: "Zweite", subject: "Zweite", blocks, next: "e1" }, { id: "e1", type: "end" as const, label: "Ende" }] };
+    const sentEvent = { id: 1, kind: "gesendet", nodeId: "m1", createdAt: t0 }; const waited = { id: 2, kind: "gewartet", nodeId: "w1", createdAt: t0 }; // gleiche Sekunde – die Reihenfolge entscheidet die id
+    // Alte Form: stand schon am Schritt NACH dem Warten (hier sogar am Ende, weil der Ablauf später geändert wurde) → zurück auf den Warten-Schritt
+    expect(resolveWaiting(tree, { nodeId: "e1", status: "wartet" }, [sentEvent, waited])).toEqual({ nodeId: "w1", waitingAt: "w1", sentNodeIds: ["m1"] });
+    expect(resolveWaiting(tree, { nodeId: "m2", status: "wartet" }, [waited, sentEvent])).toEqual({ nodeId: "w1", waitingAt: "w1", sentNodeIds: ["m1"] });
+    // Neue Form: steht schon am Warten-Schritt → unverändert, waitingAt gesetzt
+    expect(resolveWaiting(tree, { nodeId: "w1", status: "wartet" }, [sentEvent, waited])).toEqual({ nodeId: "w1", waitingAt: "w1", sentNodeIds: ["m1"] });
+    // Versandfenster-Pause an einer E-Mail (kein Warten-Schritt) → bleibt, wo sie ist
+    const paused = { id: 3, kind: "gewartet", nodeId: "m2", createdAt: new Date(t0.getTime() + 1000) };
+    expect(resolveWaiting(tree, { nodeId: "m2", status: "wartet" }, [sentEvent, waited, paused])).toEqual({ nodeId: "m2", waitingAt: null, sentNodeIds: ["m1"] });
+    // Öffnung oder Klick während der Wartezeit ändern nichts – die Wartezeit läuft weiter
+    expect(resolveWaiting(tree, { nodeId: "w1", status: "wartet" }, [sentEvent, waited, { id: 4, kind: "geklickt", nodeId: "m1", createdAt: new Date(t0.getTime() + 5000) }])).toEqual({ nodeId: "w1", waitingAt: "w1", sentNodeIds: ["m1"] });
+    // Frisch aufgenommen (kein Verlauf) oder nicht im Status „wartet“ → unverändert
+    expect(resolveWaiting(tree, { nodeId: "m1", status: "wartet" }, [])).toEqual({ nodeId: "m1", waitingAt: null, sentNodeIds: [] });
+    expect(resolveWaiting(tree, { nodeId: "m2", status: "laeuft" }, [sentEvent, waited])).toEqual({ nodeId: "m2", waitingAt: null, sentNodeIds: ["m1"] });
+    // Warten-Schritt inzwischen gelöscht → kein Zurücksetzen auf einen fehlenden Schritt
+    expect(resolveWaiting({ ...tree, nodes: tree.nodes.filter((node) => node.id !== "w1") }, { nodeId: "m2", status: "wartet" }, [sentEvent, waited])).toEqual({ nodeId: "m2", waitingAt: null, sentNodeIds: ["m1"] });
+    // Lead-Log: der Warten-Schritt ist „aktuell“, die E-Mail danach „offen“
+    const steps = recipientPath(tree, { nodeId: "w1", status: "wartet", sentCount: 1 }, [sentEvent, { ...waited, note: "Wartet 168 Stunden" }]);
+    expect(steps.map((step) => [step.id, step.state])).toEqual([["m1", "erledigt"], ["w1", "aktuell"], ["m2", "offen"], ["e1", "offen"]]);
+  });
+});
 
 describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
   it("läuft die Serie: senden → warten → wenn geöffnet → Dann-Zweig, sonst Sonst-Zweig", async () => {
@@ -29,7 +85,7 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
     expect(stoppedByReply(replied)).toBe(true);
     const stopped = await advanceRecipient(tree, replied, new Date(t0.getTime() + 2 * 3_600_000), send);
     expect(sent).toEqual(["Erste"]); expect(stopped.state.status).toBe("fertig"); expect(stopped.state.nodeId).toBeNull(); expect(stopped.state.nextActionAt).toBeNull();
-    expect(stopped.events).toEqual([{ kind: "beendet", nodeId: "m2", note: REPLY_STOP_NOTE }]);
+    expect(stopped.events).toEqual([{ kind: "beendet", nodeId: "w1", note: REPLY_STOP_NOTE }]); // steht während der Wartezeit AM Warten-Schritt
     // Ohne Antwort läuft die Serie normal weiter (Gegenprobe)
     const normal = await advanceRecipient(tree, first.state, new Date(t0.getTime() + 2 * 3_600_000), send); expect(sent).toEqual(["Erste", "Zweite", "Dritte"]); expect(normal.state.status).toBe("fertig");
     // Antwort kurz vor dem Senden (Nachprüfung im Versand-Rückruf) → Stopp ohne Versand, kein „Fehler“

@@ -6,7 +6,7 @@ import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, or, sql }
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { draftToBlocks, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
+import { draftToBlocks, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -491,6 +491,7 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
     const signature = await signatureFor(db, campaign.tenantId, base).then((result) => ({ html: result.html, text: result.text })).catch(() => null); // Signatur aus den E-Mail-Einstellungen – hängt an jeder Kampagnen-Mail
     // „Erst-E-Mail einzeln freigeben“: die erste E-Mail geht nur raus, wenn du den Entwurf freigegeben hast – Nachfass-Mails laufen automatisch
     const reviewGate = campaign.reviewFirst ? or(gt(emailCampaignRecipients.sentCount, 0), eq(emailCampaignRecipients.draftState, "freigegeben")) : undefined;
+    const campaignTree = tree(campaign);
     const due = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), or(isNull(emailCampaignRecipients.nextActionAt), lte(emailCampaignRecipients.nextActionAt, horizon)), reviewGate)).limit(options.limit ?? 100);
     for (const recipient of due) {
       if (sentInRun >= budget) break; // Drip: für diesen Durchlauf genug – der Rest folgt in den nächsten Minuten
@@ -500,11 +501,14 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
       const claimed = (claim as unknown as [{ affectedRows?: number }] | undefined)?.[0]?.affectedRows; if (claimed === 0) continue;
       const lead = recipient.leadId ? (await db.select().from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] : null;
       const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: extraFieldsOf(lead?.metadata) }, `${base}/api/mail/u/${recipient.token}`);
-      const state: RecipientState = { nodeId: recipient.nodeId, nextActionAt: recipient.nextActionAt && recipient.nextActionAt <= horizon ? null : recipient.nextActionAt, status: recipient.status as RecipientState["status"], sentCount: recipient.sentCount, openedAt: recipient.openedAt, clickedAt: recipient.clickedAt, repliedAt: recipient.repliedAt, lastSentAt: recipient.lastSentAt, variant: (recipient.variant ?? null) as RecipientState["variant"], clickedUrls: (Array.isArray(recipient.clickedUrls) ? recipient.clickedUrls : []) as string[] };
+      // Verlauf des Empfängers: läuft gerade eine Wartezeit (dann steht er am Warten-Schritt) und welche E-Mails hat er schon – nie doppelt, Ablaufänderungen gelten auch für Wartende
+      const history = await db.select({ id: emailCampaignEvents.id, kind: emailCampaignEvents.kind, nodeId: emailCampaignEvents.nodeId, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, recipient.id));
+      const waiting = resolveWaiting(campaignTree, recipient, history);
+      const state: RecipientState = { nodeId: waiting.nodeId, waitingAt: waiting.waitingAt, sentNodeIds: waiting.sentNodeIds, nextActionAt: recipient.nextActionAt && recipient.nextActionAt <= horizon ? null : recipient.nextActionAt, status: recipient.status as RecipientState["status"], sentCount: recipient.sentCount, openedAt: recipient.openedAt, clickedAt: recipient.clickedAt, repliedAt: recipient.repliedAt, lastSentAt: recipient.lastSentAt, variant: (recipient.variant ?? null) as RecipientState["variant"], clickedUrls: (Array.isArray(recipient.clickedUrls) ? recipient.clickedUrls : []) as string[] };
       // Freigegebener Entwurf: ersetzt Betreff und Text der ersten E-Mail (Knopf und Signatur der Vorlage bleiben)
       const useDraft = Boolean(campaign.reviewFirst && recipient.sentCount === 0 && recipient.draftState === "freigegeben" && recipient.draftSubject && recipient.draftText); let draftUsed = false;
       const sentIds: Array<string | null> = []; // Message-IDs der gesendeten Mails – damit Antworten sicher zugeordnet werden (In-Reply-To), egal von welcher Adresse
-      const result = await advanceRecipient(tree(campaign), state, now, async (nodeIn, subjectIn) => { let node = nodeIn; let subject = subjectIn; if (useDraft && !draftUsed) { draftUsed = true; node = { ...nodeIn, subject: recipient.draftSubject!, subjectB: null, blocks: draftToBlocks(recipient.draftText!, nodeIn.blocks) }; subject = recipient.draftSubject!; }
+      const result = await advanceRecipient(campaignTree, state, now, async (nodeIn, subjectIn) => { let node = nodeIn; let subject = subjectIn; if (useDraft && !draftUsed) { draftUsed = true; node = { ...nodeIn, subject: recipient.draftSubject!, subjectB: null, blocks: draftToBlocks(recipient.draftText!, nodeIn.blocks) }; subject = recipient.draftSubject!; }
         const rendered = (() => { const d = design(campaign); // persönlicher Versand: kein Zählpixel, keine umgeschriebenen Links – nur der Abmelde-Link bleibt (gesetzlich nötig)
         return renderNode(node, d, values, d.plain ? { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature } : { pixelUrl: `${base}/api/mail/o/${recipient.token}.gif`, wrapLink: (url) => `${base}/api/mail/c/${recipient.token}?u=${encodeURIComponent(url)}`, unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature }); })(); const fresh = (await db.select({ repliedAt: emailCampaignRecipients.repliedAt, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]; // Antwort-Stopp: direkt vor dem Senden noch einmal nachsehen
         if (fresh?.repliedAt && stopsOnReply(campaign)) return { ok: false, subject: rendered.subject, stopped: REPLY_STOP_NOTE }; if (fresh && !["wartet", "laeuft"].includes(fresh.status)) return { ok: false, subject: rendered.subject, stopped: "Empfänger inzwischen beendet – keine weitere E-Mail" };
@@ -524,6 +528,29 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
     if (!open.length && due.length) await db.update(emailCampaigns).set({ status: "beendet" }).where(eq(emailCampaigns.id, campaign.id));
   }
   return processed;
+}
+/**
+ * Einmal nach dem Serverstart: Wartende aus der Zeit, als sie schon am Schritt NACH dem Warten standen, auf den Warten-Schritt
+ * setzen. Fällige macht der Zeitplaner ohnehin richtig – hier geht es darum, dass die Anzeige stimmt („33 warten hier“) und
+ * Änderungen am Ablauf sofort für alle Wartenden gelten. Nur Status „wartet“, mehrfach ausführbar ohne Nebenwirkung.
+ */
+export async function repairWaitingRecipients(db: Db) {
+  const campaigns = await db.select().from(emailCampaigns).where(inArray(emailCampaigns.status, ["aktiv", "pausiert"])); let repaired = 0;
+  for (const campaign of campaigns) {
+    const campaignTree = tree(campaign); const byId = new Map(campaignTree.nodes.map((node) => [node.id, node]));
+    const rows = await db.select({ id: emailCampaignRecipients.id, nodeId: emailCampaignRecipients.nodeId, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.status, "wartet")));
+    const candidates = rows.filter((row) => !row.nodeId || byId.get(row.nodeId)?.type !== "wait");
+    for (let offset = 0; offset < candidates.length; offset += 200) {
+      const chunk = candidates.slice(offset, offset + 200);
+      const events = await db.select({ id: emailCampaignEvents.id, recipientId: emailCampaignEvents.recipientId, kind: emailCampaignEvents.kind, nodeId: emailCampaignEvents.nodeId, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(inArray(emailCampaignEvents.recipientId, chunk.map((row) => row.id)));
+      for (const row of chunk) {
+        const own = events.filter((event) => event.recipientId === row.id); if (!own.length) continue;
+        const waiting = resolveWaiting(campaignTree, row, own); if (!waiting.waitingAt || waiting.nodeId === row.nodeId) continue;
+        await db.update(emailCampaignRecipients).set({ nodeId: waiting.nodeId }).where(and(eq(emailCampaignRecipients.id, row.id), eq(emailCampaignRecipients.status, "wartet"))); repaired += 1;
+      }
+    }
+  }
+  return repaired;
 }
 /**
  * Lead-Log: alles, was mit einem Empfänger in einer Serie passiert ist – anklickbar aus der Kampagnen-Ansicht. Ereignisse in

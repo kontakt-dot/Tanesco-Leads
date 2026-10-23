@@ -16,7 +16,7 @@ import { leadDeliveries, leadStatusEvents, leads, orderOperationalConfigs, order
 import { getDb } from "./db";
 import { processDueEmails } from "./email-onboarding";
 import { syncInsights } from "./meta-ads";
-import { processEmailCampaigns } from "./sales-outreach";
+import { processEmailCampaigns, repairWaitingRecipients } from "./sales-outreach";
 import { processAutomations } from "./pipeline-extras";
 import { syncInbox } from "./inbox";
 import { tenantsWithImap } from "./mail-settings";
@@ -119,10 +119,12 @@ let campaignTimer: ReturnType<typeof setInterval> | undefined;
 /** E-Mail-Kampagnen im Minutentakt (EMAIL_CAMPAIGN_TICK_SECONDS, Standard 60, 0 = aus) – fällige Mails gehen spätestens nach einer Minute raus, nicht erst nach 15. */
 export function startEmailCampaignScheduler(intervalSeconds = Number(process.env.EMAIL_CAMPAIGN_TICK_SECONDS ?? 60)) {
   if (campaignTimer || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return undefined;
-  let running = false;
+  let running = false; let repaired = false;
   const tick = async () => {
     if (running) return; running = true; // läuft ein Durchgang noch (viele Mails), startet kein zweiter parallel – keine Doppelversände
-    try { const db = await getDb(); if (!db) return; await processEmailCampaigns(db, process.env.APP_URL ?? "", { limit: 300 }); }
+    try { const db = await getDb(); if (!db) return;
+      if (!repaired) { repaired = true; const count = await repairWaitingRecipients(db).catch((error) => { console.error("[E-Mail-Kampagnen] Wartende nachziehen:", error instanceof Error ? error.message : error); return 0; }); if (count) console.log(`[E-Mail-Kampagnen] ${count} wartende Kontakte stehen jetzt am Warten-Schritt`); } // einmal nach dem Start: Wartende auf den Warten-Schritt setzen
+      await processEmailCampaigns(db, process.env.APP_URL ?? "", { limit: 300 }); }
     catch (error) { console.error("[E-Mail-Kampagnen]", error instanceof Error ? error.message : error); } finally { running = false; }
   };
   campaignTimer = setInterval(tick, intervalSeconds * 1000); campaignTimer.unref?.();

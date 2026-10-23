@@ -8,7 +8,13 @@ export type EmailNode =
 export type EmailTree = { start: string | null; nodes: EmailNode[] };
 export type AbVariant = "A" | "B";
 export type RecipientStatus = "wartet" | "laeuft" | "fertig" | "fehler" | "abgemeldet" | "bounce" | "beschwerde";
-export type RecipientState = { nodeId: string | null; nextActionAt: Date | null; status: RecipientStatus; sentCount: number; openedAt: Date | null; clickedAt: Date | null; repliedAt: Date | null; lastSentAt: Date | null; variant?: AbVariant | null; clickedUrls?: string[] | null };
+/**
+ * Stand eines Empfängers im Ablauf. `nodeId` ist der Schritt, an dem er gerade steht: während einer Wartezeit der Warten-Schritt
+ * selbst (`waitingAt` = derselbe Schritt, `nextActionAt` = wann die Wartezeit um ist). Erst wenn sie um ist, wird nachgesehen,
+ * was JETZT dahinter steht – so gelten Änderungen am Ablauf (E-Mail eingefügt, Schritt verschoben) auch für alle, die gerade warten.
+ * `sentNodeIds`: E-Mails, die er in diesem Durchlauf schon bekommen hat – dieselbe E-Mail geht nie zweimal raus.
+ */
+export type RecipientState = { nodeId: string | null; nextActionAt: Date | null; status: RecipientStatus; sentCount: number; openedAt: Date | null; clickedAt: Date | null; repliedAt: Date | null; lastSentAt: Date | null; variant?: AbVariant | null; clickedUrls?: string[] | null; waitingAt?: string | null; sentNodeIds?: string[] | null };
 export type StepEvent = { kind: "gesendet" | "gewartet" | "verzweigt" | "beendet" | "fehler"; nodeId: string; subject?: string; note: string };
 /**
  * Versandfenster: nur an diesen Wochentagen (0 = Sonntag) zwischen von/bis (Ortszeit der Zeitzone) senden.
@@ -138,7 +144,8 @@ export function stoppedByReply(state: Pick<RecipientState, "status" | "repliedAt
 export type SendOutcome = boolean | { ok: boolean; subject?: string | null; stopped?: string | null };
 export async function advanceRecipient(tree: EmailTree, state: RecipientState, now: Date, send: (node: Extract<EmailNode, { type: "send" }>, subject: string) => Promise<SendOutcome>, options: { window?: SendWindow | null; stopOnReply?: boolean | null } = {}): Promise<{ state: RecipientState; events: StepEvent[] }> {
   const events: StepEvent[] = []; let current = { ...state }; let guard = 0;
-  if (!current.nodeId) current.nodeId = tree.start;
+  // Ohne Schritt: ein frischer Empfänger beginnt vorn. Wer schon E-Mails bekommen hat, ist fertig – nie wieder von vorn, nie doppelt.
+  if (!current.nodeId) { if (current.sentCount > 0 || current.lastSentAt) { current = { ...current, status: "fertig", nextActionAt: null }; events.push({ kind: "beendet", nodeId: "", note: "Kein weiterer Schritt – Ablauf beendet" }); return { state: current, events }; } current.nodeId = tree.start; }
   // Antwort-Stopp (Schalter „Bei Antwort anhalten“, Standard an): geantwortet → sofort beenden, egal wo der Ablauf gerade steht.
   if (options.stopOnReply !== false && stoppedByReply(current)) { const at = current.nodeId ?? ""; current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: at, note: REPLY_STOP_NOTE }); return { state: current, events }; }
   while (current.nodeId && guard < 12) {
@@ -146,21 +153,51 @@ export async function advanceRecipient(tree: EmailTree, state: RecipientState, n
     const node = tree.nodes.find((item) => item.id === current.nodeId);
     if (!node) { current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: current.nodeId ?? "", note: "Schritt nicht gefunden – Ablauf beendet" }); break; }
     if (node.type === "end") { current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: node.id, note: node.label ?? "Ablauf beendet" }); break; }
-    if (node.type === "wait") { if (current.nextActionAt && current.nextActionAt > now) break; const due = new Date(now.getTime() + node.hours * 3_600_000); current = { ...current, status: "wartet", nodeId: node.next, nextActionAt: due }; events.push({ kind: "gewartet", nodeId: node.id, note: `Wartet ${node.hours} Stunden (bis ${due.toLocaleString("de-DE")})` }); break; }
+    if (node.type === "wait") {
+      if (current.waitingAt === node.id) { // Wartezeit lief schon und ist um: weiter zu dem Schritt, der JETZT dahinter steht – auch wenn der Ablauf inzwischen geändert wurde
+        current = { ...current, status: "laeuft", nodeId: node.next, nextActionAt: null, waitingAt: null };
+        if (!node.next) { current = { ...current, status: "fertig" }; events.push({ kind: "beendet", nodeId: node.id, note: "Wartezeit vorbei, kein weiterer Schritt – Ablauf beendet" }); }
+        continue;
+      }
+      // Wartezeit beginnt: der Empfänger bleibt AM Warten-Schritt stehen (nicht schon am nächsten) – was danach kommt, wird erst am Ende der Wartezeit nachgesehen
+      const due = new Date(now.getTime() + node.hours * 3_600_000); current = { ...current, status: "wartet", nodeId: node.id, nextActionAt: due, waitingAt: node.id };
+      events.push({ kind: "gewartet", nodeId: node.id, note: `Wartet ${node.hours} Stunden (bis ${due.toLocaleString("de-DE")})` }); break;
+    }
     if (node.type === "condition") { const since = current.lastSentAt ? new Date(current.lastSentAt.getTime() - 3000) : new Date(0); /* 3 s Toleranz (Sekundenrundung) */ const wanted = (node.url ?? "").trim().toLowerCase(); const clickedWanted = !wanted || (current.clickedUrls ?? []).some((url) => url.toLowerCase().includes(wanted)); const hit = node.check === "opened" ? Boolean(current.openedAt && current.openedAt >= since) : node.check === "clicked" ? Boolean(current.clickedAt && current.clickedAt >= since && clickedWanted) : Boolean(current.repliedAt && current.repliedAt >= since); const label = node.check === "opened" ? "geöffnet" : node.check === "clicked" ? (wanted ? `Link „${wanted.slice(0, 40)}“ geklickt` : "geklickt") : "geantwortet"; current = { ...current, nodeId: hit ? node.yes : node.no, nextActionAt: null }; events.push({ kind: "verzweigt", nodeId: node.id, note: hit ? `Wenn ${label}: ja → Dann-Zweig` : `Wenn ${label}: nein → Sonst-Zweig` }); if (!current.nodeId) { current = { ...current, status: "fertig" }; events.push({ kind: "beendet", nodeId: node.id, note: "Kein weiterer Schritt – Ablauf beendet" }); } continue; }
     if (node.type === "send") {
       if (current.nextActionAt && current.nextActionAt > now) break;
+      if (current.sentNodeIds?.includes(node.id)) { // Schutz: dieselbe E-Mail geht in einem Durchlauf nie zweimal raus – z. B. wenn der Ablauf umgebaut wurde, während der Kontakt wartete
+        current = { ...current, nodeId: node.next, nextActionAt: null }; events.push({ kind: "verzweigt", nodeId: node.id, note: `Übersprungen: E-Mail „${node.label?.trim() || node.subject}“ wurde schon gesendet` });
+        if (!node.next) { current = { ...current, status: "fertig" }; events.push({ kind: "beendet", nodeId: node.id, note: "Kein weiterer Schritt – Ablauf beendet" }); }
+        continue;
+      }
       const slot = nextSendSlot(now, options.window); if (slot) { current = { ...current, status: "wartet", nextActionAt: slot }; events.push({ kind: "gewartet", nodeId: node.id, note: `Versandfenster: wartet bis ${slot.toLocaleString("de-DE", { timeZone: options.window?.timezone })}` }); break; }
       const template = subjectFor(node, current.variant); const outcome = await send(node, template);
       if (typeof outcome === "object" && outcome.stopped) { current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: node.id, note: outcome.stopped }); break; } // z. B. Antwort kurz vor dem Senden eingetroffen
       const ok = typeof outcome === "boolean" ? outcome : outcome.ok; const subject = (typeof outcome === "object" && outcome.subject) || template;
       if (!ok) { current = { ...current, status: "fehler", nextActionAt: null }; events.push({ kind: "fehler", nodeId: node.id, subject, note: "Versand fehlgeschlagen" }); break; }
-      current = { ...current, status: "laeuft", sentCount: current.sentCount + 1, lastSentAt: now, nodeId: node.next, nextActionAt: null }; events.push({ kind: "gesendet", nodeId: node.id, subject, note: `E-Mail „${subject}“ gesendet${current.variant && node.subjectB?.trim() ? ` (Variante ${current.variant})` : ""}` });
+      current = { ...current, status: "laeuft", sentCount: current.sentCount + 1, lastSentAt: now, nodeId: node.next, nextActionAt: null, sentNodeIds: [...(current.sentNodeIds ?? []), node.id] }; events.push({ kind: "gesendet", nodeId: node.id, subject, note: `E-Mail „${subject}“ gesendet${current.variant && node.subjectB?.trim() ? ` (Variante ${current.variant})` : ""}` });
       if (!node.next) { current = { ...current, status: "fertig" }; events.push({ kind: "beendet", nodeId: node.id, note: "Letzte E-Mail gesendet – Ablauf beendet" }); }
       continue;
     }
   }
   return { state: current, events };
+}
+/**
+ * Wartezeit-Stand eines Empfängers aus seinem Verlauf – für den Zeitplaner (Server und Demo):
+ * - `waitingAt`: der Warten-Schritt, dessen Wartezeit gerade läuft (letztes Ereignis ist „gewartet“ an einem Warten-Schritt des aktuellen Ablaufs)
+ * - `sentNodeIds`: E-Mails, die er in diesem Durchlauf schon bekommen hat (nie doppelt)
+ * - `nodeId`: Einträge aus der Zeit, als Wartende schon am Schritt NACH dem Warten standen, werden auf den Warten-Schritt gesetzt –
+ *   so gilt auch für sie, was JETZT hinter der Wartezeit steht. Versandfenster-Pausen („gewartet“ an einer E-Mail) bleiben unberührt.
+ */
+const STEP_EVENT_KINDS = ["gesendet", "gewartet", "verzweigt", "beendet", "fehler"];
+export function resolveWaiting(tree: EmailTree, recipient: { nodeId: string | null; status: string }, events: Array<{ id?: number; kind: string; nodeId?: string | null; createdAt: Date | string }>): { nodeId: string | null; waitingAt: string | null; sentNodeIds: string[] } {
+  const ordered = [...events].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || Number(b.id ?? 0) - Number(a.id ?? 0));
+  const sentNodeIds: string[] = []; for (const event of ordered) if (event.kind === "gesendet" && event.nodeId && !sentNodeIds.includes(event.nodeId)) sentNodeIds.push(event.nodeId);
+  const latest = ordered.find((event) => STEP_EVENT_KINDS.includes(event.kind)); // Öffnungen/Klicks während der Wartezeit zählen nicht als Schritt
+  const waitNode = latest?.kind === "gewartet" && latest.nodeId ? tree.nodes.find((node) => node.id === latest.nodeId && node.type === "wait") : undefined;
+  if (!waitNode || recipient.status !== "wartet") return { nodeId: recipient.nodeId, waitingAt: null, sentNodeIds };
+  return { nodeId: waitNode.id, waitingAt: waitNode.id, sentNodeIds };
 }
 export type SignatureParts = { html: string; text: string } | null | undefined;
 export function renderNode(node: Extract<EmailNode, { type: "send" }>, design: EmailDesign, values: Record<string, string | null | undefined>, tracking: { pixelUrl?: string | null; wrapLink?: (url: string) => string; unsubscribeUrl?: string | null; logoBase?: string | null; preview?: boolean; subject?: string | null; signature?: SignatureParts } = {}) {
@@ -226,7 +263,7 @@ export function moveNodeInTree(tree: EmailTree, id: string, parentId: string | n
 
 /* ---------------------------------------------------------------- Lead-Log (Verlauf je Empfänger) */
 export const EVENT_KIND_LABEL: Record<string, string> = { gesendet: "E-Mail gesendet", geoeffnet: "Geöffnet", geklickt: "Link geklickt", gewartet: "Gewartet", verzweigt: "Verzweigung geprüft", beendet: "Beendet", fehler: "Fehler", abgemeldet: "Abgemeldet", bounce: "Unzustellbar", beschwerde: "Beschwerde" };
-export function eventLabel(event: { kind: string; note?: string | null }): string { if (event.kind === "geoeffnet" && /^antwort/i.test(event.note ?? "")) return "Antwort erhalten"; if (event.kind === "gewartet" && /abwesenheitsnotiz/i.test(event.note ?? "")) return "Abwesenheitsnotiz"; if (event.kind === "gewartet" && /läuft weiter/i.test(event.note ?? "")) return "Antwort erhalten (Serie läuft weiter)"; return EVENT_KIND_LABEL[event.kind] ?? event.kind; }
+export function eventLabel(event: { kind: string; note?: string | null }): string { if (event.kind === "geoeffnet" && /^antwort/i.test(event.note ?? "")) return "Antwort erhalten"; if (event.kind === "gewartet" && /abwesenheitsnotiz/i.test(event.note ?? "")) return "Abwesenheitsnotiz"; if (event.kind === "gewartet" && /läuft weiter/i.test(event.note ?? "")) return "Antwort erhalten (Serie läuft weiter)"; if (event.kind === "verzweigt" && /^übersprungen/i.test(event.note ?? "")) return "E-Mail übersprungen (schon gesendet)"; return EVENT_KIND_LABEL[event.kind] ?? event.kind; }
 export type LogStepState = "erledigt" | "aktuell" | "offen" | "uebersprungen" | "abgebrochen";
 export type LogStep = { id: string; type: EmailNode["type"]; title: string; detail: string | null; state: LogStepState; at: Date | null; branch?: "yes" | "no" | null };
 /** Kurzname eines Schritts: „E-Mail: Betreff“, „Warten 2 Tage“, „Wenn geöffnet“, „Ende“. */
