@@ -141,7 +141,8 @@ export function stoppedByReply(state: Pick<RecipientState, "status" | "repliedAt
  * Vorlage mit Platzhaltern). `stopped` (Text) bricht die Serie ohne Versand ab – z. B. wenn beim Nachprüfen direkt vor dem
  * Senden eine Antwort oder eine Sperre aufgetaucht ist.
  */
-export type SendOutcome = boolean | { ok: boolean; subject?: string | null; stopped?: string | null };
+export type SendOutcome = boolean | { ok: boolean; subject?: string | null; stopped?: string | null; defer?: string | null };
+/* `defer`: Diese E-Mail darf JETZT noch nicht raus (z. B. wartet auf deine Freigabe) – der Empfänger bleibt am Schritt stehen und wird später erneut geprüft; kein Fehler, kein Ereignis. */
 export async function advanceRecipient(tree: EmailTree, state: RecipientState, now: Date, send: (node: Extract<EmailNode, { type: "send" }>, subject: string) => Promise<SendOutcome>, options: { window?: SendWindow | null; stopOnReply?: boolean | null } = {}): Promise<{ state: RecipientState; events: StepEvent[] }> {
   const events: StepEvent[] = []; let current = { ...state }; let guard = 0;
   // Ohne Schritt: ein frischer Empfänger beginnt vorn. Wer schon E-Mails bekommen hat, ist fertig – nie wieder von vorn, nie doppelt.
@@ -173,6 +174,7 @@ export async function advanceRecipient(tree: EmailTree, state: RecipientState, n
       }
       const slot = nextSendSlot(now, options.window); if (slot) { current = { ...current, status: "wartet", nextActionAt: slot }; events.push({ kind: "gewartet", nodeId: node.id, note: `Versandfenster: wartet bis ${slot.toLocaleString("de-DE", { timeZone: options.window?.timezone })}` }); break; }
       const template = subjectFor(node, current.variant); const outcome = await send(node, template);
+      if (typeof outcome === "object" && outcome.defer) { current = { ...current, status: "wartet", nodeId: node.id, nextActionAt: new Date(now.getTime() + 10 * 60_000) }; break; } // z. B. wartet auf Freigabe oder KI-Entwurf – in ein paar Minuten erneut prüfen
       if (typeof outcome === "object" && outcome.stopped) { current = { ...current, status: "fertig", nodeId: null, nextActionAt: null }; events.push({ kind: "beendet", nodeId: node.id, note: outcome.stopped }); break; } // z. B. Antwort kurz vor dem Senden eingetroffen
       const ok = typeof outcome === "boolean" ? outcome : outcome.ok; const subject = (typeof outcome === "object" && outcome.subject) || template;
       if (!ok) { current = { ...current, status: "fehler", nextActionAt: null }; events.push({ kind: "fehler", nodeId: node.id, subject, note: "Versand fehlgeschlagen" }); break; }
@@ -393,8 +395,26 @@ export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: 
   { key: "frei", label: "Freier Vorschlag", hint: "Eigene Idee der KI – ein anderer Einstieg, aber genauso persönlich auf die Firma zugeschnitten." },
 ];
 export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? "Entwurf";
+/* ---------------------------------------------------------------- KI-Versand: Betriebsart und Ansatz je Kampagne */
+export type KiModus = "aus" | "freigabe" | "auto";
+export type KiAnsatz = "individuell" | "drittanbieter";
+export const KI_MODUS_OPTIONS: Array<{ key: KiModus; label: string; hint: string }> = [
+  { key: "aus", label: "Aus – Vorlagen senden", hint: "Jeder Schritt verschickt die Vorlage aus dem Builder, nur die Platzhalter werden gefüllt." },
+  { key: "freigabe", label: "Mit Freigabe", hint: "Die KI schreibt jede E-Mail persönlich (jeder Schritt, jeder Kontakt) – du liest unter „Freigeben“ und schickst los. Ohne deine Freigabe geht nichts raus." },
+  { key: "auto", label: "Automatisch", hint: "Die KI schreibt jede E-Mail persönlich im Hintergrund und der Versand läuft sofort weiter – ohne Freigabe. Ist die KI nicht erreichbar, geht die Vorlage raus." },
+];
+export const KI_ANSATZ_OPTIONS: Array<{ key: KiAnsatz; label: string; hint: string }> = [
+  { key: "individuell", label: "Individueller Ansatz", hint: "Einstieg mit etwas Konkretem von der Webseite oder aus den Daten, dann unser Angebot – wie von Hand geschrieben." },
+  { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Kernbotschaft: Leads kommen sehr wahrscheinlich über Zwischenhändler an und stammen ohnehin von uns – deshalb direkte Zusammenarbeit. Trotzdem individuell je Firma." },
+];
+/** Betriebsart einer Kampagne – alte Kampagnen mit „Erst-E-Mail einzeln freigeben“ zählen als „freigabe“. */
+export function kiModusOf(campaign: { kiModus?: string | null; reviewFirst?: boolean | null }): KiModus {
+  return campaign.kiModus === "auto" || campaign.kiModus === "freigabe" || campaign.kiModus === "aus" ? campaign.kiModus : campaign.reviewFirst ? "freigabe" : "aus";
+}
+export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { return campaign.kiAnsatz === "drittanbieter" ? "drittanbieter" : "individuell"; }
+
 /** Ohne KI: der Drittanbieter-Ansatz als feste Vorlage mit den Daten der Firma. */
 export function thirdPartyTemplate(values: Record<string, string | null | undefined>): { subject: string; text: string } {
   const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = values.nachname && values.anrede ? `Sehr geehrte${values.anrede === "Frau" ? "" : "r"} ${values.anrede} ${values.nachname},` : "Sehr geehrte Damen und Herren,";
-  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich Photovoltaik und Wärmepumpen, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler. Dieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und am Ende leiden Aktualität und Datenqualität. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWir freuen uns über Ihre Rückmeldung und die Möglichkeit eines persönlichen Telefonats.\n\nMit freundlichen Grüßen` };
+  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich Photovoltaik und Wärmepumpen, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler. Dieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und am Ende leiden Aktualität und Datenqualität. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten – in der Regel über 10 Fragen; auf Wunsch nennen wir Ihren Firmennamen, der Interessent erwartet dann Ihre Rückmeldung\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWir freuen uns über Ihre Rückmeldung und die Möglichkeit eines persönlichen Telefonats.` };
 }

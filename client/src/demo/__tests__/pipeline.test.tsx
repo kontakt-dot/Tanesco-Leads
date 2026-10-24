@@ -758,6 +758,35 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(row().sentCount).toBe(2); expect(row()).toMatchObject({ status: "wartet", nodeId: "w1" }); expect(getStore().tables.emailCampaignEvents.some((event) => event.recipientId === row().id && event.kind === "verzweigt" && /^Übersprungen/.test(event.note ?? ""))).toBe(true);
     const log = await call("leadops.emailRecipientLog", { recipientId: row().id }); expect(log.events.map((event: any) => event.label)).toContain("E-Mail übersprungen (schon gesendet)");
   });
+  it("KI-Versand (Demo): Freigabe je Schritt, Ansatz der Kampagne, Auto-Modus sendet sofort", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "KI-Demo", rows: [{ firstName: "Kim", lastName: "Kette", company: "Kette Klima", email: "kim@ki-demo.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage", blocks: starterBlocks("nachfassen"), next: null }] };
+    const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 };
+    const saved = await call("leadops.saveEmailCampaign", { ...base, name: "KI-Demo", audience: { source: "liste", listName: "KI-Demo" }, tree, kiModus: "freigabe", kiAnsatz: "drittanbieter" });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    const row = () => getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === saved.id)!;
+    expect(row().sentCount).toBe(0); expect(row().draftState).toBe("entwurf"); expect(row().draftNodeId).toBe("m1"); expect(row().draftApproach).toBe("drittanbieter"); expect(String(row().draftText)).toContain("Zwischenhändler");
+    const queue1 = await call("leadops.campaignReviewQueue", { campaignId: saved.id }); expect(queue1.items[0].nodeLabel).toBe("Erste"); expect(queue1.items[0].followUp).toBe(false);
+    await call("leadops.saveCampaignDraft", { recipientId: row().id, subject: "Persönlich 1", text: "Guten Tag Frau Kette,\n\npersönliche erste Mail.", approve: true });
+    await call("leadops.runEmailCampaigns");
+    expect(row()).toMatchObject({ sentCount: 1, nodeId: "w1", draftState: null });
+    row().nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns");
+    expect(row()).toMatchObject({ sentCount: 1, nodeId: "m2", draftState: "entwurf", draftNodeId: "m2" }); // Nachfass-Mail wartet wieder auf Freigabe
+    const queue2 = await call("leadops.campaignReviewQueue", { campaignId: saved.id }); expect(queue2.items[0].nodeLabel).toBe("Kurze Nachfrage"); expect(queue2.items[0].followUp).toBe(true);
+    await call("leadops.saveCampaignDraft", { recipientId: row().id, subject: "Persönlich 2", text: "Guten Tag Frau Kette,\n\nkurze Nachfrage.", approve: true });
+    await call("leadops.runEmailCampaigns");
+    expect(row()).toMatchObject({ sentCount: 2, status: "fertig" });
+    expect(getStore().tables.emailCampaignEvents.filter((event) => event.recipientId === row().id && event.kind === "gesendet").map((event) => event.subject)).toEqual(["Persönlich 1", "Persönlich 2"]);
+    // Auto-Modus: Demo schreibt die persönliche Fassung selbst und sendet sofort
+    await call("leadops.importColdList", { listName: "KI-Demo-Auto", rows: [{ firstName: "Udo", lastName: "Auto", company: "Auto Solar", email: "udo@ki-demo-auto.example" }] });
+    const auto = await call("leadops.saveEmailCampaign", { ...base, name: "KI-Demo-Auto", audience: { source: "liste", listName: "KI-Demo-Auto" }, tree: { start: "a1", nodes: [{ id: "a1", type: "send", label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "auto", kiAnsatz: "individuell" });
+    await call("leadops.startEmailCampaign", { id: auto.id }); await call("leadops.runEmailCampaigns");
+    const udo = getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === auto.id)!;
+    expect(udo.sentCount).toBe(1); expect(udo.status).toBe("fertig");
+    const sentAuto = getStore().tables.emailCampaignEvents.find((event) => event.recipientId === udo.id && event.kind === "gesendet");
+    expect(String(sentAuto?.subject)).toContain("Auto Solar"); // persönliche Fassung je Kontakt
+  });
 });
 
 describe("Dialer für Leads aus dem Posteingang & KI-Vorlagen-Builder (Chat-Build)", () => {

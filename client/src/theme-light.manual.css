@@ -1439,3 +1439,13 @@ html:not(.dark) .inbox-bulk-lead { border-top-color: #eceef3 !important; }
 html:not(.dark) .list-picker-check { background: #ffffff !important; border-color: #d0d5dd !important; color: #ffffff !important; }
 html:not(.dark) .list-picker-check.is-on { background: #bc001d !important; border-color: #bc001d !important; }
 html:not(.dark) .list-picker-row.is-active { border-color: #f1c2ca !important; background: #fff7f8 !important; }
+
+/* KI-Versand-Box hell */
+html:not(.dark) .ki-box { background: #fdf7f8 !important; border-color: #f1dade !important; }
+html:not(.dark) .ki-box.is-off { background: #f9fafb !important; border-color: #e7eaf0 !important; }
+html:not(.dark) .ki-box-hint { color: #667085 !important; }
+html:not(.dark) .ki-box-row button { color: #475467 !important; border-color: #d8dce5 !important; background: #ffffff !important; }
+html:not(.dark) .ki-box-row button.is-active { background: #bc001d !important; border-color: #bc001d !important; color: #ffffff !important; }
+html:not(.dark) .ki-box-row.is-ansatz button.is-active { background: #fff1f3 !important; border-color: #e8a7b1 !important; color: #9f0018 !important; }
+html:not(.dark) .rv-step { color: #8a4bdd !important; }
+html:not(.dark) .cd-chip.is-ki { border-color: #e0d7fb !important; color: #6941c6 !important; background: #f9f5ff !important; }

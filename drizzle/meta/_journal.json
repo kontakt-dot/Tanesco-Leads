@@ -575,6 +575,13 @@
       "when": 1792680000000,
       "tag": "0081_einzeln_freigeben",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "5",
+      "when": 1792800000000,
+      "tag": "0082_ki_versand",
+      "breakpoints": true
     }
   ]
 }

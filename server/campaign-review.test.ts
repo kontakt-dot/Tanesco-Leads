@@ -10,6 +10,14 @@ const tree: EmailTree = { start: "w1", nodes: [
 ] };
 
 describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
+  it("Grußformel am Ende wird entfernt – die Signatur bringt „Mit freundlichen Grüßen“ und den Namen schon mit", async () => {
+    const { stripClosing } = await import("./campaign-review"); const { thirdPartyTemplate } = await import("../shared/email-campaigns");
+    expect(stripClosing("Hallo,\n\nkurzer Text.\n\nMit freundlichen Grüßen")).toBe("Hallo,\n\nkurzer Text.");
+    expect(stripClosing("Hallo,\n\nkurzer Text.\n\nViele Grüße\n")).toBe("Hallo,\n\nkurzer Text.");
+    expect(stripClosing("Text endet mit Frage: Passt Donnerstag?")).toBe("Text endet mit Frage: Passt Donnerstag?");
+    expect(stripClosing("Wir grüßen die Kollegen im Text, nicht am Ende.")).toBe("Wir grüßen die Kollegen im Text, nicht am Ende."); // nur ganze Schlusszeilen
+    expect(thirdPartyTemplate({ firma: "Koppen GmbH" }).text).not.toMatch(/Grüßen\s*$/); // feste Vorlage ohne doppelte Grußformel
+  });
   it("findet die erste E-Mail des Ablaufs über Warten und Abfragen hinweg", () => { expect(firstSendNode(tree)?.id).toBe("s1"); expect(firstSendNode({ start: null, nodes: [] })).toBeNull(); expect(firstSendNode({ start: "x", nodes: [{ id: "x", type: "end" }] })).toBeNull(); });
   it("macht aus den Bausteinen Fließtext mit gefüllten Platzhaltern – ohne Überschrift, Knopf und Signatur", () => {
     const text = blocksToPlainText(firstSendNode(tree)!.blocks, { firma: "Koppen GmbH", anrede: "Herr", nachname: "Koppen", stadt: "Kassel" });

@@ -2518,11 +2518,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
     expect(recipients.every((row) => row.sentCount === 0)).toBe(true); // ohne Freigabe geht nichts raus
     const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0 });
-    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toEqual({ offen: 2, entwurf: 0, freigegeben: 0 });
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toEqual({ offen: 0, entwurf: 2, freigegeben: 0 }); // der Versand-Lauf hat die Entwürfe schon geschrieben (Vorlage, ohne KI-Schlüssel) und wartet auf Freigabe
     const rita = queue.items.find((item) => item.email === "rita@review-e2e.example")!; expect(rita.city).toBe("Kassel");
     const drafts = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [rita.id] }); // ohne KI-Schlüssel: Vorlage mit den Daten des Kontakts
     expect(drafts.drafts).toHaveLength(1); expect(drafts.drafts[0].subject).toContain("Review Dach GmbH"); expect(drafts.drafts[0].text).not.toContain("{{"); expect(drafts.drafts[0].text).not.toMatch(/ {2}/); expect(drafts.drafts[0].text).toContain("Review,"); expect(drafts.drafts[0].options.map((option) => option.key)).toEqual(["individuell", "drittanbieter"]); expect(drafts.drafts[0].options[1].text).toContain("Drittpartner bei Review Dach GmbH"); expect(drafts.drafts[0].options[1].text).toContain("Zwischenhändler"); expect(drafts.drafts[0].options[1].text).toContain("direkte Zusammenarbeit"); // Kernbotschaft Drittanbieter-Ansatz
-    expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).counts).toEqual({ offen: 1, entwurf: 1, freigegeben: 0 });
+    expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).counts).toEqual({ offen: 0, entwurf: 2, freigegeben: 0 });
     await owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "Persönlich für Review Dach", text: "Guten Tag Frau Review,\n\nIhr Betrieb in Kassel ist uns aufgefallen. Kurz telefonieren?\n\nViele Grüße", approve: false });
     await owner.leadops.runEmailCampaigns(); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, rita.id)))[0].sentCount).toBe(0); // gespeichert ≠ freigegeben
     await owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "Persönlich für Review Dach", text: "Guten Tag Frau Review,\n\nIhr Betrieb in Kassel ist uns aufgefallen. Kurz telefonieren?\n\nViele Grüße", approve: true, approach: "drittanbieter" }); expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).items.find((item) => item.id === rita.id)?.draftApproach).toBe("drittanbieter");
@@ -2636,5 +2636,38 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const doroEvents = await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, doro.id)).orderBy(asc(emailCampaignEvents.id));
     expect(doroEvents.filter((event) => event.kind === "gesendet").map((event) => event.nodeId)).toEqual(["m1", "m2"]); expect(doroEvents.some((event) => event.kind === "verzweigt" && /^Übersprungen/.test(event.note ?? ""))).toBe(true);
     const doroLog = await owner.leadops.emailRecipientLog({ recipientId: doro.id }); expect(doroLog.events.map((event) => event.label)).toContain("E-Mail übersprungen (schon gesendet)");
+  }, 40000);
+  it("59. KI-Versand je Schritt: Freigabe für JEDE E-Mail (auch Nachfass), Ansatz der Kampagne, Auto-Modus sendet ohne Freigabe (Vorlagen-Rückfall)", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "KI-Test", toPipeline: false, rows: [{ firstName: "Kim", lastName: "Kette", company: "Kette Klima", city: "Mainz", email: "kim@ki-e2e.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "KI-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "KI-Test" }, tree, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "drittanbieter", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).reviewFirst).toBe(true); // Freigabe-Modus zählt wie „Erst-E-Mail einzeln freigeben“
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const row = async () => (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)))[0];
+    let kim = await row(); expect(kim.sentCount).toBe(0); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m1"); expect(kim.draftApproach).toBe("drittanbieter"); expect(kim.draftText).toContain("Zwischenhändler"); // Ansatz der Kampagne, ohne KI-Schlüssel aus der festen Vorlage
+    const queue1 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue1.items[0].nodeLabel).toBe("Erste"); expect(queue1.items[0].followUp).toBe(false);
+    await owner.leadops.saveCampaignDraft({ recipientId: kim.id, subject: "Persönlich 1 für Kette Klima", text: "Guten Tag Frau Kette,\n\npersönliche erste Mail.", approve: true });
+    await owner.leadops.runEmailCampaigns(); kim = await row();
+    expect(kim.sentCount).toBe(1); expect(kim.nodeId).toBe("w1"); expect(kim.draftState).toBeNull(); expect(kim.draftNodeId).toBeNull(); // Entwurf verbraucht – nächster Schritt bekommt einen frischen
+    // Wartezeit um → Nachfass-Mail braucht WIEDER eine Freigabe
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, kim.id));
+    await owner.leadops.runEmailCampaigns(); kim = await row();
+    expect(kim.sentCount).toBe(1); expect(kim.nodeId).toBe("m2"); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m2"); // wartet an der Nachfass-Mail auf Freigabe
+    const queue2 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue2.items[0].nodeLabel).toBe("Kurze Nachfrage"); expect(queue2.items[0].followUp).toBe(true);
+    await owner.leadops.runEmailCampaigns(); expect((await row()).sentCount).toBe(1); // ohne Freigabe geht weiterhin nichts raus
+    await owner.leadops.saveCampaignDraft({ recipientId: kim.id, subject: "Persönlich 2 – kurze Nachfrage", text: "Guten Tag Frau Kette,\n\nkurze Nachfrage zur ersten Mail.", approve: true });
+    await owner.leadops.runEmailCampaigns(); kim = await row();
+    expect(kim.sentCount).toBe(2); expect(kim.status).toBe("fertig");
+    const sent = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, kim.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
+    expect(sent.map((event) => event.subject)).toEqual(["Persönlich 1 für Kette Klima", "Persönlich 2 – kurze Nachfrage"]); // beide Schritte mit dem freigegebenen, persönlichen Text
+    // Auto-Modus: ohne KI-Schlüssel geht die Vorlage sofort raus – keine Freigabe nötig
+    await owner.leadops.importColdList({ listName: "KI-Auto", toPipeline: false, rows: [{ firstName: "Udo", lastName: "Auto", company: "Auto Solar", email: "udo@ki-auto-e2e.example" }] });
+    const auto = await owner.leadops.saveEmailCampaign({ name: "KI-Auto", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "KI-Auto" }, tree: { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "auto", kiAnsatz: "individuell", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    expect((await owner.leadops.getEmailCampaign({ id: auto.id })).reviewFirst).toBe(false);
+    await owner.leadops.startEmailCampaign({ id: auto.id }); await owner.leadops.runEmailCampaigns();
+    const udo = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, auto.id)))[0];
+    expect(udo.sentCount).toBe(1); expect(udo.status).toBe("fertig");
   }, 40000);
 });
