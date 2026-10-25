@@ -3171,3 +3171,10 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .audience-pick-hint strong{color:#e4e2f5}
 .audience-status .is-picked{background:rgba(52,211,153,.14);color:#a7f3d0}
 html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#067647!important}
+/* Zielgruppen-Zeile in der Kampagnen-Karte: lange Hinweise („61 beim Start · 41 schon drin …“) umbrechen statt unter die Zahlen zu laufen */
+.cl-card .audience-status{min-width:0;max-width:100%;overflow:hidden}
+.cl-card .audience-status .is-muted{white-space:normal;line-height:1.35;flex:1 1 100%}
+/* Auswahlkästchen in einer Linie: Kopfzeile „Alle auswählen“ und Zeilen gleich ausgerichtet */
+.email-leads-table th.email-leads-check,.email-leads-table td.email-leads-check{width:36px;min-width:36px;text-align:center;padding-left:10px;padding-right:6px}
+.email-leads-table .email-leads-check input{margin:0;vertical-align:middle}
+.cd-bulk{padding-left:10px}
