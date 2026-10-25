@@ -184,8 +184,20 @@ export async function purgeOrphanCampaignEvents(db: Db, tenantId: number) {
   const result = await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), sql`${emailCampaignEvents.recipientId} not in (select ${emailCampaignRecipients.id} from ${emailCampaignRecipients} where ${emailCampaignRecipients.tenantId} = ${tenantId})`));
   return Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
 }
+/**
+ * Entwürfe mit Zielgruppe „Liste“ ohne Liste, in die schon Kontakte von Hand aufgenommen wurden (vor der Zielgruppe „auswahl“):
+ * sie leben von diesen Kontakten → Zielgruppe wird „Nur ausgewählte Kontakte“, damit Anzeige und Start zusammenpassen.
+ */
+async function repairPickedDrafts(db: Db, tenantId: number) {
+  const drafts = await db.select({ id: emailCampaigns.id, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.status, "entwurf"), eq(emailCampaigns.isTemplate, false)));
+  const empty = drafts.filter((row) => { const audience = (row.audience ?? null) as Audience | null; return audience?.source === "liste" && !audienceLists(audience).length; });
+  if (!empty.length) return;
+  const counts = await db.select({ campaignId: emailCampaignRecipients.campaignId }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.campaignId, empty.map((row) => row.id))));
+  const withRecipients = new Set(counts.map((row) => row.campaignId));
+  for (const row of empty) if (withRecipients.has(row.id)) await db.update(emailCampaigns).set({ audience: { source: "auswahl" } }).where(eq(emailCampaigns.id, row.id));
+}
 export async function listEmailCampaigns(db: Db, tenantId: number) {
-  await purgeOrphanCampaignEvents(db, tenantId);
+  await purgeOrphanCampaignEvents(db, tenantId); await repairPickedDrafts(db, tenantId);
   const rows = await db.select().from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId)).orderBy(desc(emailCampaigns.updatedAt));
   const recipients = await db.select({ campaignId: emailCampaignRecipients.campaignId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, variant: emailCampaignRecipients.variant, draftState: emailCampaignRecipients.draftState }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
   const recipientEmails = await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
@@ -199,6 +211,7 @@ export async function listEmailCampaigns(db: Db, tenantId: number) {
   return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.isTemplate ? withoutLists(row.audience as Audience | null) : (row.audience ?? { source: "alle" })) as Audience, audienceInfo: infos.get(row.id) ?? null, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, archivedAt: row.archivedAt ?? null, createdAt: row.createdAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), reviewFirst: kiModusOf(row) === "freigabe", kiModus: kiModusOf(row), kiAnsatz: kiAnsatzOf(row), review: kiModusOf(row) === "freigabe" ? { zurFreigabe: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState !== "freigegeben").length, freigegeben: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState === "freigegeben").length } : null, sendWindow: sendWindowOf(row), stats: { ...summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))), mails: mailsOf(row.id) } }));
 }
 export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
+  await repairPickedDrafts(db, tenantId);
   const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
   const recipients = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id))).orderBy(desc(emailCampaignRecipients.createdAt));
   const events = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id))).orderBy(desc(emailCampaignEvents.createdAt)).limit(200);

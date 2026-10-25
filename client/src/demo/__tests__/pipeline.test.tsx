@@ -1786,6 +1786,9 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const picked = await call("leadops.getEmailCampaign", { id: draft2.id }); expect(picked.audience.source).toBe("auswahl"); expect(picked.audienceInfo).toMatchObject({ total: 1, picked: true, outside: 0 });
     expect((await call("leadops.previewEmailAudience", { source: "auswahl", campaignId: draft2.id })).count).toBe(1);
     expect((await call("leadops.previewEmailAudience", { source: "auswahl" })).count).toBe(0);
+    // Alte Daten: Entwurf „Liste ohne Liste“ mit Empfängern wird beim Laden repariert
+    getStore().tables.emailCampaigns.find((row) => row.id === draft2.id)!.audience = { source: "liste", listName: null, listNames: [] };
+    expect((await call("leadops.listEmailCampaigns")).find((row: any) => row.id === draft2.id).audienceInfo).toMatchObject({ total: 1, picked: true });
     expect((await call("leadops.startEmailCampaign", { id: draft2.id })).added).toBe(1);
     expect((await call("leadops.getEmailCampaign", { id: draft2.id })).recipients).toHaveLength(1); // niemand kommt automatisch dazu
     await call("leadops.importColdList", { listName: "Messe West", categoryId: null, toPipeline: false, rows: [{ firstName: "Spaet", lastName: "Dran", company: "Spaet GmbH", email: "spaet@listen-test.de" }] });

@@ -2758,6 +2758,10 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(await owner.leadops.addLeadsToEmailCampaign({ id: campaign.id, leadIds: picked.map((row) => row.id) })).toMatchObject({ added: 2, status: "entwurf" });
     const listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
     expect(listed.audience.source).toBe("auswahl"); expect(listed.audienceInfo).toMatchObject({ total: 2, picked: true, outside: 0, pending: 0 }); expect(listed.stats.total).toBe(2); // Empfänger = Zielgruppe, kein Widerspruch mehr
+    // Alte Daten (vor der Zielgruppe „auswahl“): Entwurf „Liste ohne Liste“ mit Empfängern wird beim Laden repariert
+    await db.update(emailCampaigns).set({ audience: { source: "liste", listName: null, listNames: [] } }).where(eq(emailCampaigns.id, campaign.id));
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).audience.source).toBe("auswahl");
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)?.audienceInfo).toMatchObject({ total: 2, picked: true });
     const preview = await owner.leadops.previewEmailAudience({ source: "auswahl", campaignId: campaign.id }); expect(preview.count).toBe(2); expect(preview.sample.map((row) => row.name).sort()).toEqual(["Dora Drei", "Emil Vier"]);
     // Start nimmt genau die zwei – Fritz (in derselben Liste, nicht ausgewählt) bleibt draußen
     const started = await owner.leadops.startEmailCampaign({ id: campaign.id }); expect(started.added).toBe(2);
