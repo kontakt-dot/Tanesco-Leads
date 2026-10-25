@@ -191,7 +191,7 @@ describe("Persönlicher Versand (weniger Werbung-Ordner)", () => {
     expect(html).toContain("border-radius"); // Knopf als Fläche
   });
   it("Persönlich: kein Logo, kein Pixel, Links direkt, Knopf als Textlink", () => {
-    const html = renderEmailHtml(blocks, { ...DEFAULT_DESIGN, plain: true }, { nachname: "Berg" }, optionen);
+    const html = renderEmailHtml(blocks, { ...DEFAULT_DESIGN, plain: true, footerText: "Tanesco Digital · {{abmelden}}" }, { nachname: "Berg" }, optionen); // Fußzeile ist standardmäßig leer – hier mit Abmelde-Platzhalter
     expect(html).not.toContain("tanesco-logo-mail.png");
     expect(html).not.toContain("/api/mail/o/abc.gif");
     expect(html).toContain("Testleads anfordern");

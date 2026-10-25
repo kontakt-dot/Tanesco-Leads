@@ -194,8 +194,14 @@ async function markAllPicked(db: Db, tenantId: number, campaignId: number) {
 }
 /** Alte Vorlagen-Reste in gespeicherten Abläufen (Begrüßung „Guten Tag {{anrede}} {{nachname}}“, tote „Termin“-Knöpfe) einmalig auffrischen – Kampagnen und Vorlagen. */
 async function repairCampaignTrees(db: Db, tenantId: number) {
-  const rows = await db.select({ id: emailCampaigns.id, tree: emailCampaigns.tree }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
-  for (const row of rows) { const current = (row.tree ?? null) as EmailTree | null; if (!current?.nodes?.length) continue; const next = modernizeTree(current); if (next) await db.update(emailCampaigns).set({ tree: next }).where(eq(emailCampaigns.id, row.id)); }
+  const rows = await db.select({ id: emailCampaigns.id, tree: emailCampaigns.tree, design: emailCampaigns.design }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+  for (const row of rows) {
+    const current = (row.tree ?? null) as EmailTree | null; const next = current?.nodes?.length ? modernizeTree(current) : null;
+    // Fußzeile einmalig leeren: der alte Standardtext („Du erhältst diese E-Mail, weil …“ bzw. Anschrift + Abmelde-Satz) verschwindet überall; eigene Texte bleiben
+    const design = (row.design ?? null) as Partial<EmailDesign> | null; const footer = design?.footerText ?? "";
+    const clearFooter = !design?.footerReset && Boolean(footer.trim()) && (/Du erhältst diese E-Mail, weil/i.test(footer) || footer.trim() === companyFooterText().trim() || /^Tanesco Digital GbR/i.test(footer.trim())); // nur einmal – wer die Fußzeile danach bewusst setzt, behält sie
+    if (next || clearFooter) await db.update(emailCampaigns).set({ ...(next ? { tree: next } : {}), ...(clearFooter ? { design: { ...(design ?? {}), footerText: "", footerReset: 1 } } : {}) }).where(eq(emailCampaigns.id, row.id));
+  }
 }
 async function repairPickedDrafts(db: Db, tenantId: number) {
   await repairCampaignTrees(db, tenantId);
@@ -264,7 +270,7 @@ async function tenantDesign(db: Db, tenantId: number): Promise<Partial<EmailDesi
 }
 export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null; stopOnReply?: boolean | null; maxRuns?: number | null; reviewFirst?: boolean | null; kiModus?: string | null; kiAnsatz?: string | null }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
-  const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.isTemplate ? withoutLists(input.audience) : input.audience, /* Vorlagen speichern nie Listen */ tree: input.tree, design: { ...DEFAULT_DESIGN, ...(await tenantDesign(db, tenantId)), ...input.design }, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}), ...(typeof input.stopOnReply === "boolean" ? { stopOnReply: input.stopOnReply } : {}), ...(typeof input.maxRuns === "number" ? { maxRuns: Math.max(0, Math.min(99, Math.round(input.maxRuns))) } : {}), ...(typeof input.reviewFirst === "boolean" ? { reviewFirst: input.reviewFirst } : {}), ...(input.kiModus === "aus" || input.kiModus === "freigabe" || input.kiModus === "auto" ? { kiModus: input.kiModus, reviewFirst: input.kiModus === "freigabe" } : {}), ...(input.kiAnsatz === "individuell" || input.kiAnsatz === "drittanbieter" ? { kiAnsatz: input.kiAnsatz } : {}) };
+  const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.isTemplate ? withoutLists(input.audience) : input.audience, /* Vorlagen speichern nie Listen */ tree: input.tree, design: { ...DEFAULT_DESIGN, ...input.design } /* Fußzeile bleibt leer – wer sie will, wendet sie unter Einstellungen → Branding an */, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}), ...(typeof input.stopOnReply === "boolean" ? { stopOnReply: input.stopOnReply } : {}), ...(typeof input.maxRuns === "number" ? { maxRuns: Math.max(0, Math.min(99, Math.round(input.maxRuns))) } : {}), ...(typeof input.reviewFirst === "boolean" ? { reviewFirst: input.reviewFirst } : {}), ...(input.kiModus === "aus" || input.kiModus === "freigabe" || input.kiModus === "auto" ? { kiModus: input.kiModus, reviewFirst: input.kiModus === "freigabe" } : {}), ...(input.kiAnsatz === "individuell" || input.kiAnsatz === "drittanbieter" ? { kiAnsatz: input.kiAnsatz } : {}) };
   if (input.id) {
     const before = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0];
     await db.update(emailCampaigns).set(values).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId)));
@@ -833,7 +839,7 @@ export async function applyFooterToCampaigns(db: Db, tenantId: number, options: 
     if (row.isTemplate && options.includeTemplates === false) continue;
     const design = { ...DEFAULT_DESIGN, ...((row.design ?? {}) as Partial<EmailDesign>) };
     if (design.footerText === patch.footerText) continue;
-    await db.update(emailCampaigns).set({ design: { ...design, footerText: patch.footerText } }).where(eq(emailCampaigns.id, row.id));
+    await db.update(emailCampaigns).set({ design: { ...design, footerText: patch.footerText, footerReset: 1 } }).where(eq(emailCampaigns.id, row.id)); // bewusst gesetzt – bleibt
     updated += 1;
   }
   return { updated, footerText: patch.footerText };

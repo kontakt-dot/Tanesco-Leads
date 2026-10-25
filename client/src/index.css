@@ -3178,3 +3178,9 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .email-leads-table th.email-leads-check,.email-leads-table td.email-leads-check{width:36px;min-width:36px;text-align:center;padding-left:10px;padding-right:6px}
 .email-leads-table .email-leads-check input{margin:0;vertical-align:middle}
 .cd-bulk{padding-left:10px}
+/* Auswahlkästchen (Kontakte, Empfängerliste, Posteingang): eigenes Aussehen statt Browser-Standard – leer durchsichtig mit feinem Rand, angehakt in der Akzentfarbe */
+.email-leads-check input,.cd-pick input,.cd-bulk-all input,.inbox-bulk-all input{-webkit-appearance:none;appearance:none;width:15px;height:15px;margin:0;border-radius:4px;border:1.5px solid rgba(203,213,225,.45);background:transparent;cursor:pointer;display:inline-grid;place-items:center;vertical-align:middle;transition:background .12s,border-color .12s}
+.email-leads-check input:hover,.cd-pick input:hover,.cd-bulk-all input:hover,.inbox-bulk-all input:hover{border-color:rgba(203,213,225,.8)}
+.email-leads-check input:checked,.cd-pick input:checked,.cd-bulk-all input:checked,.inbox-bulk-all input:checked{background:#7c6cff;border-color:#7c6cff}
+.email-leads-check input:checked::after,.cd-pick input:checked::after,.cd-bulk-all input:checked::after,.inbox-bulk-all input:checked::after{content:"";width:8px;height:5px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:translateY(-1px) rotate(-45deg)}
+.email-leads-check input:focus-visible,.cd-pick input:focus-visible,.cd-bulk-all input:focus-visible,.inbox-bulk-all input:focus-visible{outline:2px solid rgba(124,108,255,.5);outline-offset:1px}

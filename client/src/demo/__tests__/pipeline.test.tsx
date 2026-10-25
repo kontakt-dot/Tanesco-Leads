@@ -773,6 +773,10 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(row()).toMatchObject({ sentCount: 1, nodeId: "w1", draftState: null });
     row().nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns");
     expect(row()).toMatchObject({ sentCount: 1, nodeId: "m2", draftState: "entwurf", draftNodeId: "m2" }); // Nachfass-Mail wartet wieder auf Freigabe
+    // „Alle freigeben“ / „Alle wieder prüfen“ / „Alle neu schreiben“
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true })).toMatchObject({ approved: 1 }); expect(row().draftState).toBe("freigegeben");
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: false })).toMatchObject({ reverted: 1 }); expect(row().draftState).toBe("entwurf");
+    expect(await call("leadops.resetCampaignDrafts", { campaignId: saved.id })).toMatchObject({ reset: 1 }); expect(row().draftState).toBeNull();
     const queue2 = await call("leadops.campaignReviewQueue", { campaignId: saved.id }); expect(queue2.items[0].nodeLabel).toBe("Kurze Nachfrage"); expect(queue2.items[0].followUp).toBe(true);
     await call("leadops.saveCampaignDraft", { recipientId: row().id, subject: "Persönlich 2", text: "Guten Tag Frau Kette,\n\nkurze Nachfrage.", approve: true });
     await call("leadops.runEmailCampaigns");

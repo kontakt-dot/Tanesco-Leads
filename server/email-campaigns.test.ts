@@ -139,7 +139,7 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
     const design = { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, sans-serif" };
     const blocks = [...starterBlocks("kaltakquise")]; expect(blocks.some((block) => block.type === "signature")).toBe(true); // Startvorlage hat einen Signatur-Baustein
     const signature = { html: `<div class="sig">Mit freundlichen Grüßen<br><i>Thomas Kutzbach</i></div>`, text: "\n-- \nMit freundlichen Grüßen\nThomas Kutzbach" };
-    const withSignature = renderEmailHtml(blocks, design, {}, { signatureHtml: signature.html });
+    const withSignature = renderEmailHtml(blocks, { ...design, footerText: "Tanesco Digital · {{abmelden}}" }, {}, { signatureHtml: signature.html }); // Fußzeile ist standardmäßig leer – hier mit Abmelde-Link, um die Reihenfolge zu prüfen
     expect(withSignature).toContain('class="sig"'); expect(withSignature).not.toContain("Ihr Tanesco-Team"); // Baustein-Signatur weg, Einstellungs-Signatur drin
     expect(withSignature.indexOf('class="sig"')).toBeLessThan(withSignature.indexOf("Hier abmelden")); // vor der Fußzeile
     const without = renderEmailHtml(blocks, { ...design, signature: false }, {}, { signatureHtml: signature.html });

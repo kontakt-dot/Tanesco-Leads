@@ -2654,6 +2654,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id })).reset).toBeGreaterThanOrEqual(1);
     expect((await row()).draftState).toBeNull(); expect((await row()).draftText).toBeNull();
     await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5 }); kim = await row(); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m1");
+    // „Alle freigeben“ / „Alle wieder prüfen“
+    const all = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true }); expect((all as { approved: number }).approved).toBeGreaterThanOrEqual(1);
+    expect((await row()).draftState).toBe("freigegeben");
+    const back = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: false }); expect((back as { reverted: number }).reverted).toBeGreaterThanOrEqual(1);
+    expect((await row()).draftState).toBe("entwurf");
     await owner.leadops.saveCampaignDraft({ recipientId: kim.id, subject: "Persönlich 1 für Kette Klima", text: "Guten Tag Frau Kette,\n\npersönliche erste Mail.", approve: true });
     await owner.leadops.runEmailCampaigns(); kim = await row();
     expect(kim.sentCount).toBe(1); expect(kim.nodeId).toBe("w1"); expect(kim.draftState).toBeNull(); expect(kim.draftNodeId).toBeNull(); // Entwurf verbraucht – nächster Schritt bekommt einen frischen

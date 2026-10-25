@@ -12,7 +12,7 @@ export type EmailBlock =
  * `plain` = persönlicher Versand: ohne Logo, ohne Kasten, ohne farbigen Knopf und ohne Messung.
  * Solche E-Mails sehen aus wie von Hand geschrieben und landen bei Gmail viel seltener im Reiter „Werbung“.
  */
-export type EmailDesign = { primaryColor: string; textColor: string; background: string; cardBackground: string; font: string; logoUrl?: string | null; logoHeight?: number; footerText?: string; unsubscribeText?: string; buttonRadius?: number; plain?: boolean; signature?: boolean /* Signatur aus den E-Mail-Einstellungen anhängen (Standard: ja) */ };
+export type EmailDesign = { primaryColor: string; textColor: string; background: string; cardBackground: string; font: string; logoUrl?: string | null; logoHeight?: number; footerText?: string; footerReset?: number; /* 1 = Fußzeile wurde bewusst gesetzt oder einmalig geleert – nicht noch einmal anfassen */ unsubscribeText?: string; buttonRadius?: number; plain?: boolean; signature?: boolean /* Signatur aus den E-Mail-Einstellungen anhängen (Standard: ja) */ };
 /** Hängt die Kampagne die Signatur aus den E-Mail-Einstellungen an? Fehlt die Angabe, ja. */
 export const usesSignature = (design: Partial<EmailDesign> | null | undefined) => design?.signature !== false;
 /**
@@ -25,7 +25,7 @@ export const COMPANY_WEBSITE = "https://tanescodigital.de";
 export const COMPANY_APPOINTMENT_URL = "";
 /**
  * Links in der Fußzeile. Zwei Schreibweisen:
- *  • eigener Text: [Termin vereinbaren](https://cal.com/tanesco) – der Text steht da, dahinter liegt die Adresse
+ *  • eigener Text: [Unsere Webseite](https://tanescodigital.de) – der Text steht da, dahinter liegt die Adresse
  *  • blanke Adresse: „https://…“ oder „tanescodigital.de“ wird von selbst anklickbar
  * Läuft auf bereits maskiertem HTML, erzeugt also nur die Links und nichts anderes.
  */
@@ -57,7 +57,7 @@ export const companyFooterText = (options: { footer?: string | null; website?: s
 };
 /** Platzhalter für das Tanesco-Logo – wird beim Versand durch die öffentliche Adresse ersetzt (APP_URL + Pfad), in der Vorschau durch die eingebettete Datei. */
 export const TANESCO_LOGO_PATH = "/brand/tanesco-logo-mail.png";
-export const DEFAULT_DESIGN: EmailDesign = { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, Helvetica, Arial, sans-serif", logoUrl: TANESCO_LOGO_PATH, logoHeight: 40, footerText: `${companyFooterText()}\nDu erhältst diese E-Mail, weil du dich für unser Angebot interessiert hast. {{abmelden}}`, unsubscribeText: "Hier abmelden", buttonRadius: 10 };
+export const DEFAULT_DESIGN: EmailDesign = { primaryColor: "#bc001d", textColor: "#101828", background: "#f3f4f6", cardBackground: "#ffffff", font: "Inter, Helvetica, Arial, sans-serif", logoUrl: TANESCO_LOGO_PATH, logoHeight: 40, footerText: "", /* Fußzeile standardmäßig leer – Anschrift und Gruß bringt die Signatur mit; unter Einstellungen → Branding lässt sich eine Fußzeile auf Wunsch auf alle Kampagnen anwenden */ unsubscribeText: "Hier abmelden", buttonRadius: 10 };
 const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 /** Platzhalter: {{vorname}}, {{nachname}}, {{anrede}}, {{firma}}, {{stadt}}, {{abmelden}} … */
 export function fillPlaceholders(text: string, values: Record<string, string | null | undefined>) { return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => values[key] ?? values[key.toLowerCase()] ?? ""); }

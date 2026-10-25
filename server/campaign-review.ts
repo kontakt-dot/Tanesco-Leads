@@ -234,6 +234,28 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   return { id: recipient.id, subject: first.subject, text: first.text, options: list, approach: first.key, source, website: site?.url ?? website, nodeId: node.id, nodeLabel: node.label?.trim() || node.subject };
 }
 
+/**
+ * Alle Entwürfe einer Kampagne auf einmal freigeben (approve = true) oder alle Freigaben zurücknehmen (approve = false),
+ * damit man sie wieder einzeln durchliest. Nur Entwürfe, die zum aktuellen Schritt passen und deren E-Mail noch nicht raus ist.
+ */
+export async function approveAllDrafts(db: Db, tenantId: number, campaignId: number, approve: boolean) {
+  const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
+  const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
+  const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
+  let changed = 0; let withoutDraft = 0;
+  for (const row of rows) {
+    const node = dueSendNode(tree, row); if (!node) continue;
+    const fits = Boolean(row.draftState) && draftFitsNode(row, node.id) && Boolean(row.draftSubject?.trim()) && (row.draftText ?? "").trim().length >= 10;
+    if (approve) {
+      if (!fits) { withoutDraft += 1; continue; }
+      if (row.draftState === "freigegeben") continue;
+      await db.update(emailCampaignRecipients).set({ draftState: "freigegeben", draftNodeId: node.id, draftAt: new Date(), ...(row.nodeId === node.id ? { nextActionAt: new Date(Date.now() - 2000) } : {}) }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
+    } else if (row.draftState === "freigegeben" && fits) {
+      await db.update(emailCampaignRecipients).set({ draftState: "entwurf", draftAt: new Date() }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
+    }
+  }
+  return approve ? { approved: changed, withoutDraft } : { reverted: changed, withoutDraft: 0 };
+}
 /** Alle noch nicht gesendeten Entwürfe einer Kampagne verwerfen (auch schon freigegebene) – die KI schreibt sie danach mit den aktuellen Regeln neu. */
 export async function resetDrafts(db: Db, tenantId: number, campaignId: number) {
   const open = await db.select({ id: emailCampaignRecipients.id, draftState: emailCampaignRecipients.draftState }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
