@@ -77,14 +77,14 @@ export function websiteOf(metadata: unknown, email: string | null | undefined): 
 
 const SYSTEM = `Du schreibst für Tanesco Digital (einer der größten Leadlieferanten Deutschlands für Photovoltaik und Wärmepumpen) Akquise-E-Mails an Fachbetriebe und Energieversorger – jede einzeln, wie von Hand geschrieben, nie wie ein Serienbrief. Je nach Auftrag schreibst du die Erst-E-Mail oder eine Nachfass-Mail, als die verlangten Vorschläge (Ansätze), alle persönlich auf genau diesen Empfänger zugeschnitten.
 
-Was Tanesco anbietet (nur diese Fakten verwenden): PV- und Wärmepumpen-Leads, eigene Generierung über Meta-Kampagnen (Facebook/Instagram), telefonisch vorqualifiziert – in der Regel über 10 Qualifizierungsfragen am Telefon; auf Wunsch nennen wir dabei den Firmennamen des Betriebs, und der Interessent weiß danach, dass sich der Betrieb bei ihm meldet. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt. Test-Angebot: 20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – baue dieses Angebot in den individuellen UND in den Drittanbieter-Ansatz ein (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
+Was Tanesco anbietet (nur diese Fakten verwenden): PV- und Wärmepumpen-Leads, eigene Generierung über Meta-Kampagnen (Facebook/Instagram), telefonisch vorqualifiziert – in der Regel über 10 Qualifizierungsfragen am Telefon; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt. Test-Angebot: 20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – baue dieses Angebot in den individuellen UND in den Drittanbieter-Ansatz ein (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
 
 1) "individuell" – Individueller Ansatz. So soll er klingen (Beispiel, nicht kopieren):
 "Sehr geehrter Herr Wiebe,
 auf Ihrer Website steht „Keine Anzahlung, 0 % Risiko“. Genau so arbeiten wir auch, nur auf der anderen Seite des Tisches.
 Mit 12 Standorten von Oldenburg bis Konstanz brauchen Sie vermutlich in jeder Region einen stetigen Strom an Anfragen. Die übliche Erfahrung mit Lead-Anbietern ist eine andere: Leads, die an fünf Betriebe gleichzeitig gehen, falsche Nummern, Interessenten, die sich an nichts erinnern, und Vorkasse für all das.
 Wir von Tanesco Digital gehören zu den größten Lead-Lieferanten in Deutschland. Unsere PV- und Wärmepumpen-Leads sind telefonisch qualifiziert und gehen exklusiv per Schnittstelle direkt an Sie. Wir arbeiten grundsätzlich ohne Vorkasse.
-Damit Sie das ohne Risiko prüfen können, bekommen Sie 20 Test-Leads kostenlos – individuell für Ihre Standorte und telefonisch qualifiziert, in der Regel über 10 Fragen; auf Wunsch nennen wir dabei Ihren Firmennamen, sodass der Interessent weiß, dass Sie sich melden.
+Damit Sie das ohne Risiko prüfen können, bekommen Sie 20 Test-Leads kostenlos – individuell für Ihre Standorte und telefonisch qualifiziert, in der Regel über 10 Fragen; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet.
 Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter 0611 000000.
 Vielen Dank"
 → Einstieg mit etwas Konkretem von der Webseite oder aus den Daten (ein Zitat, ein Versprechen, Standorte, Spezialisierung), daraus eine Brücke zu uns, dann der typische Schmerz mit Lead-Anbietern, dann unser Angebot. Keine Aufzählung, 90–150 Wörter.
@@ -93,9 +93,9 @@ Vielen Dank"
 
 3) "frei" – Freier Vorschlag: dein eigener, anderer Einstieg (z. B. eine konkrete Frage, eine Beobachtung zur Region oder zum Geschäftsmodell), genauso persönlich, 80–140 Wörter.
 
-Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlich, in Nachfass-Mails in ein bis zwei Sätzen): das Test-Angebot (20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert) und wie wir qualifizieren (in der Regel über 10 Fragen am Telefon, auf Wunsch unter Nennung des Firmennamens, sodass der Interessent weiß, dass sich der Betrieb bei ihm meldet). Fehlt davon etwas, ist die E-Mail falsch.
+Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlich, in Nachfass-Mails in ein bis zwei Sätzen): das Test-Angebot (20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert) und wie wir qualifizieren (in der Regel über 10 Fragen am Telefon; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet). Den Firmennamen des Betriebs nennen wir dabei NICHT – das darf nirgends stehen. Fehlt von den Pflichtinhalten etwas, ist die E-Mail falsch.
 
-Regeln für alle drei: Deutsch, Sie-Form. Anrede IMMER förmlich und nie „Hallo“, „Hi“ oder „Moin“: mit Namen „Sehr geehrter Herr …“ / „Sehr geehrte Frau …“ (bei unbekanntem Geschlecht „Guten Tag Vorname Nachname“). Steht in den Angaben kein Ansprechpartner, suche im Webseiten-Auszug (besonders im Impressum) nach dem Geschäftsführer oder Inhaber und sprich diese Person in ALLEN drei Vorschlägen direkt mit Herr/Frau und Nachnamen an (ohne Vornamen und Titel) – aber nur, wenn der Name wörtlich im Auszug steht, nie geraten. Erst wenn es gar keinen Namen gibt: „Sehr geehrte Damen und Herren“ – nie „Hallo“ ohne Namen. Nichts erfinden: keine Zahlen, Standorte, Zitate, Namen oder Fakten, die nicht in den Angaben oder auf der Webseite stehen – Webseiten-Zitate nur wörtlich aus dem Auszug. Keine Floskeln, kein „ich habe Ihre Webseite besucht“, keine Links, kein Knopf, keine Terminbuchung, keine Ausrufezeichen. Der Schluss ist immer gleich aufgebaut: vorletzter Absatz = ein klarer Satz, was zu tun ist – „Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter <Telefon des Absenders>.“ (Telefon steht in den Angaben; fehlt es: nur „antworten Sie einfach auf diese E-Mail“; eine Variante wie „Lassen Sie uns gerne sprechen: …“ ist erlaubt, die Nummer muss dann trotzdem drinstehen) – und die letzte Zeile lautet genau „Vielen Dank“. KEINE Grußformel danach – kein „Mit freundlichen Grüßen“, kein „Viele Grüße“, kein Name: Die Signatur, die das System automatisch anhängt, enthält Gruß und Namen schon. Betreff je Vorschlag: konkret, persönlich, höchstens 70 Zeichen, kein Clickbait.
+Regeln für alle drei: Deutsch, Sie-Form. Für die Anrede gibt es genau zwei Formen: „Sehr geehrter Herr Nachname,“ / „Sehr geehrte Frau Nachname,“ – oder „Sehr geehrte Damen und Herren,“. Nie „Hallo“, „Hi“, „Moin“, nie „Guten Tag Vorname Nachname“, nie nur der Vorname. Herr oder Frau darfst du aus einem eindeutigen Vornamen ableiten (Stefan → Herr, Katrin → Frau); ist der Vorname nicht eindeutig oder fehlt der Nachname, schreibst du „Sehr geehrte Damen und Herren“. Steht in den Angaben kein Ansprechpartner, suche im Webseiten-Auszug (besonders im Impressum) nach dem Geschäftsführer oder Inhaber und sprich diese Person in ALLEN drei Vorschlägen direkt mit Herr/Frau und Nachnamen an (ohne Vornamen und Titel) – aber nur, wenn der Name wörtlich im Auszug steht, nie geraten. Erst wenn es gar keinen Namen gibt: „Sehr geehrte Damen und Herren“ – nie „Hallo“ ohne Namen. Nichts erfinden: keine Zahlen, Standorte, Zitate, Namen oder Fakten, die nicht in den Angaben oder auf der Webseite stehen – Webseiten-Zitate nur wörtlich aus dem Auszug. Keine Floskeln, kein „ich habe Ihre Webseite besucht“, keine Links, kein Knopf, keine Terminbuchung, keine Ausrufezeichen. Der Schluss ist immer gleich aufgebaut: vorletzter Absatz = ein klarer Satz, was zu tun ist – „Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter <Telefon des Absenders>.“ (Telefon steht in den Angaben; fehlt es: nur „antworten Sie einfach auf diese E-Mail“; eine Variante wie „Lassen Sie uns gerne sprechen: …“ ist erlaubt, die Nummer muss dann trotzdem drinstehen) – und die letzte Zeile lautet genau „Vielen Dank“. KEINE Grußformel danach – kein „Mit freundlichen Grüßen“, kein „Viele Grüße“, kein Name: Die Signatur, die das System automatisch anhängt, enthält Gruß und Namen schon. Betreff je Vorschlag: konkret, persönlich, höchstens 70 Zeichen, kein Clickbait.
 Die Vorlage der Kampagne zeigt den gewünschten Inhalt/Ton – nutze sie als Grundlage, besonders für den freien Vorschlag.
 Nachfass-Mails (wenn der Auftrag sagt, dass schon E-Mails raus sind): kurz (50–110 Wörter), knüpfen in einem Halbsatz an die vorige E-Mail an, ohne sie zu wiederholen – danach ein NEUER Aufhänger oder konkreter Mehrwert (eine Frage zum Bedarf, ein passender Punkt von der Webseite, ein Angebot wie kostenlose Test-Leads, ein konkreter Terminvorschlag). Keine erneute lange Vorstellung von Tanesco, derselbe Ansatz wie verlangt, genauso individuell.`;
 
@@ -122,9 +122,9 @@ async function senderPhone(db: Db, tenantId: number): Promise<string> { try { co
 const digitsOf = (value: string) => value.replace(/\D+/g, "");
 const CTA_RE = /antworten sie|rufen sie|melden sie sich|rückmeldung|lassen sie uns\b|hätten sie\b.*\b(minuten|zeit)\b|zeit für ein|für ein (kurzes )?(telefonat|gespräch)|kurzes telefonat|terminvorschlag|wann passt/i; // Handlungsaufforderung am Schluss (nicht jedes „telefonisch“ im Text)
 /**
- * Anrede nie „Hallo“: „Hallo Herr Wiebe,“ → „Sehr geehrter Herr Wiebe,“; „Hallo Max Muster,“ → „Guten Tag Max Muster,“; „Hallo,“ oder gar keine
- * Anrede → die förmliche Begrüßung aus den Daten („Sehr geehrte Damen und Herren“, wenn kein Name bekannt ist). Eine förmliche Anrede der KI
- * (z. B. der Geschäftsführer aus dem Impressum) bleibt unverändert.
+ * Anrede: nur zwei Formen – „Sehr geehrte/r Frau/Herr Nachname“ oder „Sehr geehrte Damen und Herren“. „Hallo Herr Wiebe,“ → „Sehr geehrter Herr Wiebe,“;
+ * „Hallo Max Muster,“ / „Guten Tag Max Muster,“ / „Hallo,“ / keine Anrede → die Begrüßung aus den Daten (ohne bekannte Anrede: „Sehr geehrte Damen
+ * und Herren“). Eine förmliche Anrede der KI mit Herr/Frau (z. B. der Geschäftsführer aus dem Impressum) bleibt unverändert.
  */
 export function fixGreeting(text: string, greeting: string): string {
   const lines = text.replace(/^\s+/, "").split("\n"); const first = (lines[0] ?? "").trim();
@@ -133,9 +133,9 @@ export function fixGreeting(text: string, greeting: string): string {
   const guten = first.match(/^guten\s+(?:tag|morgen|abend)\b[\s,]*(.*?)[,!.]?\s*$/i);
   const geehrte = /^sehr\s+geehrte/i.test(first);
   let head: string | null = null;
-  if (informal) { const rest = informal[2].trim(); head = /^(herr|frau)\s+\S/i.test(rest) ? formal(rest) : rest ? `Guten Tag ${rest},` : `${greeting},`; }
-  else if (guten) { const rest = guten[1].trim(); head = /^(herr|frau)\s+\S/i.test(rest) ? formal(rest) : rest ? `Guten Tag ${rest},` : `${greeting},`; }
-  else if (geehrte) head = first.replace(/[,!.]?\s*$/, ",");
+  if (informal) { const rest = informal[2].trim(); head = /^(herr|frau)\s+\S/i.test(rest) ? formal(rest) : `${greeting},`; }
+  else if (guten) { const rest = guten[1].trim(); head = /^(herr|frau)\s+\S/i.test(rest) ? formal(rest) : `${greeting},`; }
+  else if (geehrte) head = /^sehr\s+geehrte(r)?\s+(herr|frau|damen)\b/i.test(first) ? first.replace(/[,!.]?\s*$/, ",") : `${greeting},`; // „Sehr geehrter Max Muster“ gibt es nicht
   if (head === null) return `${greeting},\n\n${lines.join("\n").trim()}`;
   return [head, ...lines.slice(1)].join("\n").replace(/^([^\n]+,)\n(?!\n)/, "$1\n\n");
 }
@@ -143,9 +143,9 @@ export function fixGreeting(text: string, greeting: string): string {
 export function ensureFacts(text: string, followUp: boolean): string {
   const hasOffer = /test-?leads?/i.test(text) && /\b20\b/.test(text); const hasQualify = /\b10\s+(qualifizierungs)?fragen/i.test(text) || /zehn\s+fragen/i.test(text);
   if (hasOffer && (hasQualify || followUp)) return text;
-  const add = !hasOffer && !hasQualify && !followUp ? "Damit Sie das ohne Risiko prüfen können: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert – in der Regel über 10 Fragen; auf Wunsch nennen wir dabei Ihren Firmennamen, sodass der Interessent weiß, dass Sie sich bei ihm melden."
+  const add = !hasOffer && !hasQualify && !followUp ? "Damit Sie das ohne Risiko prüfen können: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert – in der Regel über 10 Fragen, sodass der Interessent weiß, dass sich ein Fachbetrieb bei ihm meldet."
     : !hasOffer ? "Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert."
-    : "Jeder Interessent wird telefonisch qualifiziert – in der Regel über 10 Fragen; auf Wunsch nennen wir dabei Ihren Firmennamen, sodass er weiß, dass Sie sich bei ihm melden.";
+    : "Jeder Interessent wird telefonisch qualifiziert – in der Regel über 10 Fragen, sodass er weiß, dass sich ein Fachbetrieb bei ihm meldet.";
   const parts = text.split(/\n{2,}/); const last = parts.length - 1;
   const ctaAt = parts.length > 1 && CTA_RE.test(parts[last]) ? last : -1;
   if (ctaAt > 0) parts.splice(ctaAt, 0, add); else parts.push(add);
@@ -161,9 +161,27 @@ export function ensureClosing(text: string, phone: string): string {
   else if (!phone && !CTA_RE.test(lastParagraph)) body += `\n\nWenn das für Sie interessant ist, ${contactWay(null)}.`;
   return `${body}\n\nVielen Dank`;
 }
+/** Der Firmenname des Betriebs wird bei der Qualifizierung NICHT genannt – Sätze dazu fliegen raus (auch wenn die KI sie noch schreibt). */
+export function dropCompanyNameClaim(text: string): string {
+  if (!/firmenname/i.test(text)) return text;
+  const trailing = /^(sodass|so dass|damit|dass|wodurch|womit|der|die|das|was)\b/i; // Nebensätze, die am Firmennamen-Satzteil hängen
+  return text.split(/(\n+)/).map((part) => {
+    if (!/firmenname/i.test(part)) return part;
+    return part.split(/(?<=[.!?])\s+/).map((sentence) => {
+      if (!/firmenname/i.test(sentence)) return sentence;
+      const clauses = sentence.split(/\s*(?:,|;|–|—|\s+und\s+|\s+sowie\s+)\s*/).filter(Boolean);
+      const hit = clauses.findIndex((clause) => /firmenname/i.test(clause));
+      const before = clauses.slice(0, hit); let after = clauses.slice(hit + 1);
+      while (after.length && trailing.test(after[0])) after = after.slice(1);
+      const kept = [...before, ...after].map((clause) => clause.replace(/[.!?]\s*$/, "")).filter(Boolean);
+      if (!kept.length) return "";
+      return `${kept.join(", ").replace(/\s+/g, " ").trim()}.`;
+    }).filter(Boolean).join(" ");
+  }).join("").replace(/[ \t]{2,}/g, " ");
+}
 /** Alle Regeln auf einen Entwurf anwenden – gilt für KI-Texte wie für Vorlagen-Rückfälle. */
 export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean }): string {
-  return ensureClosing(ensureFacts(fixGreeting(text.trim(), options.greeting), options.followUp), options.phone);
+  return ensureClosing(ensureFacts(fixGreeting(dropCompanyNameClaim(text.trim()), options.greeting), options.followUp), options.phone);
 }
 type FollowUpInfo = { index: number; sentSubjects: string[] } | null; // Nr. der E-Mail im Ablauf (0 = Erst-E-Mail) und was schon raus ist
 async function aiDrafts(base: { subject: string; text: string }, info: Record<string, string>, site: { url: string; text: string } | null = null, options: { approaches?: DraftApproach[]; followUp?: FollowUpInfo; stepLabel?: string | null; phone?: string | null } = {}): Promise<DraftOption[] | null> {
