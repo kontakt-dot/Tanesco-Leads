@@ -3,7 +3,7 @@ import { confirmAction } from "@/lib/confirm";
 import { Check, ChevronRight, ExternalLink, Globe, MailX, PenLine, RefreshCw, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { DRAFT_APPROACHES, type DraftApproach } from "../../../shared/email-campaigns";
+import { DRAFT_APPROACHES, draftToBlocks, type DraftApproach, type EmailNode } from "../../../shared/email-campaigns";
 
 /**
  * Erst-E-Mails einzeln schreiben & freigeben: links alle Kontakte, deren erste E-Mail noch nicht raus ist, rechts der
@@ -30,10 +30,18 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
   const [subject, setSubject] = useState(""); const [text, setText] = useState(""); const loadedSig = useRef<string | null>(null);
   const [approach, setApproach] = useState<DraftApproach | null>(null); const edits = useRef<Record<string, { subject: string; text: string }>>({}); // je Ansatz die eigenen Änderungen merken
   const [generatingIds, setGeneratingIds] = useState<Set<number>>(new Set());
+  const campaign = trpc.leadops.getEmailCampaign.useQuery({ id: campaignId }, { retry: false });
+  const [showPreview, setShowPreview] = useState(true);
+  const [deferred, setDeferred] = useState<{ subject: string; text: string }>({ subject: "", text: "" }); // Vorschau folgt dem Tippen mit kurzer Verzögerung
+
   const items = useMemo(() => (queue.data?.items ?? []) as Item[], [queue.data]);
   const visible = items.filter((item) => filter === "alle" || stateOf(item) === filter);
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const counts = queue.data?.counts ?? { offen: 0, entwurf: 0, freigegeben: 0 };
+  // Vorschau: der Entwurf in der echten E-Mail – Design und Footer/Signatur aus dem Builder
+  useEffect(() => { const timer = setTimeout(() => setDeferred({ subject, text }), 600); return () => clearTimeout(timer); }, [subject, text]);
+  const previewNode = useMemo(() => { const tree = campaign.data?.tree; if (!tree || !selected) return null; const nodeId = (selected as { nodeId?: string | null }).nodeId ?? null; const node = tree.nodes.find((item): item is Extract<EmailNode, { type: "send" }> => item.type === "send" && (nodeId ? item.id === nodeId : true)); if (!node || !deferred.text.trim()) return null; return { ...node, subject: deferred.subject.trim() || node.subject, subjectB: null, blocks: draftToBlocks(deferred.text, node.blocks) }; }, [campaign.data, selected, deferred]);
+  const preview = trpc.leadops.previewEmailNode.useQuery({ node: previewNode as never, design: (campaign.data?.design ?? {}) as Record<string, unknown> }, { retry: false, enabled: Boolean(previewNode && showPreview), placeholderData: (previous) => previous });
 
   // Auswahl: erster Kontakt, der noch nicht freigegeben ist
   useEffect(() => { if (selectedId !== null && items.some((item) => item.id === selectedId)) return; const next = items.find((item) => item.draftState !== "freigegeben") ?? items[0] ?? null; setSelectedId(next?.id ?? null); }, [items, selectedId]);
@@ -79,6 +87,10 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
           {(selected.draftOptions?.length ?? 0) > 1 && <div className="rv-approaches" role="tablist" aria-label="Ansatz wählen">{DRAFT_APPROACHES.filter((item) => selected.draftOptions?.some((option) => option.key === item.key)).map((item) => <button key={item.key} type="button" role="tab" aria-selected={approach === item.key} className={approach === item.key ? "is-active" : ""} title={item.hint} onClick={() => switchTo(item.key)}><strong>{item.label}</strong><small>{item.hint}</small></button>)}</div>}
           <label className="rv-field">Betreff<input value={subject} placeholder="Betreff dieser E-Mail" onChange={(event) => setSubject(event.target.value)} /></label>
           <label className="rv-field">E-Mail-Text<textarea value={text} rows={14} placeholder={isGenerating ? "KI schreibt …" : "Persönlicher Text für diesen Kontakt – Grußformel ohne Namen, die Signatur hängt das System an."} onChange={(event) => setText(event.target.value)} /></label>
+          <div className="rv-preview">
+            <button type="button" className="rv-preview-toggle" aria-expanded={showPreview} onClick={() => setShowPreview((value) => !value)}>{showPreview ? "▾" : "▸"} So kommt die E-Mail an – mit Design und Footer aus dem Builder{selected.draftState !== "freigegeben" && showPreview ? "" : ""}</button>
+            {showPreview && (preview.data?.html ? <iframe className="rv-preview-frame" title="Vorschau der E-Mail" sandbox="" srcDoc={preview.data.html} /> : <p className="rv-preview-empty">{previewNode ? "Vorschau wird geladen …" : "Noch kein Text – die Vorschau erscheint, sobald ein Entwurf da ist."}</p>)}
+          </div>
           <div className="rv-editor-foot">
             <small>{text.trim().split(/\s+/).filter(Boolean).length} Wörter{dirty ? " · ungespeichert" : ""}</small>
             <div className="rv-editor-buttons">

@@ -1449,3 +1449,7 @@ html:not(.dark) .ki-box-row button.is-active { background: #bc001d !important; b
 html:not(.dark) .ki-box-row.is-ansatz button.is-active { background: #fff1f3 !important; border-color: #e8a7b1 !important; color: #9f0018 !important; }
 html:not(.dark) .rv-step { color: #8a4bdd !important; }
 html:not(.dark) .cd-chip.is-ki { border-color: #e0d7fb !important; color: #6941c6 !important; background: #f9f5ff !important; }
+
+html:not(.dark) .rv-preview-toggle { color: #667085 !important; }
+html:not(.dark) .rv-preview-toggle:hover { color: #101828 !important; }
+html:not(.dark) .rv-preview-frame { border-color: #e4e7ec !important; }
