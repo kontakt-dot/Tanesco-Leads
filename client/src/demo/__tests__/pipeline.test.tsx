@@ -1782,6 +1782,17 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.getEmailCampaign", { id: saved.id })).recipients.map((row: any) => row.email)).toEqual([westLeads[0].email]);
     const draft2 = await call("leadops.saveEmailCampaign", { id: null, name: "Einzel-Entwurf", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: null, listNames: [] }, tree: starter.tree, design: {} });
     expect(await call("leadops.addLeadsToEmailCampaign", { id: draft2.id, leadIds: [westLeads[1].id] })).toMatchObject({ added: 1, status: "entwurf" });
+    // Entwurf ohne Liste + von Hand aufgenommen → Zielgruppe „Nur ausgewählte Kontakte“: Zahlen passen zusammen, Start nimmt genau diese
+    const picked = await call("leadops.getEmailCampaign", { id: draft2.id }); expect(picked.audience.source).toBe("auswahl"); expect(picked.audienceInfo).toMatchObject({ total: 1, picked: true, outside: 0 });
+    expect((await call("leadops.previewEmailAudience", { source: "auswahl", campaignId: draft2.id })).count).toBe(1);
+    expect((await call("leadops.previewEmailAudience", { source: "auswahl" })).count).toBe(0);
+    expect((await call("leadops.startEmailCampaign", { id: draft2.id })).added).toBe(1);
+    expect((await call("leadops.getEmailCampaign", { id: draft2.id })).recipients).toHaveLength(1); // niemand kommt automatisch dazu
+    await call("leadops.importColdList", { listName: "Messe West", categoryId: null, toPipeline: false, rows: [{ firstName: "Spaet", lastName: "Dran", company: "Spaet GmbH", email: "spaet@listen-test.de" }] });
+    expect((await call("leadops.getEmailCampaign", { id: draft2.id })).recipients).toHaveLength(1);
+    // Entwurf ohne Liste und ohne Kontakte lässt sich nicht starten – mit klarem Hinweis
+    const draft3 = await call("leadops.saveEmailCampaign", { id: null, name: "Leer", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "auswahl" }, tree: starter.tree, design: {} });
+    await expect(call("leadops.startEmailCampaign", { id: draft3.id })).rejects.toThrow(/Noch keine Kontakte ausgewählt/);
   });
 
   it("E-Mail-Kampagne archivieren (Demo): läuft → beendet + archiviert, nimmt niemanden mehr auf, Automatik überspringt sie, Wiederherstellen", async () => {

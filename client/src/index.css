@@ -3167,3 +3167,5 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-card.is-archiviert:hover{opacity:1}
 .cd-state.is-archiviert{border-color:rgba(165,163,196,.35);background:rgba(165,163,196,.1);color:#c9c6ee}
 .cl-archived-note{display:block;margin-top:4px;font-size:11.5px;color:#a5a3c4}
+.audience-pick-hint{margin-top:10px;padding:9px 12px;border-radius:10px;border:1px dashed rgba(255,255,255,.14);background:rgba(255,255,255,.03);font-size:12px;line-height:1.5;color:#a5a3c4}
+.audience-pick-hint strong{color:#e4e2f5}

@@ -174,7 +174,9 @@ export async function moveLeadsToPipeline(db: Db, tenantId: number, input: { pub
 }
 
 /* ---------- E-Mail-Kampagnen ---------- */
-export type Audience = { source: "liste" | "stufe" | "tag" | "alle"; listName?: string | null; listNames?: string[] | null; stage?: string | null; tagId?: number | null };
+/** Zielgruppe einer Kampagne. „auswahl“ = nur von Hand aufgenommene Kontakte (aus „Kontakte“ oder „Einzeln hinzufügen“) – keine automatische Aufnahme. */
+export type Audience = { source: "liste" | "stufe" | "tag" | "alle" | "auswahl"; listName?: string | null; listNames?: string[] | null; stage?: string | null; tagId?: number | null };
+const isPickAudience = (audience: Audience | null | undefined) => audience?.source === "auswahl";
 const tree = (campaign: EmailCampaign): EmailTree => (campaign.tree && typeof campaign.tree === "object" ? (campaign.tree as EmailTree) : { start: null, nodes: [] });
 const design = (campaign: EmailCampaign): EmailDesign => ({ ...DEFAULT_DESIGN, ...((campaign.design ?? {}) as Partial<EmailDesign>) });
 /** Verlauf von Empfängern, die es nicht mehr gibt, endgültig löschen – gelöschte Kontakte zählen in keiner Zahl mehr. */
@@ -285,6 +287,7 @@ export async function archiveEmailCampaign(db: Db, tenantId: number, id: number,
 export async function deleteEmailCampaign(db: Db, tenantId: number, id: number) { await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id))); await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id))); await db.delete(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
 async function audienceContacts(db: Db, tenantId: number, audience: Audience) {
   const conditions = [eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")]; // Zielgruppen bestehen nur aus Vertriebskontakten – nie aus Leads zum Verkauf
+  if (isPickAudience(audience)) return []; // „Nur ausgewählte Kontakte“: niemand kommt automatisch dazu
   const lists = audienceLists(audience); if (audience.source === "liste" && !lists.length) return []; // Zielgruppe „Liste“ ohne Liste = niemand (nie „alle“)
   if (lists.length) conditions.push(inArray(leads.listName, lists));
   if (audience.source === "stufe" && audience.stage) conditions.push(eq(leads.pipelineStage, audience.stage));
@@ -303,18 +306,27 @@ async function audienceLeads(db: Db, tenantId: number, audience: Audience) {
  */
 /** Zielgruppe gegen die Empfänger abgleichen: wer fehlt noch, wer ist gar nicht mehr in der Zielgruppe (z. B. gelöschter Testkontakt). */
 async function audienceInfo(db: Db, tenantId: number, audience: Audience, enrolled: Array<{ id: number; email: string }>, blocked: Set<string>) {
+  if (isPickAudience(audience)) return { total: enrolled.length, noEmail: 0, blocked: 0, pending: 0, outside: 0, outsideIds: [] as number[], picked: true }; // von Hand aufgenommen = die Zielgruppe
   const rows = await audienceContacts(db, tenantId, audience);
   const enrolledEmails = new Set(enrolled.map((item) => item.email.toLowerCase()));
   let noEmail = 0; let suppressed = 0; let pending = 0; const seen = new Set<string>(); const inAudience = new Set<string>();
   for (const row of rows) { if (row.email) inAudience.add(row.email.toLowerCase()); if (!validEmail(row.email)) { noEmail += 1; continue; } const key = row.email.toLowerCase(); if (blocked.has(key)) { suppressed += 1; continue; } if (seen.has(key)) continue; seen.add(key); if (!enrolledEmails.has(key)) pending += 1; }
   const outsideIds = enrolled.filter((item) => !inAudience.has(item.email.toLowerCase())).map((item) => item.id);
-  return { total: rows.length, noEmail, blocked: suppressed, pending, outside: outsideIds.length, outsideIds };
+  return { total: rows.length, noEmail, blocked: suppressed, pending, outside: outsideIds.length, outsideIds, picked: false };
 }
 /**
  * Zielgruppe prüfen: Anzahl und die ersten Empfänger – jeweils mit allen Platzhalter-Werten,
  * damit sich die E-Mail im Builder mit echten Daten ansehen lässt, bevor sie rausgeht.
  */
-export async function previewAudience(db: Db, tenantId: number, audience: Audience) {
+export async function previewAudience(db: Db, tenantId: number, audience: Audience & { campaignId?: number | null }) {
+  if (isPickAudience(audience)) {
+    if (!audience.campaignId) return { count: 0, sample: [] };
+    const picked = await db.select({ email: emailCampaignRecipients.email, name: emailCampaignRecipients.name, company: emailCampaignRecipients.company, leadId: emailCampaignRecipients.leadId }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, audience.campaignId))).orderBy(desc(emailCampaignRecipients.createdAt));
+    const leadIds = picked.slice(0, 5).map((row) => row.leadId).filter((id): id is number => typeof id === "number");
+    const leadRows = leadIds.length ? await db.select({ id: leads.id, firstName: leads.firstName, lastName: leads.lastName, email: leads.email, company: leads.company, city: leads.city, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, leadIds))) : [];
+    const sample = picked.slice(0, 5).map((row) => { const lead = leadRows.find((item) => item.id === row.leadId); return { name: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : row.name ?? "", email: row.email, company: lead?.company ?? row.company ?? null, values: recipientValues({ firstName: lead?.firstName, lastName: lead?.lastName, company: lead?.company ?? row.company, city: lead?.city, salutation: (lead?.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata) ? (lead.metadata as { salutation?: string }).salutation : null) ?? null, email: row.email, fields: extraFieldsOf(lead?.metadata ?? null) }, null) }; });
+    return { count: picked.length, sample };
+  }
   const rows = await audienceLeads(db, tenantId, audience);
   const sample = rows.slice(0, 5).map((row) => ({
     name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim(), email: row.email, company: row.company,
@@ -407,6 +419,9 @@ export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: {
   if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst eine Kampagne daraus anlegen.");
   if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
   const ids = Array.from(new Set(input.leadIds)).slice(0, 5000); if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
+  // Entwurf mit Zielgruppe „Liste“, aber ohne Liste: die Kampagne lebt offensichtlich von Hand ausgewählten Kontakten → Zielgruppe „Nur ausgewählte Kontakte“
+  const current = (campaign.audience ?? { source: "alle" }) as Audience;
+  if (campaign.status === "entwurf" && current.source === "liste" && !audienceLists(current).length) await db.update(emailCampaigns).set({ audience: { source: "auswahl" } }).where(eq(emailCampaigns.id, campaign.id));
   const rows = await db.select({ id: leads.id, firstName: leads.firstName, lastName: leads.lastName, email: leads.email, company: leads.company, city: leads.city, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
   const blocked = await suppressedSet(db, tenantId);
   const noEmail = rows.filter((row) => !validEmail(row.email)).length; const suppressed = rows.filter((row) => validEmail(row.email) && blocked.has(row.email.toLowerCase())).length;
@@ -472,10 +487,17 @@ export async function startEmailCampaign(db: Db, tenantId: number, id: number, a
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst „Aus Vorlage anlegen“ und dann die Kampagne starten.");
   if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
-  if ((campaign.audience as Audience | null)?.source === "liste" && !audienceLists(campaign.audience as Audience).length) throw new Error("Bitte zuerst eine Liste als Zielgruppe wählen – eine neue Kampagne übernimmt keine Listen der alten.");
+  let audience = (campaign.audience ?? { source: "alle" }) as Audience;
+  const pickedCount = (await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id)))).length;
+  if (audience.source === "liste" && !audienceLists(audience).length) {
+    if (!pickedCount) throw new Error("Bitte zuerst eine Liste als Zielgruppe wählen – oder unter „Kontakte“ Kontakte markieren und in die Kampagne aufnehmen.");
+    audience = { source: "auswahl" }; await db.update(emailCampaigns).set({ audience }).where(eq(emailCampaigns.id, id)); // nur von Hand aufgenommene Kontakte – so bleibt es auch
+  }
   const issues = validateTree(tree(campaign)); if (issues.length) throw new Error(issues.join(" "));
-  const rows = await audienceLeads(db, tenantId, (campaign.audience ?? { source: "alle" }) as Audience); if (!rows.length) throw new Error("Die Zielgruppe enthält keine Kontakte mit E-Mail-Adresse.");
-  const { added, skipped, repeated, maxRuns } = await enrollRecipients(db, tenantId, campaign, rows);
+  const rows = await audienceLeads(db, tenantId, audience);
+  if (!rows.length && !(isPickAudience(audience) && pickedCount)) throw new Error(isPickAudience(audience) ? "Noch keine Kontakte ausgewählt – unter „Kontakte“ Kontakte markieren und „In Kampagne aufnehmen“ wählen." : "Die Zielgruppe enthält keine Kontakte mit E-Mail-Adresse.");
+  const enrolled = await enrollRecipients(db, tenantId, campaign, rows);
+  const { skipped, repeated, maxRuns } = enrolled; const added = isPickAudience(audience) ? pickedCount : enrolled.added; // bei „Nur ausgewählte Kontakte“ sind die Empfänger schon drin – sie starten jetzt
   await db.update(emailCampaigns).set({ status: "aktiv", startedAt: campaign.startedAt ?? new Date() }).where(eq(emailCampaigns.id, id));
   await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“ gestartet`, detail: `${added} Empfänger aufgenommen${repeated ? ` (${repeated} erneut)` : ""}${skipped ? ` · ${skipped} übersprungen (${maxRunsLabel(maxRuns)})` : ""}`, refType: "emailCampaign", refId: id });
   // Versand läuft im Hintergrund (SMTP kann dauern) – die Anfrage kehrt sofort zurück; der Zeitplaner nimmt den Rest.

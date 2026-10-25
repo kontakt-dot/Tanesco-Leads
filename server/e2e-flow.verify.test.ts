@@ -2746,4 +2746,32 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const restored = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(restored.archivedAt).toBeNull(); expect(restored.status).toBe("beendet");
     const added = await owner.leadops.addListsToEmailCampaign({ id: campaign.id, listNames: ["Archiv-Test"] }); expect(added.running).toBe(true); expect(added.added).toBe(1); // Cem kommt jetzt rein
   }, 40000);
+
+  it("62. Zielgruppe „Nur ausgewählte Kontakte“: Entwurf ohne Liste + von Hand aufgenommen → Zahlen passen, Start nimmt genau diese, Upload nimmt niemanden dazu", async () => {
+    const outreach = await import("./sales-outreach"); const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "Auswahl-Test", toPipeline: true, rows: [{ firstName: "Dora", lastName: "Drei", company: "Drei GmbH", email: "dora@auswahl-e2e.example" }, { firstName: "Emil", lastName: "Vier", company: "Vier GmbH", email: "emil@auswahl-e2e.example" }, { firstName: "Fritz", lastName: "Fuenf", company: "Fuenf GmbH", email: "fritz@auswahl-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
+    // Wie in der Praxis: Kampagne mit Zielgruppe „Liste“, aber ohne Liste – dann Kontakte aus „Kontakte“ aufnehmen
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Auswahl-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: null, listNames: [] }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    const picked = await db.select({ id: leads.id }).from(leads).where(and(eq(leads.kind, "vertrieb"), inArray(leads.email, ["dora@auswahl-e2e.example", "emil@auswahl-e2e.example"])));
+    expect(await owner.leadops.addLeadsToEmailCampaign({ id: campaign.id, leadIds: picked.map((row) => row.id) })).toMatchObject({ added: 2, status: "entwurf" });
+    const listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+    expect(listed.audience.source).toBe("auswahl"); expect(listed.audienceInfo).toMatchObject({ total: 2, picked: true, outside: 0, pending: 0 }); expect(listed.stats.total).toBe(2); // Empfänger = Zielgruppe, kein Widerspruch mehr
+    const preview = await owner.leadops.previewEmailAudience({ source: "auswahl", campaignId: campaign.id }); expect(preview.count).toBe(2); expect(preview.sample.map((row) => row.name).sort()).toEqual(["Dora Drei", "Emil Vier"]);
+    // Start nimmt genau die zwei – Fritz (in derselben Liste, nicht ausgewählt) bleibt draußen
+    const started = await owner.leadops.startEmailCampaign({ id: campaign.id }); expect(started.added).toBe(2);
+    await owner.leadops.runEmailCampaigns();
+    const sent = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")));
+    expect(sent).toHaveLength(2);
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).recipients.map((row) => row.email).sort()).toEqual(["dora@auswahl-e2e.example", "emil@auswahl-e2e.example"]);
+    // Neuer Upload in die Liste und „Jetzt aufnehmen“: niemand kommt automatisch dazu
+    await owner.leadops.importColdList({ listName: "Auswahl-Test", toPipeline: false, rows: [{ firstName: "Gerd", lastName: "Sechs", company: "Sechs GmbH", email: "gerd@auswahl-e2e.example" }] });
+    expect((await owner.leadops.syncEmailCampaignAudience({ id: campaign.id })).added).toBe(0);
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).recipients).toHaveLength(2);
+    expect(await outreach.enrollListIntoRunningCampaigns(db, S.tenantId as number, "Auswahl-Test", "http://localhost")).toEqual([]);
+    // Leere Auswahl lässt sich nicht starten – mit klarem Hinweis
+    const empty = await owner.leadops.saveEmailCampaign({ name: "Auswahl leer", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "auswahl" }, tree, design: starter.design as unknown as Record<string, unknown> } as never);
+    await expect(owner.leadops.startEmailCampaign({ id: empty.id })).rejects.toThrow(/Noch keine Kontakte ausgewählt/);
+  }, 40000);
 });
