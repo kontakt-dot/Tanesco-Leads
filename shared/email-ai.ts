@@ -63,8 +63,8 @@ export function guessGoal(brief: string): EmailGoal {
 /** Das Thema/die Zielgruppe aus der Beschreibung ziehen – nur hinter „für/an/zu/über/wegen/bei“ („Nachfass-Mail nach Angebot für Dachdecker“ → „Dachdecker“). */
 function topicOf(brief: string) { const clause = brief.split(/[:;,–]|\s-\s/)[0] ?? ""; const marker = clause.match(/\b(?:für|an|zu|zum|zur|über|wegen|bei)\s+(.+)$/i); if (!marker) return ""; const cleaned = marker[1].replace(/(^|\s)[-/](?=\s|$)/g, " ").replace(/\b(bitte|eine|einen|ein|e ?mail|mail|schreib(e|en)?|erstell(e|en)?|brauche|ich|wir|möchte|will|soll|die|der|das|mit|an|zu|und|für|freundlich(e)?|sachlich(e)?|locker(e)?|kurz(e)?|lang(e)?|erstkontakt|erstansprache|nachfass\w*|nachhaken|aufweck\w*|willkommens?\w*|rückruf|termin\w*|angebot\w*|infos?|unterlagen|serie|kampagne|anbieten|schicken|senden|nach|dem|den|wegen|anfrage|kontakte?|leads?|kunden|empfänger|interessenten)\b/gi, " ").replace(/(^|\s)[-/–](?=\s|$)/g, " ").replace(/\s+/g, " ").trim(); if (cleaned.length <= 3) return ""; const words = cleaned.split(" "); if (words.length > 4 || /\b(nicht|kein|seit|die|der|das|dass|wenn)\b/i.test(cleaned) || /^[a-zäöü]\S*(en|ern|eln)$/.test(words[words.length - 1])) return ""; return cleaned.charAt(0).toUpperCase() + cleaned.slice(1); }
 const sentence = (text: string) => (text && !/[.!?]$/.test(text) ? `${text}.` : text);
-const greeting = (tone: EmailTone) => tone === "locker" ? "Hallo {{vorname}}," : "Guten Tag {{anrede}} {{nachname}},";
-const closing = (tone: EmailTone, sender: string) => tone === "locker" ? `Viele Grüße\n${sender}` : tone === "dringend" ? `Ich freue mich auf Ihre kurze Rückmeldung.\nMit freundlichen Grüßen\n${sender}` : `Mit freundlichen Grüßen\n${sender}`;
+const greeting = (_tone: EmailTone) => "{{begruessung}},"; // immer förmlich: „Sehr geehrte Frau …“ / „Sehr geehrter Herr …“ / „Sehr geehrte Damen und Herren“ – nie „Hallo“
+const closing = (_tone: EmailTone, _sender: string) => "Wenn das für Sie interessant ist, {{kontaktweg}}.\n\nVielen Dank"; // klarer Schluss: antworten oder anrufen (Nummer aus der Signatur) – Gruß und Name bringt die Signatur mit
 
 /** Regelbasierter Entwurf (ohne KI): je Ziel ein Gerüst, Ton und Länge steuern Anrede, Textmenge und Aufzählung. */
 export function heuristicEmailDraft(input: EmailBrief): EmailDraft {
@@ -86,7 +86,7 @@ export function heuristicEmailDraft(input: EmailBrief): EmailDraft {
   const blocks: EmailBlock[] = [{ id: newBlockId(), type: "heading", text: scaffold.heading }, { id: newBlockId(), type: "text", text: `${greeting(tone)}\n\n${sentence(scaffold.intro)} ${sentence(scaffold.body)}` }];
   if (length !== "kurz") blocks.push({ id: newBlockId(), type: "bullets", items: scaffold.bullets });
   if (length === "lang") blocks.push({ id: newBlockId(), type: "text", text: input.brief.trim() ? `Kurz zu uns: ${sentence(input.brief.trim().replace(/^[a-zäöü]/, (c) => c.toUpperCase()))}` : `Wir begleiten Sie von der ersten Frage bis zur Umsetzung – persönlich und ohne Umwege.` });
-  blocks.push({ id: newBlockId(), type: "button", text: cta.text, url: cta.url }, { id: newBlockId(), type: "text", text: closing(tone, sender) }, { id: newBlockId(), type: "signature", name: sender, role: "Vertrieb", phone: "+49 69 000000" });
+  void cta; blocks.push({ id: newBlockId(), type: "text", text: closing(tone, sender) }, { id: newBlockId(), type: "signature", name: sender, role: "Vertrieb", phone: "+49 69 000000" }); // kein Knopf – es gibt keine Terminbuchung
   return { label: GOALS.find((item) => item.key === goal)?.label ?? "E-Mail", subject: scaffold.subject, subjectB: input.abTest ? scaffold.subjectB : null, preheader: scaffold.preheader, blocks, notes: "Regelbasierter Entwurf – Texte im Builder anpassen." };
 }
 
@@ -130,7 +130,7 @@ export function sanitizeBlocks(raw: unknown): EmailBlock[] {
     if (type === "heading" && text) out.push({ id: newBlockId(), type: "heading", text: text.slice(0, 140) });
     else if (type === "text" && text) out.push({ id: newBlockId(), type: "text", text });
     else if (type === "bullets" && Array.isArray(block.items)) { const items = (block.items as unknown[]).map((entry) => String(entry).trim()).filter(Boolean).slice(0, 8); if (items.length) out.push({ id: newBlockId(), type: "bullets", items }); }
-    else if (type === "button") out.push({ id: newBlockId(), type: "button", text: (text || "Mehr erfahren").slice(0, 60), url: String(block.url ?? DEFAULT_CTA_URL).slice(0, 400) || DEFAULT_CTA_URL });
+    else if (type === "button") continue; // Knöpfe werden nicht übernommen – es gibt keine Terminbuchung
     else if (type === "divider") out.push({ id: newBlockId(), type: "divider" });
     else if (type === "spacer") out.push({ id: newBlockId(), type: "spacer", height: Math.min(80, Math.max(4, Number(block.height) || 16)) });
     else if (type === "signature") out.push({ id: newBlockId(), type: "signature", name: String(block.name ?? "Ihr Tanesco-Team").slice(0, 80), role: block.role ? String(block.role).slice(0, 80) : undefined, phone: block.phone ? String(block.phone).slice(0, 40) : undefined });
@@ -161,28 +161,27 @@ export function draftWordCount(blocks: EmailBlock[]) { return blocks.reduce((sum
 /** Vollständig = Betreff, mindestens drei Bausteine, Textbaustein, genug Text (kurz ≥ 30 Wörter, mittel ≥ 45, lang ≥ 60) und ein Knopf oder eine Grußformel – eine einzelne Zeile fällt durch. */
 export function draftIsComplete(draft: EmailDraft, length: EmailLength = "mittel") {
   const texts = draft.blocks.filter((block): block is Extract<EmailBlock, { type: "text" }> => block.type === "text");
-  return Boolean(draft.subject.trim()) && draft.blocks.length >= 3 && texts.length >= 1 && draftWordCount(draft.blocks) >= (length === "kurz" ? 30 : length === "lang" ? 60 : 45) && (draft.blocks.some((block) => block.type === "button") || texts.some((block) => /grüße|gruß/i.test(block.text)));
+  return Boolean(draft.subject.trim()) && draft.blocks.length >= 3 && texts.length >= 1 && draftWordCount(draft.blocks) >= (length === "kurz" ? 30 : length === "lang" ? 60 : 45) && texts.some((block) => /grüße|gruß|vielen dank|kontaktweg/i.test(block.text));
 }
 /** Lückenhafte KI-Antwort zur ganzen E-Mail ergänzen: fehlende Überschrift, Anrede, Aufzählung, Knopf, Grußformel und Signatur kommen aus dem regelbasierten Entwurf – vorhandener KI-Text bleibt. */
 export function completeDraft(draft: EmailDraft, fallback: EmailDraft, tone: EmailTone = "freundlich"): EmailDraft {
   const pick = <T extends EmailBlock["type"]>(blocks: EmailBlock[], type: T) => blocks.find((block): block is Extract<EmailBlock, { type: T }> => block.type === type);
   const texts = draft.blocks.filter((block): block is Extract<EmailBlock, { type: "text" }> => block.type === "text").map((block) => ({ ...block, id: newBlockId() }));
   const fallbackTexts = fallback.blocks.filter((block): block is Extract<EmailBlock, { type: "text" }> => block.type === "text");
-  const isClosing = (text: string) => /grüße|gruß/i.test(text) && text.split(/\s+/).length <= 14;
+  const isClosing = (text: string) => (/grüße|gruß|vielen dank|\{\{kontaktweg\}\}/i.test(text) && text.split(/\s+/).length <= 30);
   let bodyTexts = texts.filter((block) => !isClosing(block.text)); const closingBlock = texts.find((block) => isClosing(block.text));
   if (!bodyTexts.length) bodyTexts = fallbackTexts.filter((block) => !isClosing(block.text)).map((block) => ({ ...block, id: newBlockId() }));
-  if (bodyTexts.length && !/^(guten|hallo|sehr geehrte|liebe|moin|servus|\{\{anrede|\{\{vorname)/i.test(bodyTexts[0].text.trim())) bodyTexts[0] = { ...bodyTexts[0], text: `${greeting(tone)}\n\n${bodyTexts[0].text}` };
+  if (bodyTexts.length && !/^(guten|hallo|sehr geehrte|liebe|moin|servus|\{\{anrede|\{\{vorname|\{\{begruessung)/i.test(bodyTexts[0].text.trim())) bodyTexts[0] = { ...bodyTexts[0], text: `${greeting(tone)}\n\n${bodyTexts[0].text}` };
+  else if (bodyTexts.length) bodyTexts[0] = { ...bodyTexts[0], text: bodyTexts[0].text.replace(/^(hallo|hi|hey|moin|servus|liebe[r]?|guten tag)\b\s*(\{\{\s*anrede\s*\}\}\s*)?(\{\{\s*(nachname|vorname|name)\s*\}\})?\s*,?/i, "{{begruessung}},") }; // nie „Hallo“ – immer die förmliche Begrüßung (der Rest der Zeile bleibt)
   if (draftWordCount(bodyTexts) < 35) { const own = bodyTexts.map((block) => block.text.toLowerCase()); const extra = fallbackTexts.filter((block) => !isClosing(block.text)).map((block) => ({ ...block, id: newBlockId(), text: block.text.replace(/^[^\n]*\n\n/, "") })).filter((block) => block.text.trim() && !own.some((text) => text.includes(block.text.toLowerCase().slice(0, 40)))); bodyTexts = [...bodyTexts, ...extra]; }
   const heading = pick(draft.blocks, "heading") ?? pick(fallback.blocks, "heading");
   const bullets = pick(draft.blocks, "bullets") ?? pick(fallback.blocks, "bullets");
-  const button = pick(draft.blocks, "button") ?? pick(fallback.blocks, "button");
   const signature = pick(draft.blocks, "signature") ?? pick(fallback.blocks, "signature");
-  const closing = closingBlock ?? fallbackTexts.find((block) => isClosing(block.text));
+  const closing = fallbackTexts.find((block) => isClosing(block.text)) ?? closingBlock; // Schluss immer aus dem Regelwerk: Kontaktweg + „Vielen Dank“ (keine doppelte Grußformel)
   const blocks: EmailBlock[] = [];
   if (heading) blocks.push({ ...heading, id: newBlockId() });
   blocks.push(...bodyTexts);
   if (bullets) blocks.push({ ...bullets, id: newBlockId() });
-  if (button) blocks.push({ ...button, id: newBlockId() });
   if (closing) blocks.push({ ...closing, id: newBlockId() });
   if (signature) blocks.push({ ...signature, id: newBlockId() });
   return { ...draft, subject: draft.subject.trim() || fallback.subject, preheader: draft.preheader.trim() || fallback.preheader, blocks };

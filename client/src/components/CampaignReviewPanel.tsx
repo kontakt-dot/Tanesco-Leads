@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
-import { Check, ChevronRight, ExternalLink, Globe, MailX, PenLine, RefreshCw, Sparkles, X } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, Globe, MailX, PenLine, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DRAFT_APPROACHES, draftToBlocks, type DraftApproach, type EmailNode } from "../../../shared/email-campaigns";
@@ -24,6 +24,7 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
   const refresh = () => { void utils.leadops.campaignReviewQueue.invalidate({ campaignId }); void utils.leadops.getEmailCampaign.invalidate({ id: campaignId }); void utils.leadops.listEmailCampaigns.invalidate(); };
   const generate = trpc.leadops.generateCampaignDrafts.useMutation({ onSuccess: (result) => { refresh(); if (result.failed) toast.error(`${result.failed} Entwurf${result.failed === 1 ? "" : "e"} konnte${result.failed === 1 ? "" : "n"} nicht geschrieben werden.`); }, onError: (error) => toast.error(error.message) });
   const save = trpc.leadops.saveCampaignDraft.useMutation({ onError: (error) => toast.error(error.message) });
+  const reset = trpc.leadops.resetCampaignDrafts.useMutation({ onSuccess: (result) => { toast.success(result.reset ? `${result.reset} Entwurf${result.reset === 1 ? "" : "e"} verworfen – die KI schreibt sie jetzt nach den aktuellen Regeln neu (beim Auswählen oder über „Nächste Entwürfe schreiben“).` : "Es gab keine Entwürfe zum Verwerfen."); loadedSig.current = null; edits.current = {}; refresh(); }, onError: (error) => toast.error(error.message) });
   const stop = trpc.leadops.stopRecipientInCampaign.useMutation({ onSuccess: () => { toast.success("Aus dem E-Mail-Funnel genommen."); refresh(); }, onError: (error) => toast.error(error.message) });
   const [filter, setFilter] = useState<Filter>("alle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -62,7 +63,7 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
   return <section className="rv-panel" aria-label="E-Mails freigeben">
     <header className="rv-head">
       <div><h2><PenLine className="h-4 w-4" aria-hidden="true" /> E-Mails freigeben</h2><p>{items.length ? <>{counts.entwurf + counts.offen} warten auf dich · {counts.freigegeben} freigegeben{daily.data ? <> · heute {daily.data.sent} von {daily.data.limit} Kampagnen-Mails gesendet</> : null}</> : "Alle Erst-E-Mails sind freigegeben oder schon raus."}</p></div>
-      <div className="rv-head-actions">{counts.offen > 0 && <button type="button" className="campaign-act" disabled={generate.isPending} onClick={() => generate.mutate({ campaignId, limit: 5 })}><Sparkles className="h-3.5 w-3.5" /> {generate.isPending ? "KI schreibt …" : `Nächste ${Math.min(5, counts.offen)} Entwürfe schreiben`}</button>}<button type="button" className="campaign-act" onClick={onClose}><X className="h-3.5 w-3.5" /> Schließen</button></div>
+      <div className="rv-head-actions">{counts.offen > 0 && <button type="button" className="campaign-act" disabled={generate.isPending} onClick={() => generate.mutate({ campaignId, limit: 5 })}><Sparkles className="h-3.5 w-3.5" /> {generate.isPending ? "KI schreibt …" : `Nächste ${Math.min(5, counts.offen)} Entwürfe schreiben`}</button>}{(counts.entwurf + counts.freigegeben) > 0 && <button type="button" className="campaign-act" disabled={reset.isPending} title="Alle noch nicht gesendeten Entwürfe (auch freigegebene) verwerfen – die KI schreibt sie mit den aktuellen Regeln neu" onClick={async () => { if (await confirmAction(`Alle ${counts.entwurf + counts.freigegeben} noch nicht gesendeten Entwürfe dieser Kampagne verwerfen und neu schreiben lassen? Eigene Änderungen an den Texten gehen dabei verloren.`, { confirmLabel: "Ja, alle neu schreiben" })) reset.mutate({ campaignId }); }}><RotateCcw className="h-3.5 w-3.5" /> {reset.isPending ? "Verwirft …" : "Alle neu schreiben"}</button>}<button type="button" className="campaign-act" onClick={onClose}><X className="h-3.5 w-3.5" /> Schließen</button></div>
     </header>
     {daily.data && daily.data.left === 0 && <p className="rv-limit">Das Tageslimit von {daily.data.limit} E-Mails ist für heute erreicht – freigegebene E-Mails gehen ab morgen raus. Das Limit änderst du unter Einstellungen → E-Mail-Versand.</p>}
     <div className="cd-filters" role="tablist" aria-label="Nach Stand filtern">{FILTERS.map(([key, label]) => { const count = key === "alle" ? items.length : counts[key]; return <button key={key} type="button" role="tab" aria-selected={filter === key} className={filter === key ? "is-active" : ""} onClick={() => setFilter(key)}>{label}<i>{count}</i></button>; })}</div>

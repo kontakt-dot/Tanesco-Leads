@@ -1549,7 +1549,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // KI-Vorlagen-Builder ohne Schlüssel: regelbasiert, aber vollständig und als Kampagne startbar
     const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
     try {
-      const single = await owner.leadops.draftEmailWithAi({ brief: "Nachfass-Mail nach Angebot für Dachdecker, freundlich, mit Terminlink", tone: "freundlich", length: "mittel", abTest: true }); expect(single.source).toBe("vorlage"); expect(single.draft.subjectB).toBeTruthy(); expect(single.draft.blocks.map((block) => block.type)).toContain("button");
+      const single = await owner.leadops.draftEmailWithAi({ brief: "Nachfass-Mail nach Angebot für Dachdecker, freundlich, mit Terminlink", tone: "freundlich", length: "mittel", abTest: true }); expect(single.source).toBe("vorlage"); expect(single.draft.subjectB).toBeTruthy(); expect(single.draft.blocks.map((block) => block.type)).not.toContain("button"); /* kein Knopf – es gibt keine Terminbuchung */
       const series = await owner.leadops.draftEmailSeriesWithAi({ brief: "Erstkontakt für PV-Betriebe in Bayern", count: 3, waitDays: 4, stopWhen: "replied", audience: "PV-Betriebe Bayern" }); expect(series.series.mails).toHaveLength(3); expect(series.tree.nodes.filter((node) => node.type === "condition").every((node) => node.type === "condition" && node.check === "replied")).toBe(true);
       const campaign = await owner.leadops.saveEmailCampaign({ name: series.series.name, fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Erweiterungen" }, tree: series.tree, design: {} });
       const started = await owner.leadops.startEmailCampaign({ id: campaign.id }); expect(started.added).toBeGreaterThanOrEqual(2); if (started.processed < started.added) await owner.leadops.runEmailCampaigns();
@@ -2648,6 +2648,12 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const row = async () => (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)))[0];
     let kim = await row(); expect(kim.sentCount).toBe(0); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m1"); expect(kim.draftApproach).toBe("drittanbieter"); expect(kim.draftText).toContain("Zwischenhändler"); // Ansatz der Kampagne, ohne KI-Schlüssel aus der festen Vorlage
     const queue1 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue1.items[0].nodeLabel).toBe("Erste"); expect(queue1.items[0].followUp).toBe(false);
+    // Entwurf-Regeln (auch ohne KI): förmliche Anrede, Pflichtinhalte, Schluss mit Kontaktweg und „Vielen Dank“, kein Gruß
+    expect(kim.draftText).toMatch(/^(Sehr geehrte|Guten Tag [A-Z])/); expect(kim.draftText).not.toMatch(/^Hallo/); expect(kim.draftText).toContain("20 Test-Leads"); expect(kim.draftText).toContain("10 Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
+    // „Alle neu schreiben“: verwirft die Entwürfe, die KI/Vorlage schreibt sie beim nächsten Lauf neu
+    expect((await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id })).reset).toBeGreaterThanOrEqual(1);
+    expect((await row()).draftState).toBeNull(); expect((await row()).draftText).toBeNull();
+    await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5 }); kim = await row(); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m1");
     await owner.leadops.saveCampaignDraft({ recipientId: kim.id, subject: "Persönlich 1 für Kette Klima", text: "Guten Tag Frau Kette,\n\npersönliche erste Mail.", approve: true });
     await owner.leadops.runEmailCampaigns(); kim = await row();
     expect(kim.sentCount).toBe(1); expect(kim.nodeId).toBe("w1"); expect(kim.draftState).toBeNull(); expect(kim.draftNodeId).toBeNull(); // Entwurf verbraucht – nächster Schritt bekommt einen frischen
@@ -2774,6 +2780,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.syncEmailCampaignAudience({ id: campaign.id })).added).toBe(0);
     expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).recipients).toHaveLength(2);
     expect(await outreach.enrollListIntoRunningCampaigns(db, S.tenantId as number, "Auswahl-Test", "http://localhost")).toEqual([]);
+    // Von Hand aufgenommene bleiben fest drin, wenn Listen dazukommen: kein „nicht mehr in der Liste“, kein Entfernen, Start zählt sie mit
+    const mix = await owner.leadops.saveEmailCampaign({ name: "Auswahl-Mix", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: null, listNames: [] }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    const koppenLead = (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.kind, "vertrieb"), eq(leads.email, "stefan.koppen@koppen-solar.example"))))[0];
+    expect(await owner.leadops.addLeadsToEmailCampaign({ id: mix.id, leadIds: [koppenLead.id] })).toMatchObject({ added: 1 }); // aus Liste „Anreicherung“
+    expect((await owner.leadops.getEmailCampaign({ id: mix.id })).recipients[0].picked).toBe(true);
+    await owner.leadops.addListsToEmailCampaign({ id: mix.id, listNames: ["Auswahl-Test"] }); // andere Liste dazu
+    const mixed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === mix.id)!;
+    expect(mixed.audience.source).toBe("liste"); expect(mixed.audienceInfo).toMatchObject({ outside: 0, handPicked: 1 }); expect(mixed.audienceInfo!.pending).toBeGreaterThan(0); // Hand-Kontakt steht in keiner gewählten Liste, zählt aber nicht als „nicht mehr in der Liste“
+    expect((await owner.leadops.pruneEmailCampaignRecipients({ id: mix.id })).removed).toBe(0); // „Entfernen“ würde ihn nie treffen
+    const mixStart = await owner.leadops.startEmailCampaign({ id: mix.id }); expect(mixStart.added).toBe(mixed.audienceInfo!.pending + 1); expect(mixStart.skipped).toBe(0);
     // Leere Auswahl lässt sich nicht starten – mit klarem Hinweis
     const empty = await owner.leadops.saveEmailCampaign({ name: "Auswahl leer", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "auswahl" }, tree, design: starter.design as unknown as Record<string, unknown> } as never);
     await expect(owner.leadops.startEmailCampaign({ id: empty.id })).rejects.toThrow(/Noch keine Kontakte ausgewählt/);

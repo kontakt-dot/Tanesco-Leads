@@ -201,16 +201,50 @@ export function resolveWaiting(tree: EmailTree, recipient: { nodeId: string | nu
   if (!waitNode || recipient.status !== "wartet") return { nodeId: recipient.nodeId, waitingAt: null, sentNodeIds };
   return { nodeId: waitNode.id, waitingAt: waitNode.id, sentNodeIds };
 }
-export type SignatureParts = { html: string; text: string } | null | undefined;
+export type SignatureParts = { html: string; text: string; phone?: string | null } | null | undefined;
 export function renderNode(node: Extract<EmailNode, { type: "send" }>, design: EmailDesign, values: Record<string, string | null | undefined>, tracking: { pixelUrl?: string | null; wrapLink?: (url: string) => string; unsubscribeUrl?: string | null; logoBase?: string | null; preview?: boolean; subject?: string | null; signature?: SignatureParts } = {}) {
   const signature = usesSignature(design) && tracking.signature ? tracking.signature : null;
-  return { subject: fillPlaceholdersSafe(tracking.subject ?? node.subject, values), html: renderEmailHtml(node.blocks, design, values, { trackingPixelUrl: tracking.pixelUrl ?? null, wrapLink: tracking.wrapLink, unsubscribeUrl: tracking.unsubscribeUrl ?? null, logoBase: tracking.logoBase ?? null, preview: tracking.preview, signatureHtml: signature?.html ?? null }), text: renderEmailText(node.blocks, values, signature?.text ?? null) };
+  const phone = (tracking.signature?.phone ?? "").trim(); if (phone && !(values.telefon ?? "").trim()) values = { ...values, telefon: phone, kontaktweg: contactWay(phone) }; // {{telefon}}/{{kontaktweg}} aus der Signatur der E-Mail-Einstellungen
+  const blocks = node.blocks.filter((block) => !isDeadButton(block)); // alte „Termin“-Knöpfe aus Vorlagen: es gibt keine Terminbuchung
+  return { subject: fillPlaceholdersSafe(tracking.subject ?? node.subject, values), html: renderEmailHtml(blocks, design, values, { trackingPixelUrl: tracking.pixelUrl ?? null, wrapLink: tracking.wrapLink, unsubscribeUrl: tracking.unsubscribeUrl ?? null, logoBase: tracking.logoBase ?? null, preview: tracking.preview, signatureHtml: signature?.html ?? null }), text: renderEmailText(blocks, values, signature?.text ?? null) };
 }
+/**
+ * Gespeicherte Abläufe aus alten Vorlagen auffrischen: „Guten Tag {{anrede}} {{nachname}},“ / „Hallo {{vorname}},“ → „{{begruessung}},“ und die
+ * toten „Termin“-Knöpfe raus. Gibt null zurück, wenn nichts zu ändern war.
+ */
+export function modernizeTree(tree: EmailTree): EmailTree | null {
+  let changed = false;
+  const nodes = tree.nodes.map((node) => {
+    if (node.type !== "send") return node;
+    const blocks = node.blocks.filter((block) => { const dead = isDeadButton(block); if (dead) changed = true; return !dead; }).map((block) => {
+      if (block.type !== "text" && block.type !== "heading") return block;
+      const text = block.text.replace(/^(guten tag|hallo|liebe[r]?)\s*(\{\{\s*anrede\s*\}\}\s*\{\{\s*nachname\s*\}\}|\{\{\s*vorname\s*\}\}|\{\{\s*name\s*\}\})?\s*,/i, "{{begruessung}},").replace(/^(Kurz nachgefragt|Passt es gerade nicht|Noch Fragen zu unserem Angebot),\s*\{\{\s*vorname\s*\}\}(\??)$/i, (_m, head: string, q: string) => `${head}${q}`);
+      if (text !== block.text) changed = true; return text === block.text ? block : { ...block, text };
+    });
+    return blocks === node.blocks ? node : { ...node, blocks };
+  });
+  return changed ? { ...tree, nodes } : null;
+}
+/** Knopf zur (nie vorhandenen) Terminbuchung aus alten Vorlagen – wird nirgends mehr gezeigt. */
+export const isDeadButton = (block: EmailBlock) => block.type === "button" && (/tanesco\.digital\/termin/i.test(block.url ?? "") || !(block.url ?? "").trim());
 export function fillPlaceholdersSafe(text: string, values: Record<string, string | null | undefined>) { return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => values[key] ?? ""); }
 /** Platzhalter-Werte eines Empfängers: feste Felder plus die Zusatzfelder aus der hochgeladenen Liste (z. B. {{branche}}); feste Felder gewinnen bei gleichem Namen. */
-export function recipientValues(lead: { firstName?: string | null; lastName?: string | null; company?: string | null; city?: string | null; salutation?: string | null; email?: string | null; fields?: Record<string, string> | null }, unsubscribeUrl?: string | null) {
+/**
+ * Förmliche Begrüßung ohne „Hallo“: „Sehr geehrte Frau Müller“ / „Sehr geehrter Herr Müller“; Name ohne Anrede → „Guten Tag Max Müller“;
+ * gar kein Name → „Sehr geehrte Damen und Herren“. Ohne Komma – das setzt die Vorlage bzw. der Text.
+ */
+export function greetingFor(lead: { firstName?: string | null; lastName?: string | null; salutation?: string | null }): string {
+  const last = (lead.lastName ?? "").trim(); const first = (lead.firstName ?? "").trim(); const salutation = (lead.salutation ?? "").toLowerCase();
+  if (last && salutation === "frau") return `Sehr geehrte Frau ${last}`;
+  if (last && salutation === "herr") return `Sehr geehrter Herr ${last}`;
+  if (last || first) return `Guten Tag ${[first, last].filter(Boolean).join(" ")}`;
+  return "Sehr geehrte Damen und Herren";
+}
+/** Klarer Schluss-Hinweis, was zu tun ist – mit der Telefonnummer aus der Signatur, wenn eine hinterlegt ist. Wird hinter „Wenn das für Sie interessant ist, “ gesetzt. */
+export const contactWay = (phone?: string | null) => (phone ?? "").trim() ? `antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter ${(phone ?? "").trim()}` : "antworten Sie einfach auf diese E-Mail";
+export function recipientValues(lead: { firstName?: string | null; lastName?: string | null; company?: string | null; city?: string | null; salutation?: string | null; email?: string | null; fields?: Record<string, string> | null; phone?: string | null }, unsubscribeUrl?: string | null) {
   const anrede = lead.salutation === "frau" ? "Frau" : lead.salutation === "herr" ? "Herr" : "";
-  return { ...(lead.fields ?? {}), vorname: lead.firstName ?? "", nachname: lead.lastName ?? "", name: `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim(), firma: lead.company ?? "", stadt: lead.city ?? "", anrede, email: lead.email ?? "", abmelden: unsubscribeUrl ? `Abmelden: ${unsubscribeUrl}` : "Abmelden" };
+  return { ...(lead.fields ?? {}), vorname: lead.firstName ?? "", nachname: lead.lastName ?? "", name: `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim(), firma: lead.company ?? "", stadt: lead.city ?? "", anrede, begruessung: greetingFor(lead), email: lead.email ?? "", telefon: (lead.phone ?? "").trim(), kontaktweg: contactWay(lead.phone), abmelden: unsubscribeUrl ? `Abmelden: ${unsubscribeUrl}` : "Abmelden" };
 }
 export type SuppressionReason = "bounce" | "beschwerde" | "abgemeldet" | "gesperrt" | "manuell";
 export const SUPPRESSION_LABELS: Record<SuppressionReason, string> = { bounce: "Unzustellbar (Bounce)", beschwerde: "Beschwerde (Spam-Meldung)", abgemeldet: "Abgemeldet", gesperrt: "Im Posteingang gesperrt", manuell: "Von Hand gesperrt" };
@@ -382,7 +416,7 @@ export function blocksToPlainText(blocks: EmailBlock[], values: Record<string, s
 }
 /** Freigegebener Entwurf → Bausteine: der Text ersetzt Überschrift/Text/Aufzählung, Knopf und Signatur der Vorlage bleiben. */
 export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[] {
-  const keep = original.filter((block) => block.type === "button" || block.type === "signature");
+  const keep = original.filter((block) => block.type === "signature"); // nur die Signatur bleibt – keine Knöpfe (es gibt keine Terminbuchung)
   return [{ id: "draft-text", type: "text", text: text.trim() }, ...keep];
 }
 
@@ -415,6 +449,6 @@ export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { r
 
 /** Ohne KI: der Drittanbieter-Ansatz als feste Vorlage mit den Daten der Firma. */
 export function thirdPartyTemplate(values: Record<string, string | null | undefined>): { subject: string; text: string } {
-  const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = values.nachname && values.anrede ? `Sehr geehrte${values.anrede === "Frau" ? "" : "r"} ${values.anrede} ${values.nachname},` : "Sehr geehrte Damen und Herren,";
-  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich Photovoltaik und Wärmepumpen, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler. Dieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und am Ende leiden Aktualität und Datenqualität. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten – in der Regel über 10 Fragen; auf Wunsch nennen wir Ihren Firmennamen, der Interessent erwartet dann Ihre Rückmeldung\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWir freuen uns über Ihre Rückmeldung und die Möglichkeit eines persönlichen Telefonats.` };
+  const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = `${(values.begruessung ?? "").trim() || greetingFor({ firstName: values.vorname, lastName: values.nachname, salutation: values.anrede === "Frau" ? "frau" : values.anrede === "Herr" ? "herr" : null })},`;
+  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich Photovoltaik und Wärmepumpen, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler. Dieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und am Ende leiden Aktualität und Datenqualität. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten – in der Regel über 10 Fragen; auf Wunsch nennen wir Ihren Firmennamen, der Interessent erwartet dann Ihre Rückmeldung\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
 }

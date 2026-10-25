@@ -23,9 +23,32 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     const text = blocksToPlainText(firstSendNode(tree)!.blocks, { firma: "Koppen GmbH", anrede: "Herr", nachname: "Koppen", stadt: "Kassel" });
     expect(text).toBe("Guten Tag Herr Koppen,\n\nkurze Frage.\n\n• Punkt A\n• Punkt Kassel"); expect(text).not.toContain("Termin"); expect(text).not.toContain("Mehr Anfragen");
   });
-  it("freigegebener Text ersetzt Überschrift/Text/Aufzählung – Knopf und Signatur bleiben", () => {
+  it("freigegebener Text ersetzt Überschrift/Text/Aufzählung – nur die Signatur bleibt, kein Knopf", () => {
     const blocks = draftToBlocks("Hallo,\n\npersönlicher Text.", firstSendNode(tree)!.blocks);
-    expect(blocks.map((block) => block.type)).toEqual(["text", "button", "signature"]); expect((blocks[0] as { text: string }).text).toBe("Hallo,\n\npersönlicher Text.");
+    expect(blocks.map((block) => block.type)).toEqual(["text", "signature"]); expect((blocks[0] as { text: string }).text).toBe("Hallo,\n\npersönlicher Text.");
+  });
+  it("Entwurf-Regeln: nie „Hallo“, Pflichtinhalte, Schluss mit Kontaktweg + Telefon und „Vielen Dank“", async () => {
+    const { fixGreeting, finishDraft } = await import("./campaign-review");
+    const greeting = "Sehr geehrte Damen und Herren";
+    expect(fixGreeting("Hallo Herr Wiebe,\n\nText.", greeting)).toBe("Sehr geehrter Herr Wiebe,\n\nText.");
+    expect(fixGreeting("Hallo Frau Kurz,\nText.", greeting)).toBe("Sehr geehrte Frau Kurz,\n\nText.");
+    expect(fixGreeting("Hallo Max Muster,\n\nText.", greeting)).toBe("Guten Tag Max Muster,\n\nText.");
+    expect(fixGreeting("Hallo,\n\nText.", greeting)).toBe("Sehr geehrte Damen und Herren,\n\nText.");
+    expect(fixGreeting("Guten Tag Herr Roth,\n\nText.", greeting)).toBe("Sehr geehrter Herr Roth,\n\nText.");
+    expect(fixGreeting("Sehr geehrte Frau Dr. Lenz,\n\nText.", greeting)).toBe("Sehr geehrte Frau Dr. Lenz,\n\nText."); // förmliche Anrede der KI (z. B. aus dem Impressum) bleibt
+    expect(fixGreeting("Text ohne Anrede.", "Sehr geehrter Herr Muster")).toBe("Sehr geehrter Herr Muster,\n\nText ohne Anrede.");
+    const thin = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Webseite steht etwas Konkretes.\n\nHätten Sie diese Woche 15 Minuten für ein Gespräch?";
+    const done = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false });
+    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).toContain("10 Fragen"); expect(done).toContain("Firmennamen"); // Pflichtinhalte ergänzt
+    expect(done).toMatch(/0611 123456/); expect(done.trim().endsWith("Vielen Dank")).toBe(true); expect(done).not.toMatch(/Grüßen/);
+    expect(done.indexOf("20 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
+    // Schon vollständig → bleibt bis auf den Schluss unverändert; keine doppelte Nummer, kein doppeltes „Vielen Dank“
+    const full = "Sehr geehrte Frau Kurz,\n\nText mit 20 Test-Leads kostenlos, telefonisch qualifiziert über 10 Fragen, auf Wunsch mit Firmennamen.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter 0611 123456.\n\nVielen Dank\n\nMit freundlichen Grüßen\nMax";
+    const kept = finishDraft(full, { greeting, phone: "0611 123456", followUp: false });
+    expect(kept.match(/0611 123456/g)).toHaveLength(1); expect(kept.match(/Vielen Dank/g)).toHaveLength(1); expect(kept).not.toContain("Max"); expect(kept.trim().endsWith("Vielen Dank")).toBe(true);
+    // Ohne Telefon: nur „antworten Sie einfach auf diese E-Mail“; Nachfass-Mail braucht nur das Test-Angebot
+    const noPhone = finishDraft("Hallo,\n\nkurzer Nachfass ohne Angebot.", { greeting, phone: "", followUp: true });
+    expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("20 Test-Leads"); expect(noPhone).not.toContain("10 Fragen");
   });
   it("Tagesbeginn in Berlin (Sommer- und Winterzeit)", () => {
     expect(dayStartIn(new Date("2026-07-15T10:30:00Z")).toISOString()).toBe("2026-07-14T22:00:00.000Z");

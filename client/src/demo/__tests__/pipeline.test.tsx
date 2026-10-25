@@ -1793,6 +1793,13 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.getEmailCampaign", { id: draft2.id })).recipients).toHaveLength(1); // niemand kommt automatisch dazu
     await call("leadops.importColdList", { listName: "Messe West", categoryId: null, toPipeline: false, rows: [{ firstName: "Spaet", lastName: "Dran", company: "Spaet GmbH", email: "spaet@listen-test.de" }] });
     expect((await call("leadops.getEmailCampaign", { id: draft2.id })).recipients).toHaveLength(1);
+    // Von Hand aufgenommene bleiben fest drin, auch wenn später Listen dazukommen: nie „nicht mehr in der Liste“, Start zählt sie mit
+    const mix = await call("leadops.saveEmailCampaign", { id: null, name: "Mix", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: null, listNames: [] }, tree: starter.tree, design: {} });
+    const suedLeads = (await call("leadops.emailLeads", { listName: "Messe Süd" })).items; expect(await call("leadops.addLeadsToEmailCampaign", { id: mix.id, leadIds: [suedLeads[0].id] })).toMatchObject({ added: 1 });
+    expect((await call("leadops.getEmailCampaign", { id: mix.id })).recipients[0].picked).toBe(true);
+    await call("leadops.addListsToEmailCampaign", { id: mix.id, listNames: ["Messe Nord"] }); // Liste dazu → Zielgruppe Liste, der Hand-Kontakt bleibt
+    const mixed = (await call("leadops.listEmailCampaigns")).find((row: any) => row.id === mix.id); expect(mixed.audience.source).toBe("liste"); expect(mixed.audienceInfo).toMatchObject({ outside: 0, handPicked: 1 }); expect(mixed.audienceInfo.pending).toBeGreaterThan(0);
+    const mixStart = await call("leadops.startEmailCampaign", { id: mix.id }); expect(mixStart.added).toBe(mixed.audienceInfo.pending + 1); expect(mixStart.skipped).toBe(0);
     // Entwurf ohne Liste und ohne Kontakte lässt sich nicht starten – mit klarem Hinweis
     const draft3 = await call("leadops.saveEmailCampaign", { id: null, name: "Leer", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "auswahl" }, tree: starter.tree, design: {} });
     await expect(call("leadops.startEmailCampaign", { id: draft3.id })).rejects.toThrow(/Noch keine Kontakte ausgewählt/);

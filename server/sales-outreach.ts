@@ -6,7 +6,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } fro
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { draftToBlocks, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
+import { draftToBlocks, modernizeTree, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -188,19 +188,29 @@ export async function purgeOrphanCampaignEvents(db: Db, tenantId: number) {
  * Entwürfe mit Zielgruppe „Liste“ ohne Liste, in die schon Kontakte von Hand aufgenommen wurden (vor der Zielgruppe „auswahl“):
  * sie leben von diesen Kontakten → Zielgruppe wird „Nur ausgewählte Kontakte“, damit Anzeige und Start zusammenpassen.
  */
+/** Alle Empfänger einer Kampagne als „von Hand aufgenommen“ markieren – wenn die Zielgruppe „auswahl“ verlassen wird, bleiben sie so Teil der Kampagne. */
+async function markAllPicked(db: Db, tenantId: number, campaignId: number) {
+  await db.update(emailCampaignRecipients).set({ pickedAt: new Date() }).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), isNull(emailCampaignRecipients.pickedAt)));
+}
+/** Alte Vorlagen-Reste in gespeicherten Abläufen (Begrüßung „Guten Tag {{anrede}} {{nachname}}“, tote „Termin“-Knöpfe) einmalig auffrischen – Kampagnen und Vorlagen. */
+async function repairCampaignTrees(db: Db, tenantId: number) {
+  const rows = await db.select({ id: emailCampaigns.id, tree: emailCampaigns.tree }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+  for (const row of rows) { const current = (row.tree ?? null) as EmailTree | null; if (!current?.nodes?.length) continue; const next = modernizeTree(current); if (next) await db.update(emailCampaigns).set({ tree: next }).where(eq(emailCampaigns.id, row.id)); }
+}
 async function repairPickedDrafts(db: Db, tenantId: number) {
+  await repairCampaignTrees(db, tenantId);
   const drafts = await db.select({ id: emailCampaigns.id, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.status, "entwurf"), eq(emailCampaigns.isTemplate, false)));
   const empty = drafts.filter((row) => { const audience = (row.audience ?? null) as Audience | null; return audience?.source === "liste" && !audienceLists(audience).length; });
   if (!empty.length) return;
   const counts = await db.select({ campaignId: emailCampaignRecipients.campaignId }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.campaignId, empty.map((row) => row.id))));
   const withRecipients = new Set(counts.map((row) => row.campaignId));
-  for (const row of empty) if (withRecipients.has(row.id)) await db.update(emailCampaigns).set({ audience: { source: "auswahl" } }).where(eq(emailCampaigns.id, row.id));
+  for (const row of empty) if (withRecipients.has(row.id)) { await db.update(emailCampaigns).set({ audience: { source: "auswahl" } }).where(eq(emailCampaigns.id, row.id)); await markAllPicked(db, tenantId, row.id); }
 }
 export async function listEmailCampaigns(db: Db, tenantId: number) {
   await purgeOrphanCampaignEvents(db, tenantId); await repairPickedDrafts(db, tenantId);
   const rows = await db.select().from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId)).orderBy(desc(emailCampaigns.updatedAt));
   const recipients = await db.select({ campaignId: emailCampaignRecipients.campaignId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, variant: emailCampaignRecipients.variant, draftState: emailCampaignRecipients.draftState }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
-  const recipientEmails = await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
+  const recipientEmails = await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, email: emailCampaignRecipients.email, pickedAt: emailCampaignRecipients.pickedAt }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
   const trackRows = await db.select({ campaignId: emailCampaignEvents.campaignId, recipientId: emailCampaignEvents.recipientId, kind: emailCampaignEvents.kind, note: emailCampaignEvents.note, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.kind, ["gesendet", "geoeffnet", "geklickt", "bounce", "abgemeldet"])));
   const stampRows = await db.select({ id: emailCampaignRecipients.id, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt, bouncedAt: emailCampaignRecipients.bouncedAt }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.tenantId, tenantId));
   const stamps = new Map<number, RecipientStamps>(stampRows.map((row) => [row.id, row]));
@@ -223,7 +233,7 @@ export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
   const stageOf = (leadId: number | null) => { const lead = leadId ? leadRows.find((item) => item.id === leadId) : null; if (!lead) return null; const stages = stagesForLead(sets, lead); const def = stages.find((stage) => stage.key === lead.pipelineStage); return { publicId: lead.publicId, key: lead.pipelineStage, label: def?.label ?? lead.pipelineStage ?? "–", inPipeline: Boolean(lead.inPipeline), listName: lead.listName ?? null, ownerUserId: lead.ownerUserId ?? null, owner: owners.find((user) => user.id === lead.ownerUserId)?.name?.split(/\s+/)[0] ?? null, closed: lead.pipelineStage === wonStage(stages) || lead.pipelineStage === lostStage(stages) }; };
   const info = row.isTemplate ? null : await audienceInfo(db, tenantId, (row.audience ?? { source: "alle" }) as Audience, recipients, await suppressedSet(db, tenantId));
   const trackRows = await db.select({ recipientId: emailCampaignEvents.recipientId, kind: emailCampaignEvents.kind, note: emailCampaignEvents.note, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id), inArray(emailCampaignEvents.kind, ["gesendet", "geoeffnet", "geklickt", "bounce", "abgemeldet"])));
-  return { ...row, kiModus: kiModusOf(row), kiAnsatz: kiAnsatzOf(row), reviewFirst: kiModusOf(row) === "freigabe", tree: tree(row), design: design(row), audience: (row.isTemplate ? withoutLists(row.audience as Audience | null) : (row.audience ?? { source: "alle" })) as Audience, audienceInfo: info, sendWindow: sendWindowOf(row), recipients: recipients.map((item) => ({ id: item.id, email: item.email, name: item.name, company: item.company, status: item.status, nodeId: item.nodeId, nextActionAt: item.nextActionAt, sentCount: item.sentCount, openedAt: item.openedAt, clickedAt: item.clickedAt, repliedAt: item.repliedAt, lead: stageOf(item.leadId), draftState: (item.draftState || null) as "entwurf" | "freigegeben" | null, draftNodeId: item.draftNodeId ?? null, variant: (item.variant ?? null) as "A" | "B" | null, clickedUrls: (Array.isArray(item.clickedUrls) ? item.clickedUrls : []) as string[], bouncedAt: item.bouncedAt, lastError: item.lastError })), events: events.map((event) => ({ id: event.id, recipientId: event.recipientId, kind: event.kind, subject: event.subject, note: event.note, createdAt: event.createdAt })), stats: { ...summarizeCampaign(recipients.map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))), mails: campaignMailStats(trackRows, new Map<number, RecipientStamps>(recipients.map((item) => [item.id, item]))) } };
+  return { ...row, kiModus: kiModusOf(row), kiAnsatz: kiAnsatzOf(row), reviewFirst: kiModusOf(row) === "freigabe", tree: tree(row), design: design(row), audience: (row.isTemplate ? withoutLists(row.audience as Audience | null) : (row.audience ?? { source: "alle" })) as Audience, audienceInfo: info, sendWindow: sendWindowOf(row), recipients: recipients.map((item) => ({ id: item.id, email: item.email, name: item.name, company: item.company, status: item.status, nodeId: item.nodeId, nextActionAt: item.nextActionAt, sentCount: item.sentCount, openedAt: item.openedAt, clickedAt: item.clickedAt, repliedAt: item.repliedAt, lead: stageOf(item.leadId), draftState: (item.draftState || null) as "entwurf" | "freigegeben" | null, draftNodeId: item.draftNodeId ?? null, picked: Boolean(item.pickedAt), variant: (item.variant ?? null) as "A" | "B" | null, clickedUrls: (Array.isArray(item.clickedUrls) ? item.clickedUrls : []) as string[], bouncedAt: item.bouncedAt, lastError: item.lastError })), events: events.map((event) => ({ id: event.id, recipientId: event.recipientId, kind: event.kind, subject: event.subject, note: event.note, createdAt: event.createdAt })), stats: { ...summarizeCampaign(recipients.map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))), mails: campaignMailStats(trackRows, new Map<number, RecipientStamps>(recipients.map((item) => [item.id, item]))) } };
 }
 const sendWindowOf = (campaign: Pick<EmailCampaign, "sendWindow">): SendWindow => resolveSendWindow(campaign.sendWindow as Partial<SendWindow> | null);
 /** Abweichende Zeiten je Wochentag prüfen: nur „0“–„6“ mit gültigen Uhrzeiten, sonst nichts. */
@@ -318,14 +328,15 @@ async function audienceLeads(db: Db, tenantId: number, audience: Audience) {
  * aufgenommen sind („warten“), z. B. weil sie nach dem Start in die Liste kamen.
  */
 /** Zielgruppe gegen die Empfänger abgleichen: wer fehlt noch, wer ist gar nicht mehr in der Zielgruppe (z. B. gelöschter Testkontakt). */
-async function audienceInfo(db: Db, tenantId: number, audience: Audience, enrolled: Array<{ id: number; email: string }>, blocked: Set<string>) {
-  if (isPickAudience(audience)) return { total: enrolled.length, noEmail: 0, blocked: 0, pending: 0, outside: 0, outsideIds: [] as number[], picked: true }; // von Hand aufgenommen = die Zielgruppe
+async function audienceInfo(db: Db, tenantId: number, audience: Audience, enrolled: Array<{ id: number; email: string; pickedAt?: Date | null }>, blocked: Set<string>) {
+  if (isPickAudience(audience)) return { total: enrolled.length, noEmail: 0, blocked: 0, pending: 0, outside: 0, outsideIds: [] as number[], picked: true, handPicked: enrolled.length }; // von Hand aufgenommen = die Zielgruppe
   const rows = await audienceContacts(db, tenantId, audience);
   const enrolledEmails = new Set(enrolled.map((item) => item.email.toLowerCase()));
   let noEmail = 0; let suppressed = 0; let pending = 0; const seen = new Set<string>(); const inAudience = new Set<string>();
   for (const row of rows) { if (row.email) inAudience.add(row.email.toLowerCase()); if (!validEmail(row.email)) { noEmail += 1; continue; } const key = row.email.toLowerCase(); if (blocked.has(key)) { suppressed += 1; continue; } if (seen.has(key)) continue; seen.add(key); if (!enrolledEmails.has(key)) pending += 1; }
-  const outsideIds = enrolled.filter((item) => !inAudience.has(item.email.toLowerCase())).map((item) => item.id);
-  return { total: rows.length, noEmail, blocked: suppressed, pending, outside: outsideIds.length, outsideIds, picked: false };
+  const outsideIds = enrolled.filter((item) => !item.pickedAt && !inAudience.has(item.email.toLowerCase())).map((item) => item.id); // von Hand aufgenommene gehören dazu – nie „nicht mehr in der Liste“
+  const handPicked = enrolled.filter((item) => item.pickedAt && !inAudience.has(item.email.toLowerCase())).length;
+  return { total: rows.length, noEmail, blocked: suppressed, pending, outside: outsideIds.length, outsideIds, picked: false, handPicked };
 }
 /**
  * Zielgruppe prüfen: Anzahl und die ersten Empfänger – jeweils mit allen Platzhalter-Werten,
@@ -348,14 +359,14 @@ export async function previewAudience(db: Db, tenantId: number, audience: Audien
   return { count: rows.length, sample };
 }
 /** Kontakte in eine Kampagne aufnehmen (ohne Doppelte, Mehrfach-Durchlauf beachten) – beim Start und beim Hinzufügen von Listen. */
-async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaign, rows: Awaited<ReturnType<typeof audienceLeads>>, options: { onlyNew?: boolean } = {}) {
+async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaign, rows: Awaited<ReturnType<typeof audienceLeads>>, options: { onlyNew?: boolean; picked?: boolean } = {}) {
   const id = campaign.id;
   const previousRows = await db.select({ email: emailCampaignRecipients.email, status: emailCampaignRecipients.status, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id)));
   const previousOf = new Map<string, Array<{ status: string; repliedAt: Date | null }>>(); for (const row of previousRows) { const key = row.email.toLowerCase(); previousOf.set(key, [...(previousOf.get(key) ?? []), row]); }
   const maxRuns = maxRunsOf(campaign); const abTest = hasAbTest(tree(campaign)); let index = previousRows.length;
   let added = 0; let skipped = 0; let repeated = 0;
   for (const row of rows) { const previous = previousOf.get(row.email!.toLowerCase()) ?? []; if ((options.onlyNew && previous.length) || !canEnroll(previous, maxRuns).ok) { skipped += 1; continue; } previousOf.set(row.email!.toLowerCase(), [...previous, { status: "wartet", repliedAt: null }]); if (previous.length) repeated += 1; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); }
-    await db.insert(emailCampaignRecipients).values({ tenantId, campaignId: id, leadId: row.id, email: row.email!, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: crypto.randomBytes(16).toString("hex"), nodeId: tree(campaign).start, nextActionAt: new Date(Date.now() - 2000), status: "wartet", sentCount: 0, variant: abTest ? abVariantFor(index, campaign.abSplit) : null }); index += 1; added += 1; } /* 2 s in der Vergangenheit: MySQL rundet Sekunden auf */
+    await db.insert(emailCampaignRecipients).values({ tenantId, campaignId: id, leadId: row.id, email: row.email!, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: crypto.randomBytes(16).toString("hex"), nodeId: tree(campaign).start, nextActionAt: new Date(Date.now() - 2000), status: "wartet", sentCount: 0, variant: abTest ? abVariantFor(index, campaign.abSplit) : null, pickedAt: options.picked ? new Date() : null }); index += 1; added += 1; } /* 2 s in der Vergangenheit: MySQL rundet Sekunden auf */
   return { added, skipped, repeated, maxRuns };
 }
 /** Empfänger wirklich aus einer Kampagne nehmen: Empfänger-Zeile und ihr Verlauf weg, keine weitere E-Mail. Der Kontakt selbst bleibt. */
@@ -370,9 +381,9 @@ async function deleteRecipients(db: Db, tenantId: number, campaignId: number, re
 /** Empfänger entfernen, die nicht mehr in der Zielgruppe sind (z. B. gelöschte Testkontakte) – damit die Zahlen nur echte Kontakte zählen. */
 export async function pruneEmailCampaignRecipients(db: Db, tenantId: number, id: number) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
-  const enrolled = await db.select({ id: emailCampaignRecipients.id, email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id)));
+  const enrolled = await db.select({ id: emailCampaignRecipients.id, email: emailCampaignRecipients.email, pickedAt: emailCampaignRecipients.pickedAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id)));
   const info = await audienceInfo(db, tenantId, (campaign.audience ?? { source: "alle" }) as Audience, enrolled, await suppressedSet(db, tenantId));
-  const removed = await deleteRecipients(db, tenantId, id, info.outsideIds);
+  const removed = await deleteRecipients(db, tenantId, id, info.outsideIds); // von Hand aufgenommene sind nie dabei
   return { removed };
 }
 /**
@@ -439,7 +450,7 @@ export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: {
   const blocked = await suppressedSet(db, tenantId);
   const noEmail = rows.filter((row) => !validEmail(row.email)).length; const suppressed = rows.filter((row) => validEmail(row.email) && blocked.has(row.email.toLowerCase())).length;
   const usable = rows.filter((row) => validEmail(row.email) && !blocked.has(row.email!.toLowerCase()));
-  const result = await enrollRecipients(db, tenantId, campaign, usable, { onlyNew: true });
+  const result = await enrollRecipients(db, tenantId, campaign, usable, { onlyNew: true, picked: true });
   if (result.added) {
     if (campaign.status === "beendet") await db.update(emailCampaigns).set({ status: "aktiv" }).where(eq(emailCampaigns.id, campaign.id));
     await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${result.added} Kontakt${result.added === 1 ? "" : "e"} einzeln hinzugefügt`, refType: "emailCampaign", refId: campaign.id });
@@ -482,6 +493,7 @@ export async function addListsToEmailCampaign(db: Db, tenantId: number, input: {
   if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
   const added = Array.from(new Set(input.listNames.map((name) => name.trim()).filter(Boolean))); if (!added.length) throw new Error("Bitte mindestens eine Liste wählen.");
   const before = (campaign.audience ?? { source: "alle" }) as Audience;
+  if (isPickAudience(before)) await markAllPicked(db, tenantId, campaign.id); // bisher nur von Hand: diese Kontakte bleiben drin, die Listen kommen dazu
   const audience = listAudience([...audienceLists(before), ...added]);
   await db.update(emailCampaigns).set({ audience }).where(eq(emailCampaigns.id, campaign.id));
   const running = campaign.status === "aktiv" || campaign.status === "pausiert" || campaign.status === "beendet";
@@ -509,8 +521,10 @@ export async function startEmailCampaign(db: Db, tenantId: number, id: number, a
   const issues = validateTree(tree(campaign)); if (issues.length) throw new Error(issues.join(" "));
   const rows = await audienceLeads(db, tenantId, audience);
   if (!rows.length && !(isPickAudience(audience) && pickedCount)) throw new Error(isPickAudience(audience) ? "Noch keine Kontakte ausgewählt – unter „Kontakte“ Kontakte markieren und „In Kampagne aufnehmen“ wählen." : "Die Zielgruppe enthält keine Kontakte mit E-Mail-Adresse.");
+  const waitingRows = await db.select({ email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id), eq(emailCampaignRecipients.sentCount, 0), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]))); // schon drin (von Hand aufgenommen) – starten jetzt mit
+  const audienceEmails = new Set(rows.map((row) => row.email!.toLowerCase())); const waitingInAudience = waitingRows.filter((row) => audienceEmails.has(row.email.toLowerCase())).length;
   const enrolled = await enrollRecipients(db, tenantId, campaign, rows);
-  const { skipped, repeated, maxRuns } = enrolled; const added = isPickAudience(audience) ? pickedCount : enrolled.added; // bei „Nur ausgewählte Kontakte“ sind die Empfänger schon drin – sie starten jetzt
+  const { repeated, maxRuns } = enrolled; const added = enrolled.added + waitingRows.length; const skipped = Math.max(0, enrolled.skipped - waitingInAudience); // wer schon drin war und jetzt startet, zählt als aufgenommen, nicht als übersprungen
   await db.update(emailCampaigns).set({ status: "aktiv", startedAt: campaign.startedAt ?? new Date() }).where(eq(emailCampaigns.id, id));
   await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“ gestartet`, detail: `${added} Empfänger aufgenommen${repeated ? ` (${repeated} erneut)` : ""}${skipped ? ` · ${skipped} übersprungen (${maxRunsLabel(maxRuns)})` : ""}`, refType: "emailCampaign", refId: id });
   // Versand läuft im Hintergrund (SMTP kann dauern) – die Anfrage kehrt sofort zurück; der Zeitplaner nimmt den Rest.
