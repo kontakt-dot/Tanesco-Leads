@@ -17,16 +17,22 @@ import type { Db } from "./lead-pipeline";
 type Recipient = typeof emailCampaignRecipients.$inferSelect;
 
 export async function campaignDailyLimit(db: Db, tenantId: number): Promise<number> {
-  const row = (await db.select({ limit: mailSettings.campaignDailyLimit }).from(mailSettings).where(eq(mailSettings.tenantId, tenantId)).limit(1))[0];
-  return row?.limit && row.limit > 0 ? row.limit : DEFAULT_CAMPAIGN_DAILY_LIMIT;
+  const row = (await db.select({ limit: mailSettings.campaignDailyLimit, warmupEnabled: mailSettings.warmupEnabled, warmupStartedAt: mailSettings.warmupStartedAt }).from(mailSettings).where(eq(mailSettings.tenantId, tenantId)).limit(1))[0];
+  const configured = row?.limit && row.limit > 0 ? row.limit : DEFAULT_CAMPAIGN_DAILY_LIMIT;
+  if (row?.warmupEnabled) { const { warmupLimit } = await import("./mail-health"); return warmupLimit(row.warmupStartedAt, configured).limit; } // Warmlaufen: Limit steigt Woche für Woche
+  return configured;
 }
 export async function sentToday(db: Db, tenantId: number, now = new Date()): Promise<number> {
   const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), gte(emailCampaignEvents.createdAt, dayStartIn(now))));
   return Number(count) || 0;
 }
 export async function campaignDailyStatus(db: Db, tenantId: number) {
-  const limit = await campaignDailyLimit(db, tenantId); const sent = await sentToday(db, tenantId);
-  return { limit, sent, left: Math.max(0, limit - sent) };
+  const row = (await db.select({ limit: mailSettings.campaignDailyLimit, warmupEnabled: mailSettings.warmupEnabled, warmupStartedAt: mailSettings.warmupStartedAt }).from(mailSettings).where(eq(mailSettings.tenantId, tenantId)).limit(1))[0];
+  const configured = row?.limit && row.limit > 0 ? row.limit : DEFAULT_CAMPAIGN_DAILY_LIMIT;
+  const { warmupLimit } = await import("./mail-health");
+  const warmup = row?.warmupEnabled ? warmupLimit(row.warmupStartedAt, configured) : null;
+  const limit = warmup ? warmup.limit : configured; const sent = await sentToday(db, tenantId);
+  return { limit, sent, left: Math.max(0, limit - sent), configured, warmup: warmup ? { week: warmup.week, done: warmup.done } : null };
 }
 export async function setCampaignDailyLimit(db: Db, tenantId: number, limit: number) {
   const value = Math.max(1, Math.min(2000, Math.round(limit)));

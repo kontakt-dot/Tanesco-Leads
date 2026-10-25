@@ -319,6 +319,30 @@ export async function createLeadsFromMessages(db: Db, tenantId: number, input: {
   }
   return { created, updated, skipped: skipped.length, skippedNote: skipped[0] ?? null };
 }
+/**
+ * KI-Antwortvorschlag: liest die eingegangene Antwort (plus unsere letzte Kampagnen-Mail als Zusammenhang) und schreibt
+ * einen kurzen Antwortentwurf – zum Lesen, Ändern und Abschicken. Ohne KI-Schlüssel kommt eine passende Vorlage.
+ * Keine Grußformel am Ende – die Signatur hängt der Versand an.
+ */
+export async function suggestReply(db: Db, tenantId: number, messageId: number): Promise<{ text: string; source: "ki" | "vorlage" }> {
+  const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");
+  const recipient = message.campaignRecipientId ? (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, message.campaignRecipientId)).limit(1))[0] ?? null : null;
+  const lastSent = recipient ? (await db.select({ subject: emailCampaignEvents.subject }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, recipient.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(desc(emailCampaignEvents.id)).limit(1))[0]?.subject ?? null : null;
+  const name = (message.fromName ?? "").trim();
+  const anrede = name && !/@/.test(name) ? `Guten Tag ${name},` : "Guten Tag,"; // ohne Anredeform – ob Herr oder Frau, wissen wir nicht sicher
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const { invokeLLM } = await import("./_core/llm");
+      const system = `Du beantwortest für Tanesco Digital (einer der größten Leadlieferanten Deutschlands für Photovoltaik- und Wärmepumpen-Leads) Antworten auf unsere Akquise-E-Mails. Schreibe EINE kurze Antwort (60–120 Wörter), Deutsch, Sie-Form, freundlich und konkret: beantworte die Fragen aus der Nachricht, nutze nur diese Fakten – Leads exklusiv, telefonisch vorqualifiziert (in der Regel über 10 Fragen; auf Wunsch nennen wir den Firmennamen des Betriebs, der Interessent erwartet die Rückmeldung), Übergabe in Echtzeit per Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, 20 Test-Leads kostenlos individuell für den Betrieb. Nenne KEINE Preise (die klären wir im Gespräch). Ziel: ein kurzes Telefonat vereinbaren – schlage vor, dass der Interessent zwei Zeitfenster nennt, oder biete an, dass wir anrufen. Bei Absagen: höflich bedanken, kein Druck, Tür offen lassen. Keine Grußformel und kein Name am Ende (die Signatur hängt das System an), keine Links, keine Ausrufezeichen.`;
+      const user = `Eingegangene Antwort von ${message.fromName ?? message.fromEmail} (${message.fromEmail}):\nBetreff: ${message.subject ?? "(ohne Betreff)"}\n\n${(message.bodyText ?? "").slice(0, 4000)}${lastSent ? `\n\nUnsere letzte E-Mail an diesen Kontakt hatte den Betreff: „${lastSent}“` : ""}\n\nSchreibe die Antwort.`;
+      const response = await invokeLLM({ maxTokens: 700, temperature: 0.5, messages: [{ role: "system", content: system }, { role: "user", content: user }] });
+      const text = String(response.choices[0]?.message.content ?? "").trim();
+      if (text.length > 30) { const { stripClosing } = await import("./campaign-review"); return { text: stripClosing(text), source: "ki" }; }
+    } catch { /* Vorlage unten */ }
+  }
+  const text = `${anrede}\n\nvielen Dank für Ihre Rückmeldung.\n\nGerne stimme ich die Einzelheiten direkt mit Ihnen ab – unsere Anfragen sind exklusiv, telefonisch vorqualifiziert und werden in Echtzeit übergeben, und zum Kennenlernen erhalten Sie 20 Test-Leads kostenlos. Passt Ihnen diese Woche ein kurzes Telefonat? Nennen Sie mir gerne zwei Zeitfenster, oder wir rufen Sie einfach an.`;
+  return { text, source: "vorlage" };
+}
 /** Antwort aus dem Posteingang schicken (über den eingerichteten Versand). */
 export async function reply(db: Db, tenantId: number, input: { messageId: number; text: string; actorUserId?: number | null; attachments?: MailAttachmentInput[] | null; appUrl?: string | null }) {
   const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");

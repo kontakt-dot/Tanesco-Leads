@@ -1643,6 +1643,17 @@ html:not(.dark) .cd-chip.is-ki { border-color: #d9dfe7 !important; color: #4b556
 html:not(.dark) .rv-preview-toggle { color: #4b5568 !important; }
 html:not(.dark) .rv-preview-toggle:hover { color: #0f172a !important; }
 html:not(.dark) .rv-preview-empty { color: #8a94a6 !important; }
+html:not(.dark) .mh-ampel.is-gruen { color: #3c7f64 !important; }
+html:not(.dark) .mh-ampel.is-gelb { color: #8a742a !important; }
+html:not(.dark) .mh-ampel.is-rot { background: #ffffff !important; color: #8b5a60 !important; }
+html:not(.dark) .mh-ampel.is-unbekannt { color: #0f172a !important; }
+html:not(.dark) .mh-chip { color: #0f172a !important; }
+html:not(.dark) .mh-chip.is-warn { color: #8b5a60 !important; }
+html:not(.dark) .mh-toggle small { color: #4b5568 !important; }
+html:not(.dark) .mh-mini { color: #0f172a !important; }
+html:not(.dark) .mh-mini:hover { border-color: #d9dfe7 !important; }
+html:not(.dark) .mh-mini.is-danger { color: #8b5a60 !important; }
+html:not(.dark) .mh-sender small { color: #4b5568 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -3344,3 +3355,15 @@ html:not(.dark) .cd-chip.is-ki { border-color: #e0d7fb !important; color: #6941c
 html:not(.dark) .rv-preview-toggle { color: #667085 !important; }
 html:not(.dark) .rv-preview-toggle:hover { color: #101828 !important; }
 html:not(.dark) .rv-preview-frame { border-color: #e4e7ec !important; }
+
+/* Zustellbarkeit hell */
+html:not(.dark) .mh-ampel.is-gruen { background: #e7f8f1 !important; color: #067647 !important; }
+html:not(.dark) .mh-ampel.is-gelb { background: #fef5e7 !important; color: #b54708 !important; }
+html:not(.dark) .mh-ampel.is-rot { background: #feeef0 !important; color: #c01048 !important; }
+html:not(.dark) .mh-ampel.is-unbekannt { background: #f2f4f7 !important; color: #475467 !important; }
+html:not(.dark) .mh-chip { border-color: #e4e7ec !important; color: #475467 !important; }
+html:not(.dark) .mh-chip.is-warn { border-color: #f6c3cd !important; color: #c01048 !important; }
+html:not(.dark) .mh-toggle, html:not(.dark) .mh-sender { border-color: #e7eaf0 !important; background: #fdfdfe !important; }
+html:not(.dark) .mh-toggle small, html:not(.dark) .mh-sender small { color: #667085 !important; }
+html:not(.dark) .mh-mini { border-color: #d8dce5 !important; color: #475467 !important; background: #ffffff !important; }
+html:not(.dark) .mh-mini.is-danger { color: #c01048 !important; border-color: #f1c2ca !important; }

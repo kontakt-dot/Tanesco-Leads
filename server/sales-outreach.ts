@@ -74,7 +74,7 @@ export async function importColdList(db: Db, tenantId: number, input: { pipeline
       updated += 1; continue;
     }
     const publicId = `KALT-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
-    const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}`, adPlatform: coldPlatform, company: row.company ?? null, listName, inPipeline: toPipeline });
+    const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(websiteFromEmail(emailKey, row.extra) ? { website: websiteFromEmail(emailKey, row.extra) } : {}), ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}`, adPlatform: coldPlatform, company: row.company ?? null, listName, inPipeline: toPipeline });
     const leadId = Number(inserted[0]?.insertId) || 0; leadIds.push(leadId); created += 1;
     const self = { id: leadId, status: "neu", phone: row.phone ?? null, email: emailKey || null, firstName: row.firstName ?? null, lastName: row.lastName ?? null, company: row.company ?? null, postcode: row.postcode ?? null, city: row.city ?? null, metadata: null } as Known;
     if (phoneKey) byPhone.set(phoneKey, self); if (emailKey) byEmail.set(emailKey, self);
@@ -472,6 +472,9 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
   const active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
   await enforceReplyStop(db, Array.from(new Set(active.map((campaign) => campaign.tenantId)))).catch((error) => console.error("[E-Mail-Kampagnen] Antwort-Stopp:", error instanceof Error ? error.message : error)); // Sicherheitsnetz: geantwortet → beendet, bevor etwas rausgeht
   const throttleOff = process.env.EMAIL_THROTTLE_OFF === "1"; // nur für Tests: kein Drip, kein Tageslimit
+  // Zusätzliche Absender-Adressen: jeder Kontakt bekommt fest „seine" Adresse (Antworten bleiben im Faden), jede mit eigenem Tagesbudget
+  const senderPools = new Map<number, Awaited<ReturnType<typeof import("./mail-health")["senderPoolFor"]>>>();
+  const poolFor = async (tenantId: number) => { if (!senderPools.has(tenantId)) { const { senderPoolFor } = await import("./mail-health"); senderPools.set(tenantId, await senderPoolFor(db, tenantId).catch(() => null)); } return senderPools.get(tenantId) ?? null; };
   // Tageslimit für alle Kampagnen eines Mandanten zusammen (Standard 80/Tag) – schützt die Absender-Adresse
   const dayLeft = new Map<number, number>();
   const dailyLeft = async (tenantId: number) => { if (throttleOff) return Number.POSITIVE_INFINITY; if (!dayLeft.has(tenantId)) { const status = await campaignDailyStatus(db, tenantId); dayLeft.set(tenantId, status.left); } return dayLeft.get(tenantId) ?? 0; };
@@ -511,6 +514,7 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
       // KI-Versand: der persönliche Text je Schritt – freigegebene Entwürfe für GENAU diesen Schritt, im Auto-Modus frisch von der KI geschrieben
       let draft: { subject: string; text: string } | null = null; let draftUsed = false;
       const sentIds: Array<string | null> = []; // Message-IDs der gesendeten Mails – damit Antworten sicher zugeordnet werden (In-Reply-To), egal von welcher Adresse
+      const pool = await poolFor(campaign.tenantId); const sender = pool ? pool.pick(recipient.email) : null; // welche Absender-Adresse diesen Kontakt anschreibt
       const result = await advanceRecipient(campaignTree, state, now, async (nodeIn, subjectIn) => { let node = nodeIn; let subject = subjectIn;
         if (kiModus === "freigabe" && !draftUsed) {
           const freshDraft = (await db.select({ draftState: emailCampaignRecipients.draftState, draftNodeId: emailCampaignRecipients.draftNodeId, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, sentCount: emailCampaignRecipients.sentCount }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0];
@@ -533,10 +537,10 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
         const rendered = (() => { const d = design(campaign); // persönlicher Versand: kein Zählpixel, keine umgeschriebenen Links – nur der Abmelde-Link bleibt (gesetzlich nötig)
         return renderNode(node, d, values, d.plain ? { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature } : { pixelUrl: `${base}/api/mail/o/${recipient.token}.gif`, wrapLink: (url) => `${base}/api/mail/c/${recipient.token}?u=${encodeURIComponent(url)}`, unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature }); })(); const fresh = (await db.select({ repliedAt: emailCampaignRecipients.repliedAt, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]; // Antwort-Stopp: direkt vor dem Senden noch einmal nachsehen
         if (fresh?.repliedAt && stopsOnReply(campaign)) return { ok: false, subject: rendered.subject, stopped: REPLY_STOP_NOTE }; if (fresh && !["wartet", "laeuft"].includes(fresh.status)) return { ok: false, subject: rendered.subject, stopped: "Empfänger inzwischen beendet – keine weitere E-Mail" };
-        const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text, attachments: (node.attachments ?? []).map((file) => ({ filename: file.filename, content: file.contentBase64, contentType: file.contentType, encoding: "base64" as const })) }, { db, tenantId: campaign.tenantId }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); if (sent.ok) sentIds.push(normalizeMessageId(sent.messageId)); return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign), stopOnReply: stopsOnReply(campaign) });
+        const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text, attachments: (node.attachments ?? []).map((file) => ({ filename: file.filename, content: file.contentBase64, contentType: file.contentType, encoding: "base64" as const })) }, { db, tenantId: campaign.tenantId, from: sender ? { name: sender.fromName, email: sender.fromEmail } : null }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); if (sent.ok) sentIds.push(normalizeMessageId(sent.messageId)); return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign), stopOnReply: stopsOnReply(campaign) });
       await db.update(emailCampaignRecipients).set({ nodeId: result.state.nodeId, nextActionAt: result.state.nextActionAt, status: result.state.status, sentCount: result.state.sentCount, lastSentAt: result.state.lastSentAt, ...(draftUsed && result.state.sentCount > recipient.sentCount ? { draftState: null, draftNodeId: null } : {}) }).where(eq(emailCampaignRecipients.id, recipient.id)); // genutzter Entwurf ist verbraucht – der nächste Schritt bekommt einen frischen
       let sentIndex = 0;
-      for (const event of result.events) await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note, messageId: event.kind === "gesendet" ? sentIds[sentIndex++] ?? null : null });
+      for (const event of result.events) await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note, sender: event.kind === "gesendet" ? sender?.fromEmail ?? null : null, messageId: event.kind === "gesendet" ? sentIds[sentIndex++] ?? null : null });
       const sentNow = result.events.filter((event) => event.kind === "gesendet").length; sentInRun += sentNow; if (sentNow && dayLeft.has(campaign.tenantId)) dayLeft.set(campaign.tenantId, (dayLeft.get(campaign.tenantId) ?? 0) - sentNow);
       const failedNow = result.events.filter((event) => event.kind === "fehler"); if (failedNow.length) { failedInRun += failedNow.length; lastFailure = `${recipient.email}: ${(await db.select({ lastError: emailCampaignRecipients.lastError }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]?.lastError ?? "Versand fehlgeschlagen"}`; }
       processed += 1;
@@ -675,6 +679,58 @@ export async function uploadMailImage(input: { fileName: string; mimeType: strin
  * Inhalt einer hochgeladenen Liste: die Kontakte mit Stammdaten, Stufe, Vertriebler und den Zusatzspalten
  * (den Platzhaltern aus der Datei). Für die Ansicht „Liste ansehen“ in der Pipeline und im Kampagnen-Editor.
  */
+/** Webseite aus der Firmen-Adresse ableiten (info@koppen-solar.de → koppen-solar.de), wenn die Liste keine Webseiten-Spalte hat. */
+function websiteFromEmail(email: string | null | undefined, extra?: Record<string, string> | null): string | null {
+  if (!email) return null;
+  if (extra && Object.keys(extra).some((key) => /^(web ?(site|seite)?|homepage|internet(seite)?|url|domain)$/i.test(key.trim()))) return null; // Liste bringt selbst eine Webseite mit
+  const domain = email.split("@")[1]?.trim().toLowerCase() ?? "";
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return null;
+  if (/^(gmail|googlemail|gmx|web|t-online|outlook|hotmail|live|yahoo|icloud|me|aol|freenet|posteo|mail|email|arcor|online|vodafone|magenta|proton|protonmail|1und1|unitybox)\./.test(domain)) return null;
+  return domain;
+}
+/** Ansprechpartner aus der E-Mail-Adresse (max.mustermann@firma.de) – nur wenn beide Teile wie Namen aussehen. */
+export function nameFromEmail(email: string | null | undefined): { firstName: string; lastName: string } | null {
+  const local = (email ?? "").split("@")[0]?.toLowerCase() ?? "";
+  const match = /^([a-zäöüß]{2,})[._-]([a-zäöüß][a-zäöüß-]{2,})$/.exec(local); if (!match) return null;
+  const generic = new Set(["info", "kontakt", "mail", "office", "vertrieb", "service", "buero", "büro", "hallo", "post", "verwaltung", "team", "shop", "bewerbung", "rechnung", "zentrale", "empfang", "anfrage", "support", "kundenservice", "marketing", "presse", "jobs", "karriere", "no", "noreply", "reply", "e", "mail"]);
+  if (generic.has(match[1]) || generic.has(match[2])) return null;
+  const cap = (part: string) => part.split("-").map((piece) => piece.charAt(0).toUpperCase() + piece.slice(1)).join("-");
+  return { firstName: cap(match[1]), lastName: cap(match[2]) };
+}
+/** Geschäftsführer/Inhaber aus einem Impressum-Text herauslesen – ohne KI, über die üblichen Formulierungen. */
+export function managerFromImpressum(text: string): { firstName: string; lastName: string } | null {
+  const keyword = /(geschäftsführung|geschäftsführer(?:in)?|inhaber(?:in)?|vertretungsberechtigte?r?\s+geschäftsführer(?:in)?|vertreten\s+durch)\s*[:\-–]?\s*/i.exec(text);
+  if (!keyword) return null;
+  const rest = text.slice(keyword.index + keyword[0].length, keyword.index + keyword[0].length + 90).replace(/^\s+/, "");
+  const name = /^((?:(?:Dipl\.-?[\w]*|Dr\.|Prof\.|Ing\.|[A-ZÄÖÜ][a-zäöüß]+)\s+){1,3}[A-ZÄÖÜ][a-zäöüß-]+)/.exec(rest)?.[1]?.trim();
+  if (!name) return null;
+  const parts = name.replace(/\b(Dipl\.?-?\w*|Dr\.?|Prof\.?|Ing\.?)\s*/g, "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2 || parts.length > 4) return null;
+  return { firstName: parts.slice(0, -1).join(" "), lastName: parts[parts.length - 1] };
+}
+/**
+ * Fehlende Daten einer Liste ergänzen: Kontakte ohne Ansprechpartner bekommen – wenn eine Webseite bekannt ist –
+ * den Geschäftsführer/Inhaber aus dem Impressum als Ansprechpartner (mit Vermerk im Verlauf). Läuft in kleinen Paketen.
+ */
+export async function enrichListContacts(db: Db, tenantId: number, input: { listName: string; limit?: number | null; actorUserId?: number | null }) {
+  const limit = Math.max(1, Math.min(15, input.limit ?? 8));
+  const { readWebsiteText } = await import("./lead-finder"); const { websiteOf } = await import("./campaign-review");
+  const rows = await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.listName, input.listName)));
+  const candidates = rows.filter((row) => { const meta = (row.metadata ?? {}) as Record<string, unknown>; const enriched = (meta.anreicherung as { geprueft?: boolean } | undefined)?.geprueft; const noContact = !(row.firstName ?? "").trim() || (row.lastName ?? "").trim() === (row.company ?? "").trim(); return !enriched && noContact && Boolean(websiteOf(row.metadata, row.email)); }).slice(0, limit);
+  let found = 0; let checked = 0;
+  for (const row of candidates) {
+    checked += 1;
+    const website = websiteOf(row.metadata, row.email)!;
+    const fromEmail = nameFromEmail(row.email);
+    const site = fromEmail ? null : await readWebsiteText(website, { maxPages: 2, maxChars: 7000 }).catch(() => null);
+    const manager = fromEmail ?? (site ? managerFromImpressum(site.text) : null);
+    const meta = (row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {}) as Record<string, unknown>;
+    const update: Record<string, unknown> = { metadata: { ...meta, anreicherung: { geprueft: true, am: new Date().toISOString().slice(0, 10), ...(manager ? { quelle: fromEmail ? "email" : "impressum" } : {}) } } };
+    if (manager) { update.firstName = manager.firstName; update.lastName = manager.lastName; found += 1; await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: row.pipelineStage ?? "neu", actorUserId: input.actorUserId ?? null, note: `Ansprechpartner ergänzt: ${manager.firstName} ${manager.lastName} (${fromEmail ? "aus der E-Mail-Adresse" : `Impressum ${website}`})` }); }
+    await db.update(leads).set(update).where(eq(leads.id, row.id));
+  }
+  return { checked, found, remaining: Math.max(0, rows.filter((row) => { const meta = (row.metadata ?? {}) as Record<string, unknown>; const enriched = (meta.anreicherung as { geprueft?: boolean } | undefined)?.geprueft; const noContact = !(row.firstName ?? "").trim() || (row.lastName ?? "").trim() === (row.company ?? "").trim(); return !enriched && noContact && Boolean(websiteOf(row.metadata, row.email)); }).length - candidates.length) };
+}
 export async function coldListContacts(db: Db, tenantId: number, input: { listName: string; limit?: number; search?: string | null }) {
   const limit = Math.min(500, Math.max(10, input.limit ?? 100));
   const rows = await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company, phone: leads.phone, email: leads.email, postcode: leads.postcode, city: leads.city, stage: leads.pipelineStage, metadata: leads.metadata, createdAt: leads.createdAt })

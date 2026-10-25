@@ -2670,4 +2670,44 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const udo = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, auto.id)))[0];
     expect(udo.sentCount).toBe(1); expect(udo.status).toBe("fertig");
   }, 40000);
+  it("60. Zustellbarkeit: Absender-Adressen mit Verteilung und eigenem Limit, Warmlauf-Limit, Wochenbericht, KI-Antwortvorschlag (Vorlage), Listen-Anreicherung", async () => {
+    const health = await import("./mail-health"); const { starterBlocks } = await import("../shared/email-design");
+    // Absender-Adressen: anlegen, verteilen (fest je Kontakt), Budget je Adresse, am Ereignis vermerkt
+    await owner.leadops.saveMailSettings({ provider: "smtp", fromEmail: "vertrieb@tanesco-test.example", fromName: "Tanesco" } as never);
+    const sender = await owner.leadops.saveMailSender({ fromEmail: "zweite@tanesco-zwei.example", fromName: "Tanesco Zwei", dailyLimit: 2 });
+    expect(sender.id).toBeGreaterThan(0);
+    const listed = await owner.leadops.listMailSenders(); expect(listed.main?.fromEmail).toBe("vertrieb@tanesco-test.example"); expect(listed.senders).toHaveLength(1);
+    const pool = await health.senderPoolFor(db, S.tenantId as number); expect(pool).not.toBeNull();
+    const picks = ["a@x.example", "b@x.example", "c@x.example", "d@x.example", "e@x.example", "f@x.example"].map((email) => pool!.pick(email)!.fromEmail);
+    expect(new Set(picks).size).toBe(2); // beide Adressen kommen vor
+    expect(picks.filter((email) => email === "zweite@tanesco-zwei.example").length).toBeLessThanOrEqual(2); // eigenes Tagesbudget der Zusatz-Adresse
+    const stable = pool!.pick("a@x.example")!.fromEmail; expect(["vertrieb@tanesco-test.example", "zweite@tanesco-zwei.example"]).toContain(stable);
+    // Versand schreibt die Adresse ans Ereignis
+    await owner.leadops.importColdList({ listName: "Sender-Test", toPipeline: false, rows: [{ firstName: "Eva", lastName: "Eins", company: "Eins GmbH", email: "eva@sender-e2e.example" }, { firstName: "Zoe", lastName: "Zwei", company: "Zwei GmbH", email: "zoe@sender-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Sender-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Sender-Test" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const senderEvents = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")));
+    expect(senderEvents).toHaveLength(2); expect(senderEvents.every((event) => event.sender && ["vertrieb@tanesco-test.example", "zweite@tanesco-zwei.example"].includes(event.sender))).toBe(true);
+    // Warmlaufen: Limit folgt der Rampe
+    await owner.leadops.saveMailSettings({ provider: "smtp", campaignDailyLimit: 100, warmupEnabled: true } as never);
+    const status = await owner.leadops.campaignDailyStatus(); expect(status.warmup).not.toBeNull(); expect(status.limit).toBe(40); expect((status as { configured?: number }).configured).toBe(100); // Woche 1
+    await owner.leadops.saveMailSettings({ provider: "smtp", warmupEnabled: false } as never);
+    expect((await owner.leadops.campaignDailyStatus()).limit).toBe(100);
+    // Wochenbericht: Baustein + Versand (simuliert)
+    const report = await health.buildWeeklyReport(db, S.tenantId as number);
+    expect(report.text).toContain("Gesendet:"); expect(report.text).toContain("Antworten:"); expect(report.subject).toContain("deine Woche");
+    const sentReport = await owner.leadops.sendWeeklyReport(); expect(sentReport.sent).toBe(true);
+    // KI-Antwortvorschlag: ohne KI-Schlüssel kommt die Vorlage – mit Anrede und Telefonat-Frage
+    const message = await owner.leadops.storeInboxMessage({ fromEmail: "chef@antwort-vorschlag.example", fromName: "Carla Chef", subject: "Re: Hallo", bodyText: "Klingt interessant, was kostet das?" });
+    const suggestion = await owner.leadops.suggestInboxReply({ messageId: message.id });
+    expect(suggestion.source).toBe("vorlage"); expect(suggestion.text).toContain("Guten Tag Carla Chef,"); expect(suggestion.text).toContain("Telefonat"); expect(suggestion.text).toContain("20 Test-Leads"); expect(suggestion.text).not.toMatch(/Grüßen\s*$/);
+    // Listen-Anreicherung: Webseite aus der Firmen-Domain beim Upload, Ansprechpartner aus der E-Mail-Adresse
+    await owner.leadops.importColdList({ listName: "Anreicherung", toPipeline: false, rows: [{ company: "Koppen Solar", email: "stefan.koppen@koppen-solar.example" }, { company: "Ohne Namen GmbH", email: "info@ohne-namen.example" }] });
+    const enriched = await owner.leadops.enrichListContacts({ listName: "Anreicherung" });
+    expect(enriched.found).toBeGreaterThanOrEqual(1);
+    const koppen = (await db.select().from(leads).where(and(eq(leads.email, "stefan.koppen@koppen-solar.example"), eq(leads.kind, "vertrieb"))))[0];
+    expect(koppen?.firstName).toBe("Stefan"); expect(koppen?.lastName).toBe("Koppen");
+    expect(((koppen?.metadata ?? {}) as { website?: string }).website).toBe("koppen-solar.example"); // Webseite aus der Firmen-Domain
+  }, 40000);
 });

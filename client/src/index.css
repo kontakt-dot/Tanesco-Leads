@@ -3120,3 +3120,38 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .rv-preview-toggle:hover{color:#e3e0ff}
 .rv-preview-frame{width:100%;height:430px;margin-top:8px;border:1px solid rgba(148,163,184,.2);border-radius:12px;background:#fff}
 .rv-preview-empty{margin:8px 0 0;font-size:12px;color:#8f93af}
+
+/* Zustellbarkeit & Absender in den E-Mail-Einstellungen */
+.mh-ampel{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:700}
+.mh-ampel::before{content:"";width:8px;height:8px;border-radius:999px;background:currentColor}
+.mh-ampel.is-gruen{background:rgba(16,185,129,.15);color:#6ee7b7}
+.mh-ampel.is-gelb{background:rgba(245,158,11,.15);color:#fcd34d}
+.mh-ampel.is-rot{background:rgba(244,63,94,.18);color:#fda4af}
+.mh-ampel.is-unbekannt{background:rgba(148,163,184,.14);color:#cbd5e1}
+.mh-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);color:#cbd5e1}
+.mh-chip.is-warn{border-color:rgba(244,63,94,.5);color:#fda4af;font-weight:600}
+.mh-toggle{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid rgba(148,163,184,.16);border-radius:12px;cursor:pointer}
+.mh-toggle input{margin-top:3px;width:15px;height:15px;accent-color:#8178ff}
+.mh-toggle strong{display:block;font-size:13px}
+.mh-toggle small{display:block;margin-top:2px;font-size:11.5px;color:#9ca0ba;line-height:1.5}
+.mh-mini{margin-top:6px;display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;border:1px solid rgba(148,163,184,.3);font-size:11.5px;color:#cbd5e1}
+.mh-mini:hover{border-color:rgba(129,120,255,.5)}
+.mh-mini.is-danger{color:#fda4af;border-color:rgba(244,63,94,.4)}
+.mh-sender{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgba(148,163,184,.14);border-radius:10px;font-size:12.5px}
+.mh-sender.is-off{opacity:.6}
+.mh-sender strong{font-size:13px}
+.mh-sender small{color:#9ca0ba}
+.mh-sender-tools{margin-left:auto;display:flex;gap:6px}
+.mh-sender-tools .mh-mini{margin-top:0}
+/* Freigeben am Handy: eine Spalte, große Knöpfe, Vorschau kleiner */
+@media (max-width:760px){
+  .rv-panel{padding:10px}
+  .rv-grid{grid-template-columns:1fr}
+  .rv-list{max-height:32vh;overflow:auto;margin-bottom:10px}
+  .rv-editor{padding:0 2px}
+  .rv-approaches{grid-template-columns:1fr;gap:6px}
+  .rv-preview-frame{height:300px}
+  .rv-editor-foot{flex-direction:column;align-items:stretch;gap:8px}
+  .rv-editor-buttons{display:grid;grid-template-columns:1fr;gap:8px}
+  .rv-editor-buttons .campaign-act{justify-content:center;height:42px}
+}
