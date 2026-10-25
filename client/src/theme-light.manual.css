@@ -1486,3 +1486,34 @@ html:not(.dark) .email-leads-check input, html:not(.dark) .cd-pick input, html:n
 html:not(.dark) .email-leads-check input:hover, html:not(.dark) .cd-pick input:hover, html:not(.dark) .cd-bulk-all input:hover, html:not(.dark) .inbox-bulk-all input:hover { border-color: #98a2b3 !important; }
 html:not(.dark) .email-leads-check input:checked, html:not(.dark) .cd-pick input:checked, html:not(.dark) .cd-bulk-all input:checked, html:not(.dark) .inbox-bulk-all input:checked { background: #bc001d !important; border-color: #bc001d !important; }
 html:not(.dark) .email-leads-check input:focus-visible, html:not(.dark) .cd-pick input:focus-visible, html:not(.dark) .cd-bulk-all input:focus-visible, html:not(.dark) .inbox-bulk-all input:focus-visible { outline-color: rgba(188, 0, 29, .4) !important; }
+html:not(.dark) .tree-preview-ki { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #4c1d95 !important; }
+html:not(.dark) .tree-preview-ki svg, html:not(.dark) .tree-preview-ki button { color: #6d28d9 !important; }
+/* Verträge – helle Ansicht */
+html:not(.dark) .ct-kpis > div { background: #ffffff !important; border-color: #eceef3 !important; box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important; }
+html:not(.dark) .ct-kpis span, html:not(.dark) .ct-kpis small, html:not(.dark) .ct-when span, html:not(.dark) .ct-when small, html:not(.dark) .ct-main small, html:not(.dark) .ct-customer svg, html:not(.dark) .ct-add > span, html:not(.dark) .ct-block-title small, html:not(.dark) .ct-block-tools button, html:not(.dark) .ct-preview-head, html:not(.dark) .ct-field > span, html:not(.dark) .ct-proof dt, html:not(.dark) .ct-dl dt, html:not(.dark) .ct-ua, html:not(.dark) .ct-timeline small, html:not(.dark) .ct-timeline time, html:not(.dark) .ct-message { color: #667085 !important; }
+html:not(.dark) .ct-kpis strong, html:not(.dark) .ct-main strong, html:not(.dark) .ct-when strong, html:not(.dark) .ct-block-title strong, html:not(.dark) .ct-proof dd, html:not(.dark) .ct-dl dd, html:not(.dark) .ct-timeline strong { color: #0f172a !important; }
+html:not(.dark) .ct-customer { color: #344054 !important; }
+html:not(.dark) .ct-card { background: #ffffff !important; border-color: #eceef3 !important; box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important; }
+html:not(.dark) .ct-card:hover { border-color: #d0d5dd !important; box-shadow: 0 4px 14px -6px rgba(16, 24, 40, .12) !important; }
+html:not(.dark) .cd-state.is-gesendet, html:not(.dark) .cd-state.is-angesehen { background: #f5f3ff !important; border-color: #c4b5fd !important; color: #5b21b6 !important; }
+html:not(.dark) .cd-state.is-unterschrieben { background: #ecfdf3 !important; border-color: #abefc6 !important; color: #067647 !important; }
+html:not(.dark) .cd-state.is-abgelehnt, html:not(.dark) .cd-state.is-storniert { background: #fef3f2 !important; border-color: #fecdca !important; color: #b42318 !important; }
+html:not(.dark) .cd-chip.is-ok { border-color: #abefc6 !important; color: #067647 !important; }
+html:not(.dark) .ct-editor-preview, html:not(.dark) .ct-detail-preview { background: #f2f4f7 !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .ct-preview-head { border-color: #e2e8f0 !important; background: #ffffff !important; }
+html:not(.dark) .ct-textarea { background: #ffffff !important; border-color: #e2e8f0 !important; color: #0f172a !important; }
+html:not(.dark) .ct-textarea:focus { border-color: #bc001d !important; box-shadow: 0 0 0 3px rgba(188, 0, 29, .12) !important; }
+html:not(.dark) .ct-add button { border-color: #d0d5dd !important; color: #344054 !important; background: #ffffff !important; }
+html:not(.dark) .ct-add button:hover { border-color: #bc001d !important; color: #bc001d !important; background: #fef3f2 !important; }
+html:not(.dark) .ct-block { background: #ffffff !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .ct-block.is-open { border-color: #bc001d !important; background: #fffafa !important; }
+html:not(.dark) .ct-block-tools button:hover { border-color: #d0d5dd !important; color: #0f172a !important; }
+html:not(.dark) .ct-block-tools button.is-danger:hover { color: #b42318 !important; border-color: #fecdca !important; }
+html:not(.dark) .ct-dot { background: #bc001d !important; box-shadow: 0 0 0 3px rgba(188, 0, 29, .14) !important; }
+html:not(.dark) .ct-timeline li.is-unterschrieben .ct-dot { background: #12b76a !important; box-shadow: 0 0 0 3px rgba(18, 183, 106, .18) !important; }
+html:not(.dark) .ct-timeline li.is-abgelehnt .ct-dot, html:not(.dark) .ct-timeline li.is-storniert .ct-dot { background: #f04438 !important; box-shadow: 0 0 0 3px rgba(240, 68, 56, .18) !important; }
+html:not(.dark) .ct-hash { color: #344054 !important; }
+html:not(.dark) .ct-sig-img { border: 1px solid #e2e8f0; }
+html:not(.dark) .ct-ai-examples span { color: #64748b !important; }
+html:not(.dark) .ct-ai-examples button { background: #f8fafc !important; border-color: #e2e8f0 !important; color: #334155 !important; }
+html:not(.dark) .ct-ai-examples button:hover { border-color: #bc001d !important; background: #fff5f5 !important; }

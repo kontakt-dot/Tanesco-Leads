@@ -5,7 +5,7 @@
  * und der Versand läuft sofort weiter (Rückfall: Vorlage, wenn die KI nicht erreichbar ist). „aus“ = Vorlagen wie früher.
  * Dazu das Tageslimit für alle Kampagnen zusammen (Standard 80 E-Mails am Tag).
  */
-import { and, asc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
 import { approachLabel, DRAFT_APPROACHES, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
@@ -255,6 +255,13 @@ export async function approveAllDrafts(db: Db, tenantId: number, campaignId: num
     }
   }
   return approve ? { approved: changed, withoutDraft } : { reverted: changed, withoutDraft: 0 };
+}
+/** Je E-Mail-Schritt das jüngste echte Beispiel: so hat die KI die E-Mail für einen Kontakt tatsächlich geschrieben (für die Vorschau im Builder). */
+export async function draftSamples(db: Db, tenantId: number, campaignId: number) {
+  const rows = await db.select({ draftNodeId: emailCampaignRecipients.draftNodeId, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, draftApproach: emailCampaignRecipients.draftApproach, draftAt: emailCampaignRecipients.draftAt, name: emailCampaignRecipients.name, company: emailCampaignRecipients.company, email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), isNotNull(emailCampaignRecipients.draftText))).orderBy(desc(emailCampaignRecipients.draftAt)).limit(400);
+  const out = new Map<string, { nodeId: string; subject: string; text: string; name: string; approach: string | null; at: Date | null }>();
+  for (const row of rows) { const nodeId = row.draftNodeId ?? "__erste"; if (out.has(nodeId) || !row.draftText) continue; out.set(nodeId, { nodeId, subject: row.draftSubject ?? "", text: row.draftText, name: row.name?.trim() || row.company?.trim() || row.email, approach: row.draftApproach ?? null, at: row.draftAt ?? null }); }
+  return Array.from(out.values());
 }
 /** Alle noch nicht gesendeten Entwürfe einer Kampagne verwerfen (auch schon freigegebene) – die KI schreibt sie danach mit den aktuellen Regeln neu. */
 export async function resetDrafts(db: Db, tenantId: number, campaignId: number) {

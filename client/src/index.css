@@ -3184,3 +3184,75 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .email-leads-check input:checked,.cd-pick input:checked,.cd-bulk-all input:checked,.inbox-bulk-all input:checked{background:#7c6cff;border-color:#7c6cff}
 .email-leads-check input:checked::after,.cd-pick input:checked::after,.cd-bulk-all input:checked::after,.inbox-bulk-all input:checked::after{content:"";width:8px;height:5px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:translateY(-1px) rotate(-45deg)}
 .email-leads-check input:focus-visible,.cd-pick input:focus-visible,.cd-bulk-all input:focus-visible,.inbox-bulk-all input:focus-visible{outline:2px solid rgba(124,108,255,.5);outline-offset:1px}
+/* Vorschau im Ablauf bei KI-Versand: Hinweiszeile über der Mail – echtes Beispiel oder Platzhalter, Vorlage auf Wunsch */
+.tree-preview-wrap{display:flex;flex-direction:column;gap:6px}
+.tree-preview-ki{display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:9px;border:1px solid rgba(167,139,250,.35);background:rgba(139,92,246,.1);font-size:11.5px;color:#e9d5ff}
+.tree-preview-ki svg{flex:none;color:#c4b5fd}.tree-preview-ki span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-preview-ki button{border:0;background:transparent;color:#c4b5fd;font-size:11.5px;font-weight:600;cursor:pointer;text-decoration:underline;white-space:nowrap}
+/* ---------- Verträge: Übersicht, Builder, Detail ---------- */
+.ct-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.ct-kpis>div{padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.025)}
+.ct-kpis span{display:block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a87a8}.ct-kpis strong{display:block;margin-top:2px;font-size:22px;line-height:1.1;color:#f1f0fb}.ct-kpis small{display:block;margin-top:2px;font-size:11.5px;color:#a5a3c4}
+@media(max-width:900px){.ct-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.ct-search{margin-left:auto;min-width:220px;flex:0 1 300px}.ct-search input{height:34px}
+.ct-list{list-style:none;margin:0;padding:10px;display:flex;flex-direction:column;gap:8px}
+.ct-card{display:grid;grid-template-columns:minmax(240px,1.5fr) minmax(170px,.8fr) auto;align-items:center;gap:18px;padding:14px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.025);transition:border-color .15s,background .15s}
+.ct-card:hover{border-color:rgba(255,255,255,.14);background:rgba(255,255,255,.04)}
+.ct-main{display:flex;flex-direction:column;gap:3px;min-width:0;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer;padding:0}
+.ct-main strong{font-size:15px;color:#f1f0fb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ct-main small{font-size:11.5px;color:#a5a3c4}
+.ct-customer{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#c9c6ee;margin-top:3px}.ct-customer svg{color:#a5a3c4}
+.ct-when{display:flex;flex-direction:column;gap:1px;min-width:0}.ct-when span{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a87a8}.ct-when strong{font-size:13px;color:#e4e2f5}.ct-when small{font-size:11.5px;color:#a5a3c4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ct-side{display:flex;align-items:center;gap:10px;justify-self:end}
+.cd-state.is-gesendet,.cd-state.is-angesehen{border-color:rgba(129,120,255,.45);background:rgba(129,120,255,.14);color:#d4d0ff}
+.cd-state.is-unterschrieben{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.12);color:#6ee7b7}
+.cd-state.is-abgelehnt,.cd-state.is-storniert{border-color:rgba(251,113,133,.4);background:rgba(251,113,133,.12);color:#fda4af}
+.cd-chip.is-ok{border-color:rgba(52,211,153,.4);color:#6ee7b7}
+@media(max-width:980px){.ct-card{grid-template-columns:1fr;gap:10px}.ct-side{justify-self:start}}
+/* Builder */
+.ct-editor-grid{display:grid;grid-template-columns:minmax(360px,520px) minmax(0,1fr);gap:16px;align-items:start}
+@media(max-width:1100px){.ct-editor-grid{grid-template-columns:1fr}}
+.ct-editor-side{display:flex;flex-direction:column;gap:12px}
+.ct-editor-preview{position:sticky;top:12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:#0f1117;overflow:hidden;min-height:70vh;display:flex;flex-direction:column}
+.ct-editor-preview iframe{flex:1;width:100%;min-height:72vh;border:0;background:#f2f4f7}
+.ct-preview-head{display:flex;align-items:center;gap:6px;padding:8px 12px;font-size:11.5px;font-weight:600;color:#a5a3c4;border-bottom:1px solid rgba(255,255,255,.07)}
+.ct-field{display:grid;gap:4px;margin-top:10px}.ct-field>span{font-size:11.5px;font-weight:600;color:#a5a3c4}.ct-field input{height:36px}.ct-field.is-small{margin-top:0;min-width:120px}
+.ct-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}.ct-fields .ct-field{grid-column:1/-1}.ct-fields .ct-field.is-half{grid-column:auto}.ct-fields .lead-action-check{grid-column:1/-1;margin-top:10px}.ct-fields p{grid-column:1/-1;margin-top:8px}
+.ct-textarea{width:100%;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(15,23,42,.35);padding:9px 11px;color:#f1effe;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit}
+.ct-textarea:focus{outline:none;border-color:rgba(129,120,255,.6);box-shadow:0 0 0 3px rgba(129,120,255,.18)}
+.ct-add{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:12px}.ct-add>span{font-size:11.5px;color:#a5a3c4;margin-right:2px}
+.ct-add button{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;border:1px dashed rgba(255,255,255,.18);background:transparent;color:#c9c6ee;font-size:11.5px;font-weight:600;cursor:pointer}
+.ct-add button:hover{border-style:solid;border-color:rgba(129,120,255,.6);color:#e9d5ff;background:rgba(129,120,255,.1)}
+.ct-blocks{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.ct-block{border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02)}.ct-block.is-open{border-color:rgba(129,120,255,.45);background:rgba(129,120,255,.06)}
+.ct-block-head{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 10px}
+.ct-block-title{flex:1;display:flex;align-items:center;gap:9px;min-width:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:3px 0}.ct-block-title>svg{flex:none;color:#a5a3c4}.ct-block-title span{display:flex;flex-direction:column;min-width:0}.ct-block-title strong{font-size:12.5px;color:#e4e2f5}.ct-block-title small{font-size:11px;color:#a5a3c4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ct-block-tools{display:flex;gap:2px}.ct-block-tools button{display:grid;place-items:center;width:26px;height:26px;border-radius:7px;border:1px solid transparent;background:transparent;color:#a5a3c4;cursor:pointer}.ct-block-tools button:hover{border-color:rgba(255,255,255,.14);color:#f1f0fb}.ct-block-tools button:disabled{opacity:.35;cursor:default}.ct-block-tools button.is-danger:hover{color:#fda4af;border-color:rgba(251,113,133,.4)}
+.ct-block-body{padding:4px 12px 12px}.ct-inline{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}.ct-thumb{height:56px;max-width:140px;object-fit:contain;border-radius:8px;background:#fff;padding:3px}
+/* Detail */
+.ct-detail-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}
+@media(max-width:1100px){.ct-detail-grid{grid-template-columns:1fr}}
+.ct-detail-preview{border-radius:16px;border:1px solid rgba(255,255,255,.08);overflow:hidden;background:#f2f4f7;min-height:70vh}.ct-detail-preview iframe{width:100%;min-height:78vh;border:0;display:block}
+.ct-detail-side{display:flex;flex-direction:column;gap:12px}
+.ct-proof dl,.ct-dl{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;margin:0;font-size:12.5px}.ct-proof dt,.ct-dl dt{color:#8a87a8}.ct-proof dd,.ct-dl dd{margin:0;color:#e4e2f5;min-width:0;word-break:break-word}
+.ct-hash{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;word-break:break-all;color:#c9c6ee}.ct-ua{font-size:11px;color:#a5a3c4}
+.ct-sig-img{margin:4px 0 10px;padding:8px;border-radius:10px;background:#fff}.ct-sig-img img{display:block;max-height:80px;max-width:100%}
+.ct-message{margin:10px 0 0;font-size:12px;color:#a5a3c4;font-style:italic}
+.ct-timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}.ct-timeline li{display:grid;grid-template-columns:12px 1fr;gap:10px;align-items:start}.ct-dot{width:10px;height:10px;margin-top:4px;border-radius:999px;background:#8178ff;box-shadow:0 0 0 3px rgba(129,120,255,.18)}
+.ct-timeline li.is-unterschrieben .ct-dot{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.2)}.ct-timeline li.is-abgelehnt .ct-dot,.ct-timeline li.is-storniert .ct-dot{background:#fb7185;box-shadow:0 0 0 3px rgba(251,113,133,.2)}
+.ct-timeline strong{display:block;font-size:12.5px;color:#e4e2f5}.ct-timeline small{display:block;font-size:11.5px;color:#a5a3c4}.ct-timeline time{display:block;font-size:11px;color:#8a87a8;margin-top:1px}
+.ct-customer-dialog{max-width:min(96vw,980px)!important;width:96vw}.ct-customer-frame{width:100%;height:78vh;border:0;border-radius:12px;background:#f2f4f7}
+/* Posteingang: Nachricht in voller Länge lesen – kein kleines Scrollfenster mehr. Die Seite scrollt, das Antwortfeld steht unter der Nachricht, die Liste links bleibt beim Scrollen stehen */
+.inbox-read{height:auto;max-height:none;min-height:420px;overflow:visible}
+.inbox-read-scroll{flex:none;min-height:0;overflow:visible;overscroll-behavior:auto}
+.inbox-body{flex:none;min-height:120px}
+.inbox-list{position:sticky;top:12px;max-height:calc(100vh - 24px)}
+.inbox-compose{margin-top:6px}
+.inbox-compose-text{max-height:none}
+@media(max-width:1000px){.inbox-list{position:static;max-height:none}}
+/* Verträge: KI-Dialog */
+.ct-ai-dialog{max-width:min(96vw,640px)!important}
+.ct-ai-prompt{width:100%;min-height:150px}
+.ct-ai-examples{display:grid;gap:6px}.ct-ai-examples span{font-size:11.5px;color:#8f93af}
+.ct-ai-examples button{text-align:left;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);font-size:12.5px;line-height:1.45;color:#d6d3f0;cursor:pointer}
+.ct-ai-examples button:hover{border-color:rgba(141,133,255,.5);background:rgba(129,120,255,.1)}
+.starter-menu button.is-ai strong{color:#c4b5fd}

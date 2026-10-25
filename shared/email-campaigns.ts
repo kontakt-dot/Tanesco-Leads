@@ -26,6 +26,8 @@ export type DripSettings = { enabled: boolean; perHour: number; gapSeconds: numb
 export const DEFAULT_DRIP: DripSettings = { enabled: true, perHour: 40, gapSeconds: 90 };
 export const DRIP_PER_HOUR = [10, 20, 30, 40, 60, 100];
 export const DRIP_GAPS: Array<[number, string]> = [[30, "30 Sek."], [60, "1 Min."], [90, "1,5 Min."], [120, "2 Min."], [300, "5 Min."]];
+/** Was wirklich pro Stunde rausgeht: das Limit „pro Stunde“ UND der Abstand zwischen zwei E-Mails begrenzen – der kleinere Wert gilt. */
+export const effectiveDripPerHour = (drip: DripSettings) => Math.max(1, Math.min(drip.perHour, Math.floor(3600 / Math.max(10, drip.gapSeconds))));
 export function resolveDrip(value: Partial<DripSettings> | null | undefined): DripSettings {
   const raw = value ?? {}; const perHour = Math.round(Number(raw.perHour)); const gap = Math.round(Number(raw.gapSeconds));
   return { enabled: raw.enabled === undefined ? DEFAULT_DRIP.enabled : Boolean(raw.enabled), perHour: Number.isFinite(perHour) && perHour >= 1 ? Math.min(500, perHour) : DEFAULT_DRIP.perHour, gapSeconds: Number.isFinite(gap) && gap >= 10 ? Math.min(3600, gap) : DEFAULT_DRIP.gapSeconds };

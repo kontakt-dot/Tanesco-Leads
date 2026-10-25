@@ -1838,6 +1838,42 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect((await call("leadops.addListsToEmailCampaign", { id: saved.id, listNames: ["Archiv-Test"] })).running).toBe(true);
   });
 
+  it("Verträge (Demo): anlegen, senden, Kundenansicht, unterschreiben mit Nachweis, PDF, Vorlage, Stornieren", async () => {
+    const seeded = await call("leadops.listContracts"); expect(seeded.length).toBe(3); expect(seeded.filter((row: any) => row.status === "unterschrieben")).toHaveLength(1);
+    const signed = await call("leadops.getContract", { id: seeded.find((row: any) => row.status === "unterschrieben").id }); expect(signed.signatureImage).toMatch(/^data:image\/png/); expect(signed.events.map((event: any) => event.kind)).toEqual(["erstellt", "gesendet", "angesehen", "unterschrieben"]);
+    const defaults = await call("leadops.contractDefaults"); expect(defaults.starter.blocks.some((block: any) => block.type === "signature" && block.party === "kunde")).toBe(true); expect(defaults.values.anbieterFirma).toContain("Tanesco");
+    expect(defaults.starters.map((starter: any) => starter.kind)).toEqual(["leadliefervertrag", "testphase", "leer"]); expect(defaults.starter.blocks.some((block: any) => block.type === "field")).toBe(false); // Kunde füllt nichts aus
+    const withDetails = (preis: string) => [...defaults.starter.blocks.map((block: any) => block.type === "detail" ? { ...block, value: block.key === "preis" ? preis : block.value || "Hessen" } : block), { id: "bUst", type: "field", key: "ustid", label: "USt-IdNr.", required: true }];
+    const saved = await call("leadops.saveContract", { id: null, title: "Testvertrag", blocks: withDetails(""), values: { firma: "Test GmbH", name: "Tina Test", email: "tina@test.example", anbieterVertreter: "Taner" }, recipientEmail: "tina@test.example", recipientName: "Tina Test" });
+    expect(saved.number).toMatch(/^V-\d{4}-0004$/);
+    const draft = await call("leadops.getContract", { id: saved.id }); expect(draft.status).toBe("entwurf"); expect(draft.values.anbieterFirma).toContain("Tanesco"); expect(draft.values.firma).toBe("Test GmbH");
+    const preview = await call("leadops.contractPreviewHtml", { id: saved.id, title: draft.title, blocks: draft.blocks, values: draft.ownValues }); expect(preview.html).toContain("Test GmbH"); expect(preview.html).toContain("füllt der Kunde aus"); expect(preview.html).toContain("noch eintragen");
+    await expect(call("leadops.sendContract", { id: saved.id, recipientEmail: "tina@test.example" })).rejects.toThrow(/Preis je Lead/);
+    await call("leadops.saveContract", { id: saved.id, title: "Testvertrag", blocks: withDetails("79 €"), values: { firma: "Test GmbH", name: "Tina Test", email: "tina@test.example", anbieterVertreter: "Taner" } });
+    await expect(call("leadops.sendContract", { id: saved.id, recipientEmail: "kaputt" })).rejects.toThrow(/E-Mail/);
+    const sent = await call("leadops.sendContract", { id: saved.id, recipientEmail: "tina@test.example", recipientName: "Tina Test", message: "Bitte prüfen" }); expect(sent.token).toHaveLength(48);
+    const open = await call("leadops.getContract", { id: saved.id }); expect(open.status).toBe("gesendet"); expect(open.documentHash).toHaveLength(64);
+    await expect(call("leadops.saveContract", { id: saved.id, title: "x", blocks: draft.blocks })).rejects.toThrow(/Kopie/); // gesendet = eingefroren
+    const customer = await call("leadops.contractPreviewHtml", { id: saved.id, title: draft.title, blocks: draft.blocks, values: draft.ownValues }); expect(customer.html).toContain("Jetzt unterschreiben"); expect(customer.html).toContain(`data-token="${sent.token}"`); expect(customer.html).toContain('data-embedded="1"');
+    // Unterschrift: Pflichtfelder, Name, Bild – danach Nachweis mit Prüfsummen
+    await expect(call("leadops.signContractDemo", { token: sent.token, signerName: "Tina Test", fields: {}, signatureImage: "data:image/png;base64,iVBORw0KGgo=", method: "zeichnen" })).rejects.toThrow(/Bitte ausfüllen/);
+    const ok = await call("leadops.signContractDemo", { token: sent.token, signerName: "Tina Test", fields: { ustid: "DE123456789" }, signatureImage: "data:image/png;base64,iVBORw0KGgo=", method: "zeichnen" }); expect(ok.success).toBe(true);
+    const done = await call("leadops.getContract", { id: saved.id }); expect(done.status).toBe("unterschrieben"); expect(done.signerIp).toBeTruthy(); expect(done.signatureHash).toHaveLength(64); expect(done.values.ustid).toBe("DE123456789"); expect(done.blocks.find((block: any) => block.key === "preis").value).toBe("79 €"); expect(done.events.map((event: any) => event.kind)).toContain("unterschrieben");
+    const proof = await call("leadops.contractPreviewHtml", { id: saved.id, title: done.title, blocks: done.blocks, values: done.ownValues }); expect(proof.html).toContain("Der Preis je geliefertem Lead beträgt 79 €"); expect(proof.html).toContain("Nachweis der elektronischen Unterschrift"); expect(proof.html).toContain(done.signatureHash);
+    const pdf = await call("leadops.contractPdf", { id: saved.id }); expect(atob(pdf.base64).startsWith("%PDF")).toBe(true); expect(pdf.fileName).toContain(saved.number);
+    await expect(call("leadops.deleteContract", { id: saved.id })).rejects.toThrow(/stornieren/);
+    // KI-Vertrag: in der Chat-Demo ohne KI-Anbindung → passende Vorlage nach Stichworten
+    const ai = await call("leadops.draftContractAi", { prompt: "Testphase für PV-Leads über 4 Wochen, die ersten 10 kostenlos" }); expect(ai.source).toBe("vorlage"); expect(ai.title).toContain("Testphase"); expect(ai.blocks.some((block: any) => block.type === "detail" && block.key === "dauer")).toBe(true);
+    await expect(call("leadops.draftContractAi", { prompt: "kurz" })).rejects.toThrow(/beschreibe/);
+    // Vorlage speichern und Kopie anlegen
+    const template = await call("leadops.saveContractTemplate", { name: "Meine Vorlage", title: "Testvertrag", blocks: draft.blocks }); expect((await call("leadops.listContractTemplates")).some((row: any) => row.id === template.id)).toBe(true);
+    const copy = await call("leadops.duplicateContract", { id: saved.id }); expect((await call("leadops.getContract", { id: copy.id })).status).toBe("entwurf");
+    // Ablehnen und stornieren
+    const second = await call("leadops.saveContract", { id: null, title: "Zweiter", blocks: withDetails("80 €"), values: { firma: "Zwei GmbH" } }); const sent2 = await call("leadops.sendContract", { id: second.id, recipientEmail: "zwei@test.example" });
+    await call("leadops.declineContractDemo", { token: sent2.token, reason: "Preis zu hoch" }); expect((await call("leadops.getContract", { id: second.id })).declineReason).toBe("Preis zu hoch");
+    const third = await call("leadops.saveContract", { id: null, title: "Dritter", blocks: withDetails("80 €"), values: {} }); await call("leadops.sendContract", { id: third.id, recipientEmail: "drei@test.example" }); await call("leadops.cancelContract", { id: third.id }); expect((await call("leadops.getContract", { id: third.id })).status).toBe("storniert");
+  });
+
   it("Pipeline-Notiz bearbeiten: Text ändern, leer ablehnen", async () => {
     const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const lead = overview.stages.flatMap((stage: any) => stage.leads)[0];
     await call("leadops.addPipelineNote", { publicId: lead.publicId, text: "Erst Tippfeler", source: "text" });

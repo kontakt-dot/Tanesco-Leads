@@ -12,7 +12,7 @@ type ClaudeRuntime = { use(name: string): Promise<unknown> };
 declare global {
   interface Window {
     saveAs?: (blob: Blob, filename?: string) => void;
-    __tanescoDemo?: { reset(): void };
+    __tanescoDemo?: { reset(): void; call?: (path: string, input: unknown) => Promise<unknown> };
     /** Aktueller Query-String der Anwendung (ersetzt window.location.search im Chat-Build). */
     __demoSearch: () => string;
     /** Ersatz für window.location.assign: Seitenwechsel ohne Neuladen der Seite. */

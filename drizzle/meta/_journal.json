@@ -603,6 +603,13 @@
       "when": 1793100000000,
       "tag": "0085_kontakte_von_hand",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "5",
+      "when": 1793200000000,
+      "tag": "0086_vertraege",
+      "breakpoints": true
     }
   ]
 }
