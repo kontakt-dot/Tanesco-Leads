@@ -2710,4 +2710,40 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(koppen?.firstName).toBe("Stefan"); expect(koppen?.lastName).toBe("Koppen");
     expect(((koppen?.metadata ?? {}) as { website?: string }).website).toBe("koppen-solar.example"); // Webseite aus der Firmen-Domain
   }, 40000);
+
+  it("61. Kampagnen-Archiv: laufende Kampagne → beendet + archiviert, nimmt niemanden mehr auf (Hand, Liste, Start, Automatik, Upload), Wiederherstellen, Vorlagen nicht", async () => {
+    const outreach = await import("./sales-outreach"); const pipelineExtras = await import("./pipeline-extras"); const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "Archiv-Test", toPipeline: true, rows: [{ firstName: "Arne", lastName: "Archiv", company: "Archiv GmbH", email: "arne@archiv-e2e.example" }, { firstName: "Bea", lastName: "Box", company: "Box GmbH", email: "bea@archiv-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 72, next: "m2" }, { id: "m2", type: "send" as const, label: "Nachfass", subject: "Nachgefragt {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Archiv-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Archiv-Test" }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    expect((await owner.leadops.startEmailCampaign({ id: campaign.id })).added).toBe(2); await owner.leadops.runEmailCampaigns();
+    const live = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(live.status).toBe("aktiv"); expect(live.archivedAt).toBeNull(); expect(live.createdAt).toBeTruthy();
+    // Archivieren: laufende Kampagne wird beendet, Datum gesetzt, Empfänger + Zahlen bleiben
+    expect(await owner.leadops.archiveEmailCampaign({ id: campaign.id, archived: true })).toMatchObject({ archived: true, status: "beendet" });
+    const archived = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(archived.status).toBe("beendet"); expect(archived.archivedAt).toBeTruthy(); expect(archived.stats.total).toBe(2); expect(archived.stats.sent).toBe(2);
+    const detail = await owner.leadops.getEmailCampaign({ id: campaign.id }); expect(detail.recipients).toHaveLength(2); expect((detail as { archivedAt?: Date | null }).archivedAt).toBeTruthy();
+    // Nimmt niemanden mehr auf – jede Tür ist zu
+    await expect(owner.leadops.startEmailCampaign({ id: campaign.id })).rejects.toThrow(/Archiv/);
+    await expect(owner.leadops.addListsToEmailCampaign({ id: campaign.id, listNames: ["Sender-Test"] })).rejects.toThrow(/Archiv/);
+    await expect(owner.leadops.syncEmailCampaignAudience({ id: campaign.id })).rejects.toThrow(/Archiv/);
+    await expect(owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "aktiv" })).rejects.toThrow(/Archiv/);
+    const senderLead = (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.email, "eva@sender-e2e.example"), eq(leads.kind, "vertrieb"))))[0];
+    await expect(owner.leadops.addLeadsToEmailCampaign({ id: campaign.id, leadIds: [senderLead.id] })).rejects.toThrow(/Archiv/);
+    expect(await pipelineExtras.enrollInCampaign(db, S.tenantId as number, { leadId: senderLead.id, campaignId: campaign.id, reason: "Test" })).toMatchObject({ enrolled: false, reason: "Kampagne archiviert" });
+    // Neuer Upload in die Liste: die archivierte Kampagne nimmt nichts auf
+    const upload = await owner.leadops.importColdList({ listName: "Archiv-Test", toPipeline: false, rows: [{ firstName: "Cem", lastName: "Neu", company: "Neu GmbH", email: "cem@archiv-e2e.example" }] });
+    expect((upload as { campaigns?: Array<{ id: number }> }).campaigns?.some((row) => row.id === campaign.id) ?? false).toBe(false);
+    expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).recipients).toHaveLength(2);
+    expect(await outreach.processEmailCampaigns(db, "http://localhost", { campaignId: campaign.id, limit: 100 })).toBe(0); // Zeitplaner lässt sie in Ruhe
+    // Noch einmal archivieren ändert nichts; Vorlagen lassen sich nicht archivieren
+    expect(await owner.leadops.archiveEmailCampaign({ id: campaign.id, archived: true })).toMatchObject({ archived: true, status: "beendet" });
+    const template = await owner.leadops.duplicateEmailCampaign({ id: campaign.id, asTemplate: true, name: "Vorlage Archiv" });
+    await expect(owner.leadops.archiveEmailCampaign({ id: template.id, archived: true })).rejects.toThrow(/Vorlagen/);
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === template.id)?.archivedAt).toBeNull(); // Kopie/Vorlage erbt das Archiv nicht
+    // Wiederherstellen: zurück in die Übersicht, bleibt beendet; Liste hinzufügen nimmt wieder auf
+    expect(await owner.leadops.archiveEmailCampaign({ id: campaign.id, archived: false })).toMatchObject({ archived: false, status: "beendet" });
+    const restored = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(restored.archivedAt).toBeNull(); expect(restored.status).toBe("beendet");
+    const added = await owner.leadops.addListsToEmailCampaign({ id: campaign.id, listNames: ["Archiv-Test"] }); expect(added.running).toBe(true); expect(added.added).toBe(1); // Cem kommt jetzt rein
+  }, 40000);
 });

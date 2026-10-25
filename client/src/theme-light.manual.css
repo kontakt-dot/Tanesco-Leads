@@ -1465,3 +1465,14 @@ html:not(.dark) .mh-toggle, html:not(.dark) .mh-sender { border-color: #e7eaf0 !
 html:not(.dark) .mh-toggle small, html:not(.dark) .mh-sender small { color: #667085 !important; }
 html:not(.dark) .mh-mini { border-color: #d8dce5 !important; color: #475467 !important; background: #ffffff !important; }
 html:not(.dark) .mh-mini.is-danger { color: #c01048 !important; border-color: #f1c2ca !important; }
+/* Kampagnen-Übersicht: Sortierung, Archiv-Schalter, archivierte Karten */
+html:not(.dark) .cl-sort > svg { color: #475467 !important; }
+html:not(.dark) .cl-archive-toggle { background: #ffffff !important; border-color: #e2e8f0 !important; color: #344054 !important; }
+html:not(.dark) .cl-archive-toggle:hover { background: #f8fafc !important; border-color: #d0d5dd !important; }
+html:not(.dark) .cl-archive-toggle.is-on { background: #f5f3ff !important; border-color: #c4b5fd !important; color: #5b21b6 !important; }
+html:not(.dark) .cl-archive-hint { background: #f8fafc !important; border-color: #d0d5dd !important; color: #475467 !important; }
+html:not(.dark) .cl-archive-hint svg { color: #7c3aed !important; }
+html:not(.dark) .cl-card.is-archiviert { background: #fafafa !important; opacity: .85; }
+html:not(.dark) .cl-card.is-archiviert:hover { opacity: 1; }
+html:not(.dark) .cd-state.is-archiviert { background: #f2f4f7 !important; border-color: #d0d5dd !important; color: #475467 !important; }
+html:not(.dark) .cl-archived-note { color: #667085 !important; }

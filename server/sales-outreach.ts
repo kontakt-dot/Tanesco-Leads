@@ -194,7 +194,7 @@ export async function listEmailCampaigns(db: Db, tenantId: number) {
   const blocked = await suppressedSet(db, tenantId);
   const infos = new Map<number, Awaited<ReturnType<typeof audienceInfo>>>();
   for (const row of rows) if (!row.isTemplate) infos.set(row.id, await audienceInfo(db, tenantId, (row.audience ?? { source: "alle" }) as Audience, recipientEmails.filter((item) => item.campaignId === row.id), blocked));
-  return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.isTemplate ? withoutLists(row.audience as Audience | null) : (row.audience ?? { source: "alle" })) as Audience, audienceInfo: infos.get(row.id) ?? null, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), reviewFirst: kiModusOf(row) === "freigabe", kiModus: kiModusOf(row), kiAnsatz: kiAnsatzOf(row), review: kiModusOf(row) === "freigabe" ? { zurFreigabe: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState !== "freigegeben").length, freigegeben: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState === "freigegeben").length } : null, sendWindow: sendWindowOf(row), stats: { ...summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))), mails: mailsOf(row.id) } }));
+  return rows.map((row) => ({ id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.isTemplate ? withoutLists(row.audience as Audience | null) : (row.audience ?? { source: "alle" })) as Audience, audienceInfo: infos.get(row.id) ?? null, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, archivedAt: row.archivedAt ?? null, createdAt: row.createdAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), reviewFirst: kiModusOf(row) === "freigabe", kiModus: kiModusOf(row), kiAnsatz: kiAnsatzOf(row), review: kiModusOf(row) === "freigabe" ? { zurFreigabe: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState !== "freigegeben").length, freigegeben: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState === "freigegeben").length } : null, sendWindow: sendWindowOf(row), stats: { ...summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))), mails: mailsOf(row.id) } }));
 }
 export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
   const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
@@ -267,6 +267,21 @@ export async function duplicateEmailCampaign(db: Db, tenantId: number, userId: n
 /** Listen gehören nie in Kopien oder Vorlagen – Stufe/Tag/Alle bleiben erhalten. */
 export function withoutLists(audience: Audience | null | undefined): Audience { return !audience ? { source: "alle" } : audience.source === "liste" ? listAudience([]) : audience; }
 export async function setEmailCampaignTemplate(db: Db, tenantId: number, id: number, isTemplate: boolean) { const row = (await db.select({ audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; await db.update(emailCampaigns).set({ isTemplate, audience: withoutLists((row?.audience ?? null) as Audience | null) }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
+const ARCHIVED_HINT = "Die Kampagne liegt im Archiv – bitte zuerst wiederherstellen.";
+/**
+ * Kampagne ins Archiv legen oder wieder herausholen. Archivierte Kampagnen bleiben mit allen Empfängern und Zahlen erhalten,
+ * verschwinden aber aus der Übersicht und nehmen keine Kontakte mehr auf. Läuft die Kampagne noch, wird sie dabei beendet –
+ * offene Empfänger bekommen keine weitere E-Mail. Wiederherstellen setzt sie als „Beendet“ zurück (Fortsetzen über „Weiterer Durchlauf“).
+ */
+export async function archiveEmailCampaign(db: Db, tenantId: number, id: number, archived: boolean) {
+  const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
+  if (row.isTemplate) throw new Error("Vorlagen lassen sich nicht archivieren – sie liegen schon im Vorlagen-Fenster.");
+  if (archived === Boolean(row.archivedAt)) return { success: true as const, status: row.status, archived };
+  const status = archived && (row.status === "aktiv" || row.status === "pausiert") ? "beendet" : row.status;
+  await db.update(emailCampaigns).set({ archivedAt: archived ? new Date() : null, status }).where(eq(emailCampaigns.id, id));
+  await logActivity(db, tenantId, { kind: "kampagne", title: archived ? `Kampagne „${row.name}“ archiviert` : `Kampagne „${row.name}“ aus dem Archiv geholt`, detail: archived && status !== row.status ? "Die Kampagne lief noch und wurde dabei beendet – offene Kontakte bekommen keine weitere E-Mail." : null, refType: "emailCampaign", refId: id });
+  return { success: true as const, status, archived };
+}
 export async function deleteEmailCampaign(db: Db, tenantId: number, id: number) { await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id))); await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id))); await db.delete(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
 async function audienceContacts(db: Db, tenantId: number, audience: Audience) {
   const conditions = [eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")]; // Zielgruppen bestehen nur aus Vertriebskontakten – nie aus Leads zum Verkauf
@@ -390,6 +405,7 @@ export async function removeListsFromEmailCampaign(db: Db, tenantId: number, inp
 export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: { id: number; leadIds: number[] }, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst eine Kampagne daraus anlegen.");
+  if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
   const ids = Array.from(new Set(input.leadIds)).slice(0, 5000); if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
   const rows = await db.select({ id: leads.id, firstName: leads.firstName, lastName: leads.lastName, email: leads.email, company: leads.company, city: leads.city, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, ids)));
   const blocked = await suppressedSet(db, tenantId);
@@ -406,7 +422,7 @@ export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: {
 /** Laufende Kampagne: alle Kontakte der Zielgruppe aufnehmen, die noch nie drin waren (z. B. nach dem Start in die Liste gekommen). */
 export async function syncEmailCampaignAudience(db: Db, tenantId: number, id: number, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
-  if (campaign.isTemplate) throw new Error("Das ist eine Vorlage."); if (campaign.status === "entwurf") throw new Error("Die Kampagne ist noch nicht gestartet – „Starten“ nimmt alle Kontakte auf.");
+  if (campaign.isTemplate) throw new Error("Das ist eine Vorlage."); if (campaign.status === "entwurf") throw new Error("Die Kampagne ist noch nicht gestartet – „Starten“ nimmt alle Kontakte auf."); if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
   const rows = await audienceLeads(db, tenantId, (campaign.audience ?? { source: "alle" }) as Audience);
   const result = await enrollRecipients(db, tenantId, campaign, rows, { onlyNew: true });
   if (result.added) {
@@ -435,6 +451,7 @@ export async function enrollListIntoRunningCampaigns(db: Db, tenantId: number, l
  */
 export async function addListsToEmailCampaign(db: Db, tenantId: number, input: { id: number; listNames: string[] }, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
+  if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
   const added = Array.from(new Set(input.listNames.map((name) => name.trim()).filter(Boolean))); if (!added.length) throw new Error("Bitte mindestens eine Liste wählen.");
   const before = (campaign.audience ?? { source: "alle" }) as Audience;
   const audience = listAudience([...audienceLists(before), ...added]);
@@ -454,6 +471,7 @@ export async function addListsToEmailCampaign(db: Db, tenantId: number, input: {
 export async function startEmailCampaign(db: Db, tenantId: number, id: number, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst „Aus Vorlage anlegen“ und dann die Kampagne starten.");
+  if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
   if ((campaign.audience as Audience | null)?.source === "liste" && !audienceLists(campaign.audience as Audience).length) throw new Error("Bitte zuerst eine Liste als Zielgruppe wählen – eine neue Kampagne übernimmt keine Listen der alten.");
   const issues = validateTree(tree(campaign)); if (issues.length) throw new Error(issues.join(" "));
   const rows = await audienceLeads(db, tenantId, (campaign.audience ?? { source: "alle" }) as Audience); if (!rows.length) throw new Error("Die Zielgruppe enthält keine Kontakte mit E-Mail-Adresse.");
@@ -464,7 +482,10 @@ export async function startEmailCampaign(db: Db, tenantId: number, id: number, a
   const processed = await Promise.race([processEmailCampaigns(db, appUrl, { campaignId: id, limit: 1000 }).catch((error) => { console.error("[E-Mail-Kampagnen] Start:", error instanceof Error ? error.message : error); return 0; }), new Promise<number>((resolve) => setTimeout(() => resolve(-1), 4000))]);
   return { added, repeated, skipped, maxRuns, processed: Math.max(processed, 0), background: processed < 0 };
 }
-export async function setEmailCampaignStatus(db: Db, tenantId: number, id: number, status: "aktiv" | "pausiert" | "beendet") { await db.update(emailCampaigns).set({ status }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
+export async function setEmailCampaignStatus(db: Db, tenantId: number, id: number, status: "aktiv" | "pausiert" | "beendet") {
+  if (status !== "beendet") { const row = (await db.select({ archivedAt: emailCampaigns.archivedAt }).from(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (row?.archivedAt) throw new Error(ARCHIVED_HINT); }
+  await db.update(emailCampaigns).set({ status }).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const };
+}
 /** Zeitplaner: fällige Empfänger aller aktiven Kampagnen weiterführen. */
 export async function processEmailCampaigns(db: Db, appUrl: string, options: { campaignId?: number; limit?: number; ignoreDrip?: boolean } = {}) {
   const now = new Date(); const horizon = new Date(now.getTime() + 1500); const base = appUrl.replace(/\/+$/, ""); /* horizon: Toleranz für Sekundenrundung der DB */

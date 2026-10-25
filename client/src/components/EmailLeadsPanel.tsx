@@ -66,7 +66,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   // Ausgewählte Kontakte direkt in eine E-Mail-Kampagne nehmen
   const [addTo, setAddTo] = useState<number | null>(null);
   const campaignList = trpc.leadops.listEmailCampaigns.useQuery(undefined, { retry: false });
-  const campaignChoices = (campaignList.data ?? []).filter((row) => !row.isTemplate);
+  const campaignChoices = (campaignList.data ?? []).filter((row) => !row.isTemplate && !row.archivedAt); // archivierte Kampagnen nehmen keine Kontakte mehr auf
   const addToCampaign = trpc.leadops.addLeadsToEmailCampaign.useMutation({ onSuccess: (result) => {
     const name = campaignChoices.find((row) => row.id === addTo)?.name ?? "die Kampagne";
     const extra = [result.already ? `${result.already} waren schon drin` : "", result.noEmail ? `${result.noEmail} ohne E-Mail-Adresse` : "", result.blocked ? `${result.blocked} gesperrt` : ""].filter(Boolean).join(", ");

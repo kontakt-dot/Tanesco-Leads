@@ -589,6 +589,13 @@
       "when": 1792900000000,
       "tag": "0083_zustellbarkeit",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "5",
+      "when": 1793000000000,
+      "tag": "0084_kampagnen_archiv",
+      "breakpoints": true
     }
   ]
 }

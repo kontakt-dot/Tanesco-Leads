@@ -1784,6 +1784,35 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     expect(await call("leadops.addLeadsToEmailCampaign", { id: draft2.id, leadIds: [westLeads[1].id] })).toMatchObject({ added: 1, status: "entwurf" });
   });
 
+  it("E-Mail-Kampagne archivieren (Demo): läuft → beendet + archiviert, nimmt niemanden mehr auf, Automatik überspringt sie, Wiederherstellen", async () => {
+    const seeded = (await call("leadops.listEmailCampaigns")).find((row: any) => row.name === "Elektriker NRW – Frühjahr");
+    expect(seeded.archivedAt).toBeTruthy(); expect(seeded.status).toBe("beendet"); expect(seeded.stats.total).toBe(6); // Seed: abgeschlossene Kampagne im Archiv, Zahlen bleiben
+    await call("leadops.importColdList", { listName: "Archiv-Test", categoryId: null, toPipeline: false, rows: [{ firstName: "Arne", lastName: "Archiv", company: "Archiv GmbH", email: "arne@archiv-test.de" }, { firstName: "Bea", lastName: "Box", company: "Box GmbH", email: "bea@archiv-test.de" }] });
+    const starter = await call("leadops.emailCampaignStarter", { kind: "kaltakquise" });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Archiv-Serie", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Archiv-Test", listNames: ["Archiv-Test"] }, tree: starter.tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" } });
+    expect((await call("leadops.startEmailCampaign", { id: saved.id })).added).toBe(2);
+    // Laufende Kampagne archivieren → beendet, mit Datum; Empfänger und Zahlen bleiben
+    const archived = await call("leadops.archiveEmailCampaign", { id: saved.id, archived: true }); expect(archived).toMatchObject({ archived: true, status: "beendet" });
+    const row = (await call("leadops.listEmailCampaigns")).find((item: any) => item.id === saved.id); expect(row.archivedAt).toBeTruthy(); expect(row.status).toBe("beendet"); expect(row.stats.total).toBe(2);
+    expect((await call("leadops.getEmailCampaign", { id: saved.id })).recipients).toHaveLength(2);
+    // Archiviert nimmt niemanden mehr auf – weder von Hand noch durch Listen, Start oder Fortsetzen
+    await expect(call("leadops.addListsToEmailCampaign", { id: saved.id, listNames: ["Archiv-Test"] })).rejects.toThrow(/Archiv/);
+    await expect(call("leadops.startEmailCampaign", { id: saved.id })).rejects.toThrow(/Archiv/);
+    await expect(call("leadops.setEmailCampaignStatus", { id: saved.id, status: "aktiv" })).rejects.toThrow(/Archiv/);
+    const westLeads = (await call("leadops.emailLeads", { listName: "Archiv-Test" })).items; await expect(call("leadops.addLeadsToEmailCampaign", { id: saved.id, leadIds: [westLeads[0].id] })).rejects.toThrow(/Archiv/);
+    // Automatik (Stufe → Kampagne) überspringt archivierte Kampagnen
+    const settings = await call("leadops.pipelineSettings"); await call("leadops.savePipelineSettings", { ...settings, stageCampaigns: { ...(settings.stageCampaigns ?? {}), angebot: saved.id } });
+    const lead = (await call("leadops.emailLeads", { listName: "Archiv-Test" })).items[1]; const moved = await call("leadops.movePipelineStage", { publicId: lead.publicId, stage: "angebot" });
+    expect((await call("leadops.getEmailCampaign", { id: saved.id })).recipients).toHaveLength(2); expect(moved.series ?? null).toBeNull();
+    // Noch einmal archivieren ändert nichts; Vorlagen gehen nicht
+    expect(await call("leadops.archiveEmailCampaign", { id: saved.id, archived: true })).toMatchObject({ archived: true });
+    const template = (await call("leadops.listEmailCampaigns")).find((item: any) => item.isTemplate); await expect(call("leadops.archiveEmailCampaign", { id: template.id, archived: true })).rejects.toThrow(/Vorlagen/);
+    // Wiederherstellen: zurück in die Übersicht, bleibt beendet, „Weiterer Durchlauf“/Starten geht wieder
+    expect(await call("leadops.archiveEmailCampaign", { id: saved.id, archived: false })).toMatchObject({ archived: false, status: "beendet" });
+    const back = (await call("leadops.listEmailCampaigns")).find((item: any) => item.id === saved.id); expect(back.archivedAt).toBeNull(); expect(back.status).toBe("beendet");
+    expect((await call("leadops.addListsToEmailCampaign", { id: saved.id, listNames: ["Archiv-Test"] })).running).toBe(true);
+  });
+
   it("Pipeline-Notiz bearbeiten: Text ändern, leer ablehnen", async () => {
     const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const lead = overview.stages.flatMap((stage: any) => stage.leads)[0];
     await call("leadops.addPipelineNote", { publicId: lead.publicId, text: "Erst Tippfeler", source: "text" });

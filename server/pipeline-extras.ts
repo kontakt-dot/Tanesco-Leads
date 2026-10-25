@@ -330,6 +330,7 @@ export async function markBounced(db: Db, tenantId: number, input: { recipientId
 export async function enrollInCampaign(db: Db, tenantId: number, input: { leadId: number; campaignId: number; reason: string; appUrl?: string }) {
   const lead = (await db.select().from(leads).where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"))).limit(1))[0]; if (!lead?.email) return { enrolled: false, reason: "keine E-Mail" };
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) return { enrolled: false, reason: "Kampagne fehlt" };
+  if (campaign.archivedAt) return { enrolled: false, reason: "Kampagne archiviert" }; // Automatik nimmt niemanden in eine archivierte Kampagne
   const email = lead.email.toLowerCase(); if (await isSuppressed(db, tenantId, email)) return { enrolled: false, reason: "gesperrt" };
   const previous = await db.select({ status: emailCampaignRecipients.status, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, email)));
   const { canEnroll, maxRunsOf } = await import("../shared/email-campaigns"); const allowed = canEnroll(previous, maxRunsOf(campaign)); if (!allowed.ok) return { enrolled: false, reason: previous.length ? `bereits Empfänger (${allowed.reason})` : allowed.reason ?? "nicht erlaubt" };

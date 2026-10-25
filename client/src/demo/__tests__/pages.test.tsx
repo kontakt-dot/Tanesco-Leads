@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DemoApp from "../App.demo";
 import { localDemoLink } from "../link";
@@ -54,6 +54,29 @@ describe("Seiten des Chat-Builds", () => {
       else if (expectedHeading[page] && !route.includes("&")) expect(heading, `Überschrift bei ${route}`).toMatch(expectedHeading[page]); // Unterseiten (z. B. eine Kette) tragen eigene Titel
     });
   }
+});
+
+describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
+  beforeEach(() => { resetStore(); try { localStorage.removeItem("kampagnen-sortierung"); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  const names = (root: HTMLElement) => Array.from(root.querySelectorAll(".cl-card .cl-name strong")).map((node) => node.textContent ?? "");
+  it("sortiert A–Z als Standard, wechselt auf „Zuletzt bearbeitet“, Archiv zeigt nur archivierte Kampagnen mit „Wiederherstellen“", async () => {
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const { view } = mount(); await settle(300); await settle(300);
+    const shown = names(view.container); expect(shown.length).toBeGreaterThan(2);
+    expect(shown).toEqual([...shown].sort((a, b) => a.localeCompare(b, "de", { sensitivity: "base", numeric: true }))); // A–Z
+    expect(shown).not.toContain("Elektriker NRW – Frühjahr"); // archivierte Kampagne nicht in der Übersicht
+    const sort = view.container.querySelector<HTMLSelectElement>(".cl-sort select"); expect(sort).not.toBeNull();
+    await act(async () => { fireEvent.change(sort!, { target: { value: "bearbeitet" } }); }); await settle(100);
+    expect(names(view.container)[0]).toBe("Solarteure Hessen – persönlich"); // zuletzt bearbeitet (heute) ganz oben
+    expect(localStorage.getItem("kampagnen-sortierung")).toBe("bearbeitet");
+    const toggle = view.container.querySelector<HTMLButtonElement>(".cl-archive-toggle"); expect(toggle?.textContent).toContain("Archiv (1)");
+    await act(async () => { fireEvent.click(toggle!); }); await settle(100);
+    expect(names(view.container)).toEqual(["Elektriker NRW – Frühjahr"]);
+    expect(view.container.querySelector(".cl-card.is-archiviert .cd-state")?.textContent).toBe("Archiviert");
+    expect(Array.from(view.container.querySelectorAll(".cl-card .campaign-act")).map((node) => node.textContent?.trim())).toContain("Wiederherstellen");
+    expect(view.container.querySelector(".cl-archive-hint")?.textContent).toContain("Zahlen bleiben erhalten");
+  });
 });
 
 describe("Seitenleiste", () => {
