@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { registerStripeWebhook } from "../stripe";
 import { registerPublicApiRoutes } from "../publicApi";
+import { ensurePublicAppUrl, rememberPublicHost } from "../public-url";
 import { startDeliveryScheduler, startDialerScheduler, startEmailCampaignScheduler } from "../delivery-scheduler";
 import { runIntegrationHealthChecks } from "../integration-health";
 import { registerFileRoutes } from "../storage";
@@ -37,6 +38,8 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  ensurePublicAppUrl(); // APP_URL fehlt? → Railway-Domain, sonst die Adresse des ersten Aufrufs (Links/Zähler in E-Mails brauchen eine volle Adresse)
+  app.use((req, _res, next) => { rememberPublicHost(req); next(); });
   registerStripeWebhook(app);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8"); } })); // Rohdaten für Webhook-Signaturen (Meta)

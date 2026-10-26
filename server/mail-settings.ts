@@ -10,6 +10,7 @@ import { emailCampaignEvents, emailCampaignRecipients, mailSettings, tenantSetti
 import { normalizeSignature, renderSignatureHtml, renderSignatureText, type MailSignature, type SignatureContext } from "../shared/email-signature";
 import { COMPANY_FOOTER, TANESCO_LOGO_PATH } from "../shared/email-design";
 import type { Db } from "./lead-pipeline";
+import { publicUrlStatus } from "./public-url";
 
 export type Provider = "gmail" | "brevo" | "brevo_api" | "mailgun" | "postmark" | "ses" | "smtp";
 /** Anbieter ohne SMTP-Verbindung (Versand über HTTP) – Server/Port/Verschlüsselung entfallen. */
@@ -30,7 +31,7 @@ export async function ensureSettings(db: Db, tenantId: number) {
 }
 export async function getSettings(db: Db, tenantId: number) {
   const row = await ensureSettings(db, tenantId);
-  return { ...row, replyRouting: replyRouting(row), password: mask(row.password), imapPassword: mask(row.imapPassword), hasPassword: Boolean(row.password), hasImapPassword: Boolean(row.imapPassword), envFallback: Boolean(process.env.SMTP_URL), replyAiAvailable: Boolean(process.env.ANTHROPIC_API_KEY), providers: PROVIDERS.map(({ key, label, host, port, secure, hint, dailyLimit }) => ({ key, label, host, port, secure, hint, dailyLimit })) };
+  return { ...row, replyRouting: replyRouting(row), password: mask(row.password), imapPassword: mask(row.imapPassword), hasPassword: Boolean(row.password), hasImapPassword: Boolean(row.imapPassword), envFallback: Boolean(process.env.SMTP_URL), replyAiAvailable: Boolean(process.env.ANTHROPIC_API_KEY), publicUrl: publicUrlStatus(), providers: PROVIDERS.map(({ key, label, host, port, secure, hint, dailyLimit }) => ({ key, label, host, port, secure, hint, dailyLimit })) };
 }
 export async function saveSettings(db: Db, tenantId: number, input: { provider: Provider; host?: string | null; port?: number | null; secure?: boolean; username?: string | null; password?: string | null; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; dailyLimit?: number | null; campaignDailyLimit?: number | null; enabled?: boolean; imapEnabled?: boolean; imapHost?: string | null; imapPort?: number | null; imapUsername?: string | null; imapPassword?: string | null; replyAiEnabled?: boolean; replyAiAutoBlock?: boolean; replyAiInterest?: boolean; imapScope?: "bekannte" | "alle"; signature?: Partial<MailSignature> | null; warmupEnabled?: boolean; weeklyReportEnabled?: boolean }) {
   const row = await ensureSettings(db, tenantId); const preset = PROVIDERS.find((item) => item.key === input.provider) ?? PROVIDERS[5];
