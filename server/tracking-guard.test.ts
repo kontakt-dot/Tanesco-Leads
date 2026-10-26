@@ -9,6 +9,8 @@ describe("Tracking-Schutz", () => {
     expect(isMachineRequest({ userAgent: "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0)" })).toBe(false);
     for (const ua of ["", "python-requests/2.31", "Barracuda Sentinel", "Mozilla/5.0 (compatible; bingbot/2.0)", "Slackbot-LinkExpanding 1.0", "curl/8.1"]) expect(isMachineRequest({ userAgent: ua })).toBe(true);
     expect(isMachineRequest({ userAgent: "Mozilla/5.0", method: "HEAD" })).toBe(true);
+    expect(isMachineRequest({ userAgent: "Mozilla/5.0", method: "GET" })).toBe(true); // Apple lädt vorab – kein echtes Öffnen
+    expect(isMachineRequest({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)" })).toBe(false); // echtes Apple Mail
     expect(isMachineRequest(undefined)).toBe(false);
   });
   it("Aufrufe in den ersten 5 Sekunden nach dem Versand sind Maschinen", () => {

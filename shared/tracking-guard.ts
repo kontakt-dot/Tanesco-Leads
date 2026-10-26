@@ -4,7 +4,8 @@
  * ohne dass ein Mensch die Mail liest. Solche Aufrufe werden nicht als „geöffnet“ oder „geklickt“ gezählt:
  *  - bekannte Scanner/Bots am Browser-Kennzeichen (User-Agent) oder ganz ohne Kennzeichen,
  *  - HEAD-Anfragen (prüfen nur, ob der Link existiert),
- *  - Aufrufe in den ersten Sekunden nach dem Versand – so schnell öffnet kein Mensch.
+ *  - Aufrufe in den ersten Sekunden nach dem Versand – so schnell öffnet kein Mensch,
+ *  - Apples Vorab-Laden (Mail Privacy Protection, Kennzeichen nur „Mozilla/5.0“).
  * Googles Bild-Proxy (Gmail) zählt dagegen: Gmail lädt das Bild erst, wenn die Mail geöffnet wird.
  */
 const BOT_PATTERN = /bot\b|bot\/|crawler|spider|scanner|python|curl|wget|go-http|java\/|okhttp|axios|node-fetch|headless|phantom|barracuda|mimecast|proofpoint|symantec|messagelabs|trendmicro|forcepoint|fortiguard|sophos|ironport|zscaler|bingpreview|slackbot|facebookexternalhit|linkedinbot|whatsapp|telegram|skypeuripreview|discordbot|preview|validator|monitor|uptime/i;
@@ -16,6 +17,7 @@ export function isMachineRequest(meta: { userAgent?: string | null; method?: str
   const ua = (meta.userAgent ?? "").trim();
   if (!ua) return true;
   if (/googleimageproxy/i.test(ua)) return false;
+  if (/^mozilla\/5\.0$/i.test(ua)) return true; // nacktes „Mozilla/5.0“: Apples Datenschutz-Funktion (Mail Privacy Protection) lädt Bilder vorab – gelesen hat da noch niemand
   return BOT_PATTERN.test(ua);
 }
 

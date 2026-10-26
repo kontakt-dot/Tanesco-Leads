@@ -617,6 +617,13 @@
       "when": 1793300000000,
       "tag": "0087_kampagnen_inhalt",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "5",
+      "when": 1793400000000,
+      "tag": "0088_kampagnen_limit_80",
+      "breakpoints": true
     }
   ]
 }
