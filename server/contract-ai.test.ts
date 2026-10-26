@@ -30,3 +30,16 @@ describe("Verträge: Vorlagen und KI", () => {
     } finally { if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved; }
   });
 });
+
+import { smoothQualifyPhrase } from "../shared/email-campaigns";
+describe("Formulierung Vorqualifizierung", () => {
+  it("glättet „qualifiziert über … Fragen“ in allen Varianten", () => {
+    expect(smoothQualifyPhrase("20 Test-Leads kostenlos an, telefonisch qualifiziert über rund zehn Fragen, sodass er weiß")).toBe("20 Test-Leads kostenlos an, in der Regel anhand von zehn Fragen telefonisch vorqualifiziert, sodass er weiß");
+    expect(smoothQualifyPhrase("volle Transparenz – telefonisch qualifiziert über in der Regel 10 Fragen und in Echtzeit")).toBe("volle Transparenz – in der Regel anhand von zehn Fragen telefonisch vorqualifiziert und in Echtzeit");
+    expect(smoothQualifyPhrase("Unsere Anfragen werden telefonisch qualifiziert – in der Regel über 10 Fragen, sodass")).toBe("Unsere Anfragen werden in der Regel anhand von zehn Fragen telefonisch vorqualifiziert, sodass");
+    expect(smoothQualifyPhrase("• Telefonisch qualifiziert, in der Regel über 10 Fragen")).toBe("• In der Regel anhand von zehn Fragen telefonisch vorqualifiziert");
+    expect(smoothQualifyPhrase("Telefonische Vorqualifizierung jedes Interessenten – in der Regel über 10 Fragen;")).toBe("Telefonische Vorqualifizierung jedes Interessenten anhand von in der Regel zehn Fragen;");
+    expect(smoothQualifyPhrase("Lead wird telefonisch qualifiziert – in der Regel über 10 Fragen – und exklusiv")).toBe("Lead wird in der Regel anhand von zehn Fragen telefonisch vorqualifiziert und exklusiv");
+    const clean = "in der Regel anhand von zehn Fragen telefonisch vorqualifiziert"; expect(smoothQualifyPhrase(clean)).toBe(clean);
+  });
+});

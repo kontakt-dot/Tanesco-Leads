@@ -1517,3 +1517,25 @@ html:not(.dark) .ct-sig-img { border: 1px solid #e2e8f0; }
 html:not(.dark) .ct-ai-examples span { color: #64748b !important; }
 html:not(.dark) .ct-ai-examples button { background: #f8fafc !important; border-color: #e2e8f0 !important; color: #334155 !important; }
 html:not(.dark) .ct-ai-examples button:hover { border-color: #bc001d !important; background: #fff5f5 !important; }
+html:not(.dark) .ct-sign-row { background: #f8fafc !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .ct-sign-row strong, html:not(.dark) .ct-picker-list strong { color: #0f172a !important; }
+html:not(.dark) .ct-sign-row small, html:not(.dark) .ct-picker-list small, html:not(.dark) .ct-picker-list .is-empty { color: #64748b !important; }
+html:not(.dark) .ct-sig-thumb { border: 1px solid #e2e8f0 !important; }
+html:not(.dark) .ct-sign-banner { background: #fffbeb !important; border-color: #fcd34d !important; color: #92400e !important; }
+html:not(.dark) .ct-sign-banner strong { color: #78350f !important; }
+html:not(.dark) .ct-sign-banner.is-ok { background: #ecfdf3 !important; border-color: #abefc6 !important; color: #067647 !important; }
+html:not(.dark) .ct-sign-banner.is-ok strong { color: #05603a !important; }
+html:not(.dark) .ct-pad { border-color: #cbd5e1 !important; }
+html:not(.dark) .ct-typed-preview { border: 1.5px dashed #cbd5e1 !important; }
+html:not(.dark) .ct-picker-input { background: #ffffff !important; border-color: #cbd5e1 !important; color: #64748b !important; }
+html:not(.dark) .ct-picker-input:focus-within { border-color: #bc001d !important; box-shadow: 0 0 0 3px rgba(188, 0, 29, .1) !important; }
+html:not(.dark) .ct-picker-input input { color: #0f172a !important; }
+html:not(.dark) .ct-picker-input input::placeholder { color: #94a3b8 !important; }
+html:not(.dark) .ct-picker-list { background: #ffffff !important; border-color: #e2e8f0 !important; box-shadow: 0 18px 40px rgba(15, 23, 42, .14) !important; }
+html:not(.dark) .ct-picker-list button:hover { background: #f1f5f9 !important; }
+html:not(.dark) .ct-picker-linked { color: #067647 !important; }
+html:not(.dark) .ct-picker-linked button { color: #64748b !important; }
+html:not(.dark) .ct-block-tools button.is-on { background: #fee2e2 !important; color: #bc001d !important; }
+html:not(.dark) .ct-block > .ct-add { border-color: #fca5a5 !important; }
+html:not(.dark) .ct-picker-input input, html:not(.dark) .ct-picker-input input:focus { border: 0 !important; box-shadow: none !important; background: transparent !important; }
+html:not(.dark) .ct-picker-input input:focus-visible { outline: none !important; border: 0 !important; box-shadow: none !important; }

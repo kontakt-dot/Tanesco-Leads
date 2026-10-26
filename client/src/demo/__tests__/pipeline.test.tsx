@@ -1862,6 +1862,14 @@ describe("Anrufzähler, Vertriebler und Verteilung beim Upload (Chat-Build)", ()
     const proof = await call("leadops.contractPreviewHtml", { id: saved.id, title: done.title, blocks: done.blocks, values: done.ownValues }); expect(proof.html).toContain("Der Preis je geliefertem Lead beträgt 79 €"); expect(proof.html).toContain("Nachweis der elektronischen Unterschrift"); expect(proof.html).toContain(done.signatureHash);
     const pdf = await call("leadops.contractPdf", { id: saved.id }); expect(atob(pdf.base64).startsWith("%PDF")).toBe(true); expect(pdf.fileName).toContain(saved.number);
     await expect(call("leadops.deleteContract", { id: saved.id })).rejects.toThrow(/stornieren/);
+    // Kunde aus den Kontakten wählen; eigene Unterschrift wird bei der Kopie entfernt
+    const options = await call("leadops.contractLeadOptions", { query: "" }); expect(options.length).toBeGreaterThan(0); const someone = options.find((row: any) => row.company) ?? options[0];
+    expect((await call("leadops.contractLeadOptions", { query: String(someone.company || someone.name).slice(0, 5) })).some((row: any) => row.id === someone.id)).toBe(true);
+    const fromLead = await call("leadops.contractValuesFromLead", { leadId: someone.id }); expect(fromLead.firma).toBe(someone.company);
+    const signedOwn = withDetails("70 €").map((block: any) => block.type === "signature" && block.party === "anbieter" ? { ...block, image: "data:image/png;base64,AAAA", signedName: "Taner Yilmaz", signedAt: new Date().toISOString() } : block);
+    const own = await call("leadops.saveContract", { id: null, title: "Mit eigener Unterschrift", blocks: signedOwn, values: { firma: someone.company }, leadId: someone.id });
+    const ownView = await call("leadops.contractPreviewHtml", { id: own.id, title: "Mit eigener Unterschrift", blocks: signedOwn, values: { firma: someone.company } }); expect(ownView.html).toContain("Taner Yilmaz"); expect(ownView.html).not.toContain("Noch nicht unterschrieben");
+    const ownCopy = await call("leadops.duplicateContract", { id: own.id }); expect((await call("leadops.getContract", { id: ownCopy.id })).blocks.find((block: any) => block.type === "signature" && block.party === "anbieter").image).toBeFalsy();
     // KI-Vertrag: in der Chat-Demo ohne KI-Anbindung → passende Vorlage nach Stichworten
     const ai = await call("leadops.draftContractAi", { prompt: "Testphase für PV-Leads über 4 Wochen, die ersten 10 kostenlos" }); expect(ai.source).toBe("vorlage"); expect(ai.title).toContain("Testphase"); expect(ai.blocks.some((block: any) => block.type === "detail" && block.key === "dauer")).toBe(true);
     await expect(call("leadops.draftContractAi", { prompt: "kurz" })).rejects.toThrow(/beschreibe/);

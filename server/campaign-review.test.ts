@@ -41,17 +41,17 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(fixGreeting("Text ohne Anrede.", "Sehr geehrter Herr Muster")).toBe("Sehr geehrter Herr Muster,\n\nText ohne Anrede.");
     const thin = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Webseite steht etwas Konkretes.\n\nHätten Sie diese Woche 15 Minuten für ein Gespräch?";
     const done = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false });
-    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).toContain("10 Fragen"); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
+    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).toContain("anhand von zehn Fragen telefonisch vorqualifiziert"); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
     expect(done).toMatch(/0611 123456/); expect(done.trim().endsWith("Vielen Dank")).toBe(true); expect(done).not.toMatch(/Grüßen/);
     expect(done.indexOf("20 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
     // Schon vollständig → bleibt bis auf den Schluss unverändert; keine doppelte Nummer, kein doppeltes „Vielen Dank“
     const full = "Sehr geehrte Frau Kurz,\n\nText mit 20 Test-Leads kostenlos, telefonisch qualifiziert über 10 Fragen. Auf Wunsch nennen wir dabei Ihren Firmennamen, sodass der Interessent weiß, dass Sie sich melden.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter 0611 123456.\n\nVielen Dank\n\nMit freundlichen Grüßen\nMax";
     const kept = finishDraft(full, { greeting, phone: "0611 123456", followUp: false });
     expect(kept.match(/0611 123456/g)).toHaveLength(1); expect(kept.match(/Vielen Dank/g)).toHaveLength(1); expect(kept).not.toContain("Max"); expect(kept.trim().endsWith("Vielen Dank")).toBe(true);
-    expect(kept).not.toMatch(/Firmenname/); expect(kept).toContain("über 10 Fragen."); // Firmennamen-Satz entfernt, Rest bleibt sauber
+    expect(kept).not.toMatch(/Firmenname/); expect(kept).toContain("anhand von zehn Fragen telefonisch vorqualifiziert."); // Firmennamen-Satz entfernt, Rest bleibt sauber
     // Ohne Telefon: nur „antworten Sie einfach auf diese E-Mail“; Nachfass-Mail braucht nur das Test-Angebot
     const noPhone = finishDraft("Hallo,\n\nkurzer Nachfass ohne Angebot.", { greeting, phone: "", followUp: true });
-    expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("20 Test-Leads"); expect(noPhone).not.toContain("10 Fragen");
+    expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("20 Test-Leads"); expect(noPhone).not.toContain("zehn Fragen");
   });
   it("Tagesbeginn in Berlin (Sommer- und Winterzeit)", () => {
     expect(dayStartIn(new Date("2026-07-15T10:30:00Z")).toISOString()).toBe("2026-07-14T22:00:00.000Z");

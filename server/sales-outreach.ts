@@ -2,11 +2,11 @@
  * Vertrieb: Kaltakquise-Listen (CSV → Leads in der Pipeline, Anrufkampagne manuell/power/predictive über den Dialer)
  * und E-Mail-Kampagnen mit Ablauf-Baum (Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst), Tracking per Pixel/Link.
  */
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lte, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { draftToBlocks, modernizeTree, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
+import { draftToBlocks, modernizeTree, smoothQualifyPhrase, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -201,7 +201,10 @@ async function repairCampaignTrees(db: Db, tenantId: number) {
     const design = (row.design ?? null) as Partial<EmailDesign> | null; const footer = design?.footerText ?? "";
     const clearFooter = !design?.footerReset && Boolean(footer.trim()) && (/Du erhältst diese E-Mail, weil/i.test(footer) || footer.trim() === companyFooterText().trim() || /^Tanesco Digital GbR/i.test(footer.trim())); // nur einmal – wer die Fußzeile danach bewusst setzt, behält sie
     if (next || clearFooter) await db.update(emailCampaigns).set({ ...(next ? { tree: next } : {}), ...(clearFooter ? { design: { ...(design ?? {}), footerText: "", footerReset: 1 } } : {}) }).where(eq(emailCampaigns.id, row.id));
-  }
+   }
+  // Gespeicherte KI-Entwürfe: holprige Formulierung „qualifiziert über … Fragen“ glätten
+  const drafts = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), like(emailCampaignRecipients.draftText, "%über%Fragen%")));
+  for (const draft of drafts) { const smooth = smoothQualifyPhrase(draft.draftText ?? ""); if (smooth !== draft.draftText) await db.update(emailCampaignRecipients).set({ draftText: smooth }).where(eq(emailCampaignRecipients.id, draft.id)); }
 }
 async function repairPickedDrafts(db: Db, tenantId: number) {
   await repairCampaignTrees(db, tenantId);

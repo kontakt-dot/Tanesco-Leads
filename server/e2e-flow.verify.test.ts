@@ -2649,7 +2649,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     let kim = await row(); expect(kim.sentCount).toBe(0); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m1"); expect(kim.draftApproach).toBe("drittanbieter"); expect(kim.draftText).toContain("Zwischenhändler"); // Ansatz der Kampagne, ohne KI-Schlüssel aus der festen Vorlage
     const queue1 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue1.items[0].nodeLabel).toBe("Erste"); expect(queue1.items[0].followUp).toBe(false);
     // Entwurf-Regeln (auch ohne KI): förmliche Anrede, Pflichtinhalte, Schluss mit Kontaktweg und „Vielen Dank“, kein Gruß
-    expect(kim.draftText).toMatch(/^Sehr geehrte/); expect(kim.draftText).not.toMatch(/^(Hallo|Guten Tag)/); expect(kim.draftText).toContain("20 Test-Leads"); expect(kim.draftText).toContain("10 Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
+    expect(kim.draftText).toMatch(/^Sehr geehrte/); expect(kim.draftText).not.toMatch(/^(Hallo|Guten Tag)/); expect(kim.draftText).toContain("20 Test-Leads"); expect(kim.draftText).toContain("zehn Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
     // „Alle neu schreiben“: verwirft die Entwürfe, die KI/Vorlage schreibt sie beim nächsten Lauf neu
     expect((await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id })).reset).toBeGreaterThanOrEqual(1);
     expect((await row()).draftState).toBeNull(); expect((await row()).draftText).toBeNull();
@@ -2801,6 +2801,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
   }, 40000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
+    const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);
+    const probe = leadOptions.find((row) => row.name) ?? leadOptions[0]; expect((await owner.leadops.contractLeadOptions({ query: (probe.name || probe.email).slice(0, 4) })).some((row) => row.id === probe.id)).toBe(true);
+    expect(await owner.leadops.contractLeadOptions({ query: "%_kein_treffer_%" })).toEqual([]);
     const defaults = await owner.leadops.contractDefaults(); expect(defaults.starter.blocks.some((block) => block.type === "signature" && block.party === "kunde")).toBe(true);
     const blocks = [...defaults.starter.blocks.map((block) => block.type === "detail" ? { ...block, value: block.key === "preis" ? "" : block.value || "Hessen" } : block), { id: "bUst", type: "field" as const, key: "ustid", label: "USt-IdNr.", required: true }];
     const saved = await owner.leadops.saveContract({ title: "Leadliefervertrag E2E", blocks, values: { firma: "E2E Solar GmbH", name: "Erika E2E", email: "erika@e2e-vertrag.example", anbieterVertreter: "Taner" }, recipientEmail: "erika@e2e-vertrag.example", recipientName: "Erika E2E" });

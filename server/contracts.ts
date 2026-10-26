@@ -4,9 +4,9 @@
  * Vorlagen liegen in contractTemplates, jeder Vorgang wird in contractEvents protokolliert.
  */
 import crypto from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { contractEvents, contractTemplates, contracts, leads, memberships, tenantSettings, users } from "../drizzle/schema";
-import { CONTRACT_STARTERS, contractFields, contractNeedsSignature, contractOutline, contractStarter, missingDetails, providerValues, renderContractHtml, type ContractBlock, type ContractEventKind, type ContractEventView, type ContractStatus, type ContractValues } from "../shared/contracts";
+import { CONTRACT_STARTERS, contractFields, contractNeedsSignature, contractOutline, contractStarter, missingDetails, withoutProviderSignatures, providerValues, renderContractHtml, type ContractBlock, type ContractEventKind, type ContractEventView, type ContractStatus, type ContractValues } from "../shared/contracts";
 import { buildContractPdf } from "../shared/contract-pdf";
 import { COMPANY_FOOTER, TANESCO_LOGO_PATH } from "../shared/email-design";
 import { logActivity } from "./activity";
@@ -56,6 +56,13 @@ export async function contractDefaults(db: Db, tenantId: number) {
   const provider = await providerFor(db, tenantId);
   return { values: provider, starter: contractStarter("leadliefervertrag"), empty: contractStarter("leer"), starters: CONTRACT_STARTERS.map((item) => ({ ...item, ...contractStarter(item.kind) })), logoBase: (process.env.APP_URL ?? "").replace(/\/+$/, "") };
 }
+/** Kontakte aus dem System als Kunde auswählen: Suche nach Firma, Name, E-Mail oder Ort (max. 20 Treffer). */
+export async function contractLeadOptions(db: Db, tenantId: number, query: string) {
+  const needle = query.trim().slice(0, 80); const pattern = `%${needle.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+  const where = needle ? and(eq(leads.tenantId, tenantId), or(like(leads.company, pattern), like(leads.firstName, pattern), like(leads.lastName, pattern), like(leads.email, pattern), like(leads.city, pattern), like(sql`concat_ws(' ', ${leads.firstName}, ${leads.lastName})`, pattern))) : eq(leads.tenantId, tenantId);
+  const rows = await db.select({ id: leads.id, company: leads.company, firstName: leads.firstName, lastName: leads.lastName, email: leads.email, postcode: leads.postcode, city: leads.city }).from(leads).where(where).orderBy(desc(leads.id)).limit(20);
+  return rows.map((row) => ({ id: row.id, company: row.company ?? "", name: [row.firstName, row.lastName].filter(Boolean).join(" "), email: row.email ?? "", place: [row.postcode, row.city].filter(Boolean).join(" ") }));
+}
 /** Lead aus der Pipeline als Kunde übernehmen (Firma, Name, E-Mail, Anschrift). */
 export async function contractValuesFromLead(db: Db, tenantId: number, leadId: number): Promise<ContractValues> {
   const lead = (await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId))).limit(1))[0]; if (!lead) throw new Error("Kontakt nicht gefunden.");
@@ -92,7 +99,7 @@ export async function deleteContract(db: Db, tenantId: number, id: number) {
 export async function duplicateContract(db: Db, tenantId: number, userId: number, id: number) {
   const row = (await db.select().from(contracts).where(and(eq(contracts.id, id), eq(contracts.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Vertrag nicht gefunden.");
   const number = await nextNumber(db, tenantId);
-  const inserted = await db.insert(contracts).values({ tenantId, number, title: `${row.title} (Kopie)`.slice(0, 200), status: "entwurf", blocks: blocksOf(row), values: valuesOf(row), recipientEmail: row.recipientEmail, recipientName: row.recipientName, leadId: row.leadId, templateId: row.templateId, ourSignerName: row.ourSignerName, createdByUserId: userId });
+  const inserted = await db.insert(contracts).values({ tenantId, number, title: `${row.title} (Kopie)`.slice(0, 200), status: "entwurf", blocks: withoutProviderSignatures(blocksOf(row)), values: valuesOf(row), recipientEmail: row.recipientEmail, recipientName: row.recipientName, leadId: row.leadId, templateId: row.templateId, ourSignerName: row.ourSignerName, createdByUserId: userId });
   const newId = Number(inserted[0]?.insertId) || 0; await addEvent(db, tenantId, newId, "erstellt", { note: `Kopie von ${row.number}`, actorUserId: userId });
   return { id: newId, number };
 }

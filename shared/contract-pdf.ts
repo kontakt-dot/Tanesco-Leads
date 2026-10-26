@@ -51,10 +51,10 @@ export function buildContractPdf(input: { title: string; blocks: ContractBlock[]
       case "signature": {
         ensure(34); gap(6);
         if (block.party === "kunde" && input.signature?.image) image(input.signature.image, 70, 22);
-        else if (block.party === "anbieter" && input.providerSignatureDataUrl) image(input.providerSignatureDataUrl, 70, 22);
+        else if (block.party === "anbieter" && (block.image || input.providerSignatureDataUrl)) image((block.image || input.providerSignatureDataUrl)!, 70, 22);
         else gap(18);
         line(PAGE.margin, PAGE.margin + 80); gap(4.5);
-        const caption = block.party === "kunde" ? `${block.label ?? "Unterschrift Kunde"}${input.signature ? ` · ${input.signature.name} · ${formatContractStamp(input.signature.signedAt)}` : ""}` : `${block.label ?? "Unterschrift Anbieter"}${values.anbieterVertreter ? ` · ${values.anbieterVertreter}` : ""}${values.anbieterFirma ? `, ${values.anbieterFirma}` : ""}`;
+        const caption = block.party === "kunde" ? `${block.label ?? "Unterschrift Kunde"}${input.signature ? ` · ${input.signature.name} · ${formatContractStamp(input.signature.signedAt)}` : ""}` : `${block.label ?? "Unterschrift Anbieter"}${(block.signedName || values.anbieterVertreter) ? ` · ${block.signedName || values.anbieterVertreter}` : ""}${values.anbieterFirma ? `, ${values.anbieterFirma}` : ""}${block.signedAt ? ` · ${formatContractDate(block.signedAt)}` : ""}`;
         text(caption, FONT.small, "normal", [102, 112, 133]); gap(2); break;
       }
       case "divider": ensure(6); gap(2); doc.setDrawColor(228, 231, 236); doc.setLineWidth(0.2); doc.line(PAGE.margin, y, PAGE.margin + width, y); gap(4); break;

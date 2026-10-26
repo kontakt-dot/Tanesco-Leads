@@ -3256,3 +3256,29 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .ct-ai-examples button{text-align:left;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);font-size:12.5px;line-height:1.45;color:#d6d3f0;cursor:pointer}
 .ct-ai-examples button:hover{border-color:rgba(141,133,255,.5);background:rgba(129,120,255,.1)}
 .starter-menu button.is-ai strong{color:#c4b5fd}
+/* Verträge: eigene Unterschrift, Kunde wählen, Bausteine einfügen */
+.ct-sign-rows{display:grid;gap:8px;margin-top:10px}
+.ct-sign-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02)}
+.ct-sign-row>div:first-child{flex:1;min-width:0}.ct-sign-row strong{display:block;font-size:13px;color:#f1effe}.ct-sign-row small{display:block;font-size:11.5px;color:#9ca0ba;line-height:1.4}
+.ct-sig-thumb{height:38px;max-width:120px;object-fit:contain;background:#fff;border-radius:8px;padding:2px 6px}
+.ct-sign-banner{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:10px 14px;border-radius:12px;border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.08);font-size:13px;color:#fde68a}
+.ct-sign-banner span{flex:1}.ct-sign-banner strong{color:#fff}
+.ct-sign-banner.is-ok{border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.08);color:#a7f3d0}
+.ct-sign-dialog{max-width:min(96vw,600px)!important}
+.ct-pad{position:relative;border:1.5px dashed rgba(255,255,255,.25);border-radius:12px;background:#fff;overflow:hidden}
+.ct-pad canvas{display:block;width:100%;height:190px;touch-action:none;cursor:crosshair}
+.ct-pad button{position:absolute;right:8px;top:8px;padding:3px 10px;border-radius:8px;border:1px solid #e4e7ec;background:#fff;color:#344054;font-size:12px}
+.ct-pad-hint{position:absolute;left:0;right:0;bottom:14px;text-align:center;font-size:12.5px;color:#98a2b3;pointer-events:none}
+.ct-pad.is-saved{display:grid;place-items:center;padding:16px}.ct-pad.is-saved img{max-height:140px;max-width:100%}
+.ct-typed-preview{margin-top:8px;min-height:80px;padding:12px 16px;border-radius:12px;background:#fff;color:#101828;font-family:"Brush Script MT","Segoe Script","Snell Roundhand",cursive;font-size:42px;font-style:italic;line-height:1.3}
+.ct-picker{position:relative;margin-top:10px}
+.ct-picker-input{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-radius:10px;border:1px solid rgba(129,120,255,.45);background:rgba(129,120,255,.08);color:#c4b5fd}
+.ct-picker-input input{flex:1;min-width:0;border:0;background:transparent;outline:none;color:#f1effe;font-size:13.5px}.ct-picker-input input::placeholder{color:#a5a1d7}
+.ct-picker-list{position:absolute;z-index:30;left:0;right:0;top:44px;max-height:300px;overflow:auto;margin:0;padding:4px;list-style:none;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:#1b1830;box-shadow:0 18px 40px rgba(0,0,0,.45)}
+.ct-picker-list button{display:block;width:100%;text-align:left;padding:8px 10px;border-radius:8px}.ct-picker-list button:hover{background:rgba(129,120,255,.14)}
+.ct-picker-list strong{display:block;font-size:13px;color:#f1effe}.ct-picker-list small{display:block;font-size:11.5px;color:#9ca0ba}
+.ct-picker-list .is-empty{padding:10px;font-size:12.5px;color:#9ca0ba}
+.ct-picker-linked{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:#6ee7b7}.ct-picker-linked button{margin-left:auto;font-size:11.5px;color:#9ca0ba;text-decoration:underline}
+.ct-block-tools button.is-on{background:rgba(129,120,255,.2);color:#fff}
+.ct-blocks>.ct-add{margin:0 0 8px}.ct-blocks>.ct-add:last-child{margin:10px 0 0}.ct-block>.ct-add{margin:6px 10px 10px;padding:8px;border-radius:10px;border:1px dashed rgba(129,120,255,.4)}
+.ct-picker-input input,.ct-picker-input input:focus{height:auto;padding:0;border:0!important;box-shadow:none!important;outline:none!important;background:transparent!important}
