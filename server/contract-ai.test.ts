@@ -43,3 +43,44 @@ describe("Formulierung Vorqualifizierung", () => {
     const clean = "in der Regel anhand von zehn Fragen telefonisch vorqualifiziert"; expect(smoothQualifyPhrase(clean)).toBe(clean);
   });
 });
+
+import { parsePlzList, regionText, BUNDESLAENDER } from "../shared/contracts";
+describe("Liefergebiet im Vertrag", () => {
+  it("Deutschlandweit, Bundesländer, PLZ mit Umkreis", () => {
+    expect(regionText({ mode: "deutschland" })).toBe("Deutschlandweit");
+    expect(regionText({ mode: "bundeslaender", states: ["Hessen", "Bayern"] })).toBe("Bundesländer: Bayern, Hessen");
+    expect(regionText({ mode: "bundeslaender", states: ["Hessen"] })).toBe("Bundesland: Hessen");
+    expect(regionText({ mode: "bundeslaender", states: [...BUNDESLAENDER] })).toBe("Deutschlandweit (alle Bundesländer)");
+    expect(regionText({ mode: "bundeslaender", states: [] })).toBe("");
+    expect(parsePlzList("60311, 65183;55116 60311 abc 123456")).toEqual(["60311", "65183", "55116"]);
+    expect(regionText({ mode: "plz", plz: ["60311", "65183"], radiusKm: 25 })).toBe("PLZ 60311, 65183 – jeweils im Umkreis von 25 km");
+    expect(regionText({ mode: "plz", plz: ["60", "61"], radiusKm: null })).toBe("PLZ-Gebiete 60, 61");
+  });
+});
+
+import { cleanDraftText, dropPortalMentions } from "../shared/email-campaigns";
+describe("Aroundhome nie in E-Mails", () => {
+  it("entfernt Sätze mit Aroundhome (auch „Around Home“), Rest bleibt", () => {
+    const text = "Sehr geehrter Herr Kurz,\n\nauf Aroundhome haben Sie 120 Bewertungen mit 4,8 Sternen. Das zeigt Qualität.\n\nIhre Google-Bewertungen sind stark. Bei Around Home sind Sie Partner.\n\nVielen Dank";
+    const out = dropPortalMentions(text);
+    expect(out).not.toMatch(/around\s*-?\s*home/i); expect(out).toContain("Das zeigt Qualität."); expect(out).toContain("Ihre Google-Bewertungen sind stark."); expect(out).toContain("Vielen Dank");
+    expect(cleanDraftText("Text ohne Portal.")).toBe("Text ohne Portal.");
+  });
+});
+
+import { sentSourceOf, subjectFromTemplate } from "../shared/email-campaigns";
+describe("Gesendet: KI-Text oder Vorlage", () => {
+  it("erkennt die Herkunft gespeichert und bei älteren E-Mails aus Betreff/Entwurf", () => {
+    expect(subjectFromTemplate("Kurze Frage zu Ihrem Bedarf, {{vorname}}", "Kurze Frage zu Ihrem Bedarf, Peter")).toBe(true);
+    expect(subjectFromTemplate("Mehr Anfragen für {{firma}} – ohne Risiko", "Ihre 12 Standorte und neue Anfragen")).toBe(false);
+    expect(sentSourceOf({ bodySource: "ki" })).toEqual({ source: "ki", known: true });
+    expect(sentSourceOf({ bodySource: "entwurf-vorlage" })).toEqual({ source: "entwurf-vorlage", known: true });
+    expect(sentSourceOf({ subject: "Ihre 12 Standorte", draftSubject: "Ihre 12 Standorte", draftSource: "ki" })).toEqual({ source: "ki", known: true });
+    expect(sentSourceOf({ subject: "Mehr Anfragen für Hansen", draftSubject: "Mehr Anfragen für Hansen", draftSource: "vorlage" })).toEqual({ source: "entwurf-vorlage", known: true });
+    expect(sentSourceOf({ subject: "Mehr Anfragen für Hansen – ohne Risiko", templateSubjects: ["Mehr Anfragen für {{firma}} – ohne Risiko"] })).toEqual({ source: "vorlage", known: false });
+    expect(sentSourceOf({ subject: "Direkte Zusammenarbeit statt Umweg über Zwischenhändler – Hansen" })).toEqual({ source: "entwurf-vorlage", known: false });
+    expect(sentSourceOf({ subject: "Ihre Website verspricht 0 % Risiko", templateSubjects: ["Mehr Anfragen für {{firma}}"] })).toEqual({ source: "ki", known: false });
+    expect(sentSourceOf({ subject: "Ihre Website verspricht 0 % Risiko", templateSubjects: ["Mehr Anfragen für {{firma}}"], kiOn: false })).toEqual({ source: "vorlage", known: false }); // Kampagne ohne KI → Vorlage
+    expect(sentSourceOf({ bodySource: "hand" })).toEqual({ source: "hand", known: true });
+  });
+});

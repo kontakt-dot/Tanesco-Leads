@@ -1539,3 +1539,22 @@ html:not(.dark) .ct-block-tools button.is-on { background: #fee2e2 !important; c
 html:not(.dark) .ct-block > .ct-add { border-color: #fca5a5 !important; }
 html:not(.dark) .ct-picker-input input, html:not(.dark) .ct-picker-input input:focus { border: 0 !important; box-shadow: none !important; background: transparent !important; }
 html:not(.dark) .ct-picker-input input:focus-visible { outline: none !important; border: 0 !important; box-shadow: none !important; }
+html:not(.dark) .ct-presets button { background: #ffffff !important; border-color: #e2e8f0 !important; color: #334155 !important; }
+html:not(.dark) .ct-presets button:hover { border-color: #bc001d !important; }
+html:not(.dark) .ct-presets button.is-on { background: #fef2f2 !important; border-color: #bc001d !important; color: #bc001d !important; }
+html:not(.dark) .ct-region-tools { color: #64748b !important; }
+html:not(.dark) .ct-region-tools button { color: #bc001d !important; }
+html:not(.dark) .ct-detail-result { color: #64748b !important; }
+html:not(.dark) .ct-detail-result strong { color: #0f172a !important; }
+html:not(.dark) .inbox-tag.is-src-ki { background: #f5f3ff !important; color: #6d28d9 !important; border-color: #ddd6fe !important; }
+html:not(.dark) .inbox-tag.is-src-vorlage, html:not(.dark) .inbox-tag.is-src-entwurf-vorlage { background: #fffbeb !important; color: #b45309 !important; border-color: #fcd34d !important; }
+html:not(.dark) .inbox-sent-origins { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #334155 !important; }
+html:not(.dark) .inbox-sent-origins.has-template { background: #fffbeb !important; border-color: #fcd34d !important; }
+html:not(.dark) .inbox-sent-origins .is-ki { background: #ede9fe !important; color: #6d28d9 !important; }
+html:not(.dark) .inbox-sent-origins .is-tpl { background: #fef3c7 !important; color: #b45309 !important; }
+html:not(.dark) .inbox-sent-origins small { color: #64748b !important; }
+html:not(.dark) .sent-preview-note.is-src-ki { color: #6d28d9 !important; }
+html:not(.dark) .sent-preview-note.is-src-vorlage, html:not(.dark) .sent-preview-note.is-src-entwurf-vorlage { color: #b45309 !important; }
+html:not(.dark) .rv-note.is-template { color: #92400e !important; background: #fffbeb !important; }
+html:not(.dark) .inbox-tag.is-src-hand { background: #ecfdf3 !important; color: #067647 !important; border-color: #abefc6 !important; }
+html:not(.dark) .sent-preview-note.is-src-hand { color: #067647 !important; }

@@ -9,6 +9,7 @@ import { INBOX_AI_FILTERS, inboxAiFilterLabel, periodRange, REPLY_KIND_LABEL, ty
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
+import { SENT_SOURCE_LABEL, type SentSource } from "../../../shared/email-campaigns";
 
 type Filter = "alle" | "antworten" | "geantwortet" | "unbekannt" | "ungelesen" | "pruefen" | "gesendet" | "archiv" | "gesperrt";
 /** Sortierung der Liste: nach Zeit oder nach KI-Einordnung (dann gruppiert von Interesse bis Beschwerde – oder umgekehrt). */
@@ -257,6 +258,7 @@ function SentMessages({ onOpenLead }: { onOpenLead?: (publicId: string) => void 
       <select className="lead-action-select" aria-label="Zeitraum" value={period} onChange={(event) => setPeriod(event.target.value as typeof period)}><option value="alle">Gesamter Zeitraum</option><option value="heute">Heute</option><option value="7tage">Letzte 7 Tage</option><option value="30tage">Letzte 30 Tage</option></select>
       <input className="inbox-search" placeholder="Suchen: Adresse, Betreff, Kampagne" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
+    {sent.data?.origins && (sent.data.origins.ki + sent.data.origins.hand + sent.data.origins.vorlage + sent.data.origins["entwurf-vorlage"]) > 0 && <div className={`inbox-sent-origins ${sent.data.origins.vorlage + sent.data.origins["entwurf-vorlage"] ? "has-template" : ""}`}><strong>Was rausging:</strong><span className="is-ki">{sent.data.origins.ki} mit KI-Text</span>{sent.data.origins.hand ? <span className="is-ki">{sent.data.origins.hand} eigener Text</span> : null}{sent.data.origins["entwurf-vorlage"] ? <span className="is-tpl">{sent.data.origins["entwurf-vorlage"]} Ersatz aus Vorlage</span> : null}{sent.data.origins.vorlage ? <span className="is-tpl">{sent.data.origins.vorlage} mit Vorlage</span> : null}<small>Klick auf eine E-Mail zeigt den Text, der wirklich verschickt wurde.</small></div>}
     <div className="inbox-sent-reactions" role="group" aria-label="Nach Reaktion filtern"><span>Reaktion:</span>{REACTION_FILTERS.map((key) => <button key={key} type="button" className={`inbox-reaction-chip is-${key} ${reaction === key ? "is-active" : ""}`} onClick={() => setReaction(reaction === key ? null : key)}>{REACTION_LABEL[key]}{sent.data ? ` ${sent.data.reactions[key]}` : ""}</button>)}{reaction && <button type="button" className="inbox-reaction-reset" onClick={() => setReaction(null)}>alle</button>}</div>
     {sent.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
       : !items.length ? <p className="py-10 text-center text-sm text-slate-500">Noch nichts gesendet{search || campaignId || kind !== "alle" || period !== "alle" || reaction ? " – oder keine Treffer für diese Filter" : ""}.</p>
@@ -276,6 +278,7 @@ function SentMessages({ onOpenLead }: { onOpenLead?: (publicId: string) => void 
           </div>
           <div className="inbox-sent-meta">
             <i className={`inbox-tag is-${item.kind}`}>{label[item.kind] ?? item.kind}</i>
+            {item.origin ? <i className={`inbox-tag is-src-${item.origin.source}`} title={item.origin.source === "ki" ? "Ging mit einem persönlichen KI-Text raus" : item.origin.source === "hand" ? "Ging mit deinem selbst geschriebenen bzw. geänderten Text raus" : item.origin.source === "vorlage" ? "Ging mit der Vorlage des Schritts raus – ohne KI-Text" : "Ersatz-Entwurf aus der Vorlage – die KI hatte hier nicht geschrieben"}>{SENT_SOURCE_LABEL[item.origin.source]}</i> : null}
             {item.tracking ? <i className={`inbox-tag inbox-reaction is-${item.tracking.reaction}`}>{REACTION_LABEL[item.tracking.reaction]}</i> : null}
             {item.status !== "gesendet" ? <i className="inbox-tag is-blocked">{item.status}</i> : null}
             <time>{new Date(item.at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time>
@@ -293,7 +296,7 @@ function SentMailPreview({ id, onClose }: { id: string; onClose: () => void }) {
   const mail = preview.data;
   return <div className="sent-preview">
     <div className="sent-preview-head">
-      <div><strong>{mail.subject || "(ohne Betreff)"}</strong><small>an {mail.name ? `${mail.name} · ` : ""}{mail.to} · {new Date(mail.at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}{mail.campaignName ? ` · ${mail.campaignName}` : ""}</small>{mail.note ? <small className="sent-preview-note">{mail.note}</small> : null}</div>
+      <div><strong>{mail.subject || "(ohne Betreff)"}</strong><small>an {mail.name ? `${mail.name} · ` : ""}{mail.to} · {new Date(mail.at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}{mail.campaignName ? ` · ${mail.campaignName}` : ""}</small>{mail.note ? <small className={`sent-preview-note ${"source" in mail && mail.source ? `is-src-${mail.source}` : ""}`}>{"source" in mail && mail.source ? <b>{SENT_SOURCE_LABEL[mail.source as SentSource]}: </b> : null}{mail.note}</small> : null}</div>
       <button type="button" className="text-xs text-violet-200 hover:underline" onClick={onClose}>schließen</button>
     </div>
     <iframe title={`Gesendete E-Mail: ${mail.subject}`} className="sent-preview-frame" srcDoc={mail.html} sandbox="allow-same-origin" />

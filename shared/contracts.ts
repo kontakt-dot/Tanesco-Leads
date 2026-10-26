@@ -11,7 +11,7 @@ export type ContractBlock =
   | { id: string; type: "image"; src: string; alt?: string; width?: number; align?: "left" | "center" | "right" } // src: eingebettetes Bild (data:) oder Adresse
   | { id: string; type: "logo"; src?: string | null; height?: number }
   | { id: string; type: "parties" } // Vertragsparteien aus den Werten (Anbieter + Kunde)
-  | { id: string; type: "detail"; key: string; label: string; value: string; hint?: string } // Vertragsangabe – füllt der Anbieter im Builder aus (Liefergebiet, Menge, Preis …), im Text als {{key}}
+  | { id: string; type: "detail"; key: string; label: string; value: string; hint?: string; region?: ContractRegion | null } // Vertragsangabe – füllt der Anbieter im Builder aus (Liefergebiet, Menge, Preis …), im Text als {{key}}
   | { id: string; type: "field"; key: string; label: string; required?: boolean; placeholder?: string } // füllt der Kunde beim Unterschreiben aus (optional)
   | { id: string; type: "date"; label?: string; mode: "unterschrift" | "fest"; value?: string | null }
   | { id: string; type: "signature"; party: "kunde" | "anbieter"; label?: string; image?: string | null; signedName?: string | null; signedAt?: string | null } // Anbieter: eigene Unterschrift (Bild, Name, Zeitpunkt) direkt im Builder
@@ -62,6 +62,30 @@ export const newContractBlock = (type: ContractBlockType): ContractBlock => {
   }
 };
 
+/** Liefergebiet: deutschlandweit, einzelne Bundesländer oder PLZ-Gebiete mit Umkreis – wird als lesbarer Text in die Angabe geschrieben. */
+export const BUNDESLAENDER = ["Baden-Württemberg", "Bayern", "Berlin", "Brandenburg", "Bremen", "Hamburg", "Hessen", "Mecklenburg-Vorpommern", "Niedersachsen", "Nordrhein-Westfalen", "Rheinland-Pfalz", "Saarland", "Sachsen", "Sachsen-Anhalt", "Schleswig-Holstein", "Thüringen"] as const;
+export type ContractRegion = { mode: "deutschland" | "bundeslaender" | "plz"; states?: string[]; plz?: string[]; radiusKm?: number | null };
+export const parsePlzList = (text: string) => Array.from(new Set(text.split(/[\s,;]+/).map((part) => part.trim()).filter((part) => /^\d{1,5}$/.test(part)))).slice(0, 200);
+export function regionText(region: ContractRegion): string {
+  if (region.mode === "deutschland") return "Deutschlandweit";
+  if (region.mode === "bundeslaender") { const states = BUNDESLAENDER.filter((name) => region.states?.includes(name)); if (!states.length) return ""; if (states.length === BUNDESLAENDER.length) return "Deutschlandweit (alle Bundesländer)"; return `${states.length === 1 ? "Bundesland" : "Bundesländer"}: ${states.join(", ")}`; }
+  const plz = region.plz ?? []; if (!plz.length) return "";
+  const areas = plz.every((code) => code.length < 5); const list = `${areas ? (plz.length === 1 ? "PLZ-Gebiet" : "PLZ-Gebiete") : "PLZ"} ${plz.join(", ")}`;
+  return region.radiusKm ? `${list} – jeweils im Umkreis von ${region.radiusKm} km` : list;
+}
+/** Schnellauswahl für Vertragsangaben (nach Schlüssel). */
+export const DETAIL_PRESETS: Record<string, string[]> = {
+  menge: ["10 Leads", "20 Leads", "30 Leads", "50 Leads", "100 Leads"],
+  leadart: ["Photovoltaik", "Wärmepumpe", "Photovoltaik und Wärmepumpe", "Photovoltaik mit Speicher"],
+  preis: ["49 €", "59 €", "69 €", "79 €", "89 €", "99 €"],
+  kennenlernen: ["die ersten 10 Leads sind kostenlos", "die ersten 20 Leads sind kostenlos", "es gibt kein kostenloses Test-Kontingent"],
+  dauer: ["2 Wochen", "4 Wochen", "6 Wochen", "3 Monate"],
+  umfang: ["bis zu 10 Leads", "bis zu 20 Leads", "bis zu 50 Leads"],
+  beginn: ["mit Unterzeichnung dieser Vereinbarung", "am Ersten des Folgemonats"],
+  konditionen: ["alle Leads in der Testphase sind kostenlos", "die ersten 10 Leads kostenlos, danach 49 € je Lead netto", "halber Preis je Lead während der Testphase"],
+  danach: ["Fortsetzung nur nach schriftlicher Bestätigung beider Seiten", "automatische Fortsetzung zum regulären Preis, jederzeit mit 14 Tagen zum Monatsende kündbar", "die Zusammenarbeit endet ohne weitere Pflichten"],
+};
+export const isRegionDetail = (block: { key: string; label: string }) => block.key === "liefergebiet" || /liefergebiet|region|gebiet/i.test(block.label);
 export type ContractStarterKind = "leadliefervertrag" | "testphase" | "leer";
 export const CONTRACT_STARTERS: Array<{ kind: ContractStarterKind; label: string; hint: string }> = [
   { kind: "leadliefervertrag", label: "Leadliefervertrag", hint: "Fertiger Rahmen: Leistungen, Liefergebiet, Menge, Preis je Lead, Reklamation, Laufzeit – du trägst die Eckdaten ein, der Kunde unterschreibt nur" },
@@ -211,7 +235,8 @@ export function renderContractHtml(contract: { title: string; blocks: ContractBl
   const party = (lines: string[]) => lines.filter(Boolean).map((line) => `<div>${esc(line)}</div>`).join("");
   const fieldValue = (key: string) => options.fieldValues?.[key] ?? "";
   const canEdit = options.mode === "unterschreiben";
-  const body = contract.blocks.map((block) => {
+  const mark = (block: ContractBlock, html: string) => (options.mode === "entwurf" && html ? html.replace(/^<([a-z0-9]+)/i, `<$1 data-b="${esc(block.id)}"`) : html); // Builder: Baustein in der Vorschau finden
+  const body = contract.blocks.map((block) => mark(block, (() => {
     switch (block.type) {
       case "heading": return `<h2 class="c-h">${fill(block.text)}</h2>`;
       case "text": return `<div class="c-p">${fillContract(block.text, values, keepUnknown).split(/\n{2,}/).map((part) => `<p>${esc(part).replace(/\n/g, "<br>")}</p>`).join("")}</div>`;
@@ -233,7 +258,7 @@ export function renderContractHtml(contract: { title: string; blocks: ContractBl
       case "divider": return `<hr class="c-hr">`;
       case "pagebreak": return `<div class="c-break"></div>`;
     }
-  }).join("");
+  })())).join("");
   const signPanel = canEdit ? `<section id="sign" class="sign" data-token="${esc(options.token ?? "")}" data-api="${esc(options.apiBase ?? "")}" data-embedded="${options.embedded ? "1" : "0"}">
     <h3>Jetzt unterschreiben</h3>
     <p class="sign-hint">Bitte Felder prüfen, Namen eintragen und im Feld unterschreiben – mit Maus, Finger oder getippt. Die Unterschrift wird mit Datum, Uhrzeit und IP-Adresse protokolliert.</p>
@@ -267,6 +292,7 @@ export function renderContractHtml(contract: { title: string; blocks: ContractBl
   .c-img{margin:14px 0}.c-img img{max-width:100%;border-radius:8px}.c-empty{padding:28px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);text-align:center;font-size:13px}
   .c-parties{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:8px 0 18px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:#fafafb;font-size:14px}.c-label{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:4px}
   .c-field{display:grid;gap:4px;margin:10px 0}.c-field>span{font-size:12.5px;font-weight:600;color:var(--muted)}.c-field input{height:42px;border:1.5px solid var(--line);border-radius:10px;padding:0 12px;font:inherit;font-size:15px;color:var(--ink);background:#fff;outline:none}.c-field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(188,0,29,.12)}.c-field.is-static strong{font-weight:600;padding:8px 0;border-bottom:1px solid var(--line)}.c-dots{color:var(--muted);font-weight:400}
+  [data-b].is-focus{outline:2px solid rgba(188,0,29,.45);outline-offset:6px;border-radius:6px;background:rgba(188,0,29,.035);transition:outline-color .3s}
   .c-kv{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:6px 16px;padding:9px 12px;border:1px solid var(--line);border-top:0;font-size:14px;background:#fafafb}.c-kv span{color:var(--muted)}.c-kv strong{font-weight:600}.c-kv:first-child,:not(.c-kv)+.c-kv{border-top:1px solid var(--line);border-radius:10px 10px 0 0;margin-top:6px}.c-kv:last-child,.c-kv:not(:has(+.c-kv)){border-radius:0 0 10px 10px;margin-bottom:12px}.c-kv:first-child:last-child,:not(.c-kv)+.c-kv:not(:has(+.c-kv)){border-radius:10px}
   .c-date{display:flex;gap:10px;align-items:baseline;margin:16px 0 6px;font-size:14px}.c-date span{color:var(--muted)}.c-date strong{font-weight:600}
   .c-sig{margin:26px 0 8px;max-width:360px}.c-sig-box{height:92px;border-bottom:1.5px solid var(--ink);display:flex;align-items:flex-end;padding:0 4px 6px}.c-sig-box img{max-height:84px;max-width:100%}.c-sig-box.is-todo{align-items:center;justify-content:center;border:1.5px dashed #cfd4dc;border-radius:10px;color:var(--muted);font-size:13px;font-weight:600}.c-sig-box.is-here{align-items:center;justify-content:center;border:1.5px dashed var(--accent);border-radius:10px;color:var(--accent);font-size:13px;font-weight:600;background:rgba(188,0,29,.04)}.c-sig-line{margin-top:6px;font-size:12.5px;color:var(--muted)}

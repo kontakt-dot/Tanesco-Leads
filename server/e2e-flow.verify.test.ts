@@ -2637,7 +2637,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(doroEvents.filter((event) => event.kind === "gesendet").map((event) => event.nodeId)).toEqual(["m1", "m2"]); expect(doroEvents.some((event) => event.kind === "verzweigt" && /^Übersprungen/.test(event.note ?? ""))).toBe(true);
     const doroLog = await owner.leadops.emailRecipientLog({ recipientId: doro.id }); expect(doroLog.events.map((event) => event.label)).toContain("E-Mail übersprungen (schon gesendet)");
   }, 40000);
-  it("59. KI-Versand je Schritt: Freigabe für JEDE E-Mail (auch Nachfass), Ansatz der Kampagne, Auto-Modus sendet ohne Freigabe (Vorlagen-Rückfall)", async () => {
+  it("59. KI-Versand je Schritt: Freigabe für JEDE E-Mail (auch Nachfass), Ansatz der Kampagne, gesendeter Text gespeichert, nie still die Vorlage", async () => {
     const { starterBlocks } = await import("../shared/email-design");
     await owner.leadops.importColdList({ listName: "KI-Test", toPipeline: false, rows: [{ firstName: "Kim", lastName: "Kette", company: "Kette Klima", city: "Mainz", email: "kim@ki-e2e.example" }] });
     const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
@@ -2655,8 +2655,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await row()).draftState).toBeNull(); expect((await row()).draftText).toBeNull();
     await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5 }); kim = await row(); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m1");
     // „Alle freigeben“ / „Alle wieder prüfen“
-    const all = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true }); expect((all as { approved: number }).approved).toBeGreaterThanOrEqual(1);
-    expect((await row()).draftState).toBe("freigegeben");
+    // Ohne KI-Schlüssel ist der Entwurf nur Ersatz aus der Vorlage → „Alle freigeben“ lässt ihn aus (nie still die Vorlage)
+    const all = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true }); expect(all).toMatchObject({ approved: 0, templateOnly: 1 });
+    expect((await row()).draftState).toBe("entwurf");
+    kim = await row(); await owner.leadops.saveCampaignDraft({ recipientId: kim.id, subject: kim.draftSubject!, text: kim.draftText!, approve: true }); // bewusst einzeln freigegeben
+    expect((await row()).draftState).toBe("freigegeben"); expect((await row()).draftSource).toBe("vorlage"); // unverändert → bleibt „Ersatz aus Vorlage“
     const back = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: false }); expect((back as { reverted: number }).reverted).toBeGreaterThanOrEqual(1);
     expect((await row()).draftState).toBe("entwurf");
     await owner.leadops.saveCampaignDraft({ recipientId: kim.id, subject: "Persönlich 1 für Kette Klima", text: "Guten Tag Frau Kette,\n\npersönliche erste Mail.", approve: true });
@@ -2673,13 +2676,18 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(kim.sentCount).toBe(2); expect(kim.status).toBe("fertig");
     const sent = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, kim.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
     expect(sent.map((event) => event.subject)).toEqual(["Persönlich 1 für Kette Klima", "Persönlich 2 – kurze Nachfrage"]); // beide Schritte mit dem freigegebenen, persönlichen Text
-    // Auto-Modus: ohne KI-Schlüssel geht die Vorlage sofort raus – keine Freigabe nötig
+    // Gesendet: der echte Text ist gespeichert und wird so angezeigt – nicht die Vorlage
+    expect(sent.map((event) => event.bodySource)).toEqual(["hand", "hand"]); expect(sent[0].body).toContain("persönliche erste Mail");
+    const preview = await owner.leadops.sentMailPreview({ id: `k${sent[0].id}` }); expect(preview.html).toContain("persönliche erste Mail"); expect(preview).toMatchObject({ source: "hand", exact: true });
+    const sentList = await owner.leadops.listSent({ campaignId: campaign.id }); expect(sentList.items.map((item) => item.origin?.source)).toEqual(["hand", "hand"]); expect(sentList.origins.hand).toBe(2);
+    // Auto-Modus ohne KI-Schlüssel: es geht NICHTS raus (keine Vorlage als stiller Ersatz) – der Kontakt wartet
     await owner.leadops.importColdList({ listName: "KI-Auto", toPipeline: false, rows: [{ firstName: "Udo", lastName: "Auto", company: "Auto Solar", email: "udo@ki-auto-e2e.example" }] });
     const auto = await owner.leadops.saveEmailCampaign({ name: "KI-Auto", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "KI-Auto" }, tree: { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "auto", kiAnsatz: "individuell", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
     expect((await owner.leadops.getEmailCampaign({ id: auto.id })).reviewFirst).toBe(false);
     await owner.leadops.startEmailCampaign({ id: auto.id }); await owner.leadops.runEmailCampaigns();
     const udo = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, auto.id)))[0];
-    expect(udo.sentCount).toBe(1); expect(udo.status).toBe("fertig");
+    expect(udo.sentCount).toBe(0); expect(udo.status).toBe("wartet");
+    expect((await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, udo.id), eq(emailCampaignEvents.kind, "gesendet"))))).toHaveLength(0);
   }, 40000);
   it("60. Zustellbarkeit: Absender-Adressen mit Verteilung und eigenem Limit, Warmlauf-Limit, Wochenbericht, KI-Antwortvorschlag (Vorlage), Listen-Anreicherung", async () => {
     const health = await import("./mail-health"); const { starterBlocks } = await import("../shared/email-design");
@@ -2799,6 +2807,22 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const empty = await owner.leadops.saveEmailCampaign({ name: "Auswahl leer", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "auswahl" }, tree, design: starter.design as unknown as Record<string, unknown> } as never);
     await expect(owner.leadops.startEmailCampaign({ id: empty.id })).rejects.toThrow(/Noch keine Kontakte ausgewählt/);
   }, 40000);
+
+  it("63a. Versandzeiten: laufende Kampagnen werden einmalig auf 9:00–11:30 und 14:00–16:30 Uhr umgestellt (Drip bleibt), gespeicherte eigene Zeiten bleiben", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const starter = await owner.leadops.emailCampaignStarter();
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
+    const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "alle" }, tree, design: starter.design as unknown as Record<string, unknown> };
+    const own = await owner.leadops.saveEmailCampaign({ ...base, name: "Eigene Zeiten", sendWindow: { enabled: true, weekdays: [1, 2, 3], from: "08:00", to: "12:00", timezone: "Europe/Berlin", pauseFrom: null, pauseTo: null } } as never);
+    const old = await owner.leadops.saveEmailCampaign({ ...base, name: "Alte Zeiten" } as never);
+    // Wie vor dem Update gespeichert: 7:30–17:00, freitags bis 13 Uhr, Drip 20/Std. – ohne Kennung der neuen Zeiten
+    await db.update(emailCampaigns).set({ status: "aktiv", sendWindow: { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } }, drip: { enabled: true, perHour: 20, gapSeconds: 180 } } }).where(eq(emailCampaigns.id, old.id));
+    const moved = (await owner.leadops.getEmailCampaign({ id: old.id })).sendWindow as Record<string, unknown>;
+    expect(moved).toMatchObject({ enabled: true, from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00", days: null, drip: { enabled: true, perHour: 20, gapSeconds: 180 } });
+    expect((await owner.leadops.getEmailCampaign({ id: own.id })).sendWindow).toMatchObject({ weekdays: [1, 2, 3], from: "08:00", to: "12:00", pauseFrom: null }); // bewusst gespeichert → bleibt
+    // Danach selbst geändert → bleibt ebenfalls (keine zweite Umstellung)
+    await owner.leadops.saveEmailCampaign({ ...base, id: old.id, name: "Alte Zeiten", sendWindow: { ...moved, from: "10:00" } } as never);
+    expect((await owner.leadops.getEmailCampaign({ id: old.id })).sendWindow).toMatchObject({ from: "10:00", pauseFrom: "11:30" });
+  }, 30000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);

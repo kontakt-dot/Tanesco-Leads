@@ -1026,12 +1026,12 @@ describe("Liste direkt im Kampagnen-Editor hochladen, Standard-Versandfenster (C
     expect(imported.created).toBe(3); expect(imported.listName).toBe("Mailing Oktober");
     const lists = await call("leadops.listColdLists"); const list = lists.find((row: any) => row.listName === "Mailing Oktober"); expect(list).toMatchObject({ contacts: 3, withEmail: 2 });
     const audience = await call("leadops.previewEmailAudience", { source: "liste", listName: "Mailing Oktober" }); expect(audience.count).toBe(2); // nur Kontakte mit E-Mail
-    // Kampagne mit dem Standardfenster speichern: eingeschaltet, werktags 7:30–17:00
+    // Kampagne mit eigenem Fenster speichern: eingeschaltet, werktags 7:30–17:00 – bleibt so
     const starter = await call("leadops.emailCampaignStarter", { kind: "kaltakquise" });
     const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Mailing Oktober", fromName: "Tanesco", fromEmail: "vertrieb@tanesco.digital", replyTo: null, audience: { source: "liste", listName: "Mailing Oktober" }, tree: starter.tree, design: starter.design, sendWindow: { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" }, isTemplate: false, abSplit: 50 });
     const campaign = await call("leadops.getEmailCampaign", { id: saved.id }); expect(campaign.sendWindow).toMatchObject({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" });
-    // ältere Kampagne ohne gespeichertes Fenster: rund um die Uhr (nichts bleibt hängen)
-    const legacy = getStore().tables.emailCampaigns.find((row) => row.sendWindow === null)!; expect((await call("leadops.getEmailCampaign", { id: legacy.id })).sendWindow.enabled).toBe(false);
+    // bestehende Kampagnen (vor dem Update gespeichert) laufen einmalig auf die zwei Zeitfenster um – Drip bleibt
+    const legacy = getStore().tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!; expect((await call("leadops.getEmailCampaign", { id: legacy.id })).sendWindow).toMatchObject({ enabled: true, from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00" });
   });
 });
 

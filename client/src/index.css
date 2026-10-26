@@ -3282,3 +3282,31 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .ct-block-tools button.is-on{background:rgba(129,120,255,.2);color:#fff}
 .ct-blocks>.ct-add{margin:0 0 8px}.ct-blocks>.ct-add:last-child{margin:10px 0 0}.ct-block>.ct-add{margin:6px 10px 10px;padding:8px;border-radius:10px;border:1px dashed rgba(129,120,255,.4)}
 .ct-picker-input input,.ct-picker-input input:focus{height:auto;padding:0;border:0!important;box-shadow:none!important;outline:none!important;background:transparent!important}
+/* Verträge: Schnellauswahl und Liefergebiet */
+.ct-detail{gap:6px}
+.ct-presets{display:flex;flex-wrap:wrap;gap:5px}
+.ct-presets button{padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);font-size:12px;color:#c9c5f5;line-height:1.4}
+.ct-presets button:hover{border-color:rgba(141,133,255,.55)}
+.ct-presets button.is-on{border-color:rgba(141,133,255,.7);background:rgba(129,120,255,.22);color:#fff}
+.ct-region{display:grid;gap:8px}
+.ct-region-modes{width:100%}.ct-region-modes button{flex:1}
+.ct-region-tools{display:flex;align-items:center;gap:10px;font-size:11.5px;color:#9ca0ba}.ct-region-tools button{text-decoration:underline;color:#c4b5fd}.ct-region-tools span{margin-left:auto}
+.ct-plz{display:grid;grid-template-columns:1fr 150px;gap:8px;align-items:end}.ct-plz>.ct-presets{grid-column:1/-1}
+.ct-detail-result{font-size:11.5px;color:#9ca0ba}.ct-detail-result strong{color:#e5e1fd;font-weight:600}
+@media(max-width:600px){.ct-plz{grid-template-columns:1fr}}
+/* Builder: Schritte in den Zweigen („Dann“/„Sonst“) bleiben in ihrer Spalte – auch mit KI-Hinweis und Vorschau */
+.tree-send{grid-template-columns:minmax(0,1fr)}
+.tree-send>*,.tree-subject>*,.tree-preview>*{min-width:0;max-width:100%}
+.tree-preview-ki{min-width:0;overflow:hidden}
+@container (max-width: 400px){.tree-preview-frame{height:210px;margin:10px 8px 0;--tree-scale:.4}}
+@container (max-width: 320px){.tree-preview-frame{--tree-scale:.36}}
+/* Gesendet: was wirklich rausging – KI-Text oder Vorlage */
+.inbox-tag.is-src-ki{background:rgba(139,92,246,.18);color:#ddd6fe;border-color:rgba(167,139,250,.4)}
+.inbox-tag.is-src-vorlage,.inbox-tag.is-src-entwurf-vorlage{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.4)}
+.inbox-sent-origins{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px;padding:9px 12px;border-radius:12px;border:1px solid rgba(167,139,250,.3);background:rgba(139,92,246,.08);font-size:12.5px;color:#d6d3f0}
+.inbox-sent-origins.has-template{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.07)}
+.inbox-sent-origins span{padding:2px 9px;border-radius:999px;font-weight:600}.inbox-sent-origins .is-ki{background:rgba(139,92,246,.2);color:#ede9fe}.inbox-sent-origins .is-tpl{background:rgba(251,191,36,.18);color:#fde68a}
+.inbox-sent-origins small{flex-basis:100%;font-size:11.5px;color:#9ca0ba}
+.sent-preview-note.is-src-ki{color:#c4b5fd}.sent-preview-note.is-src-vorlage,.sent-preview-note.is-src-entwurf-vorlage{color:#fcd34d}
+.rv-note.is-template{color:#fde68a;background:rgba(251,191,36,.1)}
+.inbox-tag.is-src-hand{background:rgba(52,211,153,.14);color:#a7f3d0;border-color:rgba(52,211,153,.4)}.sent-preview-note.is-src-hand{color:#6ee7b7}

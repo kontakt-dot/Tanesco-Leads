@@ -6,7 +6,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lte, or, sql
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { draftToBlocks, modernizeTree, smoothQualifyPhrase, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow } from "../shared/email-campaigns";
+import { draftToBlocks, modernizeTree, smoothQualifyPhrase, cleanDraftText, sentSourceOf, type SentSource, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow, SEND_WINDOW_PRESET} from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -194,17 +194,32 @@ async function markAllPicked(db: Db, tenantId: number, campaignId: number) {
 }
 /** Alte Vorlagen-Reste in gespeicherten Abläufen (Begrüßung „Guten Tag {{anrede}} {{nachname}}“, tote „Termin“-Knöpfe) einmalig auffrischen – Kampagnen und Vorlagen. */
 async function repairCampaignTrees(db: Db, tenantId: number) {
-  const rows = await db.select({ id: emailCampaigns.id, tree: emailCampaigns.tree, design: emailCampaigns.design }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+  const rows = await db.select({ id: emailCampaigns.id, tree: emailCampaigns.tree, design: emailCampaigns.design, sendWindow: emailCampaigns.sendWindow, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
   for (const row of rows) {
     const current = (row.tree ?? null) as EmailTree | null; const next = current?.nodes?.length ? modernizeTree(current) : null;
     // Fußzeile einmalig leeren: der alte Standardtext („Du erhältst diese E-Mail, weil …“ bzw. Anschrift + Abmelde-Satz) verschwindet überall; eigene Texte bleiben
     const design = (row.design ?? null) as Partial<EmailDesign> | null; const footer = design?.footerText ?? "";
     const clearFooter = !design?.footerReset && Boolean(footer.trim()) && (/Du erhältst diese E-Mail, weil/i.test(footer) || footer.trim() === companyFooterText().trim() || /^Tanesco Digital GbR/i.test(footer.trim())); // nur einmal – wer die Fußzeile danach bewusst setzt, behält sie
-    if (next || clearFooter) await db.update(emailCampaigns).set({ ...(next ? { tree: next } : {}), ...(clearFooter ? { design: { ...(design ?? {}), footerText: "", footerReset: 1 } } : {}) }).where(eq(emailCampaigns.id, row.id));
+    // Versandzeiten einmalig auf die zwei Zeitfenster umstellen (9:00–11:30 und 14:00–16:30, Mo–Fr); spätere eigene Änderungen bleiben
+    const stored = (row.sendWindow ?? null) as Partial<SendWindow> | null; const moveWindow = stored?.preset !== SEND_WINDOW_PRESET;
+    const sendWindow = moveWindow ? { ...DEFAULT_SEND_WINDOW, timezone: stored?.timezone || DEFAULT_SEND_WINDOW.timezone, drip: stored?.drip ?? null } : null;
+    if (next || clearFooter || sendWindow) await db.update(emailCampaigns).set({ ...(next ? { tree: next } : {}), ...(clearFooter ? { design: { ...(design ?? {}), footerText: "", footerReset: 1 } } : {}), ...(sendWindow ? { sendWindow } : {}), updatedAt: row.updatedAt }).where(eq(emailCampaigns.id, row.id)); // automatische Auffrischung zählt nicht als „bearbeitet“
    }
-  // Gespeicherte KI-Entwürfe: holprige Formulierung „qualifiziert über … Fragen“ glätten
-  const drafts = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), like(emailCampaignRecipients.draftText, "%über%Fragen%")));
-  for (const draft of drafts) { const smooth = smoothQualifyPhrase(draft.draftText ?? ""); if (smooth !== draft.draftText) await db.update(emailCampaignRecipients).set({ draftText: smooth }).where(eq(emailCampaignRecipients.id, draft.id)); }
+  // Gespeicherte KI-Entwürfe: Aroundhome-Erwähnungen raus, holprige Formulierung „qualifiziert über … Fragen“ glätten
+  const drafts = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), or(like(emailCampaignRecipients.draftText, "%über%Fragen%"), like(emailCampaignRecipients.draftText, "%round%home%"))));
+  for (const draft of drafts) { const smooth = cleanDraftText(draft.draftText ?? ""); if (smooth !== draft.draftText) await db.update(emailCampaignRecipients).set({ draftText: smooth }).where(eq(emailCampaignRecipients.id, draft.id)); }
+}
+/** Laufende Kampagnen ohne aktuelle Versandzeiten einmalig auf die zwei Zeitfenster (9:00–11:30, 14:00–16:30 Uhr) umstellen – auch ohne dass jemand die Seite öffnet. Drip-Einstellung bleibt. */
+const windowsMigrated = new Set<number>();
+export async function migrateSendWindows(db: Db, tenantId: number): Promise<number> {
+  if (windowsMigrated.has(tenantId)) return 0; windowsMigrated.add(tenantId);
+  const rows = await db.select({ id: emailCampaigns.id, sendWindow: emailCampaigns.sendWindow, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+  let changed = 0;
+  for (const row of rows) {
+    const stored = (row.sendWindow ?? null) as Partial<SendWindow> | null; if (stored?.preset === SEND_WINDOW_PRESET) continue;
+    await db.update(emailCampaigns).set({ sendWindow: { ...DEFAULT_SEND_WINDOW, timezone: stored?.timezone || DEFAULT_SEND_WINDOW.timezone, drip: stored?.drip ?? null }, updatedAt: row.updatedAt }).where(eq(emailCampaigns.id, row.id)); changed += 1; // „zuletzt bearbeitet“ bleibt
+  }
+  return changed;
 }
 async function repairPickedDrafts(db: Db, tenantId: number) {
   await repairCampaignTrees(db, tenantId);
@@ -259,7 +274,7 @@ function normalizeSendDays(input: unknown): Record<string, SendDay> | null {
 }
 export function normalizeSendWindow(input: unknown): SendWindow {
   const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {}; const time = (value: unknown, fallback: string) => (/^\d{2}:\d{2}$/.test(String(value ?? "")) ? String(value) : fallback);
-  return { enabled: Boolean(raw.enabled), weekdays: Array.isArray(raw.weekdays) ? (raw.weekdays as unknown[]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : DEFAULT_SEND_WINDOW.weekdays, from: time(raw.from, DEFAULT_SEND_WINDOW.from), to: time(raw.to, DEFAULT_SEND_WINDOW.to), timezone: String(raw.timezone ?? DEFAULT_SEND_WINDOW.timezone).slice(0, 60) || DEFAULT_SEND_WINDOW.timezone, days: normalizeSendDays(raw.days), drip: resolveDrip(raw.drip as Partial<DripSettings> | null) };
+  return { enabled: Boolean(raw.enabled), weekdays: Array.isArray(raw.weekdays) ? (raw.weekdays as unknown[]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : DEFAULT_SEND_WINDOW.weekdays, from: time(raw.from, DEFAULT_SEND_WINDOW.from), to: time(raw.to, DEFAULT_SEND_WINDOW.to), timezone: String(raw.timezone ?? DEFAULT_SEND_WINDOW.timezone).slice(0, 60) || DEFAULT_SEND_WINDOW.timezone, days: normalizeSendDays(raw.days), drip: resolveDrip(raw.drip as Partial<DripSettings> | null), pauseFrom: /^\d{2}:\d{2}$/.test(String(raw.pauseFrom ?? "")) ? String(raw.pauseFrom) : null, pauseTo: /^\d{2}:\d{2}$/.test(String(raw.pauseTo ?? "")) ? String(raw.pauseTo) : null, preset: SEND_WINDOW_PRESET }; // gespeichert = bewusst gewählt → wird von der einmaligen Umstellung nicht mehr angefasst
 }
 /**
  * Fußzeile des Mandanten (Einstellungen → Branding): Anschrift, Webseite und Terminlink.
@@ -284,7 +299,7 @@ export async function saveEmailCampaign(db: Db, tenantId: number, userId: number
     if (before && newLists.length && before.status !== "entwurf" && !before.isTemplate) { const result = await addListsToEmailCampaign(db, tenantId, { id: input.id, listNames: newLists }, process.env.APP_URL ?? ""); return { id: input.id, enrolled: result.added, removed: dropped }; }
     return { id: input.id, enrolled: 0, removed: dropped };
   }
-  const inserted = await db.insert(emailCampaigns).values(values); return { id: Number(inserted[0]?.insertId) || 0, enrolled: 0, removed: 0 };
+  const inserted = await db.insert(emailCampaigns).values({ ...values, ...(input.sendWindow === undefined ? { sendWindow: { ...DEFAULT_SEND_WINDOW, enabled: false } } : {}) }); return { id: Number(inserted[0]?.insertId) || 0, enrolled: 0, removed: 0 }; // ohne Angabe: kein Versandfenster (wie bisher), aber schon im neuen Schema – die einmalige Umstellung lässt sie in Ruhe
 }
 export function starterCampaign(kind: "kaltakquise" | "angebot" | "aufwecken" = "kaltakquise") {
   if (kind === "angebot") return { tree: followUpTree({ first: starterBlocks("angebot"), second: starterBlocks("nachfassen") }, { firstSubject: "Noch Fragen zu unserem Angebot, {{vorname}}?", secondSubject: "Kurz nachgefragt: unser Angebot für {{firma}}", waitHours: 96 }), design: DEFAULT_DESIGN, name: "Nachfassen nach Angebot" };
@@ -548,7 +563,9 @@ export async function setEmailCampaignStatus(db: Db, tenantId: number, id: numbe
 export async function processEmailCampaigns(db: Db, appUrl: string, options: { campaignId?: number; limit?: number; ignoreDrip?: boolean } = {}) {
   const now = new Date(); const horizon = new Date(now.getTime() + 1500); const base = appUrl.replace(/\/+$/, ""); /* horizon: Toleranz für Sekundenrundung der DB */
   const campaignConditions = [eq(emailCampaigns.status, "aktiv")]; if (options.campaignId) campaignConditions.push(eq(emailCampaigns.id, options.campaignId));
-  const active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
+  let active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
+  let moved = 0; for (const tenantId of Array.from(new Set(active.map((campaign) => campaign.tenantId)))) moved += await migrateSendWindows(db, tenantId).catch(() => 0);
+  if (moved) active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); // neue Versandzeiten gelten sofort
   await enforceReplyStop(db, Array.from(new Set(active.map((campaign) => campaign.tenantId)))).catch((error) => console.error("[E-Mail-Kampagnen] Antwort-Stopp:", error instanceof Error ? error.message : error)); // Sicherheitsnetz: geantwortet → beendet, bevor etwas rausgeht
   const throttleOff = process.env.EMAIL_THROTTLE_OFF === "1"; // nur für Tests: kein Drip, kein Tageslimit
   // Zusätzliche Absender-Adressen: jeder Kontakt bekommt fest „seine" Adresse (Antworten bleiben im Faden), jede mit eigenem Tagesbudget
@@ -592,34 +609,38 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
       // Freigegebener Entwurf: ersetzt Betreff und Text der ersten E-Mail (Knopf und Signatur der Vorlage bleiben)
       // KI-Versand: der persönliche Text je Schritt – freigegebene Entwürfe für GENAU diesen Schritt, im Auto-Modus frisch von der KI geschrieben
       let draft: { subject: string; text: string } | null = null; let draftUsed = false;
+      const sentBodies: Array<{ body: string | null; source: string }> = []; // was wirklich rausging: KI-Text (bzw. Ersatz-Entwurf) oder Vorlage – für „Gesendet“
+      let draftSource: string | null = null;
       const sentIds: Array<string | null> = []; // Message-IDs der gesendeten Mails – damit Antworten sicher zugeordnet werden (In-Reply-To), egal von welcher Adresse
       const pool = await poolFor(campaign.tenantId); const sender = pool ? pool.pick(recipient.email) : null; // welche Absender-Adresse diesen Kontakt anschreibt
-      const result = await advanceRecipient(campaignTree, state, now, async (nodeIn, subjectIn) => { let node = nodeIn; let subject = subjectIn;
+      const result = await advanceRecipient(campaignTree, state, now, async (nodeIn, subjectIn) => { let node = nodeIn; let subject = subjectIn; let usedNow = false;
+        if ((kiModus === "freigabe" || kiModus === "auto") && draftUsed) return { ok: false, subject: subjectIn, defer: "Nächste E-Mail im nächsten Lauf – mit eigenem KI-Text" }; // nie eine Vorlage hinterher
         if (kiModus === "freigabe" && !draftUsed) {
-          const freshDraft = (await db.select({ draftState: emailCampaignRecipients.draftState, draftNodeId: emailCampaignRecipients.draftNodeId, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, sentCount: emailCampaignRecipients.sentCount }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0];
+          const freshDraft = (await db.select({ draftState: emailCampaignRecipients.draftState, draftNodeId: emailCampaignRecipients.draftNodeId, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, draftSource: emailCampaignRecipients.draftSource, sentCount: emailCampaignRecipients.sentCount }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0];
           const approved = freshDraft && freshDraft.draftState === "freigegeben" && freshDraft.draftSubject && freshDraft.draftText && draftFitsNode(freshDraft, nodeIn.id);
           if (!approved) { // noch keine Freigabe für DIESEN Schritt: Entwurf schreiben lassen (damit er unter „Freigeben“ liegt) und warten
             const hasDraft = freshDraft && freshDraft.draftState === "entwurf" && draftFitsNode(freshDraft, nodeIn.id);
             if (!hasDraft && kiBudget > 0) { kiBudget -= 1; await draftForRecipient(db, campaign.tenantId, recipient.id, { nodeId: nodeIn.id }).catch(() => null); }
             return { ok: false, subject: subjectIn, defer: "Wartet auf deine Freigabe" };
           }
-          draft = { subject: freshDraft.draftSubject!, text: freshDraft.draftText! };
+          draft = { subject: freshDraft.draftSubject!, text: freshDraft.draftText! }; draftSource = freshDraft.draftSource ?? "ki";
         }
         if (kiModus === "auto" && !draftUsed) { // KI schreibt diese E-Mail jetzt – nur der gewählte Ansatz; klappt es nicht, geht die Vorlage raus
           const freshAuto = (await db.select({ draftState: emailCampaignRecipients.draftState, draftNodeId: emailCampaignRecipients.draftNodeId, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, draftSource: emailCampaignRecipients.draftSource, sentCount: emailCampaignRecipients.sentCount }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0];
           const usable = freshAuto && freshAuto.draftSubject && freshAuto.draftText && draftFitsNode(freshAuto, nodeIn.id) && (freshAuto.draftState === "freigegeben" || freshAuto.draftState === "entwurf") && freshAuto.draftSource !== "vorlage";
-          if (usable) draft = { subject: freshAuto.draftSubject!, text: freshAuto.draftText! };
-          else if (process.env.ANTHROPIC_API_KEY && kiBudget > 0) { kiBudget -= 1; const made = await draftForRecipient(db, campaign.tenantId, recipient.id, { nodeId: nodeIn.id, onlyApproach: kiAnsatz }).catch(() => null); if (made && (made.source === "ki" || made.source === "kiweb")) draft = { subject: made.subject, text: made.text }; }
-          else if (process.env.ANTHROPIC_API_KEY && kiBudget <= 0) return { ok: false, subject: subjectIn, defer: "KI schreibt noch – nächster Lauf" };
+          if (usable) { draft = { subject: freshAuto.draftSubject!, text: freshAuto.draftText! }; draftSource = freshAuto.draftSource ?? "ki"; }
+          else if (!process.env.ANTHROPIC_API_KEY) { await db.update(emailCampaignRecipients).set({ lastError: "KI ist auf dem Server nicht eingerichtet – die E-Mail wartet (keine Vorlage als Ersatz)" }).where(eq(emailCampaignRecipients.id, recipient.id)); return { ok: false, subject: subjectIn, defer: "KI ist nicht eingerichtet – keine Vorlage als Ersatz, die E-Mail wartet" }; }
+          else if (kiBudget > 0) { kiBudget -= 1; const made = await draftForRecipient(db, campaign.tenantId, recipient.id, { nodeId: nodeIn.id, onlyApproach: kiAnsatz }).catch(() => null); if (made && (made.source === "ki" || made.source === "kiweb")) { draft = { subject: made.subject, text: made.text }; draftSource = made.source; } else return { ok: false, subject: subjectIn, defer: "KI konnte noch nicht schreiben – neuer Versuch im nächsten Lauf (keine Vorlage als Ersatz)" }; }
+          else return { ok: false, subject: subjectIn, defer: "KI schreibt noch – nächster Lauf" };
         }
-        if (draft && !draftUsed) { draftUsed = true; node = { ...nodeIn, subject: draft.subject, subjectB: null, blocks: draftToBlocks(draft.text, nodeIn.blocks) }; subject = draft.subject; }
+        if (draft && !draftUsed) { draftUsed = true; usedNow = true; node = { ...nodeIn, subject: draft.subject, subjectB: null, blocks: draftToBlocks(draft.text, nodeIn.blocks) }; subject = draft.subject; }
         const rendered = (() => { const d = design(campaign); // persönlicher Versand: kein Zählpixel, keine umgeschriebenen Links – nur der Abmelde-Link bleibt (gesetzlich nötig)
         return renderNode(node, d, values, d.plain ? { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature } : { pixelUrl: `${base}/api/mail/o/${recipient.token}.gif`, wrapLink: (url) => `${base}/api/mail/c/${recipient.token}?u=${encodeURIComponent(url)}`, unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature }); })(); const fresh = (await db.select({ repliedAt: emailCampaignRecipients.repliedAt, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]; // Antwort-Stopp: direkt vor dem Senden noch einmal nachsehen
         if (fresh?.repliedAt && stopsOnReply(campaign)) return { ok: false, subject: rendered.subject, stopped: REPLY_STOP_NOTE }; if (fresh && !["wartet", "laeuft"].includes(fresh.status)) return { ok: false, subject: rendered.subject, stopped: "Empfänger inzwischen beendet – keine weitere E-Mail" };
-        const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text, attachments: (node.attachments ?? []).map((file) => ({ filename: file.filename, content: file.contentBase64, contentType: file.contentType, encoding: "base64" as const })) }, { db, tenantId: campaign.tenantId, from: sender ? { name: sender.fromName, email: sender.fromEmail } : null }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); if (sent.ok) sentIds.push(normalizeMessageId(sent.messageId)); return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign), stopOnReply: stopsOnReply(campaign) });
+        const sent = await deliverMail({ to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text, attachments: (node.attachments ?? []).map((file) => ({ filename: file.filename, content: file.contentBase64, contentType: file.contentType, encoding: "base64" as const })) }, { db, tenantId: campaign.tenantId, from: sender ? { name: sender.fromName, email: sender.fromEmail } : null }); if (!sent.ok) await db.update(emailCampaignRecipients).set({ lastError: sent.note ?? "Versand fehlgeschlagen" }).where(eq(emailCampaignRecipients.id, recipient.id)); if (sent.ok) { sentIds.push(normalizeMessageId(sent.messageId)); sentBodies.push(usedNow && draft ? { body: cleanDraftText(draft.text.trim()), source: draftSource === "vorlage" ? "entwurf-vorlage" : draftSource === "hand" ? "hand" : "ki" } : { body: null, source: "vorlage" }); } return { ok: sent.ok, subject: rendered.subject }; }, { window: sendWindowOf(campaign), stopOnReply: stopsOnReply(campaign) });
       await db.update(emailCampaignRecipients).set({ nodeId: result.state.nodeId, nextActionAt: result.state.nextActionAt, status: result.state.status, sentCount: result.state.sentCount, lastSentAt: result.state.lastSentAt, ...(draftUsed && result.state.sentCount > recipient.sentCount ? { draftState: null, draftNodeId: null } : {}) }).where(eq(emailCampaignRecipients.id, recipient.id)); // genutzter Entwurf ist verbraucht – der nächste Schritt bekommt einen frischen
       let sentIndex = 0;
-      for (const event of result.events) await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note, sender: event.kind === "gesendet" ? sender?.fromEmail ?? null : null, messageId: event.kind === "gesendet" ? sentIds[sentIndex++] ?? null : null });
+      for (const event of result.events) { const at = event.kind === "gesendet" ? sentIndex++ : -1; await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note, sender: at >= 0 ? sender?.fromEmail ?? null : null, messageId: at >= 0 ? sentIds[at] ?? null : null, body: at >= 0 ? sentBodies[at]?.body ?? null : null, bodySource: at >= 0 ? sentBodies[at]?.source ?? null : null }); }
       const sentNow = result.events.filter((event) => event.kind === "gesendet").length; sentInRun += sentNow; if (sentNow && dayLeft.has(campaign.tenantId)) dayLeft.set(campaign.tenantId, (dayLeft.get(campaign.tenantId) ?? 0) - sentNow);
       const failedNow = result.events.filter((event) => event.kind === "fehler"); if (failedNow.length) { failedInRun += failedNow.length; lastFailure = `${recipient.email}: ${(await db.select({ lastError: emailCampaignRecipients.lastError }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]?.lastError ?? "Versand fehlgeschlagen"}`; }
       processed += 1;
@@ -1092,12 +1113,18 @@ export async function sentMailPreview(db: Db, tenantId: number, id: string) {
     if (!recipient || !campaign) throw new Error("Empfänger oder Kampagne gibt es nicht mehr.");
     const node = tree(campaign).nodes.find((item) => item.id === event.nodeId && item.type === "send") as Extract<EmailNode, { type: "send" }> | undefined;
     const lead = recipient.leadId ? (await db.select().from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] : null;
+    if (!node && event.body) return { kind: "kampagne" as const, to: recipient.email, name: recipient.name, subject: event.subject ?? "", at: event.createdAt, campaignName: campaign.name, html: `<div style="font-family:Inter,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#101828;max-width:600px;margin:0 auto;padding:18px 16px;white-space:pre-wrap">${escape(event.body)}</div>`, note: "genau so verschickt (der Schritt wurde inzwischen aus der Kampagne entfernt).", source: (event.bodySource === "hand" ? "hand" : event.bodySource === "entwurf-vorlage" ? "entwurf-vorlage" : "ki") as SentSource, exact: true };
     if (!node) return { kind: "kampagne" as const, to: recipient.email, name: recipient.name, subject: event.subject ?? "", at: event.createdAt, campaignName: campaign.name, html: `<p style="font-family:sans-serif;color:#475569">Der Schritt dieser E-Mail wurde inzwischen aus der Kampagne entfernt – der Inhalt lässt sich nicht mehr nachbauen. Betreff damals: „${escape(event.subject ?? "")}“.</p>`, note: "Schritt existiert nicht mehr" };
     const base = (process.env.APP_URL ?? "").replace(/\/+$/, "");
     const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: extraFieldsOf(lead?.metadata) }, `${base}/api/mail/u/${recipient.token}`);
     const signature = await signatureFor(db, tenantId, base).then((result) => ({ html: result.html, text: result.text })).catch(() => null);
-    const rendered = renderNode(node, design(campaign), values, { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject: event.subject ?? undefined, preview: true, signature });
-    return { kind: "kampagne" as const, to: recipient.email, name: recipient.name, subject: rendered.subject, at: event.createdAt, campaignName: campaign.name, html: rendered.html, note: "Nachgebaut aus dem Schritt und den Empfängerdaten – so sah die E-Mail beim Versand aus." };
+    // Was ging wirklich raus? Ab jetzt gespeichert (body/bodySource); bei älteren E-Mails aus dem letzten Entwurf und dem Betreff erschlossen
+    const origin = sentSourceOf({ bodySource: event.bodySource, subject: event.subject, draftSubject: recipient.draftSubject, draftSource: recipient.draftSource, templateSubjects: [node.subject, node.subjectB], kiOn: kiModusOf(campaign) !== "aus" });
+    const body = event.body ?? (recipient.draftText && recipient.draftSubject?.trim() && recipient.draftSubject.trim() === (event.subject ?? "").trim() ? recipient.draftText : null);
+    const sentNode = body ? { ...node, subject: event.subject ?? node.subject, subjectB: null, blocks: draftToBlocks(body, node.blocks) } : node;
+    const rendered = renderNode(sentNode, design(campaign), values, { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject: event.subject ?? undefined, preview: true, signature });
+    const note = origin.source === "vorlage" ? "Vorlage des Schritts – diese E-Mail ging ohne KI-Text raus." : origin.source === "entwurf-vorlage" ? (body ? "Ersatz-Entwurf aus der Vorlage – die KI konnte für diesen Kontakt keinen eigenen Text schreiben. Genau so verschickt." : "Ersatz-Entwurf aus der Vorlage (Drittanbieter-Text) – die KI konnte für diesen Kontakt keinen eigenen Text schreiben.") : origin.source === "hand" ? "von Hand geändert – genau so verschickt." : body ? "genau so verschickt." : "Diese E-Mail ging mit KI-Text raus (der Betreff oben ist echt). Den genauen Text hat die Software bei älteren E-Mails nicht gespeichert – ab jetzt wird jeder Text gespeichert. Unten nur die Vorlage zur Orientierung.";
+    return { kind: "kampagne" as const, to: recipient.email, name: recipient.name, subject: event.subject ?? rendered.subject, at: event.createdAt, campaignName: campaign.name, html: rendered.html, note, source: origin.source, exact: Boolean(body) || origin.source === "vorlage" };
   }
   const messageId = Number(id.slice(1));
   const row = (await db.select().from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.id, messageId))).limit(1))[0];

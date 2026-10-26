@@ -7,7 +7,7 @@
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
-import { smoothQualifyPhrase, approachLabel, DRAFT_APPROACHES, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
+import { cleanDraftText, PORTAL_RE, smoothQualifyPhrase, approachLabel, DRAFT_APPROACHES, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { invokeLLM } from "./_core/llm";
 import { readWebsiteText } from "./lead-finder";
@@ -57,7 +57,7 @@ async function loadContext(db: Db, tenantId: number, recipient: Recipient, nodeI
   const node = (nodeId ? tree.nodes.find((item): item is Extract<EmailNode, { type: "send" }> => item.id === nodeId && item.type === "send") : null) ?? dueSendNode(tree, recipient);
   if (!node) throw new Error("Die Kampagne hat keine E-Mail im Ablauf.");
   const phone = await senderPhone(db, tenantId);
-  const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: extraFieldsOf(lead?.metadata), phone });
+  const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: Object.fromEntries(Object.entries(extraFieldsOf(lead?.metadata)).filter(([key, value]) => !PORTAL_RE.test(key) && !PORTAL_RE.test(String(value ?? "")))), phone }); // Aroundhome-Daten bekommt die KI gar nicht erst zu sehen
   return { campaign, lead, node, values, phone };
 }
 
@@ -93,6 +93,7 @@ Vielen Dank"
 
 3) "frei" – Freier Vorschlag: dein eigener, anderer Einstieg (z. B. eine konkrete Frage, eine Beobachtung zur Region oder zum Geschäftsmodell), genauso persönlich, 80–140 Wörter.
 
+Aroundhome erwähnst du NIE – weder den Namen noch Zahlen, Antworten, Bewertungen oder Anfragen von dort, auch nicht umschrieben. Auch keine anderen Portale oder Vermittler beim Namen. Bewertungen darfst du nur ansprechen, wenn in den Daten ausdrücklich Google-Bewertungen stehen – dann als „Google-Bewertungen“ und nur mit genau diesen Zahlen; sonst gar keine Bewertungen erwähnen.
 Formulierung zur Qualifizierung immer so: „in der Regel anhand von zehn Fragen telefonisch vorqualifiziert“ – nie „qualifiziert über … Fragen“.
 Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlich, in Nachfass-Mails in ein bis zwei Sätzen): das Test-Angebot (20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert) und wie wir qualifizieren (in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet). Den Firmennamen des Betriebs nennen wir dabei NICHT – das darf nirgends stehen. Fehlt von den Pflichtinhalten etwas, ist die E-Mail falsch.
 
@@ -182,7 +183,7 @@ export function dropCompanyNameClaim(text: string): string {
 }
 /** Alle Regeln auf einen Entwurf anwenden – gilt für KI-Texte wie für Vorlagen-Rückfälle. */
 export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean }): string {
-  return smoothQualifyPhrase(ensureClosing(ensureFacts(fixGreeting(dropCompanyNameClaim(text.trim()), options.greeting), options.followUp), options.phone));
+  return cleanDraftText(ensureClosing(ensureFacts(fixGreeting(dropCompanyNameClaim(text.trim()), options.greeting), options.followUp), options.phone));
 }
 type FollowUpInfo = { index: number; sentSubjects: string[] } | null; // Nr. der E-Mail im Ablauf (0 = Erst-E-Mail) und was schon raus ist
 async function aiDrafts(base: { subject: string; text: string }, info: Record<string, string>, site: { url: string; text: string } | null = null, options: { approaches?: DraftApproach[]; followUp?: FollowUpInfo; stepLabel?: string | null; phone?: string | null } = {}): Promise<DraftOption[] | null> {
@@ -218,9 +219,10 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const base = templateDraft(node, values);
   const meta = (lead?.metadata ?? {}) as Record<string, unknown>;
   const website = websiteOf(lead?.metadata, recipient.email);
-  const info: Record<string, string> = { Firma: values.firma, Ansprechpartner: [values.anrede, values.vorname, values.nachname].filter(Boolean).join(" "), Ort: values.stadt, "PLZ": String(lead?.postcode ?? ""), Webseite: website ?? String(meta.website ?? meta.webseite ?? ""), Liste: String(lead?.listName ?? ""), ...Object.fromEntries(Object.entries(extraFieldsOf(lead?.metadata)).map(([key, value]) => [key, String(value)])) };
+  const info: Record<string, string> = { Firma: values.firma, Ansprechpartner: [values.anrede, values.vorname, values.nachname].filter(Boolean).join(" "), Ort: values.stadt, "PLZ": String(lead?.postcode ?? ""), Webseite: website ?? String(meta.website ?? meta.webseite ?? ""), Liste: String(lead?.listName ?? ""), ...Object.fromEntries(Object.entries(extraFieldsOf(lead?.metadata)).filter(([key, value]) => !PORTAL_RE.test(key) && !PORTAL_RE.test(String(value))).map(([key, value]) => [key, String(value)])) }; // Portal-Daten (Aroundhome) gehen nie an die KI
   // Webseite lesen (Startseite + Impressum + Leistungen/Über uns) – die KI greift daraus konkrete Punkte auf
-  const site = process.env.ANTHROPIC_API_KEY && website ? await readWebsiteText(website).catch(() => null) : null;
+  const rawSite = process.env.ANTHROPIC_API_KEY && website ? await readWebsiteText(website).catch(() => null) : null;
+  const site = rawSite ? { ...rawSite, text: rawSite.text.split(/\n+/).filter((line) => !PORTAL_RE.test(line)).join("\n") } : null; // Portal-Hinweise der Webseite (z. B. Aroundhome-Siegel) nicht an die KI
   const ansatz = kiAnsatzOf(campaign);
   const followUp: FollowUpInfo = { index: sentEvents.length, sentSubjects: sentEvents.map((event) => event.subject ?? "").filter(Boolean).slice(-4) };
   const finish = (text: string) => finishDraft(text, { greeting: values.begruessung, phone, followUp: sentEvents.length > 0 });
@@ -243,19 +245,20 @@ export async function approveAllDrafts(db: Db, tenantId: number, campaignId: num
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
   const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
-  let changed = 0; let withoutDraft = 0;
+  let changed = 0; let withoutDraft = 0; let templateOnly = 0;
   for (const row of rows) {
     const node = dueSendNode(tree, row); if (!node) continue;
     const fits = Boolean(row.draftState) && draftFitsNode(row, node.id) && Boolean(row.draftSubject?.trim()) && (row.draftText ?? "").trim().length >= 10;
     if (approve) {
       if (!fits) { withoutDraft += 1; continue; }
       if (row.draftState === "freigegeben") continue;
+      if (row.draftSource === "vorlage") { templateOnly += 1; continue; } // Ersatz aus der Vorlage (KI hat nicht geschrieben) – nie per „Alle freigeben“, nur bewusst einzeln
       await db.update(emailCampaignRecipients).set({ draftState: "freigegeben", draftNodeId: node.id, draftAt: new Date(), ...(row.nodeId === node.id ? { nextActionAt: new Date(Date.now() - 2000) } : {}) }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
     } else if (row.draftState === "freigegeben" && fits) {
       await db.update(emailCampaignRecipients).set({ draftState: "entwurf", draftAt: new Date() }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
     }
   }
-  return approve ? { approved: changed, withoutDraft } : { reverted: changed, withoutDraft: 0 };
+  return approve ? { approved: changed, withoutDraft, templateOnly } : { reverted: changed, withoutDraft: 0, templateOnly: 0 };
 }
 /** Je E-Mail-Schritt das jüngste echte Beispiel: so hat die KI die E-Mail für einen Kontakt tatsächlich geschrieben (für die Vorschau im Builder). */
 export async function draftSamples(db: Db, tenantId: number, campaignId: number) {
@@ -309,6 +312,6 @@ export async function saveDraft(db: Db, tenantId: number, input: { recipientId: 
   if (sent.length) throw new Error(`Die E-Mail „${node.label?.trim() || node.subject}“ ist an diesen Kontakt schon raus.`);
   const subject = input.subject.trim().slice(0, 300); const text = input.text.trim();
   if (input.approve && (!subject || text.length < 10)) throw new Error("Bitte Betreff und Text ausfüllen.");
-  await db.update(emailCampaignRecipients).set({ draftSubject: subject || null, draftText: text || null, draftNodeId: node.id, draftState: input.approve ? "freigegeben" : "entwurf", draftSource: recipient.draftSource ?? "hand", ...(input.approach ? { draftApproach: input.approach } : {}), draftAt: new Date(), ...(input.approve && recipient.nodeId === node.id ? { nextActionAt: new Date(Date.now() - 2000) } : {}) }).where(eq(emailCampaignRecipients.id, recipient.id));
+  await db.update(emailCampaignRecipients).set({ draftSubject: subject || null, draftText: text || null, draftNodeId: node.id, draftState: input.approve ? "freigegeben" : "entwurf", draftSource: subject !== (recipient.draftSubject ?? "").trim() || text !== (recipient.draftText ?? "").trim() ? "hand" : recipient.draftSource ?? "hand", ...(input.approach ? { draftApproach: input.approach } : {}), draftAt: new Date(), ...(input.approve && recipient.nodeId === node.id ? { nextActionAt: new Date(Date.now() - 2000) } : {}) }).where(eq(emailCampaignRecipients.id, recipient.id));
   return { id: recipient.id, draftState: input.approve ? "freigegeben" as const : "entwurf" as const };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildIcs, callCounterText, callResultOfDialer, CALL_RESULTS, dueBucket, fillMessage, followUpDue, groupByDue, leadScore, ownerSequence, splitShares, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, normalizeSourceOrder, pickOwner, shareSequence, distributionActive, effectiveDistribution, pipelineCsv, pipelineValueSummary, stageProbability, staleInfo, temperatureOf, weekDays } from "../shared/pipeline-extras";
-import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, followUpTree, hasAbTest, moveNodeInTree, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
+import { abVariantFor, advanceRecipient, DEFAULT_SEND_WINDOW, SEND_WINDOW_PRESET, windowTimes, followUpTree, hasAbTest, moveNodeInTree, nextSendSlot, resolveSendWindow, subjectFor, summarizeCampaign, validateTree, windowForDay, type EmailNode, type RecipientState } from "../shared/email-campaigns";
 import { companyFooterText, DEFAULT_DESIGN, linkifyFooter, renderEmailHtml } from "../shared/email-design";
 import { starterBlocks } from "../shared/email-design";
 import { contactedStage, PIPELINE_STAGES, workingStage } from "../shared/sales-pipeline";
@@ -102,16 +102,19 @@ describe("E-Mail-Kampagnen: A/B-Test, Versandfenster, Link-Bedingung, Sperrliste
     const stats = summarizeCampaign([{ status: "fertig", sentCount: 1, openedAt: now, clickedAt: null, repliedAt: null, variant: "A" }, { status: "fertig", sentCount: 1, openedAt: null, clickedAt: null, repliedAt: null, variant: "B" }, { status: "bounce", sentCount: 1, openedAt: null, clickedAt: null, repliedAt: null, variant: "B" }]);
     expect(stats.abTest).toMatchObject({ winner: "A" }); expect(stats.abTest?.a.openRate).toBe(100); expect(stats.bounced).toBe(1); expect(stats.bounceRate).toBe(33);
   });
-  it("Standard-Versandfenster: werktags 7:30–17:00 Uhr Berlin, freitags nur bis 13:00; ältere Kampagnen ohne Fenster senden rund um die Uhr", () => {
-    expect(DEFAULT_SEND_WINDOW).toEqual({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } } });
-    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 5, 0)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-13T05:30:00.000Z"); // Dienstag 7:00 Berlin → 7:30
-    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 15, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-14T05:30:00.000Z"); // Dienstag 17:30 Berlin → Mittwoch 7:30
-    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 15, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-19T05:30:00.000Z"); // Freitag 17:30 → Montag 7:30
-    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 11, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-19T05:30:00.000Z"); // Freitag 13:30 Berlin → nach 13 Uhr zu, also Montag 7:30
-    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 9, 0)), DEFAULT_SEND_WINDOW)).toBeNull(); // Freitag 11:00 Berlin → noch im Fenster
+  it("Standard-Versandfenster: werktags zwei Zeitfenster 9:00–11:30 und 14:00–16:30 Uhr Berlin; dazwischen Pause", () => {
+    expect(DEFAULT_SEND_WINDOW).toEqual({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00", timezone: "Europe/Berlin", days: null, preset: SEND_WINDOW_PRESET });
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 5, 0)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-13T07:00:00.000Z"); // Dienstag 7:00 Berlin → 9:00
     expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 8, 0)), DEFAULT_SEND_WINDOW)).toBeNull(); // Dienstag 10:00 Berlin → sofort
-    expect(resolveSendWindow(null)).toMatchObject({ enabled: false, from: "07:30", to: "17:00" });
-    expect(resolveSendWindow({ enabled: true, from: "09:00" })).toMatchObject({ enabled: true, from: "09:00", to: "17:00", weekdays: [1, 2, 3, 4, 5] });
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 10, 0)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-13T12:00:00.000Z"); // Dienstag 12:00 Berlin (Pause) → 14:00
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 13, 0)), DEFAULT_SEND_WINDOW)).toBeNull(); // Dienstag 15:00 Berlin → sofort
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 14, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-14T07:00:00.000Z"); // Dienstag 16:30 Berlin → Mittwoch 9:00
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 16, 15, 30)), DEFAULT_SEND_WINDOW)?.toISOString()).toBe("2026-10-19T07:00:00.000Z"); // Freitag 17:30 → Montag 9:00
+    expect(windowTimes(DEFAULT_SEND_WINDOW)).toBe("09:00–11:30 und 14:00–16:30");
+    expect(windowTimes({ ...DEFAULT_SEND_WINDOW, pauseFrom: null, pauseTo: null })).toBe("09:00–16:30");
+    expect(nextSendSlot(new Date(Date.UTC(2026, 9, 13, 10, 0)), { ...DEFAULT_SEND_WINDOW, pauseFrom: null, pauseTo: null })).toBeNull(); // ohne Pause durchgehend
+    expect(resolveSendWindow(null)).toMatchObject({ enabled: false, from: "09:00", to: "16:30" });
+    expect(resolveSendWindow({ enabled: true, from: "08:00" })).toMatchObject({ enabled: true, from: "08:00", to: "16:30", weekdays: [1, 2, 3, 4, 5] });
     expect(resolveSendWindow({ enabled: false })).toMatchObject({ enabled: false });
   });
   it("hält das Versandfenster ein (Zeitzone, Wochentage) und wartet sonst bis zum nächsten Fenster", async () => {

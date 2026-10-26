@@ -40,9 +40,14 @@ export function dripBudget(drip: DripSettings, sentLastHour: number, lastSentAt:
   if (lastSentAt && now.getTime() - lastSentAt.getTime() < gap) return 0;
   return Math.min(left, Math.max(1, Math.floor(60 / drip.gapSeconds))); // je Minuten-Durchlauf höchstens so viele, wie der Abstand zulässt
 }
-export type SendWindow = { enabled: boolean; weekdays: number[]; from: string; to: string; timezone: string; days?: Record<string, SendDay> | null; drip?: DripSettings | null };
-/** Standard für neue Kampagnen: werktags 7:30–17:00 Uhr, freitags nur bis 13:00 Uhr (Berlin). Fällige E-Mails außerhalb warten bis zum nächsten Fenster. */
-export const DEFAULT_SEND_WINDOW: SendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } } };
+export type SendWindow = { enabled: boolean; weekdays: number[]; from: string; to: string; timezone: string; days?: Record<string, SendDay> | null; drip?: DripSettings | null; pauseFrom?: string | null; pauseTo?: string | null; preset?: string | null }; // Pause: dazwischen wird nicht gesendet (zwei Zeitfenster am Tag)
+/** Standard: werktags zwei Zeitfenster, 9:00–11:30 und 14:00–16:30 Uhr (Berlin) – die Zeiten, die am besten konvertieren. Fällige E-Mails außerhalb warten bis zum nächsten Fenster. */
+export const SEND_WINDOW_PRESET = "2fenster-0900-1130-1400-1630";
+export const DEFAULT_SEND_WINDOW: SendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00", timezone: "Europe/Berlin", days: null, preset: SEND_WINDOW_PRESET };
+/** Gilt die Pause (z. B. 11:30–14:00)? Nur wenn sie innerhalb von Von–Bis liegt. */
+export const pauseOf = (window: Pick<SendWindow, "pauseFrom" | "pauseTo">) => (window.pauseFrom && window.pauseTo && window.pauseFrom < window.pauseTo ? { from: window.pauseFrom, to: window.pauseTo } : null);
+/** Lesbar: „09:00–11:30 und 14:00–16:30“ oder „07:30–17:00“. */
+export const windowTimes = (window: SendWindow, day?: SendDay | null) => { const from = day?.from ?? window.from; const to = day?.to ?? window.to; const pause = pauseOf(window); return pause && pause.from > from && pause.to < to ? `${from}–${pause.from} und ${pause.to}–${to}` : `${from}–${to}`; };
 /** Gespeichertes Fenster einer Kampagne auflösen: fehlende Felder mit dem Standard füllen; ohne gespeichertes Fenster (ältere Kampagnen) bleibt der Versand rund um die Uhr. */
 export const resolveSendWindow = (stored: Partial<SendWindow> | null | undefined): SendWindow => stored ? { ...DEFAULT_SEND_WINDOW, ...stored, days: stored.days === undefined ? DEFAULT_SEND_WINDOW.days : stored.days } : { ...DEFAULT_SEND_WINDOW, enabled: false };
 /** Zeiten für einen Wochentag: Ausnahme aus `days`, sonst das allgemeine von/bis. `null`, wenn an dem Tag gar nicht gesendet wird. */
@@ -115,7 +120,7 @@ const toMinutes = (time: string) => { const [hours, minutes] = time.split(":").m
 export function nextSendSlot(now: Date, window: SendWindow | null | undefined): Date | null {
   if (!window || !window.enabled) return null;
   /** Liegt dieser Zeitpunkt im Fenster seines Wochentags? Jeder Tag kann eigene Zeiten haben (z. B. Freitag bis 13 Uhr). */
-  const inside = (date: Date) => { const parts = zonedParts(date, window.timezone); const day = windowForDay(window, parts.weekday); return day ? parts.minutes >= toMinutes(day.from) && parts.minutes < toMinutes(day.to) : false; };
+  const inside = (date: Date) => { const parts = zonedParts(date, window.timezone); const day = windowForDay(window, parts.weekday); if (!day || parts.minutes < toMinutes(day.from) || parts.minutes >= toMinutes(day.to)) return false; const pause = pauseOf(window); return !(pause && parts.minutes >= toMinutes(pause.from) && parts.minutes < toMinutes(pause.to)); };
   if (inside(now)) return null;
   for (let step = 0; step < 8 * 24 * 4; step += 1) { // in Viertelstunden bis zu 8 Tage vorausschauen
     const candidate = new Date(now.getTime() + step * 15 * 60_000);
@@ -416,6 +421,26 @@ export function blocksToPlainText(blocks: EmailBlock[], values: Record<string, s
   return blocks.map((block) => block.type === "text" ? fill(block.text) : block.type === "bullets" ? block.items.map((item) => `• ${fill(item)}`).join("\n") : "").filter((text) => text.trim()).join("\n\n").replace(/[ \t]{2,}/g, " ").replace(/ ,/g, ",").trim(); // leere Platzhalter (z. B. fehlende Anrede) hinterlassen keine Doppel-Leerzeichen
 }
 /** Freigegebener Entwurf → Bausteine: der Text ersetzt Überschrift/Text/Aufzählung, Knopf und Signatur der Vorlage bleiben. */
+/* ── Was ging wirklich raus? KI-Text, Ersatz-Entwurf aus der Vorlage oder die Vorlage des Schritts ── */
+export type SentSource = "ki" | "hand" | "entwurf-vorlage" | "vorlage";
+export const SENT_SOURCE_LABEL: Record<SentSource, string> = { ki: "KI-Text", hand: "Eigener Text", "entwurf-vorlage": "Ersatz aus Vorlage", vorlage: "Vorlage" };
+const THIRD_PARTY_SUBJECT = "Direkte Zusammenarbeit statt Umweg über Zwischenhändler";
+/** Passt ein gesendeter Betreff zur Vorlage des Schritts (Platzhalter beliebig gefüllt)? */
+export function subjectFromTemplate(template: string | null | undefined, actual: string | null | undefined): boolean {
+  const tpl = (template ?? "").trim(); const value = (actual ?? "").trim(); if (!tpl || !value) return false;
+  const pattern = tpl.split(/\{\{\s*[a-zA-Z0-9_]+\s*\}\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s\\S]*?");
+  try { return new RegExp(`^${pattern}$`, "i").test(value); } catch { return tpl === value; }
+}
+/** Herkunft einer gesendeten Kampagnen-E-Mail – gespeichert (ab jetzt) oder aus Betreff und letztem Entwurf erschlossen (ältere E-Mails). */
+export function sentSourceOf(input: { bodySource?: string | null; subject?: string | null; draftSubject?: string | null; draftSource?: string | null; templateSubjects?: Array<string | null | undefined>; kiOn?: boolean }): { source: SentSource; known: boolean } {
+  const stored = input.bodySource; if (stored) return { source: stored === "vorlage" ? "vorlage" : stored === "entwurf-vorlage" || stored === "vorlage-entwurf" ? "entwurf-vorlage" : stored === "hand" ? "hand" : "ki", known: true };
+  const subject = (input.subject ?? "").trim();
+  if (subject && input.draftSubject?.trim() === subject) return { source: input.draftSource === "vorlage" ? "entwurf-vorlage" : input.draftSource === "hand" ? "hand" : "ki", known: true };
+  if (subject.startsWith(THIRD_PARTY_SUBJECT)) return { source: "entwurf-vorlage", known: false };
+  if (input.kiOn === false) return { source: "vorlage", known: false }; // Kampagne ohne KI → Vorlage
+  if ((input.templateSubjects ?? []).some((template) => subjectFromTemplate(template, subject))) return { source: "vorlage", known: false };
+  return { source: "ki", known: false };
+}
 /** Holprige Formulierung „telefonisch qualifiziert über (in der Regel) 10 Fragen“ → „in der Regel anhand von zehn Fragen telefonisch vorqualifiziert“ – für gespeicherte Vorlagen, KI-Entwürfe und den Versand. */
 export function smoothQualifyPhrase(text: string): string {
   const cap = (match: string, value: string) => (/^[A-ZÄÖÜ]/.test(match) ? value.charAt(0).toUpperCase() + value.slice(1) : value);
@@ -423,9 +448,21 @@ export function smoothQualifyPhrase(text: string): string {
     .replace(/(?:telefonisch\s+)?(?:vor)?qualifiziert(?:\s*[–,-]\s*|\s+)(?:in der Regel\s+|rund\s+|meist\s+)?über\s+(?:in der Regel\s+|rund\s+)?(?:10|zehn)\s+(?:Qualifizierungs)?[Ff]ragen(?:\s+am Telefon)?(\s*–(?=\s+und\b))?/gi, (match) => cap(match, "in der Regel anhand von zehn Fragen telefonisch vorqualifiziert"))
     .replace(/((?:Vor)?[Qq]ualifizierung(?:\s+jedes Interessenten)?)(?:\s*[–,-]\s*|\s+)(?:in der Regel\s+)?über\s+(?:in der Regel\s+|rund\s+)?(?:10|zehn)\s+(?:Qualifizierungs)?[Ff]ragen(?:\s+am Telefon)?/g, "$1 anhand von in der Regel zehn Fragen");
 }
+/** Aroundhome wird in E-Mails nie erwähnt – Sätze mit „Aroundhome“ (auch „Around Home“) fliegen raus, samt Zahlen dazu. */
+export const PORTAL_RE = /around[\s-]*home/i;
+export function dropPortalMentions(text: string): string {
+  if (!PORTAL_RE.test(text)) return text;
+  return text.split(/\n/).map((line) => {
+    if (!PORTAL_RE.test(line)) return line;
+    const kept = (line.match(/[^.!?]+[.!?]*\s*/g) ?? [line]).filter((sentence) => !PORTAL_RE.test(sentence)).join("").trim();
+    return kept;
+  }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+/** Für gespeicherte Entwürfe und den Versand: Aroundhome raus, Formulierung zur Vorqualifizierung glätten. */
+export const cleanDraftText = (text: string) => smoothQualifyPhrase(dropPortalMentions(text));
 export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[] {
   const keep = original.filter((block) => block.type === "signature"); // nur die Signatur bleibt – keine Knöpfe (es gibt keine Terminbuchung)
-  return [{ id: "draft-text", type: "text", text: smoothQualifyPhrase(text.trim()) }, ...keep];
+  return [{ id: "draft-text", type: "text", text: cleanDraftText(text.trim()) }, ...keep];
 }
 
 /* ── Drei Ansätze je Erst-E-Mail: Individuell, Drittanbieter, Freier Vorschlag ─────────────────── */
