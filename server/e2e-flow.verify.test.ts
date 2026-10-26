@@ -2824,6 +2824,25 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.getEmailCampaign({ id: old.id })).sendWindow).toMatchObject({ from: "10:00", pauseFrom: "11:30" });
   }, 30000);
 
+  it("63b. Aroundhome nie in Entwürfen: Text, Betreff und Alternativ-Vorschläge werden gesäubert, Prüfung im Freigabe-Fenster", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "Portal-Test", toPipeline: false, rows: [{ firstName: "Pia", lastName: "Portal", company: "Portal Solar", email: "pia@portal-e2e.example" }, { firstName: "Olaf", lastName: "Ohne", company: "Ohne Solar", email: "olaf@portal-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const tree = { start: "p1", nodes: [{ id: "p1", type: "send" as const, label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Portal-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Portal-Test" }, tree, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const [pia, olaf] = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+    await db.update(emailCampaignRecipients).set({ draftState: "entwurf", draftNodeId: "p1", draftSubject: "Mehr Anfragen für Portal Solar", draftText: "Sehr geehrte Frau Portal,\n\nauf Aroundhome haben Sie 120 Bewertungen mit 4,8 Sternen. Wir liefern exklusive Leads.\n\nVielen Dank", draftOptions: [{ key: "individuell", label: "Individuell", subject: "Mehr Anfragen", text: "Bei Around Home sind Sie Partner. Der Rest bleibt." }, { key: "frei", label: "Frei", subject: "Ihre Aroundhome-Bewertungen", text: "x" }] }).where(eq(emailCampaignRecipients.id, pia.id));
+    await db.update(emailCampaignRecipients).set({ draftState: "entwurf", draftNodeId: "p1", draftSubject: "Ihre Aroundhome-Bewertungen", draftText: "Sehr geehrter Herr Ohne,\n\nText.\n\nVielen Dank" }).where(eq(emailCampaignRecipients.id, olaf.id));
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id });
+    expect(queue.portalCheck).toMatchObject({ found: 0, cleaned: 1, reset: 1 });
+    const [pia2, olaf2] = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+    expect(pia2.draftText).not.toMatch(/around\s*-?\s*home/i); expect(pia2.draftText).toContain("Wir liefern exklusive Leads."); expect(pia2.draftText).toContain("Vielen Dank");
+    expect(pia2.draftOptions).toHaveLength(1); expect(JSON.stringify(pia2.draftOptions)).not.toMatch(/around\s*-?\s*home/i); expect(JSON.stringify(pia2.draftOptions)).toContain("Der Rest bleibt.");
+    expect(olaf2.draftState).toBeNull(); expect(olaf2.draftSubject).toBeNull(); // Aroundhome im Betreff → verworfen, wird neu geschrieben
+    expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).portalCheck).toMatchObject({ found: 0, cleaned: 0, reset: 0 }); // zweiter Blick: sauber
+  }, 30000);
+
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);
     const probe = leadOptions.find((row) => row.name) ?? leadOptions[0]; expect((await owner.leadops.contractLeadOptions({ query: (probe.name || probe.email).slice(0, 4) })).some((row) => row.id === probe.id)).toBe(true);

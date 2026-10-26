@@ -226,7 +226,7 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const ansatz = kiAnsatzOf(campaign);
   const followUp: FollowUpInfo = { index: sentEvents.length, sentSubjects: sentEvents.map((event) => event.subject ?? "").filter(Boolean).slice(-4) };
   const finish = (text: string) => finishDraft(text, { greeting: values.begruessung, phone, followUp: sentEvents.length > 0 });
-  const ai = (await aiDrafts(base, info, site, { approaches: options.onlyApproach ? [options.onlyApproach] : undefined, followUp, stepLabel: node.label ?? node.subject, phone }))?.map((item) => ({ ...item, text: finish(item.text) })) ?? null;
+  const ai = (await aiDrafts(base, info, site, { approaches: options.onlyApproach ? [options.onlyApproach] : undefined, followUp, stepLabel: node.label ?? node.subject, phone }))?.map((item) => ({ ...item, subject: PORTAL_RE.test(item.subject) ? base.subject : item.subject, text: finish(item.text) })) ?? null; // nie Aroundhome – auch nicht im Betreff
   // Ohne KI: Individuell = Vorlage mit den Daten, Drittanbieter = feste Vorlage (nur sinnvoll für die Erst-E-Mail)
   const third = thirdPartyTemplate(values);
   const fallback: DraftOption[] = [{ key: "individuell", label: approachLabel("individuell"), subject: base.subject, text: finish(base.text) }, ...(sentEvents.length === 0 ? [{ key: "drittanbieter" as const, label: approachLabel("drittanbieter"), subject: third.subject, text: finish(third.text) }] : [])];
@@ -291,7 +291,27 @@ export async function generateDrafts(db: Db, tenantId: number, input: { campaign
 }
 
 /** Freigabe-Liste einer Kampagne: alle offenen Empfänger, deren aktueller Schritt eine E-Mail ist, die noch nicht raus ist – mit dem Namen des Schritts. */
+/**
+ * Gespeicherte Entwürfe säubern: Aroundhome (auch „Around Home“) kommt nirgends vor – nicht im Text, nicht im Betreff,
+ * nicht in den Alternativ-Vorschlägen. Steht es im Betreff, wird der Entwurf verworfen und neu geschrieben.
+ * Dazu die geglättete Formulierung zur Vorqualifizierung. Gibt zurück, wie viele Entwürfe geändert/verworfen wurden.
+ */
+export async function cleanStoredDrafts(db: Db, tenantId: number, campaignId?: number | null): Promise<{ cleaned: number; reset: number }> {
+  const hit = or(sql`${emailCampaignRecipients.draftText} like '%über%Fragen%'`, sql`lower(${emailCampaignRecipients.draftText}) like '%round%home%'`, sql`lower(${emailCampaignRecipients.draftSubject}) like '%round%home%'`, sql`lower(cast(${emailCampaignRecipients.draftOptions} as char)) like '%round%home%'`, sql`cast(${emailCampaignRecipients.draftOptions} as char) like '%über%Fragen%'`);
+  const rows = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText, draftSubject: emailCampaignRecipients.draftSubject, draftOptions: emailCampaignRecipients.draftOptions }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), ...(campaignId ? [eq(emailCampaignRecipients.campaignId, campaignId)] : []), hit));
+  let cleaned = 0; let reset = 0;
+  for (const row of rows) {
+    if (PORTAL_RE.test(row.draftSubject ?? "")) { await db.update(emailCampaignRecipients).set({ draftState: null, draftSubject: null, draftText: null, draftOptions: null, draftNodeId: null }).where(eq(emailCampaignRecipients.id, row.id)); reset += 1; continue; } // Betreff mit Portal-Namen → neu schreiben lassen
+    const text = row.draftText ? cleanDraftText(row.draftText) : row.draftText;
+    const options = Array.isArray(row.draftOptions) ? (row.draftOptions as DraftOption[]).filter((option) => !PORTAL_RE.test(option.subject ?? "")).map((option) => ({ ...option, text: cleanDraftText(option.text ?? "") })) : row.draftOptions;
+    if (text !== row.draftText || JSON.stringify(options) !== JSON.stringify(row.draftOptions)) { await db.update(emailCampaignRecipients).set({ draftText: text, draftOptions: options as DraftOption[] | null }).where(eq(emailCampaignRecipients.id, row.id)); cleaned += 1; }
+  }
+  return { cleaned, reset };
+}
+const mentionsPortal = (item: { draftSubject?: string | null; draftText?: string | null; draftOptions?: unknown }) => PORTAL_RE.test(item.draftSubject ?? "") || PORTAL_RE.test(item.draftText ?? "") || (Array.isArray(item.draftOptions) && (item.draftOptions as DraftOption[]).some((option) => PORTAL_RE.test(`${option.subject ?? ""} ${option.text ?? ""}`)));
+
 export async function reviewQueue(db: Db, tenantId: number, campaignId: number) {
+  const repaired = await cleanStoredDrafts(db, tenantId, campaignId).catch(() => ({ cleaned: 0, reset: 0 })); // vor dem Anzeigen: nichts mit Aroundhome
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
   const all = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]))).orderBy(asc(emailCampaignRecipients.id));
@@ -299,7 +319,8 @@ export async function reviewQueue(db: Db, tenantId: number, campaignId: number) 
   const leadIds = Array.from(new Set(rows.map(({ row }) => row.leadId).filter((id): id is number => typeof id === "number")));
   const leadRows = leadIds.length ? await db.select({ id: leads.id, publicId: leads.publicId, city: leads.city, listName: leads.listName, company: leads.company, firstName: leads.firstName, lastName: leads.lastName, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, leadIds))) : [];
   const items = rows.map(({ row, node }) => { const lead = leadRows.find((item) => item.id === row.leadId) ?? null; const fits = draftFitsNode(row, node.id); return { id: row.id, email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits && Array.isArray(row.draftOptions) ? row.draftOptions : []) as DraftOption[], draftApproach: (fits ? row.draftApproach || null : null) as DraftApproach | null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
-  return { items, counts: { offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length } };
+  const withDraft = items.filter((item) => item.draftText);
+  return { items, counts: { offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } };
 }
 
 /** Entwurf speichern, freigeben oder Freigabe zurücknehmen – gilt für den aktuellen Schritt des Empfängers. Freigegeben = geht beim nächsten Lauf raus. */

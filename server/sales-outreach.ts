@@ -6,7 +6,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lte, or, sql
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
-import { draftToBlocks, modernizeTree, smoothQualifyPhrase, cleanDraftText, sentSourceOf, type SentSource, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow, SEND_WINDOW_PRESET} from "../shared/email-campaigns";
+import { draftToBlocks, modernizeTree, smoothQualifyPhrase, cleanDraftText, sentSourceOf, type SentSource, PORTAL_RE, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow, SEND_WINDOW_PRESET} from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
 import { buildQueue, saveCampaign as saveDialerCampaign, setCampaignStatus } from "./dialer";
@@ -16,7 +16,7 @@ import { isMachineRequest, isTooSoonAfterSend } from "../shared/tracking-guard";
 import { campaignMailStats, type RecipientStamps } from "../shared/sent-tracking";
 import { bumpActivity, logActivity } from "./activity";
 import { signatureFor } from "./mail-settings";
-import { campaignDailyStatus, draftFitsNode, draftForRecipient } from "./campaign-review";
+import { campaignDailyStatus, cleanStoredDrafts, draftFitsNode, draftForRecipient } from "./campaign-review";
 import { normalizeMessageId } from "../shared/message-id";
 import type { Db } from "./lead-pipeline";
 import type { OwnerShare, ShareMode } from "../shared/pipeline-extras";
@@ -205,9 +205,8 @@ async function repairCampaignTrees(db: Db, tenantId: number) {
     const sendWindow = moveWindow ? { ...DEFAULT_SEND_WINDOW, timezone: stored?.timezone || DEFAULT_SEND_WINDOW.timezone, drip: stored?.drip ?? null } : null;
     if (next || clearFooter || sendWindow) await db.update(emailCampaigns).set({ ...(next ? { tree: next } : {}), ...(clearFooter ? { design: { ...(design ?? {}), footerText: "", footerReset: 1 } } : {}), ...(sendWindow ? { sendWindow } : {}), updatedAt: row.updatedAt }).where(eq(emailCampaigns.id, row.id)); // automatische Auffrischung zählt nicht als „bearbeitet“
    }
-  // Gespeicherte KI-Entwürfe: Aroundhome-Erwähnungen raus, holprige Formulierung „qualifiziert über … Fragen“ glätten
-  const drafts = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), or(like(emailCampaignRecipients.draftText, "%über%Fragen%"), like(emailCampaignRecipients.draftText, "%round%home%"))));
-  for (const draft of drafts) { const smooth = cleanDraftText(draft.draftText ?? ""); if (smooth !== draft.draftText) await db.update(emailCampaignRecipients).set({ draftText: smooth }).where(eq(emailCampaignRecipients.id, draft.id)); }
+  // Gespeicherte KI-Entwürfe: Aroundhome raus (Text, Betreff, Alternativen), holprige Formulierung „qualifiziert über … Fragen“ glätten
+  await cleanStoredDrafts(db, tenantId).catch(() => null);
 }
 /** Laufende Kampagnen ohne aktuelle Versandzeiten einmalig auf die zwei Zeitfenster (9:00–11:30, 14:00–16:30 Uhr) umstellen – auch ohne dass jemand die Seite öffnet. Drip-Einstellung bleibt. */
 const windowsMigrated = new Set<number>();
@@ -633,6 +632,7 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
           else if (kiBudget > 0) { kiBudget -= 1; const made = await draftForRecipient(db, campaign.tenantId, recipient.id, { nodeId: nodeIn.id, onlyApproach: kiAnsatz }).catch(() => null); if (made && (made.source === "ki" || made.source === "kiweb")) { draft = { subject: made.subject, text: made.text }; draftSource = made.source; } else return { ok: false, subject: subjectIn, defer: "KI konnte noch nicht schreiben – neuer Versuch im nächsten Lauf (keine Vorlage als Ersatz)" }; }
           else return { ok: false, subject: subjectIn, defer: "KI schreibt noch – nächster Lauf" };
         }
+        if (draft && PORTAL_RE.test(draft.subject)) { await db.update(emailCampaignRecipients).set({ draftState: null, draftSubject: null, draftText: null, draftOptions: null, draftNodeId: null }).where(eq(emailCampaignRecipients.id, recipient.id)); return { ok: false, subject: subjectIn, defer: "Entwurf erwähnte Aroundhome – wird neu geschrieben" }; } // nie Aroundhome, auch nicht im Betreff
         if (draft && !draftUsed) { draftUsed = true; usedNow = true; node = { ...nodeIn, subject: draft.subject, subjectB: null, blocks: draftToBlocks(draft.text, nodeIn.blocks) }; subject = draft.subject; }
         const rendered = (() => { const d = design(campaign); // persönlicher Versand: kein Zählpixel, keine umgeschriebenen Links – nur der Abmelde-Link bleibt (gesetzlich nötig)
         return renderNode(node, d, values, d.plain ? { unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature } : { pixelUrl: `${base}/api/mail/o/${recipient.token}.gif`, wrapLink: (url) => `${base}/api/mail/c/${recipient.token}?u=${encodeURIComponent(url)}`, unsubscribeUrl: `${base}/api/mail/u/${recipient.token}`, logoBase: base, subject, signature }); })(); const fresh = (await db.select({ repliedAt: emailCampaignRecipients.repliedAt, status: emailCampaignRecipients.status }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]; // Antwort-Stopp: direkt vor dem Senden noch einmal nachsehen

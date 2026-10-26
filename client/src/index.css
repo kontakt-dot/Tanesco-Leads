@@ -3310,3 +3310,20 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .sent-preview-note.is-src-ki{color:#c4b5fd}.sent-preview-note.is-src-vorlage,.sent-preview-note.is-src-entwurf-vorlage{color:#fcd34d}
 .rv-note.is-template{color:#fde68a;background:rgba(251,191,36,.1)}
 .inbox-tag.is-src-hand{background:rgba(52,211,153,.14);color:#a7f3d0;border-color:rgba(52,211,153,.4)}.sent-preview-note.is-src-hand{color:#6ee7b7}
+/* Kampagne: Kennzahlen anklickbar → Kontakte dahinter; Ansicht „Gesendete E-Mails“; E-Mail im Verlauf ansehen */
+.cd-kpi.is-pick{text-align:left;cursor:pointer;font:inherit;color:inherit;transition:border-color .15s,transform .15s}
+.cd-kpi.is-pick:hover{border-color:rgba(141,133,255,.5);transform:translateY(-1px)}
+.cd-kpi.is-pick:focus-visible{outline:2px solid rgba(141,133,255,.7);outline-offset:2px}
+.cd-kpi.is-pick.is-active{border-color:rgba(141,133,255,.85);box-shadow:0 0 0 3px rgba(129,120,255,.18)}
+.cd-kpi.is-pick small::after{content:" · ansehen";opacity:.75}
+.cd-panel-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px;padding:3px;border-radius:12px;background:rgba(255,255,255,.04);width:fit-content;max-width:100%}
+.cd-panel-tabs button{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:9px;border:0;background:transparent;font:inherit;font-size:13px;font-weight:600;color:#a5a3c4;cursor:pointer}
+.cd-panel-tabs button i{font-style:normal;font-size:11px;padding:1px 7px;border-radius:999px;background:rgba(255,255,255,.08)}
+.cd-panel-tabs button.is-active{background:rgba(129,120,255,.22);color:#fff}
+.cd-recipients .inbox-sent{margin-top:4px}
+.cj-mail-toggle{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:4px 10px;border-radius:999px;border:1px solid rgba(141,133,255,.4);background:rgba(129,120,255,.1);font-size:11.5px;font-weight:600;color:#c4b5fd;cursor:pointer}
+.cj-mail-toggle:hover{background:rgba(129,120,255,.2)}
+.cj-mail{margin-top:8px}.cj-mail .sent-preview-frame{height:440px}
+.rv-portal{margin:0 0 10px;padding:7px 12px;border-radius:10px;font-size:12px;color:#a7f3d0;background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.25)}
+.rv-portal.is-bad{color:#fecaca;background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.35)}
+.sent-preview-head button{flex:none;white-space:nowrap}

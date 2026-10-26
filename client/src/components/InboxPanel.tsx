@@ -239,10 +239,12 @@ export const InboxIcon = Mail;
 const whenShort = (value: Date | string) => { const date = new Date(value); const today = new Date(); const sameDay = date.toDateString() === today.toDateString(); return sameDay ? `heute ${date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}` : date.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); };
 const REACTION_FILTERS: SentReaction[] = ["geoeffnet", "geklickt", "geantwortet", "ohne", "bounce", "abgemeldet"];
 
-function SentMessages({ onOpenLead }: { onOpenLead?: (publicId: string) => void }) {
-  const [kind, setKind] = useState<"alle" | "kampagne" | "antwort" | "einzel">("alle");
+/** Gesendete E-Mails – im Posteingang alle, in einer Kampagne (fixedCampaignId) nur deren E-Mails, jede mit dem Text, der wirklich rausging. */
+export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (publicId: string) => void; fixedCampaignId?: number | null }) {
+  const fixed = typeof fixedCampaignId === "number" && fixedCampaignId > 0;
+  const [kind, setKind] = useState<"alle" | "kampagne" | "antwort" | "einzel">(fixed ? "kampagne" : "alle");
   const [reaction, setReaction] = useState<SentReaction | null>(null);
-  const [campaignId, setCampaignId] = useState<number | null>(null);
+  const [campaignIdState, setCampaignId] = useState<number | null>(null); const campaignId = fixed ? fixedCampaignId! : campaignIdState;
   const [period, setPeriod] = useState<"alle" | "heute" | "7tage" | "30tage">("alle");
   const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<string | null>(null); // Vorschau einer gesendeten E-Mail
@@ -253,8 +255,8 @@ function SentMessages({ onOpenLead }: { onOpenLead?: (publicId: string) => void 
   const openLead = (publicId: string) => { if (onOpenLead) onOpenLead(publicId); else window.location.assign(`/?page=Vertriebspipeline&lead=${publicId}`); };
   return <div className="inbox-sent">
     <div className="inbox-sent-filters">
-      <div className="dashboard-segments">{([["alle", `Alle${sent.data ? ` (${sent.data.counts.alle})` : ""}`], ["kampagne", `Kampagnen${sent.data ? ` (${sent.data.counts.kampagne})` : ""}`], ["antwort", `Antworten${sent.data ? ` (${sent.data.counts.antwort})` : ""}`], ["einzel", `Einzeln${sent.data ? ` (${sent.data.counts.einzel})` : ""}`]] as const).map(([key, text]) => <button key={key} type="button" className={kind === key ? "active" : ""} onClick={() => setKind(key)}>{text}</button>)}</div>
-      <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kampagnen</option>{(sent.data?.campaigns ?? []).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}</select>
+      {!fixed && <div className="dashboard-segments">{([["alle", `Alle${sent.data ? ` (${sent.data.counts.alle})` : ""}`], ["kampagne", `Kampagnen${sent.data ? ` (${sent.data.counts.kampagne})` : ""}`], ["antwort", `Antworten${sent.data ? ` (${sent.data.counts.antwort})` : ""}`], ["einzel", `Einzeln${sent.data ? ` (${sent.data.counts.einzel})` : ""}`]] as const).map(([key, text]) => <button key={key} type="button" className={kind === key ? "active" : ""} onClick={() => setKind(key)}>{text}</button>)}</div>}
+      {!fixed && <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kampagnen</option>{(sent.data?.campaigns ?? []).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}</select>}
       <select className="lead-action-select" aria-label="Zeitraum" value={period} onChange={(event) => setPeriod(event.target.value as typeof period)}><option value="alle">Gesamter Zeitraum</option><option value="heute">Heute</option><option value="7tage">Letzte 7 Tage</option><option value="30tage">Letzte 30 Tage</option></select>
       <input className="inbox-search" placeholder="Suchen: Adresse, Betreff, Kampagne" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
@@ -289,7 +291,7 @@ function SentMessages({ onOpenLead }: { onOpenLead?: (publicId: string) => void 
 }
 
 /** Vorschau einer gesendeten E-Mail: Kampagnen-Mails werden aus dem Schritt und den Empfängerdaten nachgebaut, Einzel-Mails aus dem gespeicherten Text. */
-function SentMailPreview({ id, onClose }: { id: string; onClose: () => void }) {
+export function SentMailPreview({ id, onClose }: { id: string; onClose: () => void }) {
   const preview = trpc.leadops.sentMailPreview.useQuery({ id }, { retry: false });
   if (preview.isLoading) return <p className="py-6 text-center text-sm text-slate-500">Vorschau wird geladen …</p>;
   if (preview.error || !preview.data) return <p className="py-6 text-center text-sm text-rose-300">{preview.error?.message ?? "Vorschau nicht möglich."}</p>;

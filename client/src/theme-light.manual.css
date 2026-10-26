@@ -1558,3 +1558,12 @@ html:not(.dark) .sent-preview-note.is-src-vorlage, html:not(.dark) .sent-preview
 html:not(.dark) .rv-note.is-template { color: #92400e !important; background: #fffbeb !important; }
 html:not(.dark) .inbox-tag.is-src-hand { background: #ecfdf3 !important; color: #067647 !important; border-color: #abefc6 !important; }
 html:not(.dark) .sent-preview-note.is-src-hand { color: #067647 !important; }
+html:not(.dark) .cd-kpi.is-pick:hover { border-color: #fca5a5 !important; }
+html:not(.dark) .cd-kpi.is-pick.is-active { border-color: #bc001d !important; box-shadow: 0 0 0 3px rgba(188, 0, 29, .1) !important; }
+html:not(.dark) .cd-panel-tabs { background: #f2f4f7 !important; }
+html:not(.dark) .cd-panel-tabs button { color: #475467 !important; }
+html:not(.dark) .cd-panel-tabs button i { background: #e4e7ec !important; color: #344054 !important; }
+html:not(.dark) .cd-panel-tabs button.is-active { background: #ffffff !important; color: #0f172a !important; box-shadow: 0 1px 2px rgba(16, 24, 40, .08) !important; }
+html:not(.dark) .cj-mail-toggle { background: #fff5f5 !important; border-color: #fca5a5 !important; color: #bc001d !important; }
+html:not(.dark) .rv-portal { color: #067647 !important; background: #ecfdf3 !important; border-color: #abefc6 !important; }
+html:not(.dark) .rv-portal.is-bad { color: #b42318 !important; background: #fef3f2 !important; border-color: #fecdca !important; }

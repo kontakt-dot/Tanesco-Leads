@@ -3,6 +3,8 @@ import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
 import { AlertTriangle, Ban, CalendarClock, Clock3, ExternalLink, Eye, Flag, GitBranch, Mail, MousePointerClick, Reply, Send, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
+import { useState } from "react";
+import { SentMailPreview } from "@/components/InboxPanel";
 
 /**
  * Kontakt in einer E-Mail-Kampagne – Seitenleiste rechts statt großem Fenster.
@@ -51,6 +53,7 @@ export default function CampaignContactDrawer({ recipientId, onClose, onChanged,
   const bounce = trpc.leadops.markEmailBounced.useMutation({ onSuccess: (result, variables) => { toast.success(`${result.email} gesperrt (${variables.kind === "bounce" ? "unzustellbar" : "Beschwerde"}).`); done(); }, onError: (error) => toast.error(error.message) });
   const remove = trpc.leadops.removeEmailRecipients.useMutation({ onSuccess: () => { toast.success("Aus der Kampagne entfernt – es geht keine weitere E-Mail an diesen Kontakt."); onChanged?.(); onClose(); }, onError: (error) => toast.error(error.message) });
   const data = log.data;
+  const [mailOpen, setMailOpen] = useState<number | null>(null); // gesendete E-Mail im Verlauf aufgeklappt
   const r = data?.recipient;
   const status = r ? (r.status === "fertig" && r.repliedAt ? { label: "Gestoppt – hat geantwortet", tone: "is-done" } : STATUS[r.status] ?? { label: r.status, tone: "is-wait" }) : null;
   const name = r ? r.name || data?.lead?.name || r.email : "";
@@ -95,7 +98,7 @@ export default function CampaignContactDrawer({ recipientId, onClose, onChanged,
 
           <section className="cj-timeline">
             <span className="cj-section-title"><Clock3 className="h-4 w-4" aria-hidden="true" /> Verlauf</span>
-            {!groups.length ? <p className="cj-empty">Noch nichts passiert – aufgenommen am {when(r.createdAt)}.</p> : groups.map((group) => <div key={group.day} className="cj-day"><span className="cj-day-label">{group.day}</span><ol>{group.items.map((event) => { const kind = kindOf(event); const meta = KIND[kind]; const Icon = meta.icon; const detail = detailOf(kind, event); return <li key={event.id} className={meta.tone}><span className="cj-dot"><Icon className="h-3.5 w-3.5" aria-hidden="true" /></span><div className="cj-event"><div className="cj-event-top"><strong>{meta.label}</strong><time>{new Date(event.createdAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</time></div>{kind === "gesendet" && event.subject && <span className="cj-subject">„{event.subject}“</span>}{detail && <small>{detail}</small>}</div></li>; })}</ol></div>)}
+            {!groups.length ? <p className="cj-empty">Noch nichts passiert – aufgenommen am {when(r.createdAt)}.</p> : groups.map((group) => <div key={group.day} className="cj-day"><span className="cj-day-label">{group.day}</span><ol>{group.items.map((event) => { const kind = kindOf(event); const meta = KIND[kind]; const Icon = meta.icon; const detail = detailOf(kind, event); return <li key={event.id} className={meta.tone}><span className="cj-dot"><Icon className="h-3.5 w-3.5" aria-hidden="true" /></span><div className="cj-event"><div className="cj-event-top"><strong>{meta.label}</strong><time>{new Date(event.createdAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</time></div>{kind === "gesendet" && event.subject && <span className="cj-subject">„{event.subject}“</span>}{detail && <small>{detail}</small>}{kind === "gesendet" && <button type="button" className="cj-mail-toggle" aria-expanded={mailOpen === event.id} onClick={() => setMailOpen(mailOpen === event.id ? null : event.id)}><Eye className="h-3.5 w-3.5" aria-hidden="true" /> {mailOpen === event.id ? "E-Mail ausblenden" : "E-Mail ansehen – so ging sie raus"}</button>}{kind === "gesendet" && mailOpen === event.id && <div className="cj-mail"><SentMailPreview id={`k${event.id}`} onClose={() => setMailOpen(null)} /></div>}</div></li>; })}</ol></div>)}
             <p className="cj-start">Aufgenommen am {when(r.createdAt)}</p>
           </section>
 
