@@ -17,6 +17,7 @@ import { getDb } from "./db";
 import { processDueEmails } from "./email-onboarding";
 import { syncInsights } from "./meta-ads";
 import { processEmailCampaigns, repairWaitingRecipients } from "./sales-outreach";
+import { syncBrevoEvents } from "./mail-events";
 import { processAutomations } from "./pipeline-extras";
 import { syncInbox } from "./inbox";
 import { tenantsWithImap } from "./mail-settings";
@@ -125,7 +126,8 @@ export function startEmailCampaignScheduler(intervalSeconds = Number(process.env
     if (running) return; running = true; // läuft ein Durchgang noch (viele Mails), startet kein zweiter parallel – keine Doppelversände
     try { const db = await getDb(); if (!db) return;
       if (!repaired) { repaired = true; const count = await repairWaitingRecipients(db).catch((error) => { console.error("[E-Mail-Kampagnen] Wartende nachziehen:", error instanceof Error ? error.message : error); return 0; }); if (count) console.log(`[E-Mail-Kampagnen] ${count} wartende Kontakte stehen jetzt am Warten-Schritt`); } // einmal nach dem Start: Wartende auf den Warten-Schritt setzen
-      await processEmailCampaigns(db, process.env.APP_URL ?? "", { limit: 300 }); }
+      await processEmailCampaigns(db, process.env.APP_URL ?? "", { limit: 300 });
+      await syncBrevoEvents(db).catch((error) => console.error("[E-Mail-Ereignisse]", error instanceof Error ? error.message : error)); } // Öffnungen/Klicks von Brevo (alle 10 Minuten)
     catch (error) { console.error("[E-Mail-Kampagnen]", error instanceof Error ? error.message : error); } finally { running = false; }
   };
   campaignTimer = setInterval(tick, intervalSeconds * 1000); campaignTimer.unref?.();

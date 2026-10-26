@@ -1768,6 +1768,7 @@ html:not(.dark) .cj-mail-toggle { border: 1px solid #d9dfe7 !important; backgrou
 html:not(.dark) .cj-mail-toggle:hover { background: #f3f6f8 !important; }
 html:not(.dark) .rv-portal { color: #5b8572 !important; }
 html:not(.dark) .rv-portal.is-bad { color: #0f172a !important; background: #ffffff !important; }
+html:not(.dark) .cd-kpi-note { color: #111318 !important; background: #f8fafb !important; border: 1px solid #e8ecf1 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -3583,3 +3584,4 @@ html:not(.dark) .cd-panel-tabs button.is-active { background: #ffffff !important
 html:not(.dark) .cj-mail-toggle { background: #fff5f5 !important; border-color: #fca5a5 !important; color: #bc001d !important; }
 html:not(.dark) .rv-portal { color: #067647 !important; background: #ecfdf3 !important; border-color: #abefc6 !important; }
 html:not(.dark) .rv-portal.is-bad { color: #b42318 !important; background: #fef3f2 !important; border-color: #fecdca !important; }
+html:not(.dark) .cd-kpi-note { color: #475467 !important; background: #f8fafc !important; border-color: #e2e8f0 !important; }

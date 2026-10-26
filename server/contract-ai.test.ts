@@ -84,3 +84,12 @@ describe("Gesendet: KI-Text oder Vorlage", () => {
     expect(sentSourceOf({ bodySource: "hand" })).toEqual({ source: "hand", known: true });
   });
 });
+
+import { providerEventKind } from "./mail-events";
+describe("Öffnungen vom Versanddienst", () => {
+  it("erkennt Brevo-, Mailgun- und Postmark-Ereignisse, Apple-Proxy zählt nicht", () => {
+    expect(providerEventKind("opened")).toBe("open"); expect(providerEventKind("unique_opened")).toBe("open"); expect(providerEventKind("Open")).toBe("open");
+    expect(providerEventKind("click")).toBe("click"); expect(providerEventKind("clicked")).toBe("click"); expect(providerEventKind("Click")).toBe("click");
+    expect(providerEventKind("proxy_open")).toBeNull(); expect(providerEventKind("loadedByProxy")).toBeNull(); expect(providerEventKind("hard_bounce")).toBeNull();
+  });
+});

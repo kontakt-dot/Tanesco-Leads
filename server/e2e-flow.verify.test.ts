@@ -16,7 +16,7 @@ import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
-import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
+import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
@@ -2841,6 +2841,38 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(pia2.draftOptions).toHaveLength(1); expect(JSON.stringify(pia2.draftOptions)).not.toMatch(/around\s*-?\s*home/i); expect(JSON.stringify(pia2.draftOptions)).toContain("Der Rest bleibt.");
     expect(olaf2.draftState).toBeNull(); expect(olaf2.draftSubject).toBeNull(); // Aroundhome im Betreff → verworfen, wird neu geschrieben
     expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).portalCheck).toMatchObject({ found: 0, cleaned: 0, reset: 0 }); // zweiter Blick: sauber
+  }, 30000);
+
+  it("63c. Öffnungen/Klicks vom Versanddienst: Brevo-Webhook und Brevo-Abruf tragen sie ein (auch bei „Persönlich senden“), ohne Doppelte", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const mailEvents = await import("./mail-events");
+    await owner.leadops.importColdList({ listName: "Öffnen-Test", toPipeline: false, rows: [{ firstName: "Otto", lastName: "Offen", company: "Offen Solar", email: "otto@offen-e2e.example" }, { firstName: "Klara", lastName: "Klick", company: "Klick Solar", email: "klara@offen-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Öffnen-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Öffnen-Test" }, tree: { start: "o1", nodes: [{ id: "o1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: { ...(starter.design as unknown as Record<string, unknown>), plain: true }, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+    const [otto, klara] = await rows(); expect(otto.sentCount).toBe(1); expect(otto.openedAt).toBeNull();
+    const sentAt = new Date(Date.now() - 10 * 60_000); await db.update(emailCampaignRecipients).set({ lastSentAt: sentAt }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); // vor 10 Minuten gesendet
+    await db.update(emailCampaignEvents).set({ messageId: "202610261200.otto@smtp-relay.mailin.fr" }).where(and(eq(emailCampaignEvents.recipientId, otto.id), eq(emailCampaignEvents.kind, "gesendet")));
+    // Webhook (Brevo-Format): „opened“ mit Message-ID → Otto geöffnet; zweite Meldung zählt nicht doppelt; Apple-Proxy zählt nicht
+    const hook = async (payload: Record<string, unknown>) => (await (await realFetch(`${apiBase}/api/mail/bounce`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })).json()) as { handled: number };
+    expect(await hook({ event: "proxy_open", email: "otto@offen-e2e.example", "message-id": "<202610261200.otto@smtp-relay.mailin.fr>" })).toEqual({ handled: 0 });
+    expect(await hook({ event: "opened", email: "otto@offen-e2e.example", "message-id": "<202610261200.otto@smtp-relay.mailin.fr>", date: new Date(Date.now() - 5 * 60_000).toISOString() })).toEqual({ handled: 1 });
+    expect(await hook({ event: "unique_opened", email: "otto@offen-e2e.example", "message-id": "<202610261200.otto@smtp-relay.mailin.fr>" })).toEqual({ handled: 0 });
+    // Scanner direkt nach dem Versand zählt nicht
+    expect(await hook({ event: "opened", email: "klara@offen-e2e.example", date: new Date(sentAt.getTime() + 2_000).toISOString() })).toEqual({ handled: 0 });
+    // Brevo-Abruf (HTTP-Versand): Klara hat geklickt → geöffnet + geklickt; zweiter Abruf ändert nichts
+    const [settingsBefore] = await db.select().from(mailSettings).where(eq(mailSettings.tenantId, S.tenantId));
+    await db.update(mailSettings).set({ provider: "brevo_api", password: "xkeysib-e2e", enabled: true }).where(eq(mailSettings.tenantId, S.tenantId));
+    const clickAt = new Date(Date.now() - 3 * 60_000).toISOString();
+    const fake = (async (input: string | URL | Request) => { const url = String(input); const body = url.includes("event=clicks") && url.includes("offset=0") ? { events: [{ email: "klara@offen-e2e.example", date: clickAt, messageId: "<unbekannt@mailin.fr>", event: "clicks", link: "https://tanesco.digital/preise" }] } : { events: [] }; return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }); }) as typeof fetch;
+    const first = await mailEvents.syncBrevoEvents(db, { tenantId: S.tenantId, force: true, fetchImpl: fake }); expect(first.applied).toBe(1);
+    const second = await mailEvents.syncBrevoEvents(db, { tenantId: S.tenantId, force: true, fetchImpl: fake }); expect(second.applied).toBe(0);
+    if (settingsBefore) await db.update(mailSettings).set({ provider: settingsBefore.provider, password: settingsBefore.password, enabled: settingsBefore.enabled }).where(eq(mailSettings.tenantId, S.tenantId));
+    const [otto2, klara2] = await rows();
+    expect(otto2.openedAt).not.toBeNull(); expect(otto2.clickedAt).toBeNull();
+    expect(klara2.openedAt).not.toBeNull(); expect(klara2.clickedAt).not.toBeNull(); expect(klara2.clickedUrls).toEqual(["https://tanesco.digital/preise"]);
+    const detail = await owner.leadops.getEmailCampaign({ id: campaign.id }); expect(detail.stats).toMatchObject({ sent: 2, opened: 2, clicked: 1 });
+    const kinds = (await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.campaignId, campaign.id))).map((event) => event.kind).sort(); expect(kinds).toEqual(["beendet", "beendet", "geklickt", "geoeffnet", "geoeffnet", "gesendet", "gesendet"]);
   }, 30000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {

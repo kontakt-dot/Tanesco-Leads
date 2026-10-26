@@ -86,3 +86,8 @@ export function brevoTransport(apiKey: string, options: { fetchImpl?: FetchLike 
     },
   };
 }
+
+/** Einzelne GET-Abfrage an Brevo (z. B. Versand-Ereignisse: geöffnet, geklickt). */
+export async function brevoGet(path: string, apiKey: string, options: { fetchImpl?: FetchLike } = {}) {
+  return call(path, apiKey.trim(), { method: "GET", fetchImpl: options.fetchImpl });
+}

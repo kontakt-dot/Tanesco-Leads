@@ -11,6 +11,7 @@ import { registerContractRoutes } from "./contract-routes";
 import * as metaAds from "./meta-ads";
 import * as outreach from "./sales-outreach";
 import * as pipelineExtras from "./pipeline-extras";
+import * as mailEvents from "./mail-events";
 import { emailCampaignRecipients } from "../drizzle/schema";
 
 async function verifyBearer(req: Request, scope: string) {
@@ -221,7 +222,10 @@ export function registerPublicApiRoutes(app: Express) {
     let handled = 0;
     for (const event of events) {
       const email = String(event.email ?? event.recipient ?? event.Email ?? (event.message as { recipient?: string } | undefined)?.recipient ?? "").toLowerCase(); if (!email) continue;
-      const type = String(event.event ?? event.type ?? event.RecordType ?? event["event-data"] ?? "").toLowerCase(); const kind = /complain|spam|beschwerde/.test(type) ? "beschwerde" : /bounce|hard|blocked|invalid|unzustell|dropped|failed/.test(type) ? "bounce" : null; if (!kind) continue;
+      const type = String(event.event ?? event.type ?? event.RecordType ?? event["event-data"] ?? "").toLowerCase();
+      // Öffnen/Klicken (Brevo „opened“, „click“ …): beim Kampagnen-Empfänger eintragen – zählt auch bei „Persönlich senden“
+      const seen = mailEvents.providerEventKind(type); if (seen) { const when = event.date ?? event.ts_event ?? event.timestamp ?? event.ReceivedAt; const at = typeof when === "number" ? new Date(when * (when < 1e12 ? 1000 : 1)) : when ? new Date(String(when)) : null; if (await mailEvents.applyProviderEvent(db, { email, messageId: String(event["message-id"] ?? event.messageId ?? event.MessageID ?? (event.message as { headers?: { "message-id"?: string } } | undefined)?.headers?.["message-id"] ?? ""), kind: seen, url: String(event.link ?? event.url ?? event.OriginalLink ?? ""), at, tenantId: Number(req.query.tenant ?? 0) || null }).catch(() => false)) handled += 1; continue; }
+      const kind = /complain|spam|beschwerde/.test(type) ? "beschwerde" : /bounce|hard|blocked|invalid|unzustell|dropped|failed/.test(type) ? "bounce" : null; if (!kind) continue;
       const tenantId = Number(req.query.tenant ?? body.tenantId ?? 0) || (await db.select({ tenantId: emailCampaignRecipients.tenantId }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.email, email)).limit(1))[0]?.tenantId; if (!tenantId) continue;
       await pipelineExtras.markBounced(db, tenantId, { email, kind, note: `Webhook: ${type}`.slice(0, 400) }).catch(() => null); handled += 1;
     }
