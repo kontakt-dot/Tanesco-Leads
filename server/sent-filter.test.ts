@@ -55,4 +55,12 @@ describe("Gesendet: Filter nach Datum und Uhrzeit", () => {
     const many = Array.from({ length: 250 }, (_, i) => mail(`m${i}`, new Date(Date.UTC(2026, 9, 26, 8, 0) - i * 60_000).toISOString()));
     const capped = summarizeSent(many, {}); expect(capped.items).toHaveLength(200); expect(capped.total).toBe(250); expect(capped.counts.kampagne).toBe(250);
   });
+
+  it("Ein Kontakt: seine Mails über die Kontakt-Nummer oder – falls die fehlt – über die Adresse", () => {
+    const withLead = items.map((item, index) => ({ ...item, leadId: index < 2 ? 7 : null }));
+    expect(ids(summarizeSent(withLead, { leadId: 7 }))).toEqual(["e", "d"]);
+    expect(ids(summarizeSent(withLead, { email: " A@Zeit.example " }))).toEqual(["a"]);
+    expect(ids(summarizeSent(withLead, { leadId: 7, email: "b@zeit.example" }))).toEqual(["e", "d", "b"]);
+    expect(summarizeSent(withLead, { leadId: 99 }).total).toBe(0);
+  });
 });

@@ -2904,6 +2904,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(gewaehlt.campaigns.length).toBeGreaterThan(1); expect(gewaehlt.campaigns.find((item) => item.id === campaign.id)?.count).toBe(3);
     expect((await owner.leadops.listSent({ kind: "kampagne" })).counts).toEqual((await owner.leadops.listSent({})).counts);
     await expect(owner.leadops.listSent({ timeFrom: "9 Uhr" } as never)).rejects.toThrow();
+    // Kontakte: Filter „Gesendet“ = alle, die eine E-Mail bekommen haben (egal was danach kam); je Kontakt seine Mails mit Uhrzeit
+    const kontakte = await owner.leadops.emailLeads({ listName: "Zeitfilter-Test", activity: "angeschrieben" });
+    expect(kontakte.items.map((item) => item.email).sort()).toEqual(["anna@zeitfilter-e2e.example", "bernd@zeitfilter-e2e.example", "carla@zeitfilter-e2e.example"]);
+    expect(kontakte.counts.angeschrieben).toBeGreaterThanOrEqual(3); expect(kontakte.items.every((item) => item.mails === 1 && item.lastSentAt)).toBe(true);
+    const anna = kontakte.items.find((item) => item.email === "anna@zeitfilter-e2e.example")!;
+    const annasMails = await owner.leadops.listSent({ leadId: anna.id, email: anna.email });
+    expect(annasMails.items).toHaveLength(1); expect(annasMails.items[0].to).toBe("anna@zeitfilter-e2e.example"); expect(times).toContain(new Date(annasMails.items[0].at).toISOString());
+    expect((await owner.leadops.listSent({ email: "ANNA@zeitfilter-e2e.example" })).items.map((item) => item.to)).toEqual(["anna@zeitfilter-e2e.example"]);
+    const ohne = await owner.leadops.importColdList({ listName: "Zeitfilter-Ohne", toPipeline: false, rows: [{ firstName: "Dora", lastName: "Neu", email: "dora@zeitfilter-e2e.example" }] }); expect(ohne.created).toBe(1);
+    expect((await owner.leadops.emailLeads({ listName: "Zeitfilter-Ohne", activity: "angeschrieben" })).total).toBe(0);
   }, 30000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {

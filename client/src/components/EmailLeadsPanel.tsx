@@ -1,8 +1,9 @@
 import { undoIdOf, withUndo } from "@/components/UndoPanel";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Ban, Phone } from "lucide-react";
 import BlockContactDialog, { UnblockButton } from "@/components/BlockContactDialog";
 import { CallDialog } from "@/components/CallLog";
+import { ContactSentMails } from "@/components/InboxPanel";
 import { trpc } from "@/lib/trpc";
 import { callCounterText, callResultLabel } from "../../../shared/pipeline-extras";
 import { toast } from "sonner";
@@ -19,7 +20,8 @@ import { pipelineLabel, pipelineSourceOf, stageLabel, type PipelineSource } from
  *   auch ohne E-Mail-Adresse – mit Telefon und Ort, Stufe setzen, zuteilen und löschen für die Auswahl.
  * Gefiltert wird wie auf der Leads-Seite.
  */
-const ACTIVITY: Array<{ key: "gesendet" | "geoeffnet" | "geklickt" | "geantwortet" | "abgemeldet" | "bounce" | "ohne"; label: string; hint?: string }> = [
+const ACTIVITY: Array<{ key: "angeschrieben" | "gesendet" | "geoeffnet" | "geklickt" | "geantwortet" | "abgemeldet" | "bounce" | "ohne"; label: string; hint?: string }> = [
+  { key: "angeschrieben", label: "Gesendet", hint: "Alle, die schon mindestens eine E-Mail bekommen haben – egal, ob sie geöffnet haben. Wer eine E-Mail bekommt, steht automatisch hier." },
   { key: "geantwortet", label: "Geantwortet" },
   { key: "geklickt", label: "Geklickt" },
   { key: "geoeffnet", label: "Geöffnet" },
@@ -47,6 +49,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const [owner, setOwner] = useState<number | "ohne" | null>(null);
   const [onlyBlocked, setOnlyBlocked] = useState(false); // nur gesperrte Kontakte (Sperrliste)
   const [blockFor, setBlockFor] = useState<{ ids: number[]; label: string } | null>(null); // Sperren-Fenster (Zeile oder Auswahl)
+  const [mailsFor, setMailsFor] = useState<number | null>(null); // aufgeklappt: welche E-Mails an diesen Kontakt rausgingen
   const data = trpc.leadops.emailLeads.useQuery({ search: search.trim() || null, listName, campaignId, activity, stage: stageFilter, ownerUserId: owner, blocked: onlyBlocked ? true : null, ...(pipeline ? { source, inPipeline: true, withoutEmail: true } : {}) }, { retry: false });
   const owners = trpc.leadops.pipelineOwners.useQuery(undefined, { retry: false });
   const stages = trpc.leadops.pipelineStages.useQuery({ source: pipeline ? source : target }, { retry: false }); // Stufen der jeweiligen Pipeline (E-Mail-Akquise: Stufen der gewählten Ziel-Pipeline)
@@ -118,6 +121,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
       {(blockedCount > 0 || onlyBlocked) && <button type="button" role="tab" aria-selected={onlyBlocked} className={`${onlyBlocked ? "is-active" : ""} is-gesperrt`} title="Gesperrte Kontakte: stehen auf der Sperrliste und bekommen keine E-Mails" onClick={() => setOnlyBlocked((value) => !value)}><b className="xl-dot is-gesperrt" aria-hidden="true" />Gesperrt<i>{blockedCount}</i></button>}
     </div>
 
+    {activity === "angeschrieben" && <p className="email-leads-sentinfo">Hier steht jeder, der schon eine E-Mail bekommen hat – neue kommen automatisch dazu, sobald eine E-Mail rausgeht. Zuletzt angeschrieben steht oben. Klick auf die Zahl bei „Mails“ zeigt, welche E-Mails rausgingen.</p>}
     {data.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
       : !items.length ? <p className="py-10 text-center text-sm text-slate-500">{gefiltert ? "Keine Kontakte für diese Filter." : pipeline ? "Noch keine Kontakte in dieser Pipeline." : "Noch keine Kontakte – lade eine Liste hoch."}</p>
       : <>
@@ -143,8 +147,8 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
           </div>}
         </div>
         <div className="email-leads-scroll"><table className="email-leads-table">
-          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Kontakt</th><th>Zuletzt</th><th>Firma</th>{pipeline && <th>Telefon</th>}{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{campaignWord}</th>{pipeline && <th title="Anrufversuche (Zähler der Karte)">Anrufe</th>}<th>Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
-          <tbody>{items.map((lead) => <tr key={lead.id} className={`${picked.includes(lead.id) ? "is-picked" : ""} ${onOpenLead ? "is-clickable" : ""}`} title="Klick öffnet die Lead-Seite" onClick={() => onOpenLead?.(lead.publicId)}>
+          <thead><tr><th className="email-leads-check"><input type="checkbox" aria-label="Alle auswählen" checked={items.some(canPick) && items.filter(canPick).every((lead) => picked.includes(lead.id))} onChange={(event) => setPicked(event.target.checked ? items.filter(canPick).map((lead) => lead.id) : [])} /></th><th>Kontakt</th><th>Zuletzt</th><th>Firma</th>{pipeline && <th>Telefon</th>}{pipeline && <th>Ort</th>}<th>{pipeline ? "Herkunft" : "Liste"}</th><th>{campaignWord}</th>{pipeline && <th title="Anrufversuche (Zähler der Karte)">Anrufe</th>}<th title="Wie viele E-Mails rausgingen – Klick auf die Zahl zeigt sie mit Datum und Uhrzeit">Mails</th><th>Stufe</th><th>Vertriebler</th><th>Angelegt</th>{!pipeline && <th>Pipeline</th>}<th></th></tr></thead>
+          <tbody>{items.map((lead) => <Fragment key={lead.id}><tr className={`${picked.includes(lead.id) ? "is-picked" : ""} ${onOpenLead ? "is-clickable" : ""} ${mailsFor === lead.id ? "is-mails-open" : ""}`} title="Klick öffnet die Lead-Seite" onClick={() => onOpenLead?.(lead.publicId)}>
             <td className="email-leads-check" onClick={(event) => event.stopPropagation()}>{canPick(lead) ? <input type="checkbox" aria-label={`${nameOf(lead)} auswählen`} checked={picked.includes(lead.id)} onChange={(event) => setPicked((value) => event.target.checked ? [...value, lead.id] : value.filter((id) => id !== lead.id))} /> : null}</td>
             <td className="xl-person"><span className="xl-person-in"><span className="cd-avatar" aria-hidden="true">{nameOf(lead).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"}</span><span className="xl-person-text">{onOpenLead ? <button type="button" className="email-leads-name" onClick={() => onOpenLead(lead.publicId)}>{nameOf(lead)}</button> : <strong>{nameOf(lead)}</strong>}<small>{lead.email || "keine E-Mail"}</small></span></span></td>
             <td className="email-leads-zuletzt">{lead.blocked ? <span className="email-leads-state is-gesperrt" title={`Gesperrt – keine E-Mails (${lead.blockedReason ?? "Sperrliste"})${lead.blockedNote ? `: ${lead.blockedNote}` : ""}`}><Ban className="h-3 w-3" /> Gesperrt</span> : <span className={`email-leads-state is-${lead.activity}`}>{ACTIVITY.find((item) => item.key === lead.activity)?.label ?? "–"}</span>}{!lead.blocked && lead.activityAt ? <small> {stamp(lead.activityAt)}</small> : null}</td>
@@ -154,13 +158,15 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
             <td className="xl-cut is-liste" title={pipeline ? "" : lead.listName ?? ""}>{pipeline ? herkunft(lead) : lead.listName || "–"}</td>
             <td className="xl-cut" title={lead.campaigns.map((campaign) => campaign.name).join(", ")}>{lead.campaigns.length ? lead.campaigns.map((campaign) => campaign.name).join(", ") : <span className="text-slate-500">in keiner</span>}</td>
             {pipeline && <td>{lead.calls?.count ? <span className={`email-leads-calls ${lead.calls.lastResult === "erreicht" || lead.calls.lastResult === "rueckruf" ? "is-reached" : ""}`} title={callCounterText(lead.calls) ?? ""}>{lead.calls.count}× <small>{callResultLabel(lead.calls.lastResult)}</small></span> : "–"}</td>}
-            <td>{lead.mails || "–"}</td>
+            <td onClick={(event) => { if (lead.mails) event.stopPropagation(); }}>{lead.mails ? <button type="button" className="email-leads-mails" aria-expanded={mailsFor === lead.id} title="Zeigt, welche E-Mails an diesen Kontakt rausgingen – mit Datum und Uhrzeit" onClick={() => setMailsFor(mailsFor === lead.id ? null : lead.id)}><b>{lead.mails}</b>{lead.lastSentAt ? <small>zuletzt {new Date(lead.lastSentAt).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</small> : null}</button> : "–"}</td>
             <td>{lead.stage ? stageLabel(lead.stage, stageDefs) : "–"}</td>
             <td title={lead.ownerName ?? ""}>{lead.ownerName ? lead.ownerName.split(/\s+/)[0] : <span className="text-slate-500">offen</span>}</td>
             <td>{stamp(lead.createdAt)}</td>
             {!pipeline && <td>{lead.inPipeline === false ? <span className="email-leads-state">nur E-Mail</span> : <span className="email-leads-state is-geoeffnet" title="Steht in dieser Pipeline">{pipelineName(lead)}</span>}</td>}
             <td className="email-leads-row-tools" onClick={(event) => event.stopPropagation()}>{pipeline && <button type="button" className="email-leads-call" title="Anrufen und Ergebnis festhalten (zählt auch ohne Dialer)" aria-label={`${nameOf(lead)} anrufen`} onClick={() => setCallFor({ publicId: lead.publicId, name: nameOf(lead), phone: lead.phone ?? null })}><Phone className="h-3.5 w-3.5" /></button>}{lead.email && (lead.blocked ? <UnblockButton leadIds={[lead.id]} label="Entsperren" className="email-leads-unblock" onDone={() => data.refetch()} /> : <button type="button" className="email-leads-blockrow" title="Sperren – keine E-Mails mehr an diesen Kontakt" aria-label={`${nameOf(lead)} sperren`} onClick={() => setBlockFor({ ids: [lead.id], label: nameOf(lead) })}><Ban className="h-3.5 w-3.5" /></button>)}<button type="button" title="Kontakt löschen" aria-label="Kontakt löschen" onClick={async () => { if (await confirmAction(`${nameOf(lead)} löschen?${pipeline ? " Verlauf, Aufgaben und Notizen gehen mit." : " Kunden bleiben erhalten."}`, { danger: true })) { if (pipeline) removeCards.mutate({ publicIds: [lead.publicId] }); else removeLeads.mutate({ leadIds: [lead.id] }); } }}>✕</button></td>
-          </tr>)}</tbody>
+          </tr>
+          {mailsFor === lead.id && <tr className="email-leads-sub"><td colSpan={pipeline ? 14 : 12}><ContactSentMails leadId={lead.id} email={lead.email ?? null} /></td></tr>}
+          </Fragment>)}</tbody>
         </table></div>
       </>}
     <BlockContactDialog leadIds={blockFor?.ids ?? []} label={blockFor?.label ?? ""} source={pipeline ? "Vertriebspipeline (Kontakte)" : "E-Mail-Kampagnen (Kontakte)"} open={Boolean(blockFor)} onClose={() => setBlockFor(null)} onDone={() => { setPicked([]); data.refetch(); onChanged?.(); }} />

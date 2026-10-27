@@ -107,8 +107,14 @@ export function inTimeOfDay(at: Date, timeFrom?: string | null, timeTo?: string 
   return start <= end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
 }
 
-export type SentFilter = { search?: string | null; from?: Date | string | null; to?: Date | string | null; campaignId?: number | null; kind?: string | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null };
-type SentRow = { kind: string; campaignId?: number | null; campaignName?: string | null; at: Date | string; to: string; name?: string | null; subject: string; tracking: SentTracking | null; origin?: { source: SentSource } | null };
+export type SentFilter = { search?: string | null; from?: Date | string | null; to?: Date | string | null; campaignId?: number | null; kind?: string | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null };
+type SentRow = { kind: string; campaignId?: number | null; campaignName?: string | null; leadId?: number | null; at: Date | string; to: string; name?: string | null; subject: string; tracking: SentTracking | null; origin?: { source: SentSource } | null };
+/** Gehört eine gesendete Mail zu diesem Kontakt? Über die Kontakt-Nummer oder – falls die fehlt – über die Adresse. */
+export const sentToContact = (item: { leadId?: number | null; to: string }, filter: { leadId?: number | null; email?: string | null }) => {
+  if (!filter.leadId && !filter.email) return true;
+  const address = (filter.email ?? "").trim().toLowerCase();
+  return (Boolean(filter.leadId) && item.leadId === filter.leadId) || (Boolean(address) && item.to.trim().toLowerCase() === address);
+};
 
 /**
  * Ordner „Gesendet“ filtern und zählen – Server und Chat-Demo nutzen dieselbe Logik.
@@ -120,7 +126,7 @@ export function summarizeSent<T extends SentRow>(items: T[], filter: SentFilter,
   const date = (value?: Date | string | null) => { if (!value) return null; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? null : parsed; };
   const from = date(filter.from); const to = date(filter.to);
   const inPeriod = (at: Date | string) => { const when = new Date(at); return (!from || when >= from) && (!to || when < to) && inTimeOfDay(when, filter.timeFrom, filter.timeTo); };
-  const scoped = items.filter((item) => inPeriod(item.at) && (!filter.campaignId || item.campaignId === filter.campaignId));
+  const scoped = items.filter((item) => inPeriod(item.at) && (!filter.campaignId || item.campaignId === filter.campaignId) && sentToContact(item, filter));
   const search = (filter.search ?? "").trim().toLowerCase();
   const filtered = scoped.filter((item) => (!filter.kind || item.kind === filter.kind) && (!filter.reaction || item.tracking?.reaction === filter.reaction)
     && (!search || `${item.to} ${item.name ?? ""} ${item.subject} ${item.campaignName ?? ""}`.toLowerCase().includes(search)));

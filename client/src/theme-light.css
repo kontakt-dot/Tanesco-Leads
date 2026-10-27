@@ -849,6 +849,21 @@ html:not(.dark) .email-leads-table td { border-top: 1px solid #e8ecf1 !important
 html:not(.dark) .email-leads-table tr:hover td { background: #f8fafb !important; }
 html:not(.dark) .email-leads-name { color: #4b5568 !important; }
 html:not(.dark) .email-leads-state { color: #0f172a !important; }
+html:not(.dark) .email-leads-mails { border: 1px solid #d9dfe7 !important; background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .email-leads-mails small { color: #4b5568 !important; }
+html:not(.dark) .email-leads-mails:hover, html:not(.dark) .email-leads-mails[aria-expanded="true"] { border-color: #d9dfe7 !important; background: #f3f6f8 !important; }
+html:not(.dark) .email-leads-table tr.is-mails-open>td { background: #f8fafb !important; }
+html:not(.dark) .email-leads-table tr.email-leads-sub>td { background: #f8fafb !important; }
+html:not(.dark) .email-leads-sentinfo { color: #4b5568 !important; }
+html:not(.dark) .contact-sent { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; }
+html:not(.dark) .contact-sent-head { color: #4b5568 !important; }
+html:not(.dark) .contact-sent-row { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .contact-sent-row:hover { border-color: #d9dfe7 !important; }
+html:not(.dark) .contact-sent li.is-open .contact-sent-row { border-color: #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .contact-sent-row time { color: #4b5568 !important; }
+html:not(.dark) .contact-sent-row strong { color: #0f172a !important; }
+html:not(.dark) .contact-sent-where { color: #4b5568 !important; }
+html:not(.dark) .contact-sent-empty { color: #4b5568 !important; }
 html:not(.dark) .email-leads-state.is-geantwortet { color: #5b8572 !important; }
 html:not(.dark) .email-leads-state.is-geklickt { color: #0f172a !important; }
 html:not(.dark) .email-leads-state.is-geoeffnet { background: #f3f6f8 !important; color: #4b5568 !important; }
@@ -3575,6 +3590,18 @@ html:not(.dark) .ct-detail-result { color: #64748b !important; }
 html:not(.dark) .ct-detail-result strong { color: #0f172a !important; }
 html:not(.dark) .inbox-tag.is-src-ki { background: #f5f3ff !important; color: #6d28d9 !important; border-color: #ddd6fe !important; }
 html:not(.dark) .inbox-tag.is-src-vorlage, html:not(.dark) .inbox-tag.is-src-entwurf-vorlage { background: #fffbeb !important; color: #b45309 !important; border-color: #fcd34d !important; }
+/* Kontakte: gesendete E-Mails je Kontakt */
+html:not(.dark) .email-leads-mails { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #5b21b6 !important; }
+html:not(.dark) .email-leads-mails small { color: #6b7280 !important; }
+html:not(.dark) .email-leads-mails:hover, html:not(.dark) .email-leads-mails[aria-expanded="true"] { background: #ede9fe !important; border-color: #a78bfa !important; }
+html:not(.dark) .email-leads-table tr.is-mails-open > td, html:not(.dark) .email-leads-table tr.email-leads-sub > td { background: #faf8ff !important; }
+html:not(.dark) .contact-sent { background: #ffffff !important; border-color: #ddd6fe !important; }
+html:not(.dark) .contact-sent-head, html:not(.dark) .contact-sent-empty, html:not(.dark) .email-leads-sentinfo { color: #64748b !important; }
+html:not(.dark) .contact-sent-row { background: #f8fafc !important; border-color: #e2e8f0 !important; color: #334155 !important; }
+html:not(.dark) .contact-sent-row:hover { border-color: #c4b5fd !important; }
+html:not(.dark) .contact-sent li.is-open .contact-sent-row { background: #f5f3ff !important; border-color: #a78bfa !important; }
+html:not(.dark) .contact-sent-row time, html:not(.dark) .contact-sent-where { color: #64748b !important; }
+html:not(.dark) .contact-sent-row strong { color: #0f172a !important; }
 /* Zeitfilter „Gesendet“ (Datum + Uhrzeit) */
 html:not(.dark) .inbox-sent-when label > span, html:not(.dark) .inbox-sent-time > span, html:not(.dark) .inbox-sent-time em { color: #64748b !important; }
 html:not(.dark) .inbox-sent-when input[type="datetime-local"], html:not(.dark) .inbox-sent-when input[type="time"] { background: #ffffff !important; border-color: #d6dbe6 !important; color: #1e293b !important; color-scheme: light; }

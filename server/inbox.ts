@@ -373,24 +373,28 @@ export type SentKind = "kampagne" | "antwort" | "einzel";
  * Filter: Suche (Adresse, Betreff), Zeitraum, Kampagne, Art und Reaktion (geöffnet, geklickt, geantwortet …).
  * Je Kampagnen-Mail steht dabei, was danach passiert ist (siehe shared/sent-tracking.ts) – und der Kontakt ist verlinkt.
  */
-export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; limit?: number } = {}) {
+export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null; limit?: number } = {}) {
   const limit = Math.min(500, Math.max(10, options.limit ?? 200));
   // Zeitraum (Datum + Uhrzeit) und Kampagne direkt in der Abfrage – sonst fielen ältere E-Mails hinter die neuesten 200.
   // Mit Zeitraum oder Uhrzeit werden bis zu 3000 Mails geholt, damit Liste und Zähler für den ganzen Zeitraum stimmen.
   const timeOfDay = Boolean(options.timeFrom || options.timeTo);
   const from = options.from && !Number.isNaN(options.from.getTime()) ? options.from : null; const to = options.to && !Number.isNaN(options.to.getTime()) ? options.to : null;
   const fetchLimit = timeOfDay || from || to ? 3000 : limit; let capped = false;
+  // Ein Kontakt (Reiter „Kontakte“): seine Mails über die Kontakt-Nummer oder – falls die fehlt – über die Adresse
+  const address = (options.email ?? "").trim().toLowerCase(); const contact = Boolean(options.leadId || address);
+  const forRecipient = contact ? [or(...(options.leadId ? [eq(emailCampaignRecipients.leadId, options.leadId)] : []), ...(address ? [sql`lower(${emailCampaignRecipients.email}) = ${address}`] : []))!] : [];
+  const forSingle = contact ? [or(...(options.leadId ? [eq(outboundMessages.leadId, options.leadId)] : []), ...(address ? [sql`lower(${outboundMessages.toAddress}) = ${address}`] : []))!] : [];
   const inWindow = <R extends { at: Date }>(rows: R[]) => { if (rows.length >= fetchLimit) capped = true; return timeOfDay ? rows.filter((row) => inTimeOfDay(new Date(row.at), options.timeFrom, options.timeTo)) : rows; };
   const campaignRows = await db.select({ id: emailCampaignEvents.id, at: emailCampaignEvents.createdAt, subject: emailCampaignEvents.subject, note: emailCampaignEvents.note, campaignId: emailCampaignEvents.campaignId, campaignName: emailCampaigns.name, nodeId: emailCampaignEvents.nodeId, bodySource: emailCampaignEvents.bodySource, draftSubject: emailCampaignRecipients.draftSubject, draftSource: emailCampaignRecipients.draftSource, recipientId: emailCampaignRecipients.id, email: emailCampaignRecipients.email, name: emailCampaignRecipients.name, leadId: emailCampaignRecipients.leadId, repliedAt: emailCampaignRecipients.repliedAt, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, bouncedAt: emailCampaignRecipients.bouncedAt })
     .from(emailCampaignEvents)
     .innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId))
     .innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignEvents.campaignId))
-    .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), ...(options.campaignId ? [eq(emailCampaignEvents.campaignId, options.campaignId)] : []), ...(from ? [gte(emailCampaignEvents.createdAt, from)] : []), ...(to ? [lt(emailCampaignEvents.createdAt, to)] : [])))
+    .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), ...forRecipient, ...(options.campaignId ? [eq(emailCampaignEvents.campaignId, options.campaignId)] : []), ...(from ? [gte(emailCampaignEvents.createdAt, from)] : []), ...(to ? [lt(emailCampaignEvents.createdAt, to)] : [])))
     .orderBy(desc(emailCampaignEvents.createdAt)).limit(fetchLimit).then(inWindow);
   // Einzel-E-Mails und Antworten gehören zu keiner Kampagne – bei gewählter Kampagne gar nicht erst laden
   const singleRows = options.campaignId ? [] : await db.select({ id: outboundMessages.id, at: outboundMessages.createdAt, subject: outboundMessages.subject, text: outboundMessages.text, to: outboundMessages.toAddress, status: outboundMessages.status, inboxMessageId: outboundMessages.inboxMessageId, leadId: outboundMessages.leadId, attachments: outboundMessages.attachments, senderName: users.name })
     .from(outboundMessages).leftJoin(users, eq(users.id, outboundMessages.createdByUserId))
-    .where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email"), ...(from ? [gte(outboundMessages.createdAt, from)] : []), ...(to ? [lt(outboundMessages.createdAt, to)] : [])))
+    .where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email"), ...forSingle, ...(from ? [gte(outboundMessages.createdAt, from)] : []), ...(to ? [lt(outboundMessages.createdAt, to)] : [])))
     .orderBy(desc(outboundMessages.createdAt)).limit(fetchLimit).then(inWindow);
   // Reaktionen je Mail: alle Ereignisse der betroffenen Empfänger holen und jeder gesendeten Mail ihr Zeitfenster zuordnen.
   const recipientIds = Array.from(new Set(campaignRows.map((row) => row.recipientId)));

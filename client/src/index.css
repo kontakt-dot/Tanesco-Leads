@@ -1540,6 +1540,32 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .email-leads-table tr:hover td{background:rgba(255,255,255,.02)}
 .email-leads-name{background:none;border:0;padding:0;color:#c7c2ff;font-size:12px;text-decoration:underline;cursor:pointer}
 .email-leads-state{display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;background:rgba(148,163,184,.16);color:#cbd5e1}
+/* Kontakte: Zahl bei „Mails“ klappt die gesendeten E-Mails des Kontakts auf (Datum + Uhrzeit, Betreff, Kampagne, Reaktion) */
+.email-leads-mails{display:inline-flex;align-items:baseline;gap:6px;padding:2px 8px;border-radius:7px;border:1px solid rgba(129,120,255,.3);background:rgba(129,120,255,.1);color:#d6d1ff;font-size:12px;cursor:pointer;transition:background-color .18s ease,border-color .18s ease}
+.email-leads-mails b{font-weight:700}
+.email-leads-mails small{font-size:10.5px;color:#a5a1c8;font-variant-numeric:tabular-nums}
+.email-leads-mails:hover,.email-leads-mails[aria-expanded="true"]{border-color:rgba(129,120,255,.65);background:rgba(129,120,255,.18)}
+.email-leads-mails:focus-visible{outline:2px solid rgba(129,120,255,.7);outline-offset:1px}
+.email-leads-table tr.is-mails-open>td{background:rgba(129,120,255,.06)}
+.email-leads-table tr.email-leads-sub>td{padding:0 10px 12px;white-space:normal;background:rgba(129,120,255,.04);border-top:0}
+.email-leads-sentinfo{margin:-2px 0 10px;font-size:12px;color:#a5a1c8}
+.contact-sent{max-width:980px;padding:10px 12px;border-radius:10px;border:1px solid rgba(129,120,255,.22);background:rgba(10,12,20,.4)}
+.contact-sent-head{margin:0 0 8px;font-size:11.5px;color:#a5a1c8}
+.contact-sent ul{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.contact-sent li{display:grid;gap:6px}
+.contact-sent-row{display:grid;grid-template-columns:150px minmax(0,1fr) minmax(0,220px) auto;align-items:center;gap:12px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02);text-align:left;font-size:12px;color:#cbd5e1;cursor:pointer}
+.contact-sent-row:hover{border-color:rgba(129,120,255,.4)}
+.contact-sent li.is-open .contact-sent-row{border-color:rgba(129,120,255,.55);background:rgba(129,120,255,.08)}
+.contact-sent-row time{font-variant-numeric:tabular-nums;color:#94a3b8;white-space:nowrap}
+.contact-sent-row strong{font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contact-sent-where{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#94a3b8}
+.contact-sent-row .inbox-tag{justify-self:end;white-space:nowrap}
+.contact-sent-empty{margin:0;padding:10px 0;font-size:12px;color:#94a3b8}
+@media (max-width:760px){.contact-sent-row{grid-template-columns:minmax(0,1fr);gap:3px}.contact-sent-row .inbox-tag{justify-self:start}}
+/* Handy (Tabelle als Karten): aufgeklappte Liste über die volle Breite, Karte nicht einfärben */
+.content-area table.stack-mobile tbody tr.is-mails-open>td{background:transparent!important}
+.content-area table.stack-mobile tbody tr.email-leads-sub{padding:0 0 10px!important}
+.content-area table.stack-mobile tbody tr.email-leads-sub>td{display:block!important;text-align:left;padding:0 10px!important;background:transparent!important}
 .email-leads-state.is-geantwortet{background:rgba(16,185,129,.18);color:#a7f3d0}
 .email-leads-state.is-geklickt{background:rgba(56,189,248,.18);color:#bae6fd}
 .email-leads-state.is-geoeffnet{background:rgba(129,120,255,.18);color:#c7c2ff}

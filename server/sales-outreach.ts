@@ -943,6 +943,8 @@ export async function deleteColdList(db: Db, tenantId: number, input: { listName
 
 /* ---------- Kontakte der E-Mail-Akquise ---------- */
 export type EmailLeadActivity = "gesendet" | "geoeffnet" | "geklickt" | "geantwortet" | "abgemeldet" | "bounce" | "ohne";
+/** Filter im Reiter „Kontakte“: die letzte Reaktion – oder „angeschrieben“ = alle, die schon eine E-Mail bekommen haben (egal was danach kam). */
+export type EmailLeadActivityFilter = EmailLeadActivity | "angeschrieben";
 /**
  * Eigene Lead-Übersicht für die E-Mail-Akquise: je Kontakt eine Zeile mit Herkunft (Liste), Anlage-Datum,
  * Stufe und Vertriebler, den Kampagnen, in denen er steckt, und dem, was zuletzt passiert ist
@@ -952,7 +954,7 @@ export type { PipelineSource } from "../shared/sales-pipeline";
 /** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board (meta-ads.pipelineOverview). */
 export const matchesSource = (adPlatform: string | null | undefined, source: PipelineSource | null | undefined) => !source ? true : source === "kaltakquise" ? adPlatform === "kaltakquise" : source === "email" ? adPlatform === "email" : isCustomSource(source) ? adPlatform === source : adPlatform !== "kaltakquise" && adPlatform !== "email" && !isCustomSource(adPlatform);
 
-export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivity | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null; blocked?: boolean | null } = {}) {
+export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivityFilter | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null; blocked?: boolean | null } = {}) {
   const limit = Math.min(1000, Math.max(10, options.limit ?? 200));
   const rows = await db.select({
     id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company,
@@ -991,14 +993,15 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
     const campaigns = Array.from(new Map(entries.map((item) => [item.campaignId, { id: item.campaignId, name: item.campaignName }])).values());
     const { metadata, ...rest } = lead;
     const suppression = lead.email ? suppressions.get(lead.email.toLowerCase()) ?? null : null;
-    return { ...rest, felder: extraFieldsOf(metadata), campaigns, activity, activityAt: at, mails: entries.reduce((sum, item) => sum + (item.sentCount ?? 0), 0), blocked: Boolean(suppression), blockedReason: suppression ? SUPPRESSION_LABELS[suppression.reason as SuppressionReason] ?? suppression.reason : null, blockedNote: suppression?.note ?? null };
+    const lastSentAt = entries.map((item) => item.lastSentAt).filter((value): value is Date => Boolean(value)).sort((x, y) => new Date(y).getTime() - new Date(x).getTime())[0] ?? null;
+    return { ...rest, felder: extraFieldsOf(metadata), campaigns, activity, activityAt: at, lastSentAt, mails: entries.reduce((sum, item) => sum + (item.sentCount ?? 0), 0), blocked: Boolean(suppression), blockedReason: suppression ? SUPPRESSION_LABELS[suppression.reason as SuppressionReason] ?? suppression.reason : null, blockedNote: suppression?.note ?? null };
   });
 
   const search = (options.search ?? "").trim().toLowerCase();
   const filtered = items.filter((item) => {
     if (options.listName && item.listName !== options.listName) return false;
     if (options.campaignId && !item.campaigns.some((campaign) => campaign.id === options.campaignId)) return false;
-    if (options.activity && item.activity !== options.activity) return false;
+    if (options.activity === "angeschrieben" ? !(item.mails > 0 || item.lastSentAt) : options.activity && item.activity !== options.activity) return false;
     if (options.blocked === true && !item.blocked) return false; if (options.blocked === false && item.blocked) return false;
     if (options.stage && item.stage !== options.stage) return false;
     if (options.ownerUserId === "ohne" && item.ownerUserId) return false;
@@ -1008,11 +1011,14 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
   });
   const counts = { alle: items.length } as Record<string, number>;
   for (const key of ["gesendet", "geoeffnet", "geklickt", "geantwortet", "abgemeldet", "bounce", "ohne"] as EmailLeadActivity[]) counts[key] = items.filter((item) => item.activity === key).length;
+  counts.angeschrieben = items.filter((item) => item.mails > 0 || item.lastSentAt).length; // „Gesendet“: jeder, der schon eine E-Mail bekommen hat – kommt automatisch dazu
   const lists = Array.from(new Set(items.map((item) => item.listName).filter((name): name is string => Boolean(name)))).sort((a, b) => a.localeCompare(b, "de"));
   const campaigns = Array.from(new Map(items.flatMap((item) => item.campaigns).map((campaign) => [campaign.id, campaign] as const)).values()).sort((a, b) => a.name.localeCompare(b.name, "de"));
   // Oben steht, was gerade zählt: zuerst die mit Reaktion (stärkste zuerst), danach der Rest nach Anlage-Datum.
   const rang: Record<EmailLeadActivity, number> = { geantwortet: 6, geklickt: 5, geoeffnet: 4, gesendet: 3, bounce: 2, abgemeldet: 1, ohne: 0 };
-  const sortiert = filtered.sort((a, b) => rang[b.activity] - rang[a.activity] || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime());
+  // Filter „Gesendet“: zuletzt angeschrieben zuerst
+  const sortiert = options.activity === "angeschrieben" ? filtered.sort((a, b) => new Date(b.lastSentAt ?? 0).getTime() - new Date(a.lastSentAt ?? 0).getTime())
+    : filtered.sort((a, b) => rang[b.activity] - rang[a.activity] || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime());
   // Anrufzähler je Kontakt (Spalte „Anrufe“ im Reiter Kontakte)
   const page = sortiert.slice(0, limit); const { callCountsMap } = await import("./pipeline-extras"); const callMap = await callCountsMap(db, tenantId, page.map((item) => item.id));
   return { items: page.map((item) => ({ ...item, calls: callMap.get(item.id) ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } })), total: filtered.length, counts, lists, campaigns, blocked: items.filter((item) => item.blocked).length };

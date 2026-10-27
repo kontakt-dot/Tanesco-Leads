@@ -1284,6 +1284,19 @@ describe("Gesendet mit Tracking je Mail und Kontakt-Link (Chat-Build)", () => {
     expect(eine.campaigns.map((item: { id: number }) => item.id).sort()).toEqual(sent.campaigns.map((item: { id: number }) => item.id).sort());
     expect(eine.items.every((item: { campaignId: number }) => item.campaignId === mail.campaignId)).toBe(true);
   });
+  it("Kontakte: Filter „Gesendet“ zeigt alle, die eine E-Mail bekommen haben; je Kontakt die gesendeten E-Mails mit Zeit", async () => {
+    const alle = await call("leadops.emailLeads", {});
+    const gesendet = await call("leadops.emailLeads", { activity: "angeschrieben" });
+    const erwartet = alle.items.filter((item: { mails: number; lastSentAt: unknown }) => item.mails > 0 || item.lastSentAt).length;
+    expect(gesendet.counts.angeschrieben).toBe(erwartet); expect(gesendet.total).toBe(erwartet); expect(erwartet).toBeGreaterThan(0);
+    expect(gesendet.items.every((item: { mails: number }) => item.mails > 0)).toBe(true);
+    // mehr als „Nicht geöffnet“: auch Geöffnete und Geantwortete stehen unter „Gesendet“
+    expect(gesendet.items.some((item: { activity: string }) => item.activity !== "gesendet")).toBe(true);
+    const zeiten = gesendet.items.map((item: { lastSentAt: string }) => new Date(item.lastSentAt).getTime()); expect([...zeiten].sort((a, b) => b - a)).toEqual(zeiten); // zuletzt angeschrieben oben
+    const kontakt = gesendet.items[0];
+    const mails = await call("leadops.listSent", { leadId: kontakt.id, email: kontakt.email });
+    expect(mails.total).toBeGreaterThan(0); expect(mails.items.every((item: { to: string }) => item.to.toLowerCase() === String(kontakt.email).toLowerCase())).toBe(true);
+  });
 });
 
 describe("Übernahme in die Pipeline „E-Mail-Kampagne“ mit Stufe (Chat-Build)", () => {

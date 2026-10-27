@@ -328,6 +328,33 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
   </div>;
 }
 
+/**
+ * Gesendete E-Mails an einen Kontakt (Reiter „Kontakte“, Zahl bei „Mails“): wann sie rausging (Datum + Uhrzeit), Betreff,
+ * Kampagne und was danach passiert ist. Klick zeigt die E-Mail genau so, wie sie verschickt wurde.
+ */
+export function ContactSentMails({ leadId, email }: { leadId: number; email: string | null }) {
+  const sent = trpc.leadops.listSent.useQuery({ leadId, email: email || null, limit: 100 }, { retry: false });
+  const [openId, setOpenId] = useState<string | null>(null);
+  if (sent.isLoading) return <p className="contact-sent-empty">Wird geladen …</p>;
+  if (sent.error) return <p className="contact-sent-empty">{sent.error.message}</p>;
+  const items = sent.data?.items ?? [];
+  if (!items.length) return <p className="contact-sent-empty">An diesen Kontakt ging noch keine E-Mail raus.</p>;
+  const kindLabel: Record<string, string> = { kampagne: "Kampagne", antwort: "Antwort", einzel: "Einzel-E-Mail" };
+  const reactionAt = (tracking: { reaction: SentReaction; openedAt: Date | string | null; clickedAt: Date | string | null; repliedAt: Date | string | null; bouncedAt: Date | string | null; unsubscribedAt: Date | string | null }) => tracking.reaction === "geantwortet" ? tracking.repliedAt : tracking.reaction === "geklickt" ? tracking.clickedAt : tracking.reaction === "geoeffnet" ? tracking.openedAt : tracking.reaction === "bounce" ? tracking.bouncedAt : tracking.reaction === "abgemeldet" ? tracking.unsubscribedAt : null;
+  return <div className="contact-sent">
+    <p className="contact-sent-head">{items.length === 1 ? "1 E-Mail" : `${items.length} E-Mails`} an diesen Kontakt, neueste zuerst. Klick zeigt die E-Mail so, wie sie rausging.</p>
+    <ul>{items.map((item) => { const at = item.tracking ? reactionAt(item.tracking) : null; return <li key={item.id} className={openId === item.id ? "is-open" : ""}>
+      <button type="button" className="contact-sent-row" aria-expanded={openId === item.id} onClick={() => setOpenId(openId === item.id ? null : item.id)}>
+        <time>{new Date(item.at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })} Uhr</time>
+        <strong>{item.subject}</strong>
+        <span className="contact-sent-where">{item.campaignName ?? kindLabel[item.kind] ?? item.kind}</span>
+        {item.tracking ? <i className={`inbox-tag inbox-reaction is-${item.tracking.reaction}`}>{REACTION_LABEL[item.tracking.reaction]}{at ? ` ${whenShort(at)}` : ""}</i> : <i className="inbox-tag">{kindLabel[item.kind] ?? item.kind}</i>}
+      </button>
+      {openId === item.id && <SentMailPreview id={item.id} onClose={() => setOpenId(null)} />}
+    </li>; })}</ul>
+  </div>;
+}
+
 /** Vorschau einer gesendeten E-Mail: Kampagnen-Mails werden aus dem Schritt und den Empfängerdaten nachgebaut, Einzel-Mails aus dem gespeicherten Text. */
 export function SentMailPreview({ id, onClose }: { id: string; onClose: () => void }) {
   const preview = trpc.leadops.sentMailPreview.useQuery({ id }, { retry: false });
