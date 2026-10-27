@@ -40,7 +40,7 @@ export async function loadSettings(db: Db, tenantId: number): Promise<PipelineSe
 export async function saveSettings(db: Db, tenantId: number, input: unknown) {
   // Eigene Pipelines werden über eigene Aktionen gepflegt – beim normalen Speichern der Einstellungen bleiben sie erhalten
   const raw = input && typeof input === "object" ? { ...(input as Record<string, unknown>) } : {};
-  if (!("customPipelines" in raw)) raw.customPipelines = (await loadSettings(db, tenantId)).customPipelines;
+  if (!("customPipelines" in raw) || !("sentStageAdded" in raw)) { const current = await loadSettings(db, tenantId); if (!("customPipelines" in raw)) raw.customPipelines = current.customPipelines; if (!("sentStageAdded" in raw)) raw.sentStageAdded = current.sentStageAdded; }
   const settings = normalizePipelineSettings(raw);
   const existing = (await db.select({ id: pipelineSettings.id }).from(pipelineSettings).where(eq(pipelineSettings.tenantId, tenantId)).limit(1))[0];
   if (existing) await db.update(pipelineSettings).set({ settings }).where(eq(pipelineSettings.id, existing.id)); else await db.insert(pipelineSettings).values({ tenantId, settings });

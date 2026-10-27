@@ -25,6 +25,9 @@ export type RestoreItem = { leadId: number; now: PipelineState; then: PipelineSt
 export const PUSH_TAKEN_RE = /^Aus der E-Mail-Akquise in die Pipeline „(.+)“ übernommen$/;
 export const PUSH_MOVED_RE = /^Aus der Pipeline „(.+)“ in die Pipeline „(.+)“ verschoben$/;
 export const PUSH_STAGED_NOTE = "Stufe über die Kontakte der E-Mail-Akquise gesetzt";
+/** Automatisch beim Versand (server/sent-card.ts): neue Kontakte → „E-Mail-Kampagne“ / „Versendet“. */
+export const AUTO_SENT_TAKEN_RE = /automatisch aus der E-Mail-Akquise in die Pipeline „([^“]+)“ übernommen$/;
+const AUTO_SENT_MOVED_RE = /^E-Mail aus „.+“ versendet$/;
 /** Automatische Zuteilung nach den Regeln (ohne handelnde Person) – vorher hatte die Karte keinen Vertriebler. */
 const AUTO_ASSIGN_RE = /^Zugeteilt an .+\(Regel: /;
 
@@ -70,9 +73,9 @@ export function reconstructStateAt(input: {
   for (const event of input.events) {
     const at = time(event.at); if (!(at > limit)) continue;
     const note = (event.note ?? "").trim(); const values: Partial<PipelineState> = {}; const unknown: StateKey[] = []; let label: string;
-    const taken = PUSH_TAKEN_RE.exec(note); const moved = PUSH_MOVED_RE.exec(note);
+    const pushed = PUSH_TAKEN_RE.exec(note); const auto = pushed ? null : AUTO_SENT_TAKEN_RE.exec(note); const taken = pushed ?? auto; const moved = PUSH_MOVED_RE.exec(note);
     if (taken) {
-      label = `In die Vertriebspipeline übernommen („${taken[1]}“)`;
+      label = auto ? "E-Mail versendet – automatisch in „Versendet“" : `In die Vertriebspipeline übernommen („${taken[1]}“)`;
       values.inPipeline = false; values.adPlatform = input.takenPlatform(event.leadId);
       const before = input.stageBefore?.(event.leadId); values.pipelineStage = before && input.isStage(before) ? before : "neu";
     } else if (moved) {
@@ -86,7 +89,7 @@ export function reconstructStateAt(input: {
     } else if (event.toStage === "besitzer" && event.actorUserId == null && AUTO_ASSIGN_RE.test(note)) {
       label = "Automatisch zugeteilt"; values.ownerUserId = null;
     } else if (event.fromStage && event.fromStage !== event.toStage && input.isStage(event.fromStage) && input.isStage(event.toStage)) {
-      label = "Stufe geändert"; values.pipelineStage = event.fromStage;
+      label = AUTO_SENT_MOVED_RE.test(note) ? "E-Mail versendet – automatisch in „Versendet“" : "Stufe geändert"; values.pipelineStage = event.fromStage;
     } else continue;
     add(event.leadId, { at, cause: { at: new Date(event.at), label, actorUserId: event.actorUserId }, values, unknown });
   }

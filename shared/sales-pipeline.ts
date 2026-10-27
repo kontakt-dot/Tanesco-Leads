@@ -81,6 +81,24 @@ export const lostStage = (stages: StageDef[] = PIPELINE_STAGES) => stages.find((
 export const workingStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "in_bearbeitung") ?? stages.find((stage) => /bearbeitung|wird angerufen|anrufen/i.test(stage.label) && !stage.fixed))?.key ?? null;
 /** Stufe „Kontaktiert“ (erreicht) – per Schlüssel oder am Namen. */
 export const contactedStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "kontaktiert") ?? stages.find((stage) => /kontaktiert|in kontakt|^kontakt$|erreicht|gesprochen/i.test(stage.label.trim()) && !stage.fixed) ?? stages.find((stage) => /kontakt/i.test(stage.key) && !stage.fixed))?.key ?? null;
+/** Stufe „Versendet“ der Pipeline „E-Mail-Kampagne“: Kampagnen-E-Mail ist raus. Per Schlüssel oder – bei eigenen Stufen – am Namen erkannt. */
+export const SENT_STAGE: StageDef = { key: "versendet", label: "Versendet", hint: "E-Mail aus einer Kampagne ist raus – neue Kontakte kommen automatisch hierher" };
+export const sentStage = (stages: StageDef[]) => (stages.find((stage) => stage.key === SENT_STAGE.key) ?? stages.find((stage) => !stage.fixed && /^(e-?mails? )?(versendet|gesendet|angeschrieben)$/i.test(stage.label.trim())))?.key ?? null;
+/** Stufen mit „Versendet“ direkt nach der Eingangsstufe – falls es sie noch nicht gibt. */
+export const withSentStage = (stages: StageDef[]): StageDef[] => { if (sentStage(stages)) return stages; const at = Math.max(0, stages.findIndex((stage) => stage.fixed === "entry")) + 1; return [...stages.slice(0, at), SENT_STAGE, ...stages.slice(at)]; };
+/**
+ * Kampagnen-E-Mail ist raus – was passiert mit der Karte? Nur NEUE kommen nach „Versendet“:
+ *  - nur in der E-Mail-Akquise (noch in keiner Pipeline) → Pipeline „E-Mail-Kampagne“, Stufe „Versendet“
+ *  - in der Pipeline „E-Mail-Kampagne“ noch in der Eingangsstufe („Neu“) → „Versendet“
+ *  - alles andere (schon weitergeschoben, andere Pipeline) bleibt, wo es ist
+ */
+export function sentCardMove(lead: { inPipeline: boolean | null; adPlatform: string | null; pipelineStage: string | null }, emailStages: StageDef[]): { intake: boolean; from: string | null; to: string } | null {
+  const to = sentStage(emailStages); if (!to) return null;
+  if (lead.inPipeline === false) return { intake: true, from: null, to };
+  if (pipelineSourceOf(lead.adPlatform) !== "email") return null;
+  const current = isStage(lead.pipelineStage, emailStages) ? lead.pipelineStage : entryStage(emailStages);
+  return current === entryStage(emailStages) && current !== to ? { intake: false, from: current, to } : null;
+}
 export const nextStageKey = (current: string, stages: StageDef[] = PIPELINE_STAGES) => { const index = stages.findIndex((stage) => stage.key === current); if (index < 0) return null; const next = stages[index + 1]; return next && next.fixed !== "lost" ? next.key : null; };
 const stageOf = (value: string | null | undefined, stages: StageDef[]) => (isStage(value, stages) ? value : entryStage(stages));
 

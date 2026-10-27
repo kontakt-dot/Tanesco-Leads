@@ -1388,6 +1388,8 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const inboxLead = await owner.leadops.createLeadFromInbox({ messageId: (await owner.leadops.storeInboxMessage({ fromEmail: "neu@firma-test.example", fromName: "Nina Neu", subject: "Interesse", bodyText: "Bitte Infos." })).id, pipeline: "email", stage: "qualifiziert" }); expect(inboxLead.created).toBe(true);
     expect((await owner.leadops.pipelineOverview({ source: "email" })).stages.find((stage) => stage.key === "qualifiziert")!.leads.find((lead) => lead.publicId === inboxLead.publicId)).toMatchObject({ adPlatform: "email", adCampaignName: "Posteingang" });
     // Stufen bearbeiten: neue Stufe „Nachfassen“ vor „Verloren“, „Angebot“ entfernen → Leads aus „Angebot“ rutschen auf „Neu“; Notiz an einer Karte
+    // (die Pipeline „E-Mail-Kampagne“ hat seit der Spalte „Versendet“ eigene Stufen – für diesen Teil wieder auf Standard)
+    await owner.leadops.resetPipelineStages({ source: "email" });
     const defaults = await owner.leadops.pipelineStages(); expect(defaults.map((stage) => stage.key)).toEqual(["neu", "in_bearbeitung", "kontaktiert", "qualifiziert", "termin", "angebot", "kunde", "verloren"]);
     const edited = await owner.leadops.savePipelineStages({ stages: [...defaults.filter((stage) => stage.key !== "angebot").map((stage) => stage.key === "termin" ? { ...stage, label: "Vor-Ort-Termin" } : stage), { label: "Nachfassen", hint: "Später erneut melden" }] });
     expect(edited.stages.map((stage) => stage.key)).toEqual(["neu", "in_bearbeitung", "kontaktiert", "qualifiziert", "termin", "kunde", "stufe_nachfassen", "verloren"]); expect(edited.stages.find((stage) => stage.key === "termin")?.label).toBe("Vor-Ort-Termin");
@@ -2904,14 +2906,6 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(gewaehlt.campaigns.length).toBeGreaterThan(1); expect(gewaehlt.campaigns.find((item) => item.id === campaign.id)?.count).toBe(3);
     expect((await owner.leadops.listSent({ kind: "kampagne" })).counts).toEqual((await owner.leadops.listSent({})).counts);
     await expect(owner.leadops.listSent({ timeFrom: "9 Uhr" } as never)).rejects.toThrow();
-    // Reiter „Gesendet“ der E-Mail-Kampagnen: nach Liste filtern; die Auswahl der Listen bleibt vollständig
-    const byList = await owner.leadops.listSent({ kind: "kampagne", listName: "Zeitfilter-Test" });
-    expect(byList.items.map((item) => item.to).sort()).toEqual(["anna@zeitfilter-e2e.example", "bernd@zeitfilter-e2e.example", "carla@zeitfilter-e2e.example"]);
-    expect(byList.items.every((item) => (item as { listName?: string | null }).listName === "Zeitfilter-Test")).toBe(true);
-    expect(byList.lists.find((item) => item.name === "Zeitfilter-Test")?.count).toBe(3); expect(byList.lists.length).toBeGreaterThan(1);
-    expect((await owner.leadops.listSent({ kind: "kampagne", listName: "Zeitfilter-Test", timeFrom: "14:00", timeTo: "16:30" })).items.map((item) => new Date(item.at).toISOString())).toEqual([times[1]]);
-    expect((await owner.leadops.listSent({ kind: "kampagne" })).lists.some((item) => item.name === "Zeitfilter-Test")).toBe(true);
-    expect((await owner.leadops.listSent({ listName: "Gibt-es-nicht-Liste" })).items).toHaveLength(0);
     // Kontakte: Filter „Gesendet“ = alle, die eine E-Mail bekommen haben (egal was danach kam); je Kontakt seine Mails mit Uhrzeit
     const kontakte = await owner.leadops.emailLeads({ listName: "Zeitfilter-Test", activity: "angeschrieben" });
     expect(kontakte.items.map((item) => item.email).sort()).toEqual(["anna@zeitfilter-e2e.example", "bernd@zeitfilter-e2e.example", "carla@zeitfilter-e2e.example"]);
@@ -2969,6 +2963,49 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(fromHistory).toHaveLength(3); expect(fromHistory.find((item) => item.leadId === ids.anke)?.then.pipeline).toBe("Nur E-Mail-Akquise"); expect(fromHistory.find((item) => item.leadId === ids.cora)?.then).toMatchObject({ pipeline: "Kaltakquise", stage: coldStages[1].label });
     expect((await owner.leadops.restorePipelineState({ at: at2, leadIds: [ids.anke, ids.bodo, ids.cora] })).restored).toBe(3);
     expect(await row(ids.anke)).toEqual(ankeBefore); expect(await row(ids.bodo)).toMatchObject({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu" }); expect(await row(ids.cora)).toEqual(coraBefore);
+  }, 40000);
+
+  it("63f. Pipeline „E-Mail-Kampagne“: Kampagnen-E-Mail raus → neue Kontakte in „Versendet“, weitergeschobene Karten und andere Pipelines bleiben; Board nach Liste filtern", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "Versendet-Test", toPipeline: false, rows: [["Vera", "Neu"], ["Nora", "Eingang"], ["Karl", "Weiter"], ["Kim", "Kalt"]].map(([firstName, lastName]) => ({ firstName, lastName, company: `${lastName} Dach`, email: `${firstName.toLowerCase()}@versendet-e2e.example` })) });
+    const ids = Object.fromEntries((await owner.leadops.emailLeads({ listName: "Versendet-Test" })).items.map((item) => [item.email!.split("@")[0], item.id])) as Record<"vera" | "nora" | "karl" | "kim", number>;
+    const coldStages = await owner.leadops.pipelineStages({ source: "kaltakquise" });
+    await owner.leadops.pushLeadsToPipeline({ leadIds: [ids.nora], target: "email", stage: "neu" });          // in „Neu“ → wandert mit
+    await owner.leadops.pushLeadsToPipeline({ leadIds: [ids.karl], target: "email", stage: "kontaktiert" });  // schon weitergeschoben → bleibt
+    await owner.leadops.pushLeadsToPipeline({ leadIds: [ids.kim], target: "kaltakquise", stage: coldStages[1].key }); // andere Pipeline → bleibt
+    const row = async (id: number) => (await db.select({ inPipeline: leads.inPipeline, adPlatform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, id)))[0];
+    const kimBefore = await row(ids.kim);
+    // frischer Stand: Pipeline „E-Mail-Kampagne“ auf Standard-Stufen, Spalte „Versendet“ noch nie automatisch angelegt
+    await owner.leadops.resetPipelineStages({ source: "email" }); const extras = await import("./pipeline-extras"); await extras.saveSettings(db, S.tenantId, { ...(await extras.loadSettings(db, S.tenantId)), sentStageAdded: false });
+    expect((await owner.leadops.pipelineStages({ source: "email" })).some((stage) => stage.key === "versendet")).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 1100)); const beforeRun = new Date(); await new Promise((resolve) => setTimeout(resolve, 1100));
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Versendet-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Versendet-Test" }, tree: { start: "o1", nodes: [{ id: "o1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: { ...(starter.design as unknown as Record<string, unknown>), plain: true }, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    expect((await db.select({ id: emailCampaignEvents.id }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")))).length).toBe(4);
+    const emailStages = await owner.leadops.pipelineStages({ source: "email" });
+    expect(emailStages.map((stage) => stage.key).slice(0, 2)).toEqual(["neu", "versendet"]);
+    expect(await row(ids.vera)).toEqual({ inPipeline: true, adPlatform: "email", stage: "versendet" });
+    expect(await row(ids.nora)).toEqual({ inPipeline: true, adPlatform: "email", stage: "versendet" });
+    expect(await row(ids.karl)).toEqual({ inPipeline: true, adPlatform: "email", stage: "kontaktiert" });
+    expect(await row(ids.kim)).toEqual(kimBefore);
+    const veraNote = (await db.select({ note: pipelineEvents.note }).from(pipelineEvents).where(eq(pipelineEvents.leadId, ids.vera))).map((event) => event.note ?? "");
+    expect(veraNote.some((note) => note.startsWith("E-Mail aus „Versendet-Test“ versendet – automatisch"))).toBe(true);
+    // zweiter Durchlauf: nichts Neues, nichts wandert
+    await owner.leadops.runEmailCampaigns(); expect(await row(ids.karl)).toMatchObject({ stage: "kontaktiert" });
+    // Board der Pipeline „E-Mail-Kampagne“ nach Liste filtern
+    const board = await owner.leadops.pipelineOverview({ source: "email", listName: "Versendet-Test" });
+    expect(board.totals.leads).toBe(3); expect(board.lists.find((item) => item.name === "Versendet-Test")?.count).toBe(3);
+    expect(board.stages.find((stage) => stage.key === "versendet")!.leads.map((lead) => lead.id).sort()).toEqual([ids.vera, ids.nora].sort());
+    expect((await owner.leadops.pipelineOverview({ source: "email" })).lists.some((item) => item.name === "Versendet-Test")).toBe(true);
+    // „Früheren Stand wiederherstellen“ erkennt das automatische Einsortieren
+    const preview = (await owner.leadops.pipelineStateAt({ at: beforeRun })).items;
+    expect(preview.find((item) => item.leadId === ids.vera)?.then.pipeline).toBe("Nur E-Mail-Akquise"); expect(preview.find((item) => item.leadId === ids.nora)?.then.stage).toBe("Neu");
+    expect(preview.some((item) => item.leadId === ids.karl || item.leadId === ids.kim)).toBe(false);
+    // Spalte gelöscht → kommt nicht wieder, und niemand wird mehr einsortiert
+    await owner.leadops.savePipelineStages({ source: "email", stages: emailStages.filter((stage) => stage.key !== "versendet") });
+    const { ensureSentStage } = await import("./sent-card"); expect(await ensureSentStage(db, S.tenantId)).toBeNull();
+    expect((await owner.leadops.pipelineStages({ source: "email" })).some((stage) => stage.key === "versendet")).toBe(false);
   }, 40000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {

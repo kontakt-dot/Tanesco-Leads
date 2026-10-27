@@ -95,8 +95,9 @@ export async function importColdList(db: Db, tenantId: number, input: { pipeline
 }
 export async function listColdLists(db: Db, tenantId: number, pipeline?: PipelineSource | null) {
   const all = await db.select({ listName: leads.listName, stage: leads.pipelineStage, phone: leads.phone, email: leads.email, metadata: leads.metadata, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
-  // Listen der Kaltakquise und aller eigenen Pipelines – mit Pipeline-Angabe nur die dieser Pipeline
-  const rows = all.filter((row) => pipeline && isColdLike(pipeline) ? row.adPlatform === platformForSource(pipeline) : isColdLike(row.adPlatform));
+  // Listen der Kaltakquise und aller eigenen Pipelines – mit Pipeline-Angabe nur die dieser Pipeline.
+  // Ohne Angabe (Listen-Auswahl der E-Mail-Kampagnen) zählen auch Kontakte einer Liste, die inzwischen in der Pipeline „E-Mail-Kampagne“ stehen (z. B. „Versendet“)
+  const rows = all.filter((row) => pipeline && isColdLike(pipeline) ? row.adPlatform === platformForSource(pipeline) : isColdLike(row.adPlatform) || (row.adPlatform === "email" && Boolean(row.listName)));
   const map = new Map<string, { listName: string; contacts: number; withPhone: number; withEmail: number; customers: number; lost: number; fields: Array<{ key: string; sample: string }> }>();
   for (const row of rows) {
     const name = row.listName ?? "Ohne Liste"; const entry = map.get(name) ?? { listName: name, contacts: 0, withPhone: 0, withEmail: 0, customers: 0, lost: 0, fields: [] };
@@ -642,6 +643,8 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
       let sentIndex = 0;
       for (const event of result.events) { const at = event.kind === "gesendet" ? sentIndex++ : -1; await db.insert(emailCampaignEvents).values({ tenantId: campaign.tenantId, campaignId: campaign.id, recipientId: recipient.id, nodeId: event.nodeId, kind: event.kind, subject: event.subject ?? null, note: event.note, sender: at >= 0 ? sender?.fromEmail ?? null : null, messageId: at >= 0 ? sentIds[at] ?? null : null, body: at >= 0 ? sentBodies[at]?.body ?? null : null, bodySource: at >= 0 ? sentBodies[at]?.source ?? null : null }); }
       const sentNow = result.events.filter((event) => event.kind === "gesendet").length; sentInRun += sentNow; if (sentNow && dayLeft.has(campaign.tenantId)) dayLeft.set(campaign.tenantId, (dayLeft.get(campaign.tenantId) ?? 0) - sentNow);
+      // Pipeline „E-Mail-Kampagne“: neue Kontakte kommen nach „Versendet“ (schon weitergeschobene Karten bleiben, wo sie sind)
+      if (sentNow && recipient.leadId) { try { const { fileSentCard } = await import("./sent-card"); await fileSentCard(db, campaign.tenantId, { leadId: recipient.leadId, campaignName: campaign.name }); } catch (error) { console.error("[versendet] Karte nicht einsortiert:", error instanceof Error ? error.message : error); } }
       const failedNow = result.events.filter((event) => event.kind === "fehler"); if (failedNow.length) { failedInRun += failedNow.length; lastFailure = `${recipient.email}: ${(await db.select({ lastError: emailCampaignRecipients.lastError }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, recipient.id)).limit(1))[0]?.lastError ?? "Versand fehlgeschlagen"}`; }
       processed += 1;
     }

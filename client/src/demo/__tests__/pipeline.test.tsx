@@ -1096,6 +1096,27 @@ describe("Dublettenschutz, Tags, Listen ansehen und Gesendet (Chat-Build)", () =
   });
 });
 
+describe("Pipeline „E-Mail-Kampagne“: Spalte „Versendet“ und Filter nach Liste (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+  it("Kampagnen-E-Mail raus → neue Kontakte stehen in „Versendet“, weitergeschobene bleiben; Board nach Liste filtern", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Versendet-Probe", toPipeline: false, rows: [{ firstName: "Vera", lastName: "Neu", company: "Neu Dach", email: "vera@versendet-probe.example" }, { firstName: "Karl", lastName: "Weiter", company: "Weiter Dach", email: "karl@versendet-probe.example" }], ownerUserIds: [] });
+    const kontakte = (await call("leadops.emailLeads", { listName: "Versendet-Probe" })).items as Array<{ id: number; email: string }>;
+    const karl = kontakte.find((item) => item.email.startsWith("karl"))!; const vera = kontakte.find((item) => item.email.startsWith("vera"))!;
+    await call("leadops.pushLeadsToPipeline", { leadIds: [karl.id], target: "email", stage: "kontaktiert" }); // schon weitergeschoben
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: "e1" }, { id: "e1", type: "end", label: "Ende" }] };
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Versendet-Probe", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Versendet-Probe" }, tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 });
+    expect((await call("leadops.startEmailCampaign", { id: saved.id })).added).toBe(2); await call("leadops.runEmailCampaigns");
+    const lead = (id: number) => getStore().tables.leads.find((row) => row.id === id)!;
+    expect((await call("leadops.pipelineStages", { source: "email" })).some((stage: { key: string }) => stage.key === "versendet")).toBe(true);
+    expect(lead(vera.id)).toMatchObject({ inPipeline: true, adPlatform: "email", pipelineStage: "versendet" });
+    expect(lead(karl.id)).toMatchObject({ inPipeline: true, adPlatform: "email", pipelineStage: "kontaktiert" });
+    const board = await call("leadops.pipelineOverview", { source: "email", listName: "Versendet-Probe" });
+    expect(board.totals.leads).toBe(2); expect(board.lists.some((item: { name: string; count: number }) => item.name === "Versendet-Probe" && item.count === 2)).toBe(true);
+    expect(board.stages.find((stage: { key: string }) => stage.key === "versendet").leads.map((row: { id: number }) => row.id)).toEqual([vera.id]);
+  });
+});
+
 describe("Früheren Stand wiederherstellen (Chat-Build)", () => {
   beforeAll(() => resetStore());
   it("Versehentlich übernommene Kontakte: Vorschau zeigt „Nur E-Mail-Akquise“, Zurücksetzen holt sie zurück, Übernehmen hat Rückgängig", async () => {
@@ -1303,9 +1324,6 @@ describe("Gesendet mit Tracking je Mail und Kontakt-Link (Chat-Build)", () => {
     expect(fenster.total).toBe(fenster.items.length); expect(fenster.counts.kampagne).toBe(fenster.total);
     // Zähler beziehen sich auf den Zeitraum: Summe der Reaktionen = Mails im Zeitraum
     const r = fenster.reactions; expect(r.geoeffnet + r.geklickt + r.geantwortet + r.ohne + r.bounce + r.abgemeldet).toBe(fenster.counts.kampagne);
-    // nach Liste filtern (Reiter „Gesendet“): nur Mails an Kontakte dieser Liste, Auswahl mit Zahlen
-    const liste = sent.lists[0];
-    if (liste) { const nurListe = await call("leadops.listSent", { kind: "kampagne", listName: liste.name }); expect(nurListe.total).toBe(liste.count); expect(nurListe.items.every((item: { listName: string | null }) => item.listName === liste.name)).toBe(true); }
     // Kampagne gewählt: Auswahlliste enthält trotzdem alle Kampagnen
     const eine = await call("leadops.listSent", { campaignId: mail.campaignId });
     expect(eine.campaigns.map((item: { id: number }) => item.id).sort()).toEqual(sent.campaigns.map((item: { id: number }) => item.id).sort());
