@@ -3008,6 +3008,37 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.pipelineStages({ source: "email" })).some((stage) => stage.key === "versendet")).toBe(false);
   }, 40000);
 
+  it("63g. Nachtrag: Kontakte mit schon versendeter E-Mail kommen einmal nach „Versendet“ – Unzustellbare, Gesperrte und weitergeschobene Karten bleiben; Rückgängig", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const sentCard = await import("./sent-card"); const extras = await import("./pipeline-extras");
+    // „Versendet“ wieder da (63f hatte sie gelöscht) – wie in einer Pipeline, die die Spalte schon hat
+    await owner.leadops.savePipelineStages({ source: "email", stages: (await import("../shared/sales-pipeline")).withSentStage(await owner.leadops.pipelineStages({ source: "email" })) });
+    await owner.leadops.importColdList({ listName: "Nachtrag-Test", toPipeline: false, rows: ["anja", "bert", "carl", "dora", "emil"].map((name) => ({ firstName: name, lastName: "Nachtrag", company: `${name} GmbH`, email: `${name}@nachtrag-e2e.example` })) });
+    const ids = Object.fromEntries((await owner.leadops.emailLeads({ listName: "Nachtrag-Test" })).items.map((item) => [item.email!.split("@")[0], item.id])) as Record<"anja" | "bert" | "carl" | "dora" | "emil", number>;
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Nachtrag-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Nachtrag-Test" }, tree: { start: "o1", nodes: [{ id: "o1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: { ...(starter.design as unknown as Record<string, unknown>), plain: true }, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    // so tun, als wären die E-Mails vor der neuen Regel rausgegangen: alle wieder wie vorher
+    for (const id of [ids.anja, ids.dora, ids.emil]) await db.update(leads).set({ inPipeline: false, adPlatform: "kaltakquise", pipelineStage: "neu", ownerUserId: null }).where(eq(leads.id, id));
+    await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: "neu", ownerUserId: null }).where(eq(leads.id, ids.bert));
+    await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: "kontaktiert", ownerUserId: null }).where(eq(leads.id, ids.carl));
+    await db.update(emailCampaignRecipients).set({ status: "bounce" }).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.leadId, ids.dora)));
+    await db.insert(emailSuppressions).values({ tenantId: S.tenantId, email: "emil@nachtrag-e2e.example", reason: "manuell" });
+    await extras.saveSettings(db, S.tenantId, { ...(await extras.loadSettings(db, S.tenantId)), sentBackfillDone: false });
+    const row = async (id: number) => (await db.select({ inPipeline: leads.inPipeline, adPlatform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, id)))[0];
+    const result = await sentCard.backfillSentCards(db, S.tenantId);
+    expect(result.done).toBe(true); expect(result.moved).toBeGreaterThanOrEqual(2);
+    expect(await row(ids.anja)).toEqual({ inPipeline: true, adPlatform: "email", stage: "versendet" });
+    expect(await row(ids.bert)).toEqual({ inPipeline: true, adPlatform: "email", stage: "versendet" });
+    expect(await row(ids.carl)).toEqual({ inPipeline: true, adPlatform: "email", stage: "kontaktiert" });
+    expect(await row(ids.dora)).toEqual({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu" }); // unzustellbar
+    expect(await row(ids.emil)).toEqual({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu" }); // gesperrt
+    expect((await extras.loadSettings(db, S.tenantId)).sentBackfillDone).toBe(true);
+    expect((await sentCard.backfillSentCards(db, S.tenantId)).done).toBe(false); // nur einmal
+    const entry = (await owner.leadops.listUndo({ limit: 20 })).find((item) => item.title.includes("bereits versendeter E-Mail"))!; expect(entry).toBeTruthy();
+    await owner.leadops.undoOperation({ id: entry.id });
+    expect(await row(ids.anja)).toEqual({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu" }); expect(await row(ids.bert)).toMatchObject({ stage: "neu" });
+  }, 40000);
+
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);
     const probe = leadOptions.find((row) => row.name) ?? leadOptions[0]; expect((await owner.leadops.contractLeadOptions({ query: (probe.name || probe.email).slice(0, 4) })).some((row) => row.id === probe.id)).toBe(true);

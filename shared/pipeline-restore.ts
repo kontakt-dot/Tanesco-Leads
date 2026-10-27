@@ -27,7 +27,7 @@ export const PUSH_MOVED_RE = /^Aus der Pipeline „(.+)“ in die Pipeline „(.
 export const PUSH_STAGED_NOTE = "Stufe über die Kontakte der E-Mail-Akquise gesetzt";
 /** Automatisch beim Versand (server/sent-card.ts): neue Kontakte → „E-Mail-Kampagne“ / „Versendet“. */
 export const AUTO_SENT_TAKEN_RE = /automatisch aus der E-Mail-Akquise in die Pipeline „([^“]+)“ übernommen$/;
-const AUTO_SENT_MOVED_RE = /^E-Mail aus „.+“ versendet$/;
+const AUTO_SENT_MOVED_RE = /^(E-Mail aus „.+“ versendet|Bereits versendete Kampagnen-E-Mail – automatisch nach „Versendet“)$/;
 /** Automatische Zuteilung nach den Regeln (ohne handelnde Person) – vorher hatte die Karte keinen Vertriebler. */
 const AUTO_ASSIGN_RE = /^Zugeteilt an .+\(Regel: /;
 

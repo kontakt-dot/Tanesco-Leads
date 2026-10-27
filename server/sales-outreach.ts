@@ -565,6 +565,8 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
   const campaignConditions = [eq(emailCampaigns.status, "aktiv")]; if (options.campaignId) campaignConditions.push(eq(emailCampaigns.id, options.campaignId));
   let active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); let processed = 0;
   let moved = 0; for (const tenantId of Array.from(new Set(active.map((campaign) => campaign.tenantId)))) moved += await migrateSendWindows(db, tenantId).catch(() => 0);
+  // einmalig: Kontakte mit schon versendeter Kampagnen-E-Mail in die Spalte „Versendet“ (Pipeline „E-Mail-Kampagne“)
+  if (!options.campaignId) { const { backfillSentCardsOnce } = await import("./sent-card"); for (const tenantId of Array.from(new Set(active.map((campaign) => campaign.tenantId)))) await backfillSentCardsOnce(db, tenantId); }
   if (moved) active = await db.select().from(emailCampaigns).where(and(...campaignConditions)); // neue Versandzeiten gelten sofort
   await enforceReplyStop(db, Array.from(new Set(active.map((campaign) => campaign.tenantId)))).catch((error) => console.error("[E-Mail-Kampagnen] Antwort-Stopp:", error instanceof Error ? error.message : error)); // Sicherheitsnetz: geantwortet → beendet, bevor etwas rausgeht
   const throttleOff = process.env.EMAIL_THROTTLE_OFF === "1"; // nur für Tests: kein Drip, kein Tageslimit

@@ -170,6 +170,8 @@ export type PipelineSettings = {
   customPipelines: CustomPipeline[];
   /** Stufe „Versendet“ in der Pipeline „E-Mail-Kampagne“ wurde einmal automatisch angelegt – löscht man sie, kommt sie nicht wieder. */
   sentStageAdded: boolean;
+  /** Nachtrag erledigt: Kontakte mit schon vorher versendeter Kampagnen-E-Mail wurden einmal nach „Versendet“ geholt. */
+  sentBackfillDone: boolean;
 };
 export type CustomPipeline = { key: CustomPipelineSource; label: string };
 export const DEFAULT_SOURCE_ORDER: PipelineSource[] = ["email", "ads", "kaltakquise"];
@@ -184,7 +186,7 @@ export function normalizeCustomPipelines(value: unknown): CustomPipeline[] {
   if (Array.isArray(value)) for (const item of value as Array<Record<string, unknown>>) { const key = item?.key; const label = String(item?.label ?? "").trim().slice(0, 40); if (isCustomSource(key) && label && !out.some((row) => row.key === key)) out.push({ key, label }); }
   return out.slice(0, 20);
 }
-export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {}, sourceOrder: ["email", "ads", "kaltakquise"], customPipelines: [], sentStageAdded: false };
+export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {}, sourceOrder: ["email", "ads", "kaltakquise"], customPipelines: [], sentStageAdded: false, sentBackfillDone: false };
 const numberOrNull = (value: unknown) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.round(number) : null; };
 const numberMap = (value: unknown) => { const out: Record<string, number> = {}; if (value && typeof value === "object" && !Array.isArray(value)) for (const [key, item] of Object.entries(value as Record<string, unknown>)) { const id = numberOrNull(item); if (id) out[key] = id; } return out; };
 export function normalizePipelineSettings(input: unknown): PipelineSettings {
@@ -214,6 +216,7 @@ export function normalizePipelineSettings(input: unknown): PipelineSettings {
     sourceOrder: normalizeSourceOrder(raw.sourceOrder, normalizeCustomPipelines(raw.customPipelines)),
     customPipelines: normalizeCustomPipelines(raw.customPipelines),
     sentStageAdded: raw.sentStageAdded === true,
+    sentBackfillDone: raw.sentBackfillDone === true,
   };
 }
 
