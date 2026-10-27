@@ -1548,6 +1548,31 @@ html:not(.dark) .ct-detail-result { color: #64748b !important; }
 html:not(.dark) .ct-detail-result strong { color: #0f172a !important; }
 html:not(.dark) .inbox-tag.is-src-ki { background: #f5f3ff !important; color: #6d28d9 !important; border-color: #ddd6fe !important; }
 html:not(.dark) .inbox-tag.is-src-vorlage, html:not(.dark) .inbox-tag.is-src-entwurf-vorlage { background: #fffbeb !important; color: #b45309 !important; border-color: #fcd34d !important; }
+/* Früheren Stand wiederherstellen */
+html:not(.dark) .email-leads-restore { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #5b21b6 !important; }
+html:not(.dark) .email-leads-restore:hover { background: #ede9fe !important; border-color: #a78bfa !important; }
+html:not(.dark) .undo-restore { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #475569 !important; }
+html:not(.dark) .undo-restore p strong { color: #0f172a !important; }
+html:not(.dark) .restore-when label span, html:not(.dark) .restore-summary, html:not(.dark) .restore-more, html:not(.dark) .restore-note { color: #475569 !important; }
+html:not(.dark) .restore-when input { background: #ffffff !important; border-color: #d6dbe6 !important; color: #1e293b !important; color-scheme: light; }
+html:not(.dark) .restore-quick button { background: #ffffff !important; border-color: #e2e8f0 !important; color: #475569 !important; }
+html:not(.dark) .restore-quick button.is-on { background: #ede9fe !important; border-color: #c4b5fd !important; color: #5b21b6 !important; }
+html:not(.dark) .restore-empty { border-color: #e2e8f0 !important; color: #64748b !important; }
+html:not(.dark) .restore-empty.is-error { color: #b91c1c !important; border-color: #fecaca !important; }
+html:not(.dark) .restore-summary strong { color: #0f172a !important; }
+html:not(.dark) .restore-groups label { background: #ffffff !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .restore-groups label.is-on { background: #f5f3ff !important; border-color: #c4b5fd !important; }
+html:not(.dark) .restore-groups label span { color: #0f172a !important; }
+html:not(.dark) .restore-groups label small, html:not(.dark) .restore-list td small { color: #64748b !important; }
+html:not(.dark) .restore-list { border-color: #e2e8f0 !important; }
+html:not(.dark) .restore-list th { background: #f8fafc !important; color: #667085 !important; }
+html:not(.dark) .restore-list td { border-color: #f1f5f9 !important; color: #334155 !important; }
+html:not(.dark) .restore-list td strong { color: #0f172a !important; }
+html:not(.dark) .restore-state span { color: #64748b !important; }
+html:not(.dark) .restore-state span.is-changed.is-now { color: #b91c1c !important; text-decoration-color: rgba(185, 28, 28, .45) !important; }
+html:not(.dark) .restore-state span.is-changed.is-then { color: #15803d !important; }
+html:not(.dark) .restore-confirm { color: #b45309 !important; }
+html:not(.dark) .restore-list td small.restore-new { color: #b45309 !important; }
 /* Kontakte: gesendete E-Mails je Kontakt */
 html:not(.dark) .email-leads-mails { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #5b21b6 !important; }
 html:not(.dark) .email-leads-mails small { color: #6b7280 !important; }

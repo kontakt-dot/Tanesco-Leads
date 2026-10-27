@@ -16,7 +16,7 @@ import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
-import { apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
+import { undoLog, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
@@ -2915,6 +2915,53 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const ohne = await owner.leadops.importColdList({ listName: "Zeitfilter-Ohne", toPipeline: false, rows: [{ firstName: "Dora", lastName: "Neu", email: "dora@zeitfilter-e2e.example" }] }); expect(ohne.created).toBe(1);
     expect((await owner.leadops.emailLeads({ listName: "Zeitfilter-Ohne", activity: "angeschrieben" })).total).toBe(0);
   }, 30000);
+
+  it("63e. Früheren Stand wiederherstellen: versehentlich „In die Vertriebspipeline übernommen“ → Vorschau zeigt den Stand davor → zurücksetzen → selbst rückgängig; Übernehmen hat jetzt Rückgängig", async () => {
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    await owner.leadops.importColdList({ listName: "Restore-Test", toPipeline: false, rows: [{ firstName: "Anke", lastName: "Alt", company: "Alt Dach", email: "anke@restore-e2e.example" }, { firstName: "Bodo", lastName: "Bleib", company: "Bleib Solar", email: "bodo@restore-e2e.example" }, { firstName: "Cora", lastName: "Kalt", company: "Kalt Bau", email: "cora@restore-e2e.example" }] });
+    const contacts = async () => (await owner.leadops.emailLeads({ listName: "Restore-Test" })).items;
+    const ids = Object.fromEntries((await contacts()).map((item) => [item.email!.split("@")[0], item.id])) as Record<"anke" | "bodo" | "cora", number>;
+    const coldStages = await owner.leadops.pipelineStages({ source: "kaltakquise" }); const emailStages = await owner.leadops.pipelineStages({ source: "email" });
+    // vorher: Cora steht in der Kaltakquise (zweite Stufe), Anke und Bodo nur in der E-Mail-Akquise
+    await owner.leadops.pushLeadsToPipeline({ leadIds: [ids.cora], target: "kaltakquise", stage: coldStages[1].key });
+    const row = async (id: number) => (await db.select({ inPipeline: leads.inPipeline, adPlatform: leads.adPlatform, stage: leads.pipelineStage, owner: leads.ownerUserId }).from(leads).where(eq(leads.id, id)))[0];
+    const coraBefore = await row(ids.cora); expect(coraBefore).toMatchObject({ inPipeline: true, adPlatform: "kaltakquise", stage: coldStages[1].key });
+    const ankeBefore = await row(ids.anke); expect(ankeBefore).toMatchObject({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu" });
+    await pause(1100); const at = new Date(); await pause(1100);
+    // das Versehen: alle drei in die Pipeline „E-Mail-Kampagne“, letzte offene Stufe
+    const pushed = await owner.leadops.pushLeadsToPipeline({ leadIds: [ids.anke, ids.bodo, ids.cora], target: "email", stage: emailStages[2].key });
+    expect(pushed.moved + pushed.switched).toBe(3); expect(pushed.undoId).toBeGreaterThan(0);
+    expect((await owner.leadops.listUndo({ limit: 20 })).some((entry) => entry.id === pushed.undoId && entry.title === "3 Kontakte in die Pipeline „E-Mail-Kampagne“ übernommen")).toBe(true);
+    // Vorschau: genau diese drei, mit dem Stand davor
+    const preview = await owner.leadops.pipelineStateAt({ at });
+    const mine = preview.items.filter((item) => Object.values(ids).includes(item.leadId));
+    expect(mine).toHaveLength(3);
+    const anke = mine.find((item) => item.leadId === ids.anke)!; expect(anke.then.pipeline).toBe("Nur E-Mail-Akquise"); expect(anke.now.pipeline).toBe("E-Mail-Kampagne");
+    const cora = mine.find((item) => item.leadId === ids.cora)!; expect(cora.then.pipeline).toBe("Kaltakquise"); expect(cora.then.stage).toBe(coldStages[1].label);
+    expect(preview.groups.some((group) => group.label.includes("übernommen") && group.leadIds.includes(ids.anke))).toBe(true);
+    await expect(owner.leadops.pipelineStateAt({ at: new Date(Date.now() + 3_600_000) })).rejects.toThrow(/Zukunft/);
+    // zurücksetzen (nur unsere drei) → wie vorher, inkl. Vertriebler
+    const restored = await owner.leadops.restorePipelineState({ at, leadIds: [ids.anke, ids.bodo, ids.cora] });
+    expect(restored.restored).toBe(3); expect(restored.undoId).toBeGreaterThan(0);
+    expect(await row(ids.anke)).toEqual(ankeBefore); expect(await row(ids.bodo)).toMatchObject({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu", owner: ankeBefore.owner });
+    expect(await row(ids.cora)).toEqual(coraBefore);
+    expect((await owner.leadops.pipelineStateAt({ at })).items.filter((item) => Object.values(ids).includes(item.leadId))).toHaveLength(0);
+    await expect(owner.leadops.restorePipelineState({ at, leadIds: [ids.anke] })).rejects.toThrow(/nichts zurückzusetzen/);
+    // das Zurücksetzen selbst rückgängig → wieder wie nach dem Versehen
+    await owner.leadops.undoOperation({ id: restored.undoId });
+    expect(await row(ids.anke)).toMatchObject({ inPipeline: true, adPlatform: "email", stage: emailStages[2].key });
+    // … und das Übernehmen hat jetzt ein eigenes Rückgängig (mit Vertriebler)
+    await owner.leadops.undoOperation({ id: pushed.undoId });
+    expect(await row(ids.anke)).toEqual(ankeBefore); expect(await row(ids.cora)).toEqual(coraBefore);
+    // wie heute Abend passiert: Übernehmen mit der alten Version (ohne Rückgängig-Eintrag) → nur der Verlauf der Karten zählt
+    await pause(1100); const at2 = new Date(); await pause(1100);
+    const again = await owner.leadops.pushLeadsToPipeline({ leadIds: [ids.anke, ids.bodo, ids.cora], target: "email", stage: emailStages[1].key });
+    await db.delete(undoLog).where(eq(undoLog.id, again.undoId));
+    const fromHistory = (await owner.leadops.pipelineStateAt({ at: at2 })).items.filter((item) => Object.values(ids).includes(item.leadId));
+    expect(fromHistory).toHaveLength(3); expect(fromHistory.find((item) => item.leadId === ids.anke)?.then.pipeline).toBe("Nur E-Mail-Akquise"); expect(fromHistory.find((item) => item.leadId === ids.cora)?.then).toMatchObject({ pipeline: "Kaltakquise", stage: coldStages[1].label });
+    expect((await owner.leadops.restorePipelineState({ at: at2, leadIds: [ids.anke, ids.bodo, ids.cora] })).restored).toBe(3);
+    expect(await row(ids.anke)).toEqual(ankeBefore); expect(await row(ids.bodo)).toMatchObject({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu" }); expect(await row(ids.cora)).toEqual(coraBefore);
+  }, 40000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);

@@ -1096,6 +1096,30 @@ describe("Dublettenschutz, Tags, Listen ansehen und Gesendet (Chat-Build)", () =
   });
 });
 
+describe("Früheren Stand wiederherstellen (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+  it("Versehentlich übernommene Kontakte: Vorschau zeigt „Nur E-Mail-Akquise“, Zurücksetzen holt sie zurück, Übernehmen hat Rückgängig", async () => {
+    await call("leadops.importColdList", { listName: "Zurücksetzen-Probe", toPipeline: false, rows: [{ firstName: "Anke", lastName: "Alt", email: "anke@zuruecksetzen.example" }, { firstName: "Bodo", lastName: "Bleib", email: "bodo@zuruecksetzen.example" }], ownerUserIds: [] });
+    const kontakte = await call("leadops.emailLeads", { listName: "Zurücksetzen-Probe" });
+    const offen = kontakte.items.filter((item: { inPipeline: boolean }) => item.inPipeline === false);
+    expect(offen).toHaveLength(2);
+    await new Promise((resolve) => setTimeout(resolve, 5)); const at = new Date(); await new Promise((resolve) => setTimeout(resolve, 5));
+    const pushed = await call("leadops.pushLeadsToPipeline", { leadIds: offen.map((item: { id: number }) => item.id), target: "email", stage: "neu" });
+    expect(pushed.undoId).toBeGreaterThan(0);
+    const ids = offen.map((item: { id: number }) => item.id);
+    const vorschau = await call("leadops.pipelineStateAt", { at });
+    const meine = vorschau.items.filter((item: { leadId: number }) => ids.includes(item.leadId));
+    expect(meine.map((item: { leadId: number }) => item.leadId).sort()).toEqual([...ids].sort());
+    expect(meine.every((item: { then: { pipeline: string }; now: { pipeline: string } }) => item.then.pipeline === "Nur E-Mail-Akquise" && item.now.pipeline === "E-Mail-Kampagne")).toBe(true);
+    expect(vorschau.groups.some((group: { label: string }) => group.label.includes("übernommen"))).toBe(true);
+    const ergebnis = await call("leadops.restorePipelineState", { at, leadIds: offen.map((item: { id: number }) => item.id) });
+    expect(ergebnis.restored).toBe(2); expect(ergebnis.undoId).toBeGreaterThan(0);
+    const danach = await call("leadops.emailLeads", {});
+    expect(danach.items.filter((item: { id: number }) => offen.some((row: { id: number }) => row.id === item.id)).every((item: { inPipeline: boolean }) => item.inPipeline === false)).toBe(true);
+    expect((await call("leadops.pipelineStateAt", { at })).items.some((item: { leadId: number }) => ids.includes(item.leadId))).toBe(false);
+  });
+});
+
 describe("Kopieren im Builder und Fußzeile nachträglich übernehmen (Chat-Build)", () => {
   beforeAll(() => resetStore());
 

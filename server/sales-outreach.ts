@@ -1032,6 +1032,8 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
 export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { leadIds: number[]; stage?: string | null; target?: "email" | "kaltakquise" | null; actorUserId?: number | null }) {
   const ids = Array.from(new Set(input.leadIds)).slice(0, 2000);
   if (!ids.length) throw new Error("Bitte mindestens einen Kontakt auswählen.");
+  // Vorher festhalten (Pipeline, Stufe, Vertriebler) – damit sich das Übernehmen rückgängig machen lässt
+  const { captureLeads, recordUndo } = await import("./undo"); const startedAt = new Date(); const before = await captureLeads(db, tenantId, { leadIds: ids });
   // Kontakte aus der E-Mail-Akquise landen in der gewählten Pipeline („E-Mail-Kampagne“ oder „Kaltakquise“) – in der gewählten Stufe.
   // Das gilt auch für Kontakte, die schon in einer anderen Pipeline stehen: sie werden verschoben (ein vorhandener Vertriebler bleibt).
   const target: "email" | "kaltakquise" = input.target === "kaltakquise" ? "kaltakquise" : "email";
@@ -1054,7 +1056,11 @@ export async function pushLeadsToPipeline(db: Db, tenantId: number, input: { lea
   let assigned = 0; const assignedTo = new Map<number, number>();
   for (const row of [...neu, ...verschoben]) { const result = await autoAssign(db, tenantId, row.id); const userId = result?.details?.[0]?.userId ?? null; if (userId) { assigned += 1; assignedTo.set(userId, (assignedTo.get(userId) ?? 0) + 1); } }
   if (touched.length) await logActivity(db, tenantId, { kind: "pipeline_uebernommen", title: `${touched.length} ${touched.length === 1 ? "Kontakt" : "Kontakte"} in die Pipeline „${targetName}“ übernommen${verschoben.length ? ` (${verschoben.length} aus anderen Pipelines verschoben)` : ""}`, detail: `Stufe „${stageDefs.find((item) => item.key === stage)?.label ?? stage}“${assigned ? ` · ${assigned} an Vertriebler verteilt` : ""}`, count: touched.length, leadId: touched.length === 1 ? touched[0].id : null, actorUserId: input.actorUserId ?? null });
-  return { moved: neu.length, switched: verschoben.length, restaged: umgestuft.length, already: unveraendert, stage, target, targetName, assigned, assignedTo: Array.from(assignedTo.entries()).map(([userId, count]) => ({ userId, count })) };
+  const after = new Map((await captureLeads(db, tenantId, { leadIds: ids })).map((row) => [row.id, row]));
+  const changedRows = before.filter((row) => { const now = after.get(row.id); return now && (now.adPlatform !== row.adPlatform || now.pipelineStage !== row.pipelineStage || now.inPipeline !== row.inPipeline || now.ownerUserId !== row.ownerUserId); });
+  const undoId = changedRows.length ? await recordUndo(db, tenantId, { kind: "pipeline", title: `${changedRows.length} ${changedRows.length === 1 ? "Kontakt" : "Kontakte"} in die Pipeline „${targetName}“ übernommen`, count: changedRows.length, actorUserId: input.actorUserId ?? null,
+    payload: { startedAt: startedAt.toISOString(), items: changedRows.map((row) => ({ leadId: row.id, adPlatform: row.adPlatform, pipelineStage: row.pipelineStage, inPipeline: row.inPipeline, ownerUserId: row.ownerUserId })) } }) : 0;
+  return { moved: neu.length, switched: verschoben.length, restaged: umgestuft.length, already: unveraendert, stage, target, targetName, assigned, assignedTo: Array.from(assignedTo.entries()).map(([userId, count]) => ({ userId, count })), undoId };
 }
 
 /* ---------- Upload-Verlauf ---------- */

@@ -91,7 +91,7 @@ export async function listUndo(db: Db, tenantId: number, options: { limit?: numb
 
 type StageItem = { leadId: number; from: string | null; to?: string | null };
 type OwnerItem = { leadId: number; from: number | null };
-type PipelineItem = { leadId: number; adPlatform: string | null; pipelineStage: string | null; inPipeline?: boolean | null };
+type PipelineItem = { leadId: number; adPlatform?: string | null; pipelineStage?: string | null; inPipeline?: boolean | null; ownerUserId?: number | null };
 
 /** Eine Operation zurücknehmen. Gibt einen kurzen Satz zurück, was passiert ist. */
 export async function undoOperation(db: Db, tenantId: number, id: number, actorUserId: number | null) {
@@ -114,7 +114,8 @@ export async function undoOperation(db: Db, tenantId: number, id: number, actorU
     }
     case "pipeline": {
       const items = (payload.items ?? []) as PipelineItem[]; let done = 0;
-      for (const item of items) { if (!(await leadExists(item.leadId))) continue; await db.update(leads).set({ adPlatform: item.adPlatform, pipelineStage: item.pipelineStage, ...(typeof item.inPipeline === "boolean" ? { inPipeline: item.inPipeline } : {}), pipelineUpdatedAt: now }).where(and(eq(leads.tenantId, tenantId), eq(leads.id, item.leadId))); done += 1; }
+      // Vertriebler nur, wenn er festgehalten wurde („In die Vertriebspipeline übernommen“ teilt automatisch zu; „Zurücksetzen“ ebenso)
+      for (const item of items) { if (!(await leadExists(item.leadId))) continue; await db.update(leads).set({ ...("adPlatform" in item ? { adPlatform: item.adPlatform ?? null } : {}), ...("pipelineStage" in item ? { pipelineStage: item.pipelineStage ?? null } : {}), ...(typeof item.inPipeline === "boolean" ? { inPipeline: item.inPipeline } : {}), ...("ownerUserId" in item ? { ownerUserId: item.ownerUserId ?? null } : {}), pipelineUpdatedAt: now }).where(and(eq(leads.tenantId, tenantId), eq(leads.id, item.leadId))); done += 1; }
       message = `${done} ${done === 1 ? "Karte ist" : "Karten sind"} wieder in der alten Pipeline.`; break;
     }
     case "anruf": {

@@ -26,6 +26,7 @@ import { CONTRACT_STARTERS, contractFields, contractNeedsSignature, contractOutl
 import { buildContractPdf } from "../../../shared/contract-pdf";
 import { checkAttachments, normalizeSignature, renderSignatureHtml, renderSignatureText, type MailAttachmentInput, type MailSignature } from "../../../shared/email-signature";
 import { campaignMailStats, summarizeSent, trackingForSend, type SentTracking } from "../../../shared/sent-tracking";
+import { describeRestore, reconstructStateAt, restoreStamp } from "../../../shared/pipeline-restore";
 import { countSince, groupActivity, type ActivityEntry, type ActivityKind } from "../../../shared/activity";
 import { proposalBrief, singleToTree, TEMPLATE_PROPOSALS, templateName } from "../../../shared/email-ai";
 import { extraFieldsOf, parseColdList, type ColumnTarget } from "../../../shared/cold-list";
@@ -2131,6 +2132,8 @@ const TRACKED: Record<string, { kind: string; label: string; title: (input: Reco
   "leadops.distributePipelineOwners": { kind: "zuteilung", label: "Zuteilung", title: () => "Karten verteilt" },
   "leadops.distributePipelineByRules": { kind: "zuteilung", label: "Zuteilung", title: () => "Nach Regeln verteilt" },
   "leadops.moveLeadsToPipeline": { kind: "pipeline", label: "Pipeline", title: (input) => `Karten in Pipeline „${String(input.target)}“ verschoben` },
+  "leadops.pushLeadsToPipeline": { kind: "pipeline", label: "Pipeline", title: (input) => { const count = (input.leadIds as unknown[] | undefined)?.length ?? 0; return `${count} ${count === 1 ? "Kontakt" : "Kontakte"} in die Pipeline „${input.target === "kaltakquise" ? "Kaltakquise" : "E-Mail-Kampagne"}“ übernommen`; } },
+  "leadops.restorePipelineState": { kind: "pipeline", label: "Pipeline", title: (input) => `${(input.leadIds as unknown[] | undefined)?.length ?? 0} Kontakte auf den Stand vom ${restoreStamp(new Date(String(input.at)))} Uhr zurückgesetzt` },
   "leadops.createPipelineContact": { kind: "kontakt_neu", label: "Kontakt angelegt", title: (input) => `Kontakt angelegt: ${[input.firstName, input.lastName].filter(Boolean).join(" ") || String(input.company ?? "")}` },
   "leadops.logCallAttempt": { kind: "anruf", label: "Anruf", title: (input) => `${String(input.publicId)}: Anruf – ${String(input.result)}` },
   "leadops.deleteCallAttempt": { kind: "anruf_weg", label: "Anruf gelöscht", title: () => "Anruf-Ergebnis gelöscht" },
@@ -2209,6 +2212,28 @@ procedures["leadops.setCampaignDailyLimit"] = (input) => { const limit = Math.ma
 procedures["leadops.deleteCallAttempt"] = (input) => { const attempt = T().leadCallAttempts.find((row) => row.id === input.id) ?? fail("Diesen Anruf gibt es nicht mehr."); remove(store, "leadCallAttempts", (row) => row.id === attempt.id); return { success: true }; };
 procedures["leadops.listUndo"] = (input) => demoUndo.filter((entry) => !input?.kind || input.kind === "alle" || entry.kind === input.kind).slice(0, 150).map(({ snapshot: _snapshot, ...entry }) => entry);
 procedures["leadops.undoOperation"] = (input) => { const index = demoUndo.findIndex((entry) => entry.id === input.id); const entry = demoUndo[index] ?? fail("Diesen Eintrag gibt es nicht mehr."); if (entry.undoneAt) fail("Das wurde schon rückgängig gemacht."); store.tables = structuredClone(entry.snapshot); const now = new Date(); for (let i = 0; i <= index; i += 1) if (!demoUndo[i].undoneAt) demoUndo[i].undoneAt = now; return { success: true, message: index > 0 ? `Rückgängig gemacht (Chat-Demo: auch die ${index} späteren Schritte).` : "Rückgängig gemacht.", kind: entry.kind }; };
+/* ---------- Kontakte auf einen früheren Stand zurücksetzen (Spiegel von server/pipeline-restore.ts) ---------- */
+function demoRestoreItems(at: Date) {
+  if (Number.isNaN(at.getTime())) fail("Bitte einen gültigen Zeitpunkt wählen.");
+  if (at.getTime() > Date.now()) fail("Der Zeitpunkt liegt in der Zukunft – bitte einen früheren wählen.");
+  const stageSets = demoStageSets(); const stageKeys = new Set(Object.values(stageSets).flatMap((list) => (list ?? []).map((stage) => stage.key))); const isStageKey = (key: string | null | undefined) => Boolean(key && stageKeys.has(key));
+  const customPipelines = demoPipelineSettings().customPipelines;
+  const events = T().pipelineEvents.map((row) => ({ id: Number(row.id), leadId: Number(row.leadId), at: row.createdAt as Date, fromStage: (row.fromStage ?? null) as string | null, toStage: String(row.toStage ?? ""), note: (row.note ?? null) as string | null, actorUserId: (row.actorUserId ?? null) as number | null }));
+  const before = new Map<number, string>(); for (const row of [...events].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())) if (new Date(row.at).getTime() <= at.getTime() && !before.has(row.leadId) && isStageKey(row.toStage)) before.set(row.leadId, row.toStage);
+  const salesLeadRows = T().leads.filter((row) => row.kind === "vertrieb");
+  const items = reconstructStateAt({ at, leads: salesLeadRows.map((row) => ({ id: row.id, createdAt: row.createdAt as Date, inPipeline: (row.inPipeline ?? null) as boolean | null, adPlatform: (row.adPlatform ?? null) as string | null, pipelineStage: (row.pipelineStage ?? null) as string | null, ownerUserId: (row.ownerUserId ?? null) as number | null })), undo: [], events, isStage: isStageKey,
+    platformFromLabel: (label) => label === "Kaltakquise" ? "kaltakquise" : label === "E-Mail-Kampagne" ? "email" : label === "Meta Ads" ? "facebook" : customPipelines.find((item) => item.label === label)?.key ?? (label === "eigene Pipeline" && customPipelines.length === 1 ? customPipelines[0].key : undefined),
+    takenPlatform: () => "kaltakquise", stageBefore: (leadId) => before.get(leadId) });
+  return { items, stageSets, customPipelines };
+}
+procedures["leadops.pipelineStateAt"] = (input) => { const at = new Date(input.at); const { items, stageSets, customPipelines } = demoRestoreItems(at); return describeRestore(items, { at, stageSets, customPipelines, userName: (id) => (T().users.find((user) => user.id === id)?.name ?? "").split(" ")[0] || null, info: (leadId) => { const row = T().leads.find((item) => item.id === leadId); return row ? { publicId: String(row.publicId), name: [row.firstName, row.lastName].filter(Boolean).join(" ") || String(row.company ?? row.email ?? row.publicId), company: (row.company ?? null) as string | null, email: (row.email ?? null) as string | null } : null; } }); };
+procedures["leadops.restorePipelineState"] = (input) => {
+  const at = new Date(input.at); const wanted = new Set((input.leadIds ?? []) as number[]); const chosen = demoRestoreItems(at).items.filter((item) => wanted.has(item.leadId));
+  if (!chosen.length) fail("Für diese Auswahl gibt es nichts zurückzusetzen – die Kontakte stehen schon so wie damals.");
+  const now = new Date(); const stamp = restoreStamp(at);
+  for (const item of chosen) { const set: Record<string, unknown> = { pipelineUpdatedAt: now }; for (const key of item.changed) set[key] = item.then[key]; update(store, "leads", (row) => row.id === item.leadId, set); insert(store, "pipelineEvents", { tenantId: tenant().id, leadId: item.leadId, fromStage: item.now.pipelineStage, toStage: item.then.pipelineStage ?? item.now.pipelineStage ?? "neu", actorUserId: currentUser().id, note: `Auf den Stand vom ${stamp} Uhr zurückgesetzt`, createdAt: now }); }
+  return { restored: chosen.length, at };
+};
 export const procedureNames = Object.keys(procedures);
 
 /** Führt eine Prozedur aus. Ergebnis wird tief kopiert, damit React Query niemals den Store mutiert. */

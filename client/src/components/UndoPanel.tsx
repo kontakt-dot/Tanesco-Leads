@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
-import { MailX, ArrowRightLeft, Layers, NotebookPen, Phone, PhoneOff, RotateCcw, Trash2, UserPlus, Users } from "lucide-react";
+import { MailX, ArrowRightLeft, History, Layers, NotebookPen, Phone, PhoneOff, RotateCcw, Trash2, UserPlus, Users } from "lucide-react";
+import RestoreStateDialog from "@/components/RestoreStateDialog";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -40,12 +41,15 @@ export default function UndoPanel() {
   const refresh = useInvalidateAll();
   const undo = trpc.leadops.undoOperation.useMutation({ onSuccess: (result) => { toast.success(result.message); refresh(); }, onError: (error) => toast.error(error.message) });
   const [filter, setFilter] = useState<Filter>("alle"); const [showDone, setShowDone] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
   const all = list.data ?? [];
   const rows = all.filter((row) => matches(row.kind, filter) && (showDone || !row.undoneAt));
   const count = (key: Filter) => all.filter((row) => matches(row.kind, key) && !row.undoneAt).length;
   return <section className="surface-panel operations-panel p-5 undo-panel">
     <div className="xl-head"><div><h2>Rückgängig &amp; Papierkorb <span>{all.filter((row) => !row.undoneAt).length}</span></h2><p>Jede Aktion in der Vertriebspipeline der letzten 60 Tage – Stufe, Zuteilung, Anruf-Ergebnis, Notiz, verschoben, angelegt, gelöscht. Ein Klick nimmt sie zurück; gelöschte Kontakte und Listen kommen mit Verlauf, Notizen, Anrufen und Kampagnen zurück.</p></div>
       <label className="undo-show-done"><input type="checkbox" checked={showDone} onChange={(event) => setShowDone(event.target.checked)} /> auch erledigte zeigen</label></div>
+    <div className="undo-restore"><History className="h-4 w-4" aria-hidden="true" /><p><strong>Früheren Stand wiederherstellen</strong><span>Kontakte so zurücksetzen, wie sie zu einem Zeitpunkt standen – z. B. gestern Abend. Pipeline, Stufe und Vertriebler; mit Vorschau.</span></p><button type="button" className="cj-btn" onClick={() => setRestoreOpen(true)}>Zeitpunkt wählen …</button></div>
+    <RestoreStateDialog open={restoreOpen} onClose={() => setRestoreOpen(false)} />
     <div className="cd-filters" role="tablist" aria-label="Nach Art filtern">{FILTERS.filter(([key]) => key === "alle" || count(key) > 0 || filter === key).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={filter === key} className={filter === key ? "is-active" : ""} onClick={() => setFilter(key)}>{label}<i>{count(key)}</i></button>)}</div>
     {list.isLoading ? <p className="cd-empty">Wird geladen …</p> : !rows.length ? <p className="cd-empty">{filter === "loeschen" ? "Der Papierkorb ist leer." : "Noch nichts, was sich zurücknehmen lässt."}</p>
       : <ol className="undo-list">{rows.map((row) => { const Icon = ICON[row.kind] ?? RotateCcw; const isDelete = row.kind === "loeschen" || row.kind === "anruf_weg" || row.kind === "notiz_weg"; return <li key={row.id} className={`${row.undoneAt ? "is-done" : ""} is-${row.kind}`}>
