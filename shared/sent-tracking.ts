@@ -1,3 +1,4 @@
+import type { SentSource } from "./email-campaigns";
 /**
  * Tracking je gesendeter E-Mail: Was ist mit genau dieser Mail passiert?
  *
@@ -91,4 +92,42 @@ export function campaignMailStats(events: TrackEvent[], stamps: Map<number, Reci
     for (const sentAt of sends) { const tracking = trackingForSend(sentAt, list, sends, stamps.get(recipientId) ?? null); sent += 1; if (tracking.openedAt || tracking.clickedAt || tracking.repliedAt) opened += 1; if (tracking.clickedAt) clicked += 1; if (tracking.repliedAt) replied += 1; }
   }
   return { sent, opened, clicked, replied };
+}
+
+/**
+ * Uhrzeit (Europe/Berlin) eines Zeitpunkts in einem Tages-Fenster „von–bis“ (z. B. 09:00–11:30), egal an welchem Tag.
+ * „bis“ zählt mit: 09:00–11:30 enthält auch eine Mail um 11:30 Uhr. Über Mitternacht geht auch (22:00–06:00).
+ */
+export function inTimeOfDay(at: Date, timeFrom?: string | null, timeTo?: string | null): boolean {
+  if (!timeFrom && !timeTo) return true;
+  const parts = new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(at);
+  const minutes = Number(parts.find((part) => part.type === "hour")?.value ?? 0) % 24 * 60 + Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  const toMinutes = (value?: string | null) => { if (!value) return null; const [h, m] = value.split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  const start = toMinutes(timeFrom) ?? 0; const end = toMinutes(timeTo) ?? 23 * 60 + 59;
+  return start <= end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
+}
+
+export type SentFilter = { search?: string | null; from?: Date | string | null; to?: Date | string | null; campaignId?: number | null; kind?: string | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null };
+type SentRow = { kind: string; campaignId?: number | null; campaignName?: string | null; at: Date | string; to: string; name?: string | null; subject: string; tracking: SentTracking | null; origin?: { source: SentSource } | null };
+
+/**
+ * Ordner „Gesendet“ filtern und zählen – Server und Chat-Demo nutzen dieselbe Logik.
+ * Zeitraum (Datum + Uhrzeit, „bis“ ausschließlich), Uhrzeit an jedem Tag und Kampagne bestimmen den Bereich:
+ * Darauf beziehen sich alle Zähler (Art, Reaktion, Kampagnen). Art, Reaktion und Suche filtern danach nur die Liste.
+ * `overview` = alle Kampagnen-Sendungen (Kampagne, Name, Zeit) für die Kampagnen-Auswahl, wenn `items` schon auf eine Kampagne beschränkt sind.
+ */
+export function summarizeSent<T extends SentRow>(items: T[], filter: SentFilter, options: { limit?: number; overview?: Array<{ campaignId: number; name: string; at: Date | string }> } = {}) {
+  const date = (value?: Date | string | null) => { if (!value) return null; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? null : parsed; };
+  const from = date(filter.from); const to = date(filter.to);
+  const inPeriod = (at: Date | string) => { const when = new Date(at); return (!from || when >= from) && (!to || when < to) && inTimeOfDay(when, filter.timeFrom, filter.timeTo); };
+  const scoped = items.filter((item) => inPeriod(item.at) && (!filter.campaignId || item.campaignId === filter.campaignId));
+  const search = (filter.search ?? "").trim().toLowerCase();
+  const filtered = scoped.filter((item) => (!filter.kind || item.kind === filter.kind) && (!filter.reaction || item.tracking?.reaction === filter.reaction)
+    && (!search || `${item.to} ${item.name ?? ""} ${item.subject} ${item.campaignName ?? ""}`.toLowerCase().includes(search)));
+  const pool = options.overview ?? items.flatMap((item) => item.campaignId && item.campaignName ? [{ campaignId: item.campaignId, name: item.campaignName, at: item.at }] : []);
+  const byCampaign = new Map<number, { id: number; name: string; count: number }>();
+  for (const row of pool) if (inPeriod(row.at)) { const entry = byCampaign.get(row.campaignId) ?? { id: row.campaignId, name: row.name, count: 0 }; entry.count += 1; byCampaign.set(row.campaignId, entry); }
+  const kindCount = (kind: string) => scoped.filter((item) => item.kind === kind).length;
+  const origins = { ki: 0, hand: 0, "entwurf-vorlage": 0, vorlage: 0 } as Record<SentSource, number>; for (const item of filtered) if (item.origin) origins[item.origin.source] += 1;
+  return { items: filtered.slice(0, options.limit ?? 200), total: filtered.length, counts: { alle: scoped.length, kampagne: kindCount("kampagne"), antwort: kindCount("antwort"), einzel: kindCount("einzel") }, reactions: countReactions(scoped), campaigns: Array.from(byCampaign.values()).sort((a, b) => b.count - a.count), origins };
 }

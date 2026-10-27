@@ -1262,6 +1262,28 @@ describe("Gesendet mit Tracking je Mail und Kontakt-Link (Chat-Build)", () => {
     expect(vorschau.html).toContain("<");
     expect(vorschau.to).toBe(geoeffnet.to);
   });
+  it("Filter nach Datum und Uhrzeit: Zeitraum (bis ausschließlich), Uhrzeit an jedem Tag in deutscher Zeit, Zähler passend", async () => {
+    const sent = await call("leadops.listSent", { kind: "kampagne" });
+    const mail = sent.items[0]; const at = new Date(mail.at);
+    const hm = (value: Date) => new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit", hour12: false }).format(value);
+    // genau die Minute der Mail als Uhrzeit-Fenster → dabei; eine Minute später beginnend → nicht dabei
+    const exakt = await call("leadops.listSent", { kind: "kampagne", timeFrom: hm(at), timeTo: hm(at) });
+    expect(exakt.items.some((item: { id: string }) => item.id === mail.id)).toBe(true);
+    expect(exakt.items.every((item: { at: string }) => hm(new Date(item.at)) === hm(at))).toBe(true);
+    const spaeter = await call("leadops.listSent", { kind: "kampagne", timeFrom: hm(new Date(at.getTime() + 60_000)), timeTo: hm(new Date(at.getTime() + 120_000)) });
+    expect(spaeter.items.some((item: { id: string }) => item.id === mail.id)).toBe(false);
+    // Zeitraum: „bis“ genau zur Sendezeit schließt die Mail aus, eine Minute danach schließt sie ein
+    expect((await call("leadops.listSent", { kind: "kampagne", to: at })).items.some((item: { id: string }) => item.id === mail.id)).toBe(false);
+    const fenster = await call("leadops.listSent", { kind: "kampagne", from: new Date(at.getTime() - 60_000), to: new Date(at.getTime() + 60_000) });
+    expect(fenster.items.some((item: { id: string }) => item.id === mail.id)).toBe(true);
+    expect(fenster.total).toBe(fenster.items.length); expect(fenster.counts.kampagne).toBe(fenster.total);
+    // Zähler beziehen sich auf den Zeitraum: Summe der Reaktionen = Mails im Zeitraum
+    const r = fenster.reactions; expect(r.geoeffnet + r.geklickt + r.geantwortet + r.ohne + r.bounce + r.abgemeldet).toBe(fenster.counts.kampagne);
+    // Kampagne gewählt: Auswahlliste enthält trotzdem alle Kampagnen
+    const eine = await call("leadops.listSent", { campaignId: mail.campaignId });
+    expect(eine.campaigns.map((item: { id: number }) => item.id).sort()).toEqual(sent.campaigns.map((item: { id: number }) => item.id).sort());
+    expect(eine.items.every((item: { campaignId: number }) => item.campaignId === mail.campaignId)).toBe(true);
+  });
 });
 
 describe("Übernahme in die Pipeline „E-Mail-Kampagne“ mit Stufe (Chat-Build)", () => {

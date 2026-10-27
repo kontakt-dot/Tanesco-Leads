@@ -9,7 +9,7 @@ import { decideReply, describeAssessment, DEFAULT_REPLY_AI, isAutoReply, matches
 import { assessReply } from "./reply-ai";
 import { isStage } from "../shared/sales-pipeline";
 import { extractPhone } from "../shared/pipeline-extras";
-import { countReactions, trackingForSend, type SentReaction, type SentTracking } from "../shared/sent-tracking";
+import { inTimeOfDay, summarizeSent, trackingForSend, type SentReaction, type SentTracking } from "../shared/sent-tracking";
 import { addSuppression, isSuppressed, removeSuppressionByEmail } from "./pipeline-extras";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
@@ -373,18 +373,25 @@ export type SentKind = "kampagne" | "antwort" | "einzel";
  * Filter: Suche (Adresse, Betreff), Zeitraum, Kampagne, Art und Reaktion (geöffnet, geklickt, geantwortet …).
  * Je Kampagnen-Mail steht dabei, was danach passiert ist (siehe shared/sent-tracking.ts) – und der Kontakt ist verlinkt.
  */
-export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; reaction?: SentReaction | null; limit?: number } = {}) {
+export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; limit?: number } = {}) {
   const limit = Math.min(500, Math.max(10, options.limit ?? 200));
+  // Zeitraum (Datum + Uhrzeit) und Kampagne direkt in der Abfrage – sonst fielen ältere E-Mails hinter die neuesten 200.
+  // Mit Zeitraum oder Uhrzeit werden bis zu 3000 Mails geholt, damit Liste und Zähler für den ganzen Zeitraum stimmen.
+  const timeOfDay = Boolean(options.timeFrom || options.timeTo);
+  const from = options.from && !Number.isNaN(options.from.getTime()) ? options.from : null; const to = options.to && !Number.isNaN(options.to.getTime()) ? options.to : null;
+  const fetchLimit = timeOfDay || from || to ? 3000 : limit; let capped = false;
+  const inWindow = <R extends { at: Date }>(rows: R[]) => { if (rows.length >= fetchLimit) capped = true; return timeOfDay ? rows.filter((row) => inTimeOfDay(new Date(row.at), options.timeFrom, options.timeTo)) : rows; };
   const campaignRows = await db.select({ id: emailCampaignEvents.id, at: emailCampaignEvents.createdAt, subject: emailCampaignEvents.subject, note: emailCampaignEvents.note, campaignId: emailCampaignEvents.campaignId, campaignName: emailCampaigns.name, nodeId: emailCampaignEvents.nodeId, bodySource: emailCampaignEvents.bodySource, draftSubject: emailCampaignRecipients.draftSubject, draftSource: emailCampaignRecipients.draftSource, recipientId: emailCampaignRecipients.id, email: emailCampaignRecipients.email, name: emailCampaignRecipients.name, leadId: emailCampaignRecipients.leadId, repliedAt: emailCampaignRecipients.repliedAt, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, bouncedAt: emailCampaignRecipients.bouncedAt })
     .from(emailCampaignEvents)
     .innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId))
     .innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignEvents.campaignId))
-    .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet")))
-    .orderBy(desc(emailCampaignEvents.createdAt)).limit(limit);
-  const singleRows = await db.select({ id: outboundMessages.id, at: outboundMessages.createdAt, subject: outboundMessages.subject, text: outboundMessages.text, to: outboundMessages.toAddress, status: outboundMessages.status, inboxMessageId: outboundMessages.inboxMessageId, leadId: outboundMessages.leadId, attachments: outboundMessages.attachments, senderName: users.name })
+    .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), ...(options.campaignId ? [eq(emailCampaignEvents.campaignId, options.campaignId)] : []), ...(from ? [gte(emailCampaignEvents.createdAt, from)] : []), ...(to ? [lt(emailCampaignEvents.createdAt, to)] : [])))
+    .orderBy(desc(emailCampaignEvents.createdAt)).limit(fetchLimit).then(inWindow);
+  // Einzel-E-Mails und Antworten gehören zu keiner Kampagne – bei gewählter Kampagne gar nicht erst laden
+  const singleRows = options.campaignId ? [] : await db.select({ id: outboundMessages.id, at: outboundMessages.createdAt, subject: outboundMessages.subject, text: outboundMessages.text, to: outboundMessages.toAddress, status: outboundMessages.status, inboxMessageId: outboundMessages.inboxMessageId, leadId: outboundMessages.leadId, attachments: outboundMessages.attachments, senderName: users.name })
     .from(outboundMessages).leftJoin(users, eq(users.id, outboundMessages.createdByUserId))
-    .where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email")))
-    .orderBy(desc(outboundMessages.createdAt)).limit(limit);
+    .where(and(eq(outboundMessages.tenantId, tenantId), eq(outboundMessages.channel, "email"), ...(from ? [gte(outboundMessages.createdAt, from)] : []), ...(to ? [lt(outboundMessages.createdAt, to)] : [])))
+    .orderBy(desc(outboundMessages.createdAt)).limit(fetchLimit).then(inWindow);
   // Reaktionen je Mail: alle Ereignisse der betroffenen Empfänger holen und jeder gesendeten Mail ihr Zeitfenster zuordnen.
   const recipientIds = Array.from(new Set(campaignRows.map((row) => row.recipientId)));
   const events = recipientIds.length ? await db.select({ recipientId: emailCampaignEvents.recipientId, kind: emailCampaignEvents.kind, note: emailCampaignEvents.note, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.recipientId, recipientIds))) : [];
@@ -405,18 +412,11 @@ export async function listSent(db: Db, tenantId: number, options: { search?: str
     ...campaignRows.map((row) => ({ id: `k${row.id}`, kind: "kampagne" as SentKind, origin: sentSourceOf({ bodySource: row.bodySource, subject: row.subject, draftSubject: row.draftSubject, draftSource: row.draftSource, templateSubjects: templateSubjects(row.campaignId, row.nodeId), kiOn: kiOnFor(row.campaignId) }) as { source: SentSource; known: boolean } | null, at: row.at, to: row.email, name: row.name ?? null, subject: row.subject ?? row.note ?? "(ohne Betreff)", preview: row.campaignName, campaignId: row.campaignId as number | null, campaignName: row.campaignName as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: "gesendet", sender: null as string | null, attachments: [] as Array<{ filename: string; size: number; contentType?: string }>, tracking: trackingForSend(row.at, byRecipient.get(row.recipientId) ?? [], sendsOf(row.recipientId), { openedAt: row.openedAt, clickedAt: row.clickedAt, repliedAt: row.repliedAt, bouncedAt: row.bouncedAt }) as SentTracking | null })),
     ...singleRows.map((row) => ({ id: `e${row.id}`, kind: (row.inboxMessageId ? "antwort" : "einzel") as SentKind, origin: null as { source: SentSource; known: boolean } | null, at: row.at, to: row.to, name: leadInfo(row.leadId)?.name ?? null, subject: row.subject ?? "(ohne Betreff)", preview: (row.text ?? "").replace(/\s+/g, " ").slice(0, 160), campaignId: null as number | null, campaignName: null as string | null, leadId: row.leadId as number | null, lead: leadInfo(row.leadId), status: row.status as string, sender: row.senderName ?? null, tracking: null as SentTracking | null, attachments: (Array.isArray(row.attachments) ? row.attachments : []) as Array<{ filename: string; size: number; contentType?: string }> })),
   ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-  const search = (options.search ?? "").trim().toLowerCase();
-  const filtered = items.filter((item) => {
-    if (options.kind && item.kind !== options.kind) return false;
-    if (options.campaignId && item.campaignId !== options.campaignId) return false;
-    if (options.reaction && item.tracking?.reaction !== options.reaction) return false;
-    if (options.from && new Date(item.at) < options.from) return false;
-    if (options.to && new Date(item.at) > options.to) return false;
-    if (search && !`${item.to} ${item.name ?? ""} ${item.subject} ${item.campaignName ?? ""}`.toLowerCase().includes(search)) return false;
-    return true;
-  });
-  const campaigns = Array.from(items.reduce((map, item) => { if (item.campaignId && item.campaignName) { const entry = map.get(item.campaignId) ?? { id: item.campaignId, name: item.campaignName, count: 0 }; entry.count += 1; map.set(item.campaignId, entry); } return map; }, new Map<number, { id: number; name: string; count: number }>()).values()).sort((a, b) => b.count - a.count);
-  const counts = { alle: items.length, kampagne: items.filter((item) => item.kind === "kampagne").length, antwort: items.filter((item) => item.kind === "antwort").length, einzel: items.filter((item) => item.kind === "einzel").length };
-  const origins = { ki: 0, hand: 0, "entwurf-vorlage": 0, vorlage: 0 } as Record<SentSource, number>; for (const item of filtered) if (item.origin) origins[item.origin.source] += 1;
-  return { items: filtered.slice(0, limit), counts, reactions: countReactions(items), campaigns, origins };
+  // Kampagnen-Auswahl: Ist schon eine Kampagne gewählt, enthalten die Zeilen nur diese – dann die Übersicht aller Kampagnen im Zeitraum extra holen
+  const overview = options.campaignId ? await db.select({ campaignId: emailCampaignEvents.campaignId, name: emailCampaigns.name, at: emailCampaignEvents.createdAt })
+    .from(emailCampaignEvents).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignEvents.campaignId))
+    .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), ...(from ? [gte(emailCampaignEvents.createdAt, from)] : []), ...(to ? [lt(emailCampaignEvents.createdAt, to)] : [])))
+    .orderBy(desc(emailCampaignEvents.createdAt)).limit(5000) : undefined;
+  const result = summarizeSent(items, { ...options, from, to }, { limit, overview });
+  return { ...result, capped };
 }

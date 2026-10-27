@@ -916,6 +916,16 @@ html:not(.dark) .sent-preview-head strong { color: #0f172a !important; }
 html:not(.dark) .sent-preview-head small { color: #4b5568 !important; }
 html:not(.dark) .email-leads-table tr.is-clickable:hover td { background: #f8fafb !important; }
 html:not(.dark) .inbox-sent-reactions { color: #8a94a6 !important; }
+html:not(.dark) .inbox-sent-when label>span, html:not(.dark) .inbox-sent-time>span { color: #8a94a6 !important; }
+html:not(.dark) .inbox-sent-time em { color: #8a94a6 !important; }
+html:not(.dark) .inbox-sent-when input[type="datetime-local"], html:not(.dark) .inbox-sent-when input[type="time"] { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #0f172a !important; }
+html:not(.dark) .inbox-sent-when input:focus-visible { border-color: #d9dfe7 !important; }
+html:not(.dark) .inbox-sent-quick button { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .inbox-sent-quick button:hover { border-color: #e8ecf1 !important; }
+html:not(.dark) .inbox-sent-quick button.is-on { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .inbox-sent-range { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .inbox-sent-range strong { color: #0f172a !important; }
+html:not(.dark) .inbox-sent-range button { color: #111318 !important; }
 html:not(.dark) .inbox-reaction-chip { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .inbox-reaction-chip:hover { border-color: #e8ecf1 !important; }
 html:not(.dark) .inbox-reaction-chip.is-active { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
@@ -3565,6 +3575,16 @@ html:not(.dark) .ct-detail-result { color: #64748b !important; }
 html:not(.dark) .ct-detail-result strong { color: #0f172a !important; }
 html:not(.dark) .inbox-tag.is-src-ki { background: #f5f3ff !important; color: #6d28d9 !important; border-color: #ddd6fe !important; }
 html:not(.dark) .inbox-tag.is-src-vorlage, html:not(.dark) .inbox-tag.is-src-entwurf-vorlage { background: #fffbeb !important; color: #b45309 !important; border-color: #fcd34d !important; }
+/* Zeitfilter „Gesendet“ (Datum + Uhrzeit) */
+html:not(.dark) .inbox-sent-when label > span, html:not(.dark) .inbox-sent-time > span, html:not(.dark) .inbox-sent-time em { color: #64748b !important; }
+html:not(.dark) .inbox-sent-when input[type="datetime-local"], html:not(.dark) .inbox-sent-when input[type="time"] { background: #ffffff !important; border-color: #d6dbe6 !important; color: #1e293b !important; color-scheme: light; }
+html:not(.dark) .inbox-sent-when input:focus-visible { outline-color: #8b5cf6 !important; border-color: #a78bfa !important; }
+html:not(.dark) .inbox-sent-quick button { background: #ffffff !important; border-color: #e2e8f0 !important; color: #475569 !important; }
+html:not(.dark) .inbox-sent-quick button:hover { border-color: #c4b5fd !important; }
+html:not(.dark) .inbox-sent-quick button.is-on { background: #ede9fe !important; border-color: #c4b5fd !important; color: #5b21b6 !important; }
+html:not(.dark) .inbox-sent-range { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #475569 !important; }
+html:not(.dark) .inbox-sent-range strong { color: #0f172a !important; }
+html:not(.dark) .inbox-sent-range button { color: #6d28d9 !important; }
 html:not(.dark) .inbox-sent-origins { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #334155 !important; }
 html:not(.dark) .inbox-sent-origins.has-template { background: #fffbeb !important; border-color: #fcd34d !important; }
 html:not(.dark) .inbox-sent-origins .is-ki { background: #ede9fe !important; color: #6d28d9 !important; }

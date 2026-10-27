@@ -2875,6 +2875,37 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const kinds = (await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.campaignId, campaign.id))).map((event) => event.kind).sort(); expect(kinds).toEqual(["beendet", "beendet", "geklickt", "geoeffnet", "geoeffnet", "gesendet", "gesendet"]);
   }, 30000);
 
+  it("63d. Gesendet: Filter nach Datum und Uhrzeit (deutsche Zeit) – Liste, Gesamtzahl, Zähler und Kampagnen-Auswahl passen", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "Zeitfilter-Test", toPipeline: false, rows: [{ firstName: "Anna", lastName: "Morgen", company: "Morgen Dach", email: "anna@zeitfilter-e2e.example" }, { firstName: "Bernd", lastName: "Mittag", company: "Mittag Dach", email: "bernd@zeitfilter-e2e.example" }, { firstName: "Carla", lastName: "Abend", company: "Abend Dach", email: "carla@zeitfilter-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Zeitfilter-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Zeitfilter-Test" }, tree: { start: "o1", nodes: [{ id: "o1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: { ...(starter.design as unknown as Record<string, unknown>), plain: true }, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const sends = await db.select({ id: emailCampaignEvents.id }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
+    expect(sends).toHaveLength(3);
+    // Mo 12.10.2026 09:10 und 14:05 (Sommerzeit), Di 13.10. 17:00
+    const times = ["2026-10-12T07:10:00.000Z", "2026-10-12T12:05:00.000Z", "2026-10-13T15:00:00.000Z"];
+    for (const [index, row] of sends.entries()) await db.update(emailCampaignEvents).set({ createdAt: new Date(times[index]) }).where(eq(emailCampaignEvents.id, row.id));
+    const base = { campaignId: campaign.id, kind: "kampagne" as const }; const at = (list: { items: Array<{ at: Date | string }> }) => list.items.map((item) => new Date(item.at).toISOString());
+    const montag = await owner.leadops.listSent({ ...base, from: new Date("2026-10-11T22:00:00Z"), to: new Date("2026-10-12T22:00:00Z") });
+    expect(at(montag)).toEqual([times[1], times[0]]); expect(montag.total).toBe(2); expect(montag.counts.kampagne).toBe(2); expect(montag.capped).toBe(false);
+    expect(at(await owner.leadops.listSent({ ...base, timeFrom: "09:00", timeTo: "11:30" }))).toEqual([times[0]]);
+    expect(at(await owner.leadops.listSent({ ...base, timeFrom: "14:00", timeTo: "16:30" }))).toEqual([times[1]]);
+    expect(at(await owner.leadops.listSent({ ...base, timeFrom: "16:31" }))).toEqual([times[2]]);
+    expect(at(await owner.leadops.listSent({ ...base, from: new Date("2026-10-12T22:00:00Z") }))).toEqual([times[2]]);
+    // „bis“ genau zur Sendezeit schließt aus, eine Minute danach (so schickt es die Oberfläche) schließt ein
+    expect((await owner.leadops.listSent({ ...base, from: new Date("2026-10-12T07:00:00Z"), to: new Date("2026-10-12T12:05:00Z") })).total).toBe(1);
+    expect((await owner.leadops.listSent({ ...base, from: new Date("2026-10-12T07:00:00Z"), to: new Date("2026-10-12T12:06:00Z") })).total).toBe(2);
+    // Zeitraum + Uhrzeit zusammen, Reaktions-Zähler passen zum Ausschnitt
+    const kombi = await owner.leadops.listSent({ ...base, from: new Date("2026-10-11T22:00:00Z"), to: new Date("2026-10-13T22:00:00Z"), timeFrom: "14:00", timeTo: "17:00" });
+    expect(at(kombi)).toEqual([times[2], times[1]]); expect(Object.values(kombi.reactions).reduce((sum, value) => sum + value, 0)).toBe(2);
+    // Kampagne gewählt: Auswahlliste enthält weiter alle Kampagnen; ohne Kampagne bleiben die Zähler je Art bei „nur Kampagnen“ gleich
+    const gewaehlt = await owner.leadops.listSent({ campaignId: campaign.id });
+    expect(gewaehlt.campaigns.length).toBeGreaterThan(1); expect(gewaehlt.campaigns.find((item) => item.id === campaign.id)?.count).toBe(3);
+    expect((await owner.leadops.listSent({ kind: "kampagne" })).counts).toEqual((await owner.leadops.listSent({})).counts);
+    await expect(owner.leadops.listSent({ timeFrom: "9 Uhr" } as never)).rejects.toThrow();
+  }, 30000);
+
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);
     const probe = leadOptions.find((row) => row.name) ?? leadOptions[0]; expect((await owner.leadops.contractLeadOptions({ query: (probe.name || probe.email).slice(0, 4) })).some((row) => row.id === probe.id)).toBe(true);
