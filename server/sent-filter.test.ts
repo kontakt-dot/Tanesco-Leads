@@ -56,6 +56,18 @@ describe("Gesendet: Filter nach Datum und Uhrzeit", () => {
     const capped = summarizeSent(many, {}); expect(capped.items).toHaveLength(200); expect(capped.total).toBe(250); expect(capped.counts.kampagne).toBe(250);
   });
 
+  it("Nach Liste filtern: Liste, Zähler und Auswahl (jede Auswahl zählt mit den anderen Filtern, nicht mit sich selbst)", () => {
+    const withLists = items.map((item) => ({ ...item, listName: item.id === "a" || item.id === "b" ? "Dachdecker Hessen" : item.id === "d" ? "Solar Bayern" : null }));
+    const all = summarizeSent(withLists, { kind: "kampagne" });
+    expect(all.lists).toEqual([{ name: "Dachdecker Hessen", count: 2 }, { name: "Solar Bayern", count: 1 }]);
+    const hessen = summarizeSent(withLists, { kind: "kampagne", listName: "Dachdecker Hessen" });
+    expect(ids(hessen)).toEqual(["b", "a"]); expect(hessen.counts.kampagne).toBe(2); expect(hessen.campaigns).toEqual([{ id: 1, name: "Dach", count: 2 }]);
+    expect(hessen.lists.map((item) => item.name)).toEqual(["Dachdecker Hessen", "Solar Bayern"]); // Auswahl bleibt vollständig
+    expect(summarizeSent(withLists, { kind: "kampagne", campaignId: 2 }).lists).toEqual([{ name: "Solar Bayern", count: 1 }]); // passend zur gewählten Kampagne
+    expect(ids(summarizeSent(withLists, { listName: "Dachdecker Hessen", timeFrom: "14:00", timeTo: "16:30" }))).toEqual(["b"]);
+    expect(summarizeSent(withLists, { listName: "Gibt es nicht" }).lists.some((item) => item.name === "Gibt es nicht")).toBe(true); // gewählte Liste bleibt sichtbar
+  });
+
   it("Ein Kontakt: seine Mails über die Kontakt-Nummer oder – falls die fehlt – über die Adresse", () => {
     const withLead = items.map((item, index) => ({ ...item, leadId: index < 2 ? 7 : null }));
     expect(ids(summarizeSent(withLead, { leadId: 7 }))).toEqual(["e", "d"]);

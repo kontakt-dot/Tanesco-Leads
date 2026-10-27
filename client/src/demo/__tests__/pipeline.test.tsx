@@ -1303,6 +1303,9 @@ describe("Gesendet mit Tracking je Mail und Kontakt-Link (Chat-Build)", () => {
     expect(fenster.total).toBe(fenster.items.length); expect(fenster.counts.kampagne).toBe(fenster.total);
     // Zähler beziehen sich auf den Zeitraum: Summe der Reaktionen = Mails im Zeitraum
     const r = fenster.reactions; expect(r.geoeffnet + r.geklickt + r.geantwortet + r.ohne + r.bounce + r.abgemeldet).toBe(fenster.counts.kampagne);
+    // nach Liste filtern (Reiter „Gesendet“): nur Mails an Kontakte dieser Liste, Auswahl mit Zahlen
+    const liste = sent.lists[0];
+    if (liste) { const nurListe = await call("leadops.listSent", { kind: "kampagne", listName: liste.name }); expect(nurListe.total).toBe(liste.count); expect(nurListe.items.every((item: { listName: string | null }) => item.listName === liste.name)).toBe(true); }
     // Kampagne gewählt: Auswahlliste enthält trotzdem alle Kampagnen
     const eine = await call("leadops.listSent", { campaignId: mail.campaignId });
     expect(eine.campaigns.map((item: { id: number }) => item.id).sort()).toEqual(sent.campaigns.map((item: { id: number }) => item.id).sort());

@@ -107,8 +107,8 @@ export function inTimeOfDay(at: Date, timeFrom?: string | null, timeTo?: string 
   return start <= end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
 }
 
-export type SentFilter = { search?: string | null; from?: Date | string | null; to?: Date | string | null; campaignId?: number | null; kind?: string | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null };
-type SentRow = { kind: string; campaignId?: number | null; campaignName?: string | null; leadId?: number | null; at: Date | string; to: string; name?: string | null; subject: string; tracking: SentTracking | null; origin?: { source: SentSource } | null };
+export type SentFilter = { search?: string | null; from?: Date | string | null; to?: Date | string | null; campaignId?: number | null; listName?: string | null; kind?: string | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null };
+type SentRow = { kind: string; campaignId?: number | null; campaignName?: string | null; listName?: string | null; leadId?: number | null; at: Date | string; to: string; name?: string | null; subject: string; tracking: SentTracking | null; origin?: { source: SentSource } | null };
 /** Gehört eine gesendete Mail zu diesem Kontakt? Über die Kontakt-Nummer oder – falls die fehlt – über die Adresse. */
 export const sentToContact = (item: { leadId?: number | null; to: string }, filter: { leadId?: number | null; email?: string | null }) => {
   if (!filter.leadId && !filter.email) return true;
@@ -122,18 +122,24 @@ export const sentToContact = (item: { leadId?: number | null; to: string }, filt
  * Darauf beziehen sich alle Zähler (Art, Reaktion, Kampagnen). Art, Reaktion und Suche filtern danach nur die Liste.
  * `overview` = alle Kampagnen-Sendungen (Kampagne, Name, Zeit) für die Kampagnen-Auswahl, wenn `items` schon auf eine Kampagne beschränkt sind.
  */
-export function summarizeSent<T extends SentRow>(items: T[], filter: SentFilter, options: { limit?: number; overview?: Array<{ campaignId: number; name: string; at: Date | string }> } = {}) {
+export function summarizeSent<T extends SentRow>(items: T[], filter: SentFilter, options: { limit?: number; overview?: Array<{ campaignId: number; name: string; at: Date | string; listName?: string | null }> } = {}) {
   const date = (value?: Date | string | null) => { if (!value) return null; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? null : parsed; };
   const from = date(filter.from); const to = date(filter.to);
   const inPeriod = (at: Date | string) => { const when = new Date(at); return (!from || when >= from) && (!to || when < to) && inTimeOfDay(when, filter.timeFrom, filter.timeTo); };
-  const scoped = items.filter((item) => inPeriod(item.at) && (!filter.campaignId || item.campaignId === filter.campaignId) && sentToContact(item, filter));
+  const scoped = items.filter((item) => inPeriod(item.at) && (!filter.campaignId || item.campaignId === filter.campaignId) && (!filter.listName || item.listName === filter.listName) && sentToContact(item, filter));
   const search = (filter.search ?? "").trim().toLowerCase();
   const filtered = scoped.filter((item) => (!filter.kind || item.kind === filter.kind) && (!filter.reaction || item.tracking?.reaction === filter.reaction)
     && (!search || `${item.to} ${item.name ?? ""} ${item.subject} ${item.campaignName ?? ""}`.toLowerCase().includes(search)));
-  const pool = options.overview ?? items.flatMap((item) => item.campaignId && item.campaignName ? [{ campaignId: item.campaignId, name: item.campaignName, at: item.at }] : []);
+  // Auswahllisten: jede zählt mit allen ANDEREN Filtern (Zeitraum, Uhrzeit, Art, die jeweils andere Auswahl) – nicht mit sich selbst
+  const pool = options.overview ?? items.flatMap((item) => item.campaignId && item.campaignName ? [{ campaignId: item.campaignId, name: item.campaignName, at: item.at, listName: item.listName ?? null }] : []);
   const byCampaign = new Map<number, { id: number; name: string; count: number }>();
-  for (const row of pool) if (inPeriod(row.at)) { const entry = byCampaign.get(row.campaignId) ?? { id: row.campaignId, name: row.name, count: 0 }; entry.count += 1; byCampaign.set(row.campaignId, entry); }
+  for (const row of pool) if (inPeriod(row.at) && (!filter.listName || row.listName === filter.listName)) { const entry = byCampaign.get(row.campaignId) ?? { id: row.campaignId, name: row.name, count: 0 }; entry.count += 1; byCampaign.set(row.campaignId, entry); }
+  const listPool = options.overview ? options.overview.map((row) => ({ ...row, kind: "kampagne" })) : items.map((item) => ({ campaignId: item.campaignId ?? null, listName: item.listName ?? null, at: item.at, kind: item.kind }));
+  const byList = new Map<string, number>();
+  for (const row of listPool) if (row.listName && inPeriod(row.at) && (!filter.campaignId || row.campaignId === filter.campaignId) && (!filter.kind || row.kind === filter.kind)) byList.set(row.listName, (byList.get(row.listName) ?? 0) + 1);
+  if (filter.listName && !byList.has(filter.listName)) byList.set(filter.listName, 0); // gewählte Liste bleibt in der Auswahl
   const kindCount = (kind: string) => scoped.filter((item) => item.kind === kind).length;
   const origins = { ki: 0, hand: 0, "entwurf-vorlage": 0, vorlage: 0 } as Record<SentSource, number>; for (const item of filtered) if (item.origin) origins[item.origin.source] += 1;
-  return { items: filtered.slice(0, options.limit ?? 200), total: filtered.length, counts: { alle: scoped.length, kampagne: kindCount("kampagne"), antwort: kindCount("antwort"), einzel: kindCount("einzel") }, reactions: countReactions(scoped), campaigns: Array.from(byCampaign.values()).sort((a, b) => b.count - a.count), origins };
+  const lists = Array.from(byList.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "de"));
+  return { items: filtered.slice(0, options.limit ?? 200), total: filtered.length, counts: { alle: scoped.length, kampagne: kindCount("kampagne"), antwort: kindCount("antwort"), einzel: kindCount("einzel") }, reactions: countReactions(scoped), campaigns: Array.from(byCampaign.values()).sort((a, b) => b.count - a.count), lists, origins };
 }

@@ -15,7 +15,7 @@ import { audienceLists, windowTimes, pauseOf, DEFAULT_SEND_WINDOW, DRIP_GAPS, DR
 import { fillPlaceholders, DEFAULT_DESIGN, newBlockId, renderEmailHtml, starterBlocks, TANESCO_LOGO_PATH, type EmailBlock, type EmailDesign } from "../../../shared/email-design";
 const PLACEHOLDER_IMAGE = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#bc001d"/><stop offset="1" stop-color="#fb2c36"/></linearGradient></defs><rect width="1200" height="500" fill="url(#g)" rx="24"/><text x="600" y="270" font-family="Arial, Helvetica, sans-serif" font-size="44" fill="#ffffff" text-anchor="middle">Bild hier hochladen</text></svg>');
 import { PIPELINE_STAGES } from "../../../shared/sales-pipeline";
-import { Archive, ArchiveRestore, ArrowUpDown, MoreHorizontal, Pause, Pencil, PenLine } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowUpDown, MailCheck, MoreHorizontal, Pause, Pencil, PenLine } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Paperclip, Ban, BookMarked, Check, ChevronsUp, Clock3, Copy, Eye, Files, Flag, GitBranch, GripVertical, History, Inbox, Mail, MousePointerClick, Play, Plus, Repeat, Reply, RotateCcw, ScrollText, Send, ShieldAlert, ShieldCheck, Shuffle, Trash2, Upload, Users, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -61,6 +61,7 @@ type StarterKind = "kaltakquise" | "angebot" | "aufwecken";
 const EMAIL_TABS = [
   { key: "posteingang" as const, label: "Posteingang", icon: Inbox, hint: "Antworten lesen, einordnen und mit einem Klick zum Lead in der Pipeline machen." },
   { key: "kampagnen" as const, label: "Kampagnen", icon: Send, hint: "Serien als Ablauf: E-Mail, warten, wenn geöffnet … – darunter die Vorlagen zum Wiederverwenden." },
+  { key: "gesendet" as const, label: "Gesendet", icon: MailCheck, hint: "Jede E-Mail, die über eine Kampagne rausging – mit Datum und Uhrzeit, filterbar nach Kampagne, Liste und Reaktion. Klick zeigt die E-Mail so, wie sie verschickt wurde." },
   { key: "kontakte" as const, label: "Kontakte", icon: Users, hint: "Wer steckt in den Serien – mit Herkunft, Kampagne und der letzten Reaktion." },
   { key: "sperrliste" as const, label: "Sperrliste", icon: Ban, hint: "Adressen, die keine E-Mails mehr bekommen: Bounces, Abmeldungen, Beschwerden." },
   { key: "verlauf" as const, label: "Upload-Verlauf", icon: History, hint: "Was wurde wann hochgeladen – und wann wurde etwas aus den Listen gelöscht, von wem und warum." },
@@ -99,7 +100,7 @@ function SendWindowDays({ window: value, onChange }: { window: SendWindow; onCha
 export default function EmailCampaignsWorkspace() {
   const list = trpc.leadops.listEmailCampaigns.useQuery(undefined, { retry: false });
   const [editing, setEditing] = useState<number | { starter: StarterKind; ai?: boolean } | null>(null); const [opened, setOpened] = useState<number | null>(null); const [openedFilter, setOpenedFilter] = useState<RecipientFilter | null>(null); const [addListsTo, setAddListsTo] = useState<CampaignRow | null>(null);
-  const [view, setView] = useState<"kampagnen" | "sperrliste" | "posteingang" | "kontakte" | "verlauf">(() => { try { const value = new URLSearchParams(window.location.search).get("ansicht"); return value === "kampagnen" || value === "vorlagen" ? "kampagnen" : value === "sperrliste" || value === "kontakte" || value === "verlauf" ? value : "posteingang"; } catch { return "posteingang"; } });
+  const [view, setView] = useState<"kampagnen" | "gesendet" | "sperrliste" | "posteingang" | "kontakte" | "verlauf">(() => { try { const value = new URLSearchParams(window.location.search).get("ansicht"); return value === "kampagnen" || value === "vorlagen" ? "kampagnen" : value === "sperrliste" || value === "kontakte" || value === "verlauf" || value === "gesendet" ? value : "posteingang"; } catch { return "posteingang"; } });
   const [starterMenu, setStarterMenu] = useState(false);
   const [aiTemplates, setAiTemplates] = useState(false); // KI-Helfer „Vorlagen schreiben“ im Vorlagen-Fenster auf- und zuklappen
   const [templatesOpen, setTemplatesOpen] = useState(false); // Vorlagen als eigenes Fenster über den Kampagnen (Knopf in der Kopfzeile)
@@ -132,6 +133,7 @@ export default function EmailCampaignsWorkspace() {
     {view === "posteingang" && <InboxPanel onOpenLead={(publicId) => setLeadWindow(publicId)} />}
     {view === "sperrliste" && <SuppressionPanel />}
     {view === "kontakte" && <EmailLeadsPanel onOpenLead={(publicId) => setLeadWindow(publicId)} />}
+    {view === "gesendet" && <section className="surface-panel operations-panel p-5 sent-all-panel"><SentMessages campaignsOnly onOpenLead={(publicId) => setLeadWindow(publicId)} /></section>}
     {view === "verlauf" && <UploadHistory />}
     {view === "kampagnen" && <>
     <CampaignKpiBar rows={showArchive ? archivedCampaigns : liveCampaigns} archive={showArchive} onOpen={(campaignId, recipientFilter) => { setOpenedFilter(recipientFilter ?? null); setOpened(campaignId); }} />

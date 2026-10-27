@@ -2904,6 +2904,14 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(gewaehlt.campaigns.length).toBeGreaterThan(1); expect(gewaehlt.campaigns.find((item) => item.id === campaign.id)?.count).toBe(3);
     expect((await owner.leadops.listSent({ kind: "kampagne" })).counts).toEqual((await owner.leadops.listSent({})).counts);
     await expect(owner.leadops.listSent({ timeFrom: "9 Uhr" } as never)).rejects.toThrow();
+    // Reiter „Gesendet“ der E-Mail-Kampagnen: nach Liste filtern; die Auswahl der Listen bleibt vollständig
+    const byList = await owner.leadops.listSent({ kind: "kampagne", listName: "Zeitfilter-Test" });
+    expect(byList.items.map((item) => item.to).sort()).toEqual(["anna@zeitfilter-e2e.example", "bernd@zeitfilter-e2e.example", "carla@zeitfilter-e2e.example"]);
+    expect(byList.items.every((item) => (item as { listName?: string | null }).listName === "Zeitfilter-Test")).toBe(true);
+    expect(byList.lists.find((item) => item.name === "Zeitfilter-Test")?.count).toBe(3); expect(byList.lists.length).toBeGreaterThan(1);
+    expect((await owner.leadops.listSent({ kind: "kampagne", listName: "Zeitfilter-Test", timeFrom: "14:00", timeTo: "16:30" })).items.map((item) => new Date(item.at).toISOString())).toEqual([times[1]]);
+    expect((await owner.leadops.listSent({ kind: "kampagne" })).lists.some((item) => item.name === "Zeitfilter-Test")).toBe(true);
+    expect((await owner.leadops.listSent({ listName: "Gibt-es-nicht-Liste" })).items).toHaveLength(0);
     // Kontakte: Filter „Gesendet“ = alle, die eine E-Mail bekommen haben (egal was danach kam); je Kontakt seine Mails mit Uhrzeit
     const kontakte = await owner.leadops.emailLeads({ listName: "Zeitfilter-Test", activity: "angeschrieben" });
     expect(kontakte.items.map((item) => item.email).sort()).toEqual(["anna@zeitfilter-e2e.example", "bernd@zeitfilter-e2e.example", "carla@zeitfilter-e2e.example"]);

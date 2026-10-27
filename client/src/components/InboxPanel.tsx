@@ -240,9 +240,14 @@ const whenShort = (value: Date | string) => { const date = new Date(value); cons
 const REACTION_FILTERS: SentReaction[] = ["geoeffnet", "geklickt", "geantwortet", "ohne", "bounce", "abgemeldet"];
 
 /** Gesendete E-Mails – im Posteingang alle, in einer Kampagne (fixedCampaignId) nur deren E-Mails, jede mit dem Text, der wirklich rausging. */
-export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (publicId: string) => void; fixedCampaignId?: number | null }) {
+/**
+ * Gesendete E-Mails – als Ordner im Posteingang (alles), im Reiter „Gesendet“ der E-Mail-Kampagnen (`campaignsOnly`: jede
+ * E-Mail, die über eine Kampagne rausging) und in einer Kampagne (`fixedCampaignId`). Filter: Kampagne, Liste, Zeitraum, Uhrzeit, Reaktion, Suche.
+ */
+export function SentMessages({ onOpenLead, fixedCampaignId, campaignsOnly = false }: { onOpenLead?: (publicId: string) => void; fixedCampaignId?: number | null; campaignsOnly?: boolean }) {
   const fixed = typeof fixedCampaignId === "number" && fixedCampaignId > 0;
-  const [kind, setKind] = useState<"alle" | "kampagne" | "antwort" | "einzel">(fixed ? "kampagne" : "alle");
+  const [kind, setKind] = useState<"alle" | "kampagne" | "antwort" | "einzel">(fixed || campaignsOnly ? "kampagne" : "alle");
+  const [listName, setListName] = useState<string | null>(null); // Liste (Upload) der Kontakte
   const [reaction, setReaction] = useState<SentReaction | null>(null);
   const [campaignIdState, setCampaignId] = useState<number | null>(null); const campaignId = fixed ? fixedCampaignId! : campaignIdState;
   const [period, setPeriod] = useState<"alle" | "heute" | "gestern" | "7tage" | "30tage" | "eigener">("alle");
@@ -253,13 +258,14 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
   const range = useMemo(() => { const now = new Date(); const day = (offset: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset); const parse = (text: string, plusMinute = false) => { if (!text) return null; const value = new Date(text); return Number.isNaN(value.getTime()) ? null : new Date(value.getTime() + (plusMinute ? 60_000 : 0)); };
     return period === "heute" ? { from: day(0), to: null } : period === "gestern" ? { from: day(-1), to: day(0) } : period === "7tage" ? { from: day(-6), to: null } : period === "30tage" ? { from: day(-29), to: null } : period === "eigener" ? { from: parse(fromText), to: parse(toText, true) } : { from: null, to: null }; }, [period, fromText, toText]);
   const timeOk = (value: string) => /^\d{2}:\d{2}$/.test(value);
-  const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, reaction, campaignId, search: search.trim() || null, from: range.from, to: range.to, timeFrom: timeOk(timeFrom) ? timeFrom : null, timeTo: timeOk(timeTo) ? timeTo : null }, { retry: false });
+  const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, reaction, campaignId, listName, search: search.trim() || null, from: range.from, to: range.to, timeFrom: timeOk(timeFrom) ? timeFrom : null, timeTo: timeOk(timeTo) ? timeTo : null }, { retry: false });
   const items = sent.data?.items ?? [];
   const filtered = period !== "alle" || timeOk(timeFrom) || timeOk(timeTo);
-  const resetWhen = () => { setPeriod("alle"); setFromText(""); setToText(""); setTimeFrom(""); setTimeTo(""); };
+  const anyFilter = filtered || Boolean(listName) || (!fixed && Boolean(campaignIdState));
+  const resetWhen = () => { setPeriod("alle"); setFromText(""); setToText(""); setTimeFrom(""); setTimeTo(""); setListName(null); if (!fixed) setCampaignId(null); };
   // Satz über dem Ergebnis, z. B. „37 E-Mails gingen raus – heute zwischen 09:00 und 11:30 Uhr.“
   const whenSentence = (() => {
-    if (!filtered || !sent.data) return null;
+    if (!sent.data || !(anyFilter || campaignsOnly)) return null; // im Reiter „Gesendet“ immer: wie viele gingen raus
     const day = (value: Date) => value.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
     const clock = (value: Date) => value.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
     const start = range.from; const until = range.to && period === "eigener" ? new Date(range.to.getTime() - 60_000) : range.to; // „bis“ zählt im eigenen Zeitraum mit
@@ -270,11 +276,13 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
     const a = timeOk(timeFrom) ? timeFrom : null; const b = timeOk(timeTo) ? timeTo : null;
     const between = a && b ? `zwischen ${a} und ${b} Uhr` : a ? `ab ${a} Uhr` : b ? `bis ${b} Uhr` : "";
     const timeText = !between ? "" : singleDay ? between : sameDay ? `nur ${between}` : `jeweils ${between}`;
-    const detail = [periodText, timeText].filter(Boolean).join(singleDay ? " " : ", ");
+    const campaignName = !fixed && campaignIdState ? sent.data.campaigns.find((item) => item.id === campaignIdState)?.name ?? null : null;
+    const when = [periodText, timeText].filter(Boolean).join(singleDay ? " " : ", ");
+    const detail = [campaignName ? `über „${campaignName}“` : "", listName ? `an die Liste „${listName}“` : "", when].filter(Boolean).join(", ");
     const base = kind === "alle" ? sent.data.counts.alle : sent.data.counts[kind]; const total = sent.data.total;
     const head = `${sent.data.capped ? "Mindestens " : ""}${base === 0 ? "Keine E-Mail" : base === 1 ? "1 E-Mail" : `${base} E-Mails`} ${base <= 1 ? "ging" : "gingen"} raus`;
-    const tail = items.length < total ? `In der Liste: die neuesten ${items.length} von ${total}.` : total !== base ? `In der Liste: ${total} (passend zu Reaktion bzw. Suche).` : "";
-    return { head, detail, tail };
+    const tail = items.length < total ? `Angezeigt: die neuesten ${items.length} von ${total}.` : total !== base ? `Angezeigt: ${total} (passend zu Reaktion bzw. Suche).` : "";
+    return { head, detail, tail, reset: anyFilter };
   })();
   const choosePeriod = (value: typeof period) => {
     if (value === "eigener" && !fromText && !toText) { // eigener Zeitraum startet mit dem bisher gezeigten Zeitraum, sonst mit den letzten 7 Tagen
@@ -287,8 +295,9 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
   const openLead = (publicId: string) => { if (onOpenLead) onOpenLead(publicId); else window.location.assign(`/?page=Vertriebspipeline&lead=${publicId}`); };
   return <div className="inbox-sent">
     <div className="inbox-sent-filters">
-      {!fixed && <div className="dashboard-segments">{([["alle", `Alle${sent.data ? ` (${sent.data.counts.alle})` : ""}`], ["kampagne", `Kampagnen${sent.data ? ` (${sent.data.counts.kampagne})` : ""}`], ["antwort", `Antworten${sent.data ? ` (${sent.data.counts.antwort})` : ""}`], ["einzel", `Einzeln${sent.data ? ` (${sent.data.counts.einzel})` : ""}`]] as const).map(([key, text]) => <button key={key} type="button" className={kind === key ? "active" : ""} onClick={() => setKind(key)}>{text}</button>)}</div>}
+      {!fixed && !campaignsOnly && <div className="dashboard-segments">{([["alle", `Alle${sent.data ? ` (${sent.data.counts.alle})` : ""}`], ["kampagne", `Kampagnen${sent.data ? ` (${sent.data.counts.kampagne})` : ""}`], ["antwort", `Antworten${sent.data ? ` (${sent.data.counts.antwort})` : ""}`], ["einzel", `Einzeln${sent.data ? ` (${sent.data.counts.einzel})` : ""}`]] as const).map(([key, text]) => <button key={key} type="button" className={kind === key ? "active" : ""} onClick={() => setKind(key)}>{text}</button>)}</div>}
       {!fixed && <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kampagnen</option>{(sent.data?.campaigns ?? []).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}</select>}
+      {((sent.data?.lists ?? []).length > 0 || listName) && <select className="lead-action-select" aria-label="Liste" title="Nur E-Mails an Kontakte aus dieser Liste (Upload)" value={listName ?? ""} onChange={(event) => setListName(event.target.value || null)}><option value="">Alle Listen</option>{(sent.data?.lists ?? []).map((item) => <option key={item.name} value={item.name}>{item.name} ({item.count})</option>)}</select>}
       <select className="lead-action-select" aria-label="Zeitraum" value={period} onChange={(event) => choosePeriod(event.target.value as typeof period)}><option value="alle">Gesamter Zeitraum</option><option value="heute">Heute</option><option value="gestern">Gestern</option><option value="7tage">Letzte 7 Tage</option><option value="30tage">Letzte 30 Tage</option><option value="eigener">Eigener Zeitraum (Datum + Uhrzeit) …</option></select>
       <input className="inbox-search" placeholder="Suchen: Adresse, Betreff, Kampagne" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
@@ -297,15 +306,15 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
       <div className="inbox-sent-time" role="group" aria-label="Uhrzeit, an jedem Tag" title="Nur E-Mails, die zu dieser Uhrzeit rausgingen – an jedem Tag des Zeitraums, z. B. 09:00 bis 11:30"><span>Uhrzeit</span><input type="time" value={timeFrom} onChange={(event) => setTimeFrom(event.target.value)} aria-label="Uhrzeit von" /><em>bis</em><input type="time" value={timeTo} onChange={(event) => setTimeTo(event.target.value)} aria-label="Uhrzeit bis" /></div>
       <span className="inbox-sent-quick">{[["09:00", "11:30", "Vormittags 9–11:30 Uhr"], ["14:00", "16:30", "Nachmittags 14–16:30 Uhr"]].map(([a, b, text]) => <button key={text} type="button" className={timeFrom === a && timeTo === b ? "is-on" : ""} onClick={() => { if (timeFrom === a && timeTo === b) { setTimeFrom(""); setTimeTo(""); } else { setTimeFrom(a); setTimeTo(b); } }}>{text}</button>)}</span>
     </div>
-    {whenSentence && <p className="inbox-sent-range" aria-live="polite"><span><strong>{whenSentence.head}</strong>{whenSentence.detail ? ` – ${whenSentence.detail}` : ""}.</span>{whenSentence.tail ? <span>{whenSentence.tail}</span> : null}<button type="button" onClick={resetWhen}>Zeitfilter zurücksetzen</button></p>}
+    {whenSentence && <p className="inbox-sent-range" aria-live="polite"><span><strong>{whenSentence.head}</strong>{whenSentence.detail ? ` – ${whenSentence.detail}` : ""}.</span>{whenSentence.tail ? <span>{whenSentence.tail}</span> : null}{whenSentence.reset ? <button type="button" onClick={resetWhen}>Filter zurücksetzen</button> : null}</p>}
     {sent.data?.origins && (sent.data.origins.ki + sent.data.origins.hand + sent.data.origins.vorlage + sent.data.origins["entwurf-vorlage"]) > 0 && <div className={`inbox-sent-origins ${sent.data.origins.vorlage + sent.data.origins["entwurf-vorlage"] ? "has-template" : ""}`}><strong>Was rausging:</strong><span className="is-ki">{sent.data.origins.ki} mit KI-Text</span>{sent.data.origins.hand ? <span className="is-ki">{sent.data.origins.hand} eigener Text</span> : null}{sent.data.origins["entwurf-vorlage"] ? <span className="is-tpl">{sent.data.origins["entwurf-vorlage"]} Ersatz aus Vorlage</span> : null}{sent.data.origins.vorlage ? <span className="is-tpl">{sent.data.origins.vorlage} mit Vorlage</span> : null}<small>Klick auf eine E-Mail zeigt den Text, der wirklich verschickt wurde.</small></div>}
     <div className="inbox-sent-reactions" role="group" aria-label="Nach Reaktion filtern"><span>Reaktion:</span>{REACTION_FILTERS.map((key) => <button key={key} type="button" className={`inbox-reaction-chip is-${key} ${reaction === key ? "is-active" : ""}`} onClick={() => setReaction(reaction === key ? null : key)}>{REACTION_LABEL[key]}{sent.data ? ` ${sent.data.reactions[key]}` : ""}</button>)}{reaction && <button type="button" className="inbox-reaction-reset" onClick={() => setReaction(null)}>alle</button>}</div>
     {sent.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
-      : !items.length ? <p className="py-10 text-center text-sm text-slate-500">Noch nichts gesendet{search || campaignId || kind !== "alle" || filtered || reaction ? " – oder keine Treffer für diese Filter" : ""}.</p>
+      : !items.length ? <p className="py-10 text-center text-sm text-slate-500">Noch nichts gesendet{search || campaignId || listName || kind !== "alle" || filtered || reaction ? " – oder keine Treffer für diese Filter" : ""}.</p>
       : <ul className="inbox-sent-list">{items.map((item) => <li key={item.id} className={`inbox-sent-row ${openId === item.id ? "is-open" : ""}`} role="button" tabIndex={0} title="Klick zeigt die E-Mail, wie sie rausging" onClick={() => setOpenId(openId === item.id ? null : item.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpenId(openId === item.id ? null : item.id); } }}>
           <div className="inbox-sent-main">
             <strong>{item.subject}</strong>
-            <small>an {item.lead ? <button type="button" className="inbox-sent-contact" title="Kontakt öffnen" onClick={(event) => { event.stopPropagation(); openLead(item.lead!.publicId); }}>{item.lead.name}</button> : item.name ? <span>{item.name}</span> : null}{item.lead || item.name ? " · " : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{item.sender ? ` · von ${item.sender}` : ""}</small>
+            <small>an {item.lead ? <button type="button" className="inbox-sent-contact" title="Kontakt öffnen" onClick={(event) => { event.stopPropagation(); openLead(item.lead!.publicId); }}>{item.lead.name}</button> : item.name ? <span>{item.name}</span> : null}{item.lead || item.name ? " · " : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{(item as { listName?: string | null }).listName ? ` · Liste „${(item as { listName?: string | null }).listName}“` : ""}{item.sender ? ` · von ${item.sender}` : ""}</small>
             {item.kind !== "kampagne" && item.preview ? <p className="inbox-sent-preview">{item.preview}</p> : null}
             {(item as { attachments?: Array<{ filename: string; size: number }> }).attachments?.length ? <div className="inbox-sent-track">{(item as { attachments: Array<{ filename: string; size: number }> }).attachments.map((file) => <i key={file.filename} className="inbox-track-step is-done" title={formatBytes(file.size)}>📎 {file.filename}</i>)}</div> : null}
             {item.tracking && <div className="inbox-sent-track" aria-label="Was mit dieser E-Mail passiert ist">
