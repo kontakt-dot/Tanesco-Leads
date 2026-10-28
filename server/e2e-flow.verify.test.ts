@@ -3082,6 +3082,19 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(nina.draftApproach).toBe("drittanbieter"); expect(nina.draftText).toContain("im Bereich Hausnotruf"); expect(nina.draftText).not.toMatch(/Photovoltaik|Wärmepumpe/);
     const individuell = (nina.draftOptions as Array<{ key: string; text: string }>).find((item) => item.key === "individuell")!;
     expect(individuell.text).toContain("Lead-Lieferanten in Deutschland für Hausnotruf"); expect(individuell.text).not.toMatch(/Photovoltaik|Wärmepumpe/); // Vorlage mit {{sparte}}
+    // „Sie zahlen nur für Leads, die passen“ gilt nur bei PV & WP: in Hausnotruf-Entwürfen nirgends, im individuellen PV-Entwurf immer
+    expect(nina.draftText).not.toMatch(/zahlen nur|nur für Leads, die/); expect(individuell.text).not.toMatch(/zahlen nur|nur für Leads, die/);
+    await owner.leadops.importColdList({ listName: "Sparte-PV", toPipeline: false, rows: [{ firstName: "Paul", lastName: "Paneel", company: "Paneel Solar GmbH", email: "paul@sparte-pv-e2e.example" }] });
+    const pvCampaign = await owner.leadops.saveEmailCampaign({ ...base, name: "PV & WP • Erstkontakt", audience: { source: "liste", listName: "Sparte-PV" }, kiModus: "freigabe", kiAnsatz: "individuell" } as never);
+    await owner.leadops.startEmailCampaign({ id: pvCampaign.id }); await owner.leadops.runEmailCampaigns();
+    const paul = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, pvCampaign.id)))[0];
+    expect(paul.draftApproach).toBe("individuell"); expect(paul.draftText).toContain("Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.");
+    expect((paul.draftOptions as Array<{ key: string; text: string }>).find((item) => item.key === "drittanbieter")?.text).toContain("Sie zahlen nur für Leads, die zu Ihnen passen");
+    // älterer PV-Entwurf ohne den Satz → einmal nach dem Start ergänzt (nur offen, nur individuell, nicht selbst geschrieben)
+    const { addPayFitToDrafts } = await import("./campaign-review");
+    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrter Herr Paneel,\n\nalter Entwurf ohne den Satz.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail.\n\nVielen Dank" }).where(eq(emailCampaignRecipients.id, paul.id));
+    expect(await addPayFitToDrafts(db)).toBeGreaterThanOrEqual(1); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, paul.id)))[0].draftText).toContain("Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.");
+    expect(await addPayFitToDrafts(db)).toBe(0);
     // alter Entwurf mit Wärmepumpen-Text in der Hausnotruf-Kampagne (vor dieser Version geschrieben) → einmal nach dem Start verworfen; eigener Text bleibt
     const { clearWrongSparteDrafts } = await import("./campaign-review");
     await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrte Frau Notruf,\n\nunsere PV- und Wärmepumpen-Leads …", draftSource: "ki" }).where(eq(emailCampaignRecipients.id, nina.id));

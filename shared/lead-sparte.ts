@@ -78,3 +78,25 @@ export const SPARTE_PHRASE = "Lead-Lieferanten in Deutschland für {{sparte}}";
 /** Platzhalter {{sparte}}: ohne Kampagne „Ihre Branche“ – mit Kampagne deren Sparte (ein Wert aus der Liste des Kontakts hat Vorrang). */
 export const SPARTE_FALLBACK = "Ihre Branche";
 export function withSparte<T extends Record<string, string>>(values: T, sparte: Pick<Sparte, "topic">): T { return { ...values, sparte: values.sparte && values.sparte !== SPARTE_FALLBACK ? values.sparte : sparte.topic }; }
+/* ---------------------------------------------------------------- „Sie zahlen nur für Leads, die passen“ */
+/** Nur bei Photovoltaik und Wärmepumpe zahlt der Betrieb ausschließlich für Leads, die zu ihm passen – in allen anderen Sparten gilt das nicht. */
+export const paysOnlyFitting = (sparte: Pick<Sparte, "key">) => isEnergySparte(sparte);
+export const PAY_FIT_SENTENCE = "Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.";
+const PAY_FIT_RE = /\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*\b[^.!?\n]{0,60}\b(?:nur|ausschließlich)\b[^.!?\n]{0,60}\bpass\w*|\b(?:nur|ausschließlich)\b[^.!?\n]{0,40}\bpass\w*[^.!?\n]{0,40}\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*/i;
+/** Steht im Text, dass nur passende Leads bezahlt werden? */
+export const mentionsPayFit = (text: string) => PAY_FIT_RE.test(text);
+const CLOSING_RE = /antworten sie|rufen sie|anrufen|\{\{kontaktweg\}\}|lassen sie uns|vielen dank/i;
+/**
+ * PV & WP: im individuellen Ansatz steht in der Erst-E-Mail immer, dass nur passende Leads bezahlt werden (fehlt der Satz,
+ * kommt er vor den Schluss). In allen anderen Sparten fliegt jeder Satz dazu raus – das gilt dort nicht.
+ */
+export function applyPayFit(text: string, options: { sparte: Pick<Sparte, "key">; approach?: string | null; followUp?: boolean }): string {
+  if (!paysOnlyFitting(options.sparte)) {
+    if (!mentionsPayFit(text)) return text;
+    return text.split(/(\n+)/).map((part) => part.split(/(?<=[.!?])\s+/).filter((sentence) => !mentionsPayFit(sentence)).join(" ")).join("").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  if (options.approach !== "individuell" || options.followUp || mentionsPayFit(text)) return text;
+  const parts = text.split(/\n{2,}/); let at = parts.length;
+  for (let index = parts.length - 1; index > 0; index -= 1) { if (CLOSING_RE.test(parts[index])) at = index; else break; } // vor den Schluss (Kontaktweg, „Vielen Dank“)
+  parts.splice(at, 0, PAY_FIT_SENTENCE); return parts.join("\n\n");
+}

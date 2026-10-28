@@ -29,7 +29,7 @@ import { checkAttachments, normalizeSignature, renderSignatureHtml, renderSignat
 import { campaignMailStats, summarizeSent, trackingForSend, type SentTracking } from "../../../shared/sent-tracking";
 import { describeRestore, reconstructStateAt, restoreStamp } from "../../../shared/pipeline-restore";
 import { planFollowUps, type FollowUpPlan } from "../../../shared/follow-up-plan";
-import { DEFAULT_SPARTE, resolveSparte, sparteOf, withSparte } from "../../../shared/lead-sparte";
+import { applyPayFit, DEFAULT_SPARTE, resolveSparte, sparteOf, withSparte } from "../../../shared/lead-sparte";
 import { countSince, groupActivity, type ActivityEntry, type ActivityKind } from "../../../shared/activity";
 import { proposalBrief, singleToTree, TEMPLATE_PROPOSALS, templateName } from "../../../shared/email-ai";
 import { extraFieldsOf, parseColdList, type ColumnTarget } from "../../../shared/cold-list";
@@ -714,7 +714,8 @@ function demoDraftFor(recipientId: number, nodeIdInput?: string | null) {
   const base = blocksToPlainText(node.blocks, values); const personal = values.firma ? `Ihr Betrieb ${values.firma}${values.stadt ? ` in ${values.stadt}` : ""} ist uns aufgefallen – deshalb schreibe ich Ihnen persönlich.` : "";
   const paragraphs = base.split("\n\n"); const greeting = paragraphs.findIndex((part) => /^(guten tag|sehr geehrte|hallo|liebe)/i.test(part.trim())); if (personal) paragraphs.splice(greeting >= 0 ? greeting + 1 : 0, 0, personal); const text = paragraphs.join("\n\n");
   const subject = fillPlaceholdersSafe(node.subject, values).slice(0, 300); const third = thirdPartyTemplate(values, demoSparteOf(campaign, lead?.listName));
-  const options = recipient.sentCount > 0 ? [{ key: "individuell", label: approachLabel("individuell"), subject, text }] : [{ key: "individuell", label: approachLabel("individuell"), subject, text }, { key: "drittanbieter", label: approachLabel("drittanbieter"), ...third }];
+  const sparte = demoSparteOf(campaign, lead?.listName); const followUp = recipient.sentCount > 0; const payFit = (body: string, approach: string) => applyPayFit(body, { sparte, approach, followUp }); // PV & WP: „nur passende Leads zahlen“ im individuellen Ansatz, sonst nirgends
+  const options = followUp ? [{ key: "individuell", label: approachLabel("individuell"), subject, text: payFit(text, "individuell") }] : [{ key: "individuell", label: approachLabel("individuell"), subject, text: payFit(text, "individuell") }, { key: "drittanbieter", label: approachLabel("drittanbieter"), ...third, text: payFit(third.text, "drittanbieter") }];
   const ansatz = (campaign as { kiAnsatz?: string | null }).kiAnsatz === "drittanbieter" ? "drittanbieter" : "individuell";
   const first = options.find((option) => option.key === ansatz) ?? options[0];
   update(store, "emailCampaignRecipients", (row) => row.id === recipient.id, { draftSubject: first.subject, draftText: first.text, draftOptions: options, draftApproach: first.key, draftNodeId: node.id, draftState: "entwurf", draftSource: "vorlage", draftAt: new Date() });
