@@ -738,6 +738,31 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     const events = getStore().tables.emailCampaignEvents.filter((row) => row.campaignId === saved.id && row.kind === "verzweigt");
     expect(events.find((row) => row.recipientId === recipients[0].id)!.note).toContain("ja → Dann-Zweig"); expect(events.find((row) => row.recipientId === recipients[1].id)!.note).toContain("nein → Sonst-Zweig");
   });
+  it("KI-Ansatz umgestellt: offene Entwürfe folgen dem gewählten Ansatz, die Builder-Vorschau zeigt nur diesen", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Ansatz-Demo", rows: [{ firstName: "Ansgar", lastName: "Ansatz", company: "Ansatz Solar", email: "ansgar@ansatz-demo.example" }] });
+    const base = { id: null, name: "Ansatz-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Ansatz-Demo" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, kiModus: "freigabe", kiAnsatz: "drittanbieter" };
+    const saved = await call("leadops.saveEmailCampaign", base); await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    const row = () => getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === saved.id)!;
+    expect(row()).toMatchObject({ draftState: "entwurf", draftApproach: "drittanbieter" });
+    expect((await call("leadops.saveEmailCampaign", { ...base, id: saved.id, kiAnsatz: "individuell" })).realigned).toBe(1);
+    expect(row()).toMatchObject({ draftState: "entwurf", draftApproach: "individuell" }); expect(String(row().draftText)).not.toContain("Zwischenhändler");
+    const samples = await call("leadops.campaignDraftSamples", { campaignId: saved.id }); expect(samples.map((item: any) => item.approach)).toContain("individuell");
+  });
+  it("Übersicht: wann die nächsten Follow-ups rausgehen (nach der Wartezeit, pausiert ohne Zeiten)", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Follow-up-Demo", rows: [1, 2, 3].map((n) => ({ firstName: `Fia${n}`, lastName: "Folge", company: `Folge ${n} GmbH`, email: `fia${n}@folge-demo.example` })) });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 72, next: "m2" }, { id: "m2", type: "send", label: "Nachfrage", subject: "Nachfrage", blocks: starterBlocks("nachfassen"), next: "e1" }, { id: "e1", type: "end", label: "Ende" }] };
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Follow-up-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Follow-up-Demo" }, tree, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 });
+    expect((await call("leadops.startEmailCampaign", { id: saved.id })).added).toBe(3); await call("leadops.runEmailCampaigns");
+    const listed = () => call("leadops.listEmailCampaigns").then((rows: any[]) => rows.find((row) => row.id === saved.id));
+    const plan = (await listed()).followUps;
+    expect(plan.total).toBe(3); expect(plan.paused).toBe(false); expect(plan.days).toHaveLength(1); expect(plan.days[0].count).toBe(3);
+    const wait = new Date(plan.days[0].first).getTime() - Date.now(); expect(wait).toBeGreaterThan(71.9 * 3_600_000); expect(wait).toBeLessThan(72.1 * 3_600_000); // nach 72 Stunden Wartezeit
+    expect((await call("leadops.getEmailCampaign", { id: saved.id })).followUps.total).toBe(3); // auch oben in der Kampagne
+    await call("leadops.setEmailCampaignStatus", { id: saved.id, status: "pausiert" });
+    expect((await listed()).followUps).toMatchObject({ paused: true, total: 3, days: [] });
+  });
   it("Wartezeit: Leads stehen am Warten-Schritt, Ablaufänderungen gelten für Wartende, keine E-Mail doppelt", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "Warte-Demo", rows: [{ firstName: "Wanda", lastName: "Wartet", company: "Wartet Dach", email: "wanda@warte-demo.example" }] });

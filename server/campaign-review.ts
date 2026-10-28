@@ -5,9 +5,10 @@
  * und der Versand läuft sofort weiter (Rückfall: Vorlage, wenn die KI nicht erreichbar ist). „aus“ = Vorlagen wie früher.
  * Dazu das Tageslimit für alle Kampagnen zusammen (Standard 80 E-Mails am Tag).
  */
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
-import { cleanDraftText, PORTAL_RE, smoothQualifyPhrase, approachLabel, DRAFT_APPROACHES, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
+import { kiModusOf } from "../shared/email-campaigns";
+import { cleanDraftText, PORTAL_RE, smoothQualifyPhrase, approachLabel, DRAFT_APPROACHES, fitsApproach, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { invokeLLM } from "./_core/llm";
 import { readWebsiteText } from "./lead-finder";
@@ -87,11 +88,11 @@ Wir von Tanesco Digital gehören zu den größten Lead-Lieferanten in Deutschlan
 Damit Sie das ohne Risiko prüfen können, bekommen Sie 20 Test-Leads kostenlos – individuell für Ihre Standorte und in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet.
 Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter 0611 000000.
 Vielen Dank"
-→ Einstieg mit etwas Konkretem von der Webseite oder aus den Daten (ein Zitat, ein Versprechen, Standorte, Spezialisierung), daraus eine Brücke zu uns, dann der typische Schmerz mit Lead-Anbietern, dann unser Angebot. Keine Aufzählung, 90–150 Wörter.
+→ Einstieg mit etwas Konkretem von der Webseite oder aus den Daten (ein Zitat, ein Versprechen, Standorte, Spezialisierung), daraus eine Brücke zu uns, dann der typische Schmerz mit Lead-Anbietern, dann unser Angebot. Keine Aufzählung, 90–150 Wörter. Die Drittanbieter-Kernbotschaft (Leads kommen über Zwischenhändler, Umwege oder Dritte an) kommt im individuellen Ansatz NICHT vor – auch nicht angedeutet.
 
 2) "drittanbieter" – Drittanbieter-Ansatz. Kernbotschaft, die IMMER enthalten sein muss: Wir sind einer der größten Lead-Lieferanten Deutschlands, und über unsere Quellen haben wir mitbekommen, dass bei der Firma sehr wahrscheinlich Leads ankommen, die ohnehin von uns stammen – nur weitergereicht über Zwischenhändler. Dieser Umweg macht Qualität und Preis kaputt: Die Leads werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und beim Betrieb kommen genervte Interessenten und falsche Kontaktdaten an. Genau deshalb streben wir die direkte Zusammenarbeit mit dieser Firma an (kürzere Lieferkette, besserer Preis ohne Zwischenstufen, mehr Transparenz, direkte Qualitätskontrolle). Formuliere es als begründete Vermutung („sehr wahrscheinlich“, „gehen wir davon aus“), nie als bewiesene Tatsache, und erfinde keinen konkreten Zwischenhändler-Namen. Seriös und förmlich, darf eine kurze Aufzählung der Vorteile haben, bittet um ein Telefonat mit dem Ansprechpartner aus dem Leadmanagement. Trotzdem IMMER persönlich und individuell, nie Serienbrief: mindestens zwei konkrete Bezüge auf genau diese Firma (etwas Wörtliches oder Konkretes von der Webseite, die Leistung/Spezialisierung, Region/Einzugsgebiet, Größe oder Geschäftsfeld) – einer davon im ersten Absatz, bevor die Kernbotschaft kommt, und die Vorteile auf die Situation der Firma bezogen. 120–200 Wörter.
 
-3) "frei" – Freier Vorschlag: dein eigener, anderer Einstieg (z. B. eine konkrete Frage, eine Beobachtung zur Region oder zum Geschäftsmodell), genauso persönlich, 80–140 Wörter.
+3) "frei" – Freier Vorschlag: dein eigener, anderer Einstieg (z. B. eine konkrete Frage, eine Beobachtung zur Region oder zum Geschäftsmodell), genauso persönlich, 80–140 Wörter – ebenfalls ohne die Drittanbieter-Kernbotschaft.
 
 Aroundhome erwähnst du NIE – weder den Namen noch Zahlen, Antworten, Bewertungen oder Anfragen von dort, auch nicht umschrieben. Auch keine anderen Portale oder Vermittler beim Namen. Bewertungen darfst du nur ansprechen, wenn in den Daten ausdrücklich Google-Bewertungen stehen – dann als „Google-Bewertungen“ und nur mit genau diesen Zahlen; sonst gar keine Bewertungen erwähnen.
 Formulierung zur Qualifizierung immer so: „in der Regel anhand von zehn Fragen telefonisch vorqualifiziert“ – nie „qualifiziert über … Fragen“.
@@ -196,7 +197,7 @@ async function aiDrafts(base: { subject: string; text: string }, info: Record<st
     const task = wanted.length === DRAFT_APPROACHES.length ? "Schreibe die drei Vorschläge für diesen Empfänger." : `Schreibe NUR diese${wanted.length === 1 ? "n" : ""} Vorschl${wanted.length === 1 ? "ag" : "äge"} für diesen Empfänger: ${wanted.map((approach) => `"${approach.key}"`).join(", ")}.`;
     const response = await invokeLLM({ maxTokens: wanted.length === 1 ? 1200 : 3000, temperature: 0.7, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: `Empfänger:\n${facts}${site ? `\n\nWebseite (${site.url}), Auszug:\n${site.text.slice(0, 9000)}` : "\n\n(Keine Webseite verfügbar – nur die Angaben oben nutzen.)"}\n\nVorlage dieses Schritts – Betreff: ${base.subject}\n\n${base.text}${followUp}\n\n${task}` }], outputSchema: { name: "vorschlaege", schema: { type: "object", additionalProperties: false, required: wanted.map((approach) => approach.key), properties: Object.fromEntries(wanted.map((approach) => [approach.key, option])) } } });
     const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as Record<string, { subject?: unknown; text?: unknown } | undefined>;
-    const list = wanted.map((approach) => { const raw = parsed[approach.key]; const subject = String(raw?.subject ?? "").trim().slice(0, 300); const text = stripClosing(String(raw?.text ?? "").trim()); return subject && text.length > 40 ? { key: approach.key, label: approach.label, subject, text } : null; }).filter((item): item is DraftOption => Boolean(item));
+    const list = wanted.map((approach) => { const raw = parsed[approach.key]; const subject = String(raw?.subject ?? "").trim().slice(0, 300); const text = stripClosing(String(raw?.text ?? "").trim()); return subject && text.length > 40 && fitsApproach(approach.key, `${subject}\n${text}`) ? { key: approach.key, label: approach.label, subject, text } : null; }).filter((item): item is DraftOption => Boolean(item)); // Text im falschen Ansatz (z. B. „Zwischenhändler“ im individuellen) zählt nicht
     return list.length ? list : null;
   } catch { return null; }
 }
@@ -223,16 +224,21 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   // Webseite lesen (Startseite + Impressum + Leistungen/Über uns) – die KI greift daraus konkrete Punkte auf
   const rawSite = process.env.ANTHROPIC_API_KEY && website ? await readWebsiteText(website).catch(() => null) : null;
   const site = rawSite ? { ...rawSite, text: rawSite.text.split(/\n+/).filter((line) => !PORTAL_RE.test(line)).join("\n") } : null; // Portal-Hinweise der Webseite (z. B. Aroundhome-Siegel) nicht an die KI
-  const ansatz = kiAnsatzOf(campaign);
+  const ansatz: DraftApproach = options.onlyApproach ?? kiAnsatzOf(campaign); // der gewählte Ansatz – IMMER der Haupt-Entwurf
   const followUp: FollowUpInfo = { index: sentEvents.length, sentSubjects: sentEvents.map((event) => event.subject ?? "").filter(Boolean).slice(-4) };
   const finish = (text: string) => finishDraft(text, { greeting: values.begruessung, phone, followUp: sentEvents.length > 0 });
-  const ai = (await aiDrafts(base, info, site, { approaches: options.onlyApproach ? [options.onlyApproach] : undefined, followUp, stepLabel: node.label ?? node.subject, phone }))?.map((item) => ({ ...item, subject: PORTAL_RE.test(item.subject) ? base.subject : item.subject, text: finish(item.text) })) ?? null; // nie Aroundhome – auch nicht im Betreff
+  const polish = (items: DraftOption[] | null) => items?.map((item) => ({ ...item, subject: PORTAL_RE.test(item.subject) ? base.subject : item.subject, text: finish(item.text) })) ?? null; // nie Aroundhome – auch nicht im Betreff
+  const aiOptions = { followUp, stepLabel: node.label ?? node.subject, phone };
+  let ai = polish(await aiDrafts(base, info, site, { ...aiOptions, approaches: options.onlyApproach ? [options.onlyApproach] : undefined }));
+  // Fehlt der gewählte Ansatz (KI hat ihn nicht sauber geliefert oder der Text passte nicht zum Ansatz): noch einmal NUR diesen schreiben lassen – nie stillschweigend ein anderer Ansatz
+  if (!ai?.some((item) => item.key === ansatz) && process.env.ANTHROPIC_API_KEY) { const again = polish(await aiDrafts(base, info, site, { ...aiOptions, approaches: [ansatz] })); if (again?.length) ai = [...again, ...(ai ?? []).filter((item) => item.key !== ansatz)]; }
   // Ohne KI: Individuell = Vorlage mit den Daten, Drittanbieter = feste Vorlage (nur sinnvoll für die Erst-E-Mail)
   const third = thirdPartyTemplate(values);
   const fallback: DraftOption[] = [{ key: "individuell", label: approachLabel("individuell"), subject: base.subject, text: finish(base.text) }, ...(sentEvents.length === 0 ? [{ key: "drittanbieter" as const, label: approachLabel("drittanbieter"), subject: third.subject, text: finish(third.text) }] : [])];
-  const list: DraftOption[] = ai ?? fallback;
-  // Der Ansatz der Kampagne ist der Haupt-Vorschlag – die anderen bleiben als Alternativen wählbar
-  const first = list.find((item) => item.key === (options.onlyApproach ?? ansatz)) ?? list[0]; const source = ai ? (site ? "kiweb" : "ki") : "vorlage";
+  // Der Ansatz der Kampagne ist der Haupt-Vorschlag – die anderen bleiben als Alternativen wählbar. Hat die KI ihn nicht geschrieben, steht die Vorlage dieses Ansatzes vorn (als „Ersatz aus Vorlage“ – geht im Auto-Modus nie raus).
+  const candidates: DraftOption[] = ai?.length ? (ai.some((item) => item.key === ansatz) ? ai : [...fallback.filter((item) => item.key === ansatz), ...ai]) : fallback;
+  const first = candidates.find((item) => item.key === ansatz) ?? fallback[0]; const source = ai?.includes(first) ? (site ? "kiweb" : "ki") : "vorlage";
+  const list = candidates.includes(first) ? candidates : [first, ...candidates]; // der Haupt-Entwurf steht immer auch unter den Vorschlägen
   await db.update(emailCampaignRecipients).set({ draftSubject: first.subject, draftText: first.text, draftOptions: list, draftApproach: first.key, draftNodeId: node.id, draftState: "entwurf", draftSource: source, draftAt: new Date() }).where(eq(emailCampaignRecipients.id, recipient.id));
   return { id: recipient.id, subject: first.subject, text: first.text, options: list, approach: first.key, source, website: site?.url ?? website, nodeId: node.id, nodeLabel: node.label?.trim() || node.subject };
 }
@@ -263,8 +269,8 @@ export async function approveAllDrafts(db: Db, tenantId: number, campaignId: num
 /** Je E-Mail-Schritt das jüngste echte Beispiel: so hat die KI die E-Mail für einen Kontakt tatsächlich geschrieben (für die Vorschau im Builder). */
 export async function draftSamples(db: Db, tenantId: number, campaignId: number) {
   const rows = await db.select({ draftNodeId: emailCampaignRecipients.draftNodeId, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, draftApproach: emailCampaignRecipients.draftApproach, draftAt: emailCampaignRecipients.draftAt, name: emailCampaignRecipients.name, company: emailCampaignRecipients.company, email: emailCampaignRecipients.email }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), isNotNull(emailCampaignRecipients.draftText))).orderBy(desc(emailCampaignRecipients.draftAt)).limit(400);
-  const out = new Map<string, { nodeId: string; subject: string; text: string; name: string; approach: string | null; at: Date | null }>();
-  for (const row of rows) { const nodeId = row.draftNodeId ?? "__erste"; if (out.has(nodeId) || !row.draftText) continue; out.set(nodeId, { nodeId, subject: row.draftSubject ?? "", text: row.draftText, name: row.name?.trim() || row.company?.trim() || row.email, approach: row.draftApproach ?? null, at: row.draftAt ?? null }); }
+  const out = new Map<string, { nodeId: string; subject: string; text: string; name: string; approach: string | null; at: Date | null }>(); // je Schritt UND Ansatz das jüngste – der Builder zeigt nur Beispiele im gewählten Ansatz
+  for (const row of rows) { const nodeId = row.draftNodeId ?? "__erste"; const key = `${nodeId}|${row.draftApproach ?? ""}`; if (out.has(key) || !row.draftText) continue; out.set(key, { nodeId, subject: row.draftSubject ?? "", text: row.draftText, name: row.name?.trim() || row.company?.trim() || row.email, approach: row.draftApproach ?? null, at: row.draftAt ?? null }); }
   return Array.from(out.values());
 }
 /** Alle noch nicht gesendeten Entwürfe einer Kampagne verwerfen (auch schon freigegebene) – die KI schreibt sie danach mit den aktuellen Regeln neu. */
@@ -273,6 +279,48 @@ export async function resetDrafts(db: Db, tenantId: number, campaignId: number) 
   const ids = open.filter((row) => row.draftState).map((row) => row.id);
   if (ids.length) await db.update(emailCampaignRecipients).set({ draftState: null, draftSubject: null, draftText: null, draftOptions: null, draftApproach: null, draftNodeId: null, draftSource: null, draftAt: null }).where(inArray(emailCampaignRecipients.id, ids));
   return { reset: ids.length };
+}
+/**
+ * Ansatz der Kampagne geändert (z. B. Drittanbieter → individuell): offene, noch nicht gesendete Entwürfe, die dem alten Ansatz
+ * folgten, auf den neuen umstellen – mit dem gespeicherten KI-Vorschlag im neuen Ansatz, sonst verwerfen (die KI schreibt neu).
+ * Selbst geschriebene Texte und bewusst anders gewählte Ansätze je Kontakt bleiben. Schon freigegebene Entwürfe im alten Ansatz
+ * brauchen danach eine neue Freigabe (der Text ist ja ein anderer).
+ */
+export async function realignDrafts(db: Db, tenantId: number, campaignId: number, from: DraftApproach, to: DraftApproach) {
+  if (from === to) return { switched: 0, cleared: 0 };
+  const rows = await db.select({ id: emailCampaignRecipients.id, draftState: emailCampaignRecipients.draftState, draftApproach: emailCampaignRecipients.draftApproach, draftOptions: emailCampaignRecipients.draftOptions, draftSource: emailCampaignRecipients.draftSource }).from(emailCampaignRecipients)
+    .where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), isNotNull(emailCampaignRecipients.draftState)));
+  let switched = 0; let cleared = 0;
+  for (const row of rows) {
+    if ((row.draftApproach || from) !== from || row.draftSource === "hand") continue;
+    const option = Array.isArray(row.draftOptions) ? (row.draftOptions as DraftOption[]).find((item) => item?.key === to && item.subject?.trim() && (item.text ?? "").trim().length > 40) : null;
+    if (option) { await db.update(emailCampaignRecipients).set({ draftSubject: option.subject, draftText: option.text, draftApproach: to, draftState: "entwurf", draftAt: new Date() }).where(eq(emailCampaignRecipients.id, row.id)); switched += 1; }
+    else { await db.update(emailCampaignRecipients).set({ draftState: null, draftSubject: null, draftText: null, draftOptions: null, draftApproach: null, draftNodeId: null, draftSource: null, draftAt: null }).where(eq(emailCampaignRecipients.id, row.id)); cleared += 1; }
+  }
+  return { switched, cleared };
+}
+/**
+ * Einmal nach dem Serverstart: ältere Entwürfe (vor dieser Version geschrieben), die nicht im Ansatz ihrer Kampagne stehen –
+ * weil die KI den gewählten Ansatz ausgelassen hatte oder der Ansatz später umgestellt wurde –, auf den gespeicherten Vorschlag
+ * im richtigen Ansatz umstellen. Nur offene, noch nicht freigegebene, nicht selbst geschriebene Entwürfe; der bisherige Text
+ * bleibt als Alternative wählbar. Mehrfach ausführbar ohne Nebenwirkung.
+ */
+const ALIGN_DRAFTS_BEFORE = new Date("2026-10-28T10:30:00Z");
+export async function alignStoredDrafts(db: Db, before = ALIGN_DRAFTS_BEFORE): Promise<number> {
+  const campaigns = (await db.select({ id: emailCampaigns.id, kiModus: emailCampaigns.kiModus, reviewFirst: emailCampaigns.reviewFirst, kiAnsatz: emailCampaigns.kiAnsatz, isTemplate: emailCampaigns.isTemplate }).from(emailCampaigns).where(isNull(emailCampaigns.archivedAt))).filter((row) => !row.isTemplate && kiModusOf(row) !== "aus");
+  let switched = 0;
+  for (const campaign of campaigns) {
+    const approach = kiAnsatzOf(campaign);
+    const rows = await db.select({ id: emailCampaignRecipients.id, draftApproach: emailCampaignRecipients.draftApproach, draftOptions: emailCampaignRecipients.draftOptions, draftSource: emailCampaignRecipients.draftSource }).from(emailCampaignRecipients)
+      .where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), eq(emailCampaignRecipients.draftState, "entwurf"), lt(emailCampaignRecipients.draftAt, before)));
+    for (const row of rows) {
+      if (row.draftSource === "hand" || (row.draftApproach || approach) === approach) continue;
+      const option = Array.isArray(row.draftOptions) ? (row.draftOptions as DraftOption[]).find((item) => item?.key === approach && item.subject?.trim() && (item.text ?? "").trim().length > 40) : null;
+      if (!option) continue; // nichts Passendes gespeichert – bleibt, „Alle neu schreiben“ schreibt im richtigen Ansatz
+      await db.update(emailCampaignRecipients).set({ draftSubject: option.subject, draftText: option.text, draftApproach: approach }).where(eq(emailCampaignRecipients.id, row.id)); switched += 1;
+    }
+  }
+  return switched;
 }
 /** Die nächsten Entwürfe schreiben – für Empfänger, deren aktueller Schritt eine E-Mail ist und die noch keinen passenden Entwurf haben; oder für bestimmte Empfänger neu. */
 export async function generateDrafts(db: Db, tenantId: number, input: { campaignId: number; recipientIds?: number[] | null; limit?: number | null }) {

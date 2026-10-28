@@ -125,7 +125,8 @@ export function startEmailCampaignScheduler(intervalSeconds = Number(process.env
   const tick = async () => {
     if (running) return; running = true; // läuft ein Durchgang noch (viele Mails), startet kein zweiter parallel – keine Doppelversände
     try { const db = await getDb(); if (!db) return;
-      if (!repaired) { repaired = true; const count = await repairWaitingRecipients(db).catch((error) => { console.error("[E-Mail-Kampagnen] Wartende nachziehen:", error instanceof Error ? error.message : error); return 0; }); if (count) console.log(`[E-Mail-Kampagnen] ${count} wartende Kontakte stehen jetzt am Warten-Schritt`); } // einmal nach dem Start: Wartende auf den Warten-Schritt setzen
+      if (!repaired) { repaired = true; const count = await repairWaitingRecipients(db).catch((error) => { console.error("[E-Mail-Kampagnen] Wartende nachziehen:", error instanceof Error ? error.message : error); return 0; }); if (count) console.log(`[E-Mail-Kampagnen] ${count} wartende Kontakte stehen jetzt am Warten-Schritt`);
+        const { alignStoredDrafts } = await import("./campaign-review"); const aligned = await alignStoredDrafts(db).catch((error) => { console.error("[E-Mail-Kampagnen] Entwürfe ausrichten:", error instanceof Error ? error.message : error); return 0; }); if (aligned) console.log(`[E-Mail-Kampagnen] ${aligned} KI-Entwürfe auf den Ansatz ihrer Kampagne umgestellt`); } // einmal nach dem Start: Wartende auf den Warten-Schritt setzen, alte Entwürfe auf den gewählten Ansatz
       await processEmailCampaigns(db, process.env.APP_URL ?? "", { limit: 300 });
       await syncBrevoEvents(db).catch((error) => console.error("[E-Mail-Ereignisse]", error instanceof Error ? error.message : error)); } // Öffnungen/Klicks von Brevo (alle 10 Minuten)
     catch (error) { console.error("[E-Mail-Kampagnen]", error instanceof Error ? error.message : error); } finally { running = false; }

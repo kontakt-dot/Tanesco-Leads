@@ -2077,6 +2077,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === d.id)?.stopOnReply).toBe(false);
     expect((await owner.leadops.startEmailCampaign({ id: d.id })).added).toBe(3); await owner.leadops.runEmailCampaigns();
     const annaD = (await rowsOf("anna@antwort-test.example")).find((row) => row.campaignId === d.id)!; expect(annaD.sentCount).toBe(1); expect(annaD.status).toBe("wartet"); // neue Serie: Anna darf wieder angeschrieben werden (bewusst gestartet)
+    // Übersicht: nächste Follow-ups – alle 3 warten auf „Zweite“, frühestens nach der Wartezeit (1 Std.), Versandfenster/Tageslimit eingerechnet
+    const planD = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === d.id)!.followUps!;
+    expect(planD.total).toBe(3); expect(planD.days.reduce((sum, day) => sum + day.count, 0) + planD.later).toBe(3); expect(planD.paused).toBe(false);
+    expect(new Date(planD.days[0].first).getTime()).toBeGreaterThan(Date.now() + 55 * 60_000);
+    expect((await owner.leadops.getEmailCampaign({ id: d.id })).followUps?.total).toBe(3);
     await owner.leadops.storeInboxMessage({ fromEmail: "anna@antwort-test.example", fromName: "Anna Stopp", subject: "Re: Erste Mail an Anna", bodyText: "Nochmal: ja, gerne anrufen." });
     const annaDAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, annaD.id)))[0]; expect(annaDAfter.status).toBe("wartet"); expect(annaDAfter.repliedAt).toBeTruthy();
     expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, annaD.id))).some((event) => event.kind === "gewartet" && /läuft weiter/.test(event.note ?? ""))).toBe(true);
@@ -2650,6 +2655,22 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const row = async () => (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)))[0];
     let kim = await row(); expect(kim.sentCount).toBe(0); expect(kim.draftState).toBe("entwurf"); expect(kim.draftNodeId).toBe("m1"); expect(kim.draftApproach).toBe("drittanbieter"); expect(kim.draftText).toContain("Zwischenhändler"); // Ansatz der Kampagne, ohne KI-Schlüssel aus der festen Vorlage
     const queue1 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue1.items[0].nodeLabel).toBe("Erste"); expect(queue1.items[0].followUp).toBe(false);
+    // Ansatz umgestellt (Drittanbieter → individuell): der offene Entwurf folgt sofort dem neuen Ansatz (Vorschlag aus den gespeicherten Alternativen) – und wieder zurück
+    const settings = { id: campaign.id, name: "KI-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste" as const, listName: "KI-Test" }, tree, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe" as const, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } };
+    expect((await owner.leadops.saveEmailCampaign({ ...settings, kiAnsatz: "individuell" } as never)).realigned).toBe(1);
+    kim = await row(); expect(kim.draftApproach).toBe("individuell"); expect(kim.draftText).not.toContain("Zwischenhändler"); expect(kim.draftState).toBe("entwurf");
+    expect((await owner.leadops.campaignDraftSamples({ campaignId: campaign.id })).map((item) => item.approach)).toContain("individuell"); // Builder-Vorschau: Beispiel im gewählten Ansatz
+    expect((await owner.leadops.saveEmailCampaign({ ...settings, kiAnsatz: "individuell" } as never)).realigned).toBe(0); // nichts geändert → nichts umgestellt
+    expect((await owner.leadops.saveEmailCampaign({ ...settings, kiAnsatz: "drittanbieter" } as never)).realigned).toBe(1);
+    kim = await row(); expect(kim.draftApproach).toBe("drittanbieter"); expect(kim.draftText).toContain("Zwischenhändler");
+    // Einmal nach dem Serverstart: alter Entwurf im falschen Ansatz (vor dieser Version geschrieben) → auf den Ansatz der Kampagne; selbst geschriebene bleiben
+    const individuell = (kim.draftOptions as Array<{ key: string; subject: string; text: string }>).find((item) => item.key === "individuell")!;
+    await db.update(emailCampaignRecipients).set({ draftApproach: "individuell", draftSubject: individuell.subject, draftText: individuell.text, draftAt: new Date("2026-10-01T09:00:00Z") }).where(eq(emailCampaignRecipients.id, kim.id));
+    const { alignStoredDrafts } = await import("./campaign-review");
+    expect(await alignStoredDrafts(db)).toBeGreaterThanOrEqual(1); kim = await row(); expect(kim.draftApproach).toBe("drittanbieter"); expect(kim.draftText).toContain("Zwischenhändler");
+    await db.update(emailCampaignRecipients).set({ draftApproach: "individuell", draftSource: "hand", draftAt: new Date("2026-10-01T09:00:00Z") }).where(eq(emailCampaignRecipients.id, kim.id));
+    await alignStoredDrafts(db); expect((await row()).draftApproach).toBe("individuell"); // eigener Text → bleibt
+    await db.update(emailCampaignRecipients).set({ draftApproach: "drittanbieter", draftSource: "vorlage" }).where(eq(emailCampaignRecipients.id, kim.id)); kim = await row();
     // Entwurf-Regeln (auch ohne KI): förmliche Anrede, Pflichtinhalte, Schluss mit Kontaktweg und „Vielen Dank“, kein Gruß
     expect(kim.draftText).toMatch(/^Sehr geehrte/); expect(kim.draftText).not.toMatch(/^(Hallo|Guten Tag)/); expect(kim.draftText).toContain("20 Test-Leads"); expect(kim.draftText).toContain("zehn Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
     // „Alle neu schreiben“: verwirft die Entwürfe, die KI/Vorlage schreibt sie beim nächsten Lauf neu

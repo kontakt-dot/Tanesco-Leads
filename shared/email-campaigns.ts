@@ -474,6 +474,21 @@ export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: 
   { key: "frei", label: "Freier Vorschlag", hint: "Eigene Idee der KI – ein anderer Einstieg, aber genauso persönlich auf die Firma zugeschnitten." },
 ];
 export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? "Entwurf";
+/** Kernbotschaft des Drittanbieter-Ansatzes (Leads kommen über Zwischenhändler/Umwege an) – gehört NICHT in den individuellen oder freien Vorschlag. */
+const THIRD_PARTY_CORE = /zwischenh(?:ä|ae)ndler|weitergereicht|umweg über|über umwege|drittanbieter|drittpartner|über dritte/i;
+/** Passt der Text zum Ansatz? Individuell/frei: ohne die Drittanbieter-Kernbotschaft. (Drittanbieter wird nicht geprüft – Nachfass-Mails wiederholen sie nicht immer.) */
+export function fitsApproach(key: DraftApproach, text: string): boolean { return key === "drittanbieter" || !THIRD_PARTY_CORE.test(text); }
+/**
+ * Auto-Modus: welcher gespeicherte Entwurf darf raus? Nur einer im Ansatz der Kampagne – außer du hast ihn freigegeben oder
+ * selbst geschrieben. Steht der Haupt-Entwurf in einem anderen Ansatz, aber unter den gespeicherten KI-Vorschlägen ist einer im
+ * richtigen Ansatz, wird der genommen. `null` = neu schreiben lassen. (Ob der Entwurf zum Schritt passt, prüft der Aufrufer.)
+ */
+export function autoDraftFor(row: { draftSubject?: string | null; draftText?: string | null; draftState?: string | null; draftSource?: string | null; draftApproach?: string | null; draftOptions?: unknown }, approach: KiAnsatz): { subject: string; text: string; approach: string } | null {
+  if (!row.draftSubject?.trim() || !row.draftText?.trim() || (row.draftState !== "freigegeben" && row.draftState !== "entwurf")) return null;
+  if (row.draftState === "freigegeben" || row.draftSource === "hand" || (row.draftApproach || approach) === approach) return { subject: row.draftSubject, text: row.draftText, approach: row.draftApproach || approach };
+  const option = Array.isArray(row.draftOptions) ? (row.draftOptions as DraftOption[]).find((item) => item?.key === approach && item.subject?.trim() && (item.text ?? "").trim().length > 40) : null;
+  return option ? { subject: option.subject, text: option.text, approach } : null;
+}
 /* ---------------------------------------------------------------- KI-Versand: Betriebsart und Ansatz je Kampagne */
 export type KiModus = "aus" | "freigabe" | "auto";
 export type KiAnsatz = "individuell" | "drittanbieter";
