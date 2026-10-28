@@ -1,0 +1,1 @@
+UPDATE `emailCampaigns` SET `design` = JSON_SET(`design`, '$.logoUrl', NULL), `updatedAt` = `updatedAt` WHERE JSON_UNQUOTE(JSON_EXTRACT(`design`, '$.logoUrl')) = '/brand/tanesco-logo-mail.png';

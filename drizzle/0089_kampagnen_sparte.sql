@@ -1,0 +1,1 @@
+ALTER TABLE `emailCampaigns` ADD `leadSparte` varchar(120);

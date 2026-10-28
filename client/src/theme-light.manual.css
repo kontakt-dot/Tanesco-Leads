@@ -1457,6 +1457,13 @@ html:not(.dark) .ki-box-row button.is-active { background: #bc001d !important; b
 html:not(.dark) .ki-box-row.is-ansatz button.is-active { background: #fff1f3 !important; border-color: #e8a7b1 !important; color: #9f0018 !important; }
 html:not(.dark) .rv-step { color: #8a4bdd !important; }
 html:not(.dark) .cd-chip.is-ki { border-color: #e0d7fb !important; color: #6941c6 !important; background: #f9f5ff !important; }
+html:not(.dark) .sparte-field > span { color: #344054 !important; }
+html:not(.dark) .sparte-field small { color: #667085 !important; }
+html:not(.dark) .sparte-field small strong { color: #101828 !important; }
+html:not(.dark) .sparte-field small.sparte-warn { color: #92400e !important; background: #fffbeb !important; border-color: #fcd34d !important; }
+html:not(.dark) .sparte-fix { color: #78350f !important; background: #fef3c7 !important; border-color: #f59e0b !important; }
+html:not(.dark) .dash-pill.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
+html:not(.dark) .cd-chip.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
 
 html:not(.dark) .rv-preview-toggle { color: #667085 !important; }
 html:not(.dark) .rv-preview-toggle:hover { color: #101828 !important; }

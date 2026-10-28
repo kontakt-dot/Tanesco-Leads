@@ -186,8 +186,9 @@ describe("Persönlicher Versand (weniger Werbung-Ordner)", () => {
   ] as never[];
   const optionen = { trackingPixelUrl: "https://app.test/api/mail/o/abc.gif", wrapLink: (url: string) => `https://app.test/api/mail/c/abc?u=${encodeURIComponent(url)}`, unsubscribeUrl: "https://app.test/api/mail/u/abc", logoBase: "https://app.test" };
 
-  it("Normal: Logo, farbiger Knopf, Zählpixel und umgeschriebene Links", () => {
-    const html = renderEmailHtml(blocks, { ...DEFAULT_DESIGN }, { nachname: "Berg" }, optionen);
+  it("Normal: Logo (wenn gewählt), farbiger Knopf, Zählpixel und umgeschriebene Links – standardmäßig ohne Logo", () => {
+    expect(renderEmailHtml(blocks, { ...DEFAULT_DESIGN }, { nachname: "Berg" }, optionen)).not.toContain("tanesco-logo-mail.png"); // Logo standardmäßig aus (weniger Spam)
+    const html = renderEmailHtml(blocks, { ...DEFAULT_DESIGN, logoUrl: "/brand/tanesco-logo-mail.png" }, { nachname: "Berg" }, optionen);
     expect(html).toContain("tanesco-logo-mail.png");
     expect(html).toContain("/api/mail/o/abc.gif"); // Zählpixel
     expect(html).toContain("/api/mail/c/abc"); // Link läuft über uns

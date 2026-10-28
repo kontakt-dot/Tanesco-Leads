@@ -3063,6 +3063,40 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(await row(ids.anja)).toEqual({ inPipeline: false, adPlatform: "kaltakquise", stage: "neu" }); expect(await row(ids.bert)).toMatchObject({ stage: "neu" });
   }, 40000);
 
+  it("63h. Leadsparte: Hausnotruf-Kampagne bekommt Hausnotruf-Texte (Entwurf, Vorlage, {{sparte}}), Sparte aus dem Namen erkannt, alte Vorlagen umgestellt", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { OLD_ENERGY_PHRASE } = await import("../shared/lead-sparte");
+    await owner.leadops.importColdList({ listName: "Sparte-Test", toPipeline: false, rows: [{ firstName: "Nina", lastName: "Notruf", company: "Notruf Nord GmbH", email: "nina@sparte-e2e.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
+    const starter = await owner.leadops.emailCampaignStarter();
+    const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste" as const, listName: "Sparte-Test" }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } };
+    const saved = await owner.leadops.saveEmailCampaign({ ...base, name: "Sparte-Test", kiModus: "freigabe", kiAnsatz: "drittanbieter", leadSparte: "Hausnotruf" } as never);
+    const listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === saved.id)!;
+    expect(listed.sparte).toMatchObject({ label: "Hausnotruf", source: "eingetragen" }); expect(listed.leadSparte).toBe("Hausnotruf");
+    await owner.leadops.startEmailCampaign({ id: saved.id }); await owner.leadops.runEmailCampaigns();
+    const nina = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, saved.id)))[0];
+    expect(nina.draftApproach).toBe("drittanbieter"); expect(nina.draftText).toContain("im Bereich Hausnotruf"); expect(nina.draftText).not.toMatch(/Photovoltaik|Wärmepumpe/);
+    const individuell = (nina.draftOptions as Array<{ key: string; text: string }>).find((item) => item.key === "individuell")!;
+    expect(individuell.text).toContain("Lead-Lieferanten in Deutschland für Hausnotruf"); expect(individuell.text).not.toMatch(/Photovoltaik|Wärmepumpe/); // Vorlage mit {{sparte}}
+    // ohne Eintrag: aus dem Namen erkannt
+    const named = await owner.leadops.saveEmailCampaign({ ...base, name: "Elektrorollstuhl • Erstkontakt" } as never);
+    expect((await owner.leadops.getEmailCampaign({ id: named.id })).sparte).toMatchObject({ label: "Elektrorollstuhl", source: "erkannt" });
+    // alte Vorlage mit dem festen PV-Satz → {{sparte}} (läuft einmal nach dem Start)
+    const oldTree = { ...tree, nodes: [{ ...tree.nodes[0], blocks: [{ id: "t1", type: "text", text: `{{begruessung}},\n\nwir von Tanesco Digital gehören zu den größten ${OLD_ENERGY_PHRASE}.` }] }] };
+    await db.update(emailCampaigns).set({ tree: oldTree }).where(eq(emailCampaigns.id, named.id));
+    const { useSpartePlaceholder } = await import("./sales-outreach"); expect(await useSpartePlaceholder(db)).toBeGreaterThanOrEqual(1);
+    const repaired = JSON.stringify((await owner.leadops.getEmailCampaign({ id: named.id })).tree); expect(repaired).toContain("für {{sparte}}"); expect(repaired).not.toContain("Photovoltaik");
+    expect(await useSpartePlaceholder(db)).toBe(0); // nichts mehr zu tun
+    // Kopie behält die Sparte; Sparte wieder leeren geht
+    const copy = await owner.leadops.duplicateEmailCampaign({ id: saved.id }); expect((await owner.leadops.getEmailCampaign({ id: copy.id })).leadSparte).toBe("Hausnotruf");
+    await owner.leadops.saveEmailCampaign({ ...base, id: copy.id, name: "Sparte-Test (Kopie)", leadSparte: "" } as never); expect((await owner.leadops.getEmailCampaign({ id: copy.id })).leadSparte).toBeNull();
+    // Logo standardmäßig aus (weniger Spam): neue Kampagnen ohne Logo; bestehende mit dem Tanesco-Logo werden einmal umgestellt (Migration 0090), Reihenfolge bleibt
+    expect((starter.design as { logoUrl?: string | null }).logoUrl ?? null).toBeNull();
+    await db.update(emailCampaigns).set({ design: { ...(starter.design as object), logoUrl: "/brand/tanesco-logo-mail.png" } }).where(eq(emailCampaigns.id, copy.id));
+    const stamp = (await db.select({ updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, copy.id)))[0].updatedAt;
+    const { readFile } = await import("node:fs/promises"); await db.execute(sql.raw(await readFile("drizzle/0090_kampagnen_ohne_logo.sql", "utf8")));
+    const after = (await db.select({ design: emailCampaigns.design, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, copy.id)))[0];
+    expect((after.design as { logoUrl?: string | null }).logoUrl).toBeNull(); expect(after.updatedAt.getTime()).toBe(stamp.getTime());
+  }, 40000);
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);
     const probe = leadOptions.find((row) => row.name) ?? leadOptions[0]; expect((await owner.leadops.contractLeadOptions({ query: (probe.name || probe.email).slice(0, 4) })).some((row) => row.id === probe.id)).toBe(true);

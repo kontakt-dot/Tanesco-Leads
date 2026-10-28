@@ -738,6 +738,19 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     const events = getStore().tables.emailCampaignEvents.filter((row) => row.campaignId === saved.id && row.kind === "verzweigt");
     expect(events.find((row) => row.recipientId === recipients[0].id)!.note).toContain("ja → Dann-Zweig"); expect(events.find((row) => row.recipientId === recipients[1].id)!.note).toContain("nein → Sonst-Zweig");
   });
+  it("Leadsparte: eingetragen oder aus dem Namen erkannt – Entwürfe und Vorlage passen zur Sparte (kein Wort zu Wärmepumpen)", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Notruf-Demo", rows: [{ firstName: "Nora", lastName: "Notruf", company: "Notruf Süd GmbH", email: "nora@notruf-demo.example" }] });
+    const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Notruf-Demo" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, kiModus: "freigabe", kiAnsatz: "individuell" };
+    const saved = await call("leadops.saveEmailCampaign", { ...base, name: "Notruf-Demo", leadSparte: "Hausnotruf" });
+    const listed = (await call("leadops.listEmailCampaigns")).find((row: any) => row.id === saved.id);
+    expect(listed.sparte).toMatchObject({ label: "Hausnotruf", source: "eingetragen" });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    const row = getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === saved.id)!;
+    expect(String(row.draftText)).toContain("für Hausnotruf"); expect(String(row.draftText)).not.toMatch(/Photovoltaik|Wärmepumpe/);
+    const named = await call("leadops.saveEmailCampaign", { ...base, name: "Alarmanlage • Erstkontakt" });
+    expect((await call("leadops.getEmailCampaign", { id: named.id })).sparte).toMatchObject({ label: "Alarmanlage", source: "erkannt" });
+  });
   it("KI-Ansatz umgestellt: offene Entwürfe folgen dem gewählten Ansatz, die Builder-Vorschau zeigt nur diesen", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "Ansatz-Demo", rows: [{ firstName: "Ansgar", lastName: "Ansatz", company: "Ansatz Solar", email: "ansgar@ansatz-demo.example" }] });

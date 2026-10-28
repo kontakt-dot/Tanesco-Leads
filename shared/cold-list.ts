@@ -13,7 +13,7 @@ export const COLD_FIELDS: Array<{ key: ColdField; label: string }> = [
 /** Feste Platzhalter, die immer da sind (aus den Stammdaten des Kontakts). */
 export const STANDARD_PLACEHOLDERS: Array<{ key: string; label: string }> = [
   { key: "anrede", label: "Herr / Frau" }, { key: "vorname", label: "Vorname" }, { key: "nachname", label: "Nachname" }, { key: "name", label: "Vor- und Nachname" },
-  { key: "firma", label: "Firma" }, { key: "stadt", label: "Ort" }, { key: "email", label: "E-Mail-Adresse" }, { key: "abmelden", label: "Abmelde-Link" },
+  { key: "firma", label: "Firma" }, { key: "stadt", label: "Ort" }, { key: "email", label: "E-Mail-Adresse" }, { key: "abmelden", label: "Abmelde-Link" }, { key: "sparte", label: "Leadsparte der Kampagne (z. B. Hausnotruf)" },
 ];
 const RESERVED = new Set(STANDARD_PLACEHOLDERS.map((item) => item.key));
 const HEADER_MAP: Array<[RegExp, ColdField]> = [[/^(vorname|first ?name|firstname)$/i, "firstName"], [/^(nachname|name|last ?name|lastname)$/i, "lastName"], [/^(firma|firmen|firmenname|company|unternehmen|betrieb)$/i, "company"], [/^(telefon|phone|tel|mobil|handy|telefonnummer)$/i, "phone"], [/^(e-?mail|mail|e-?mail-?adresse)$/i, "email"], [/^(plz|postleitzahl|zip)$/i, "postcode"], [/^(ort|stadt|city)$/i, "city"], [/^(anrede|salutation)$/i, "salutation"], [/^(notiz|notizen|notes|bemerkung|kommentar)$/i, "notes"]];

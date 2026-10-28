@@ -7,7 +7,8 @@
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
-import { kiModusOf } from "../shared/email-campaigns";
+import { audienceLists, kiModusOf } from "../shared/email-campaigns";
+import { DEFAULT_SPARTE, fitsSparte, isEnergySparte, sparteOf, withSparte, type Sparte } from "../shared/lead-sparte";
 import { cleanDraftText, PORTAL_RE, smoothQualifyPhrase, approachLabel, DRAFT_APPROACHES, fitsApproach, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { invokeLLM } from "./_core/llm";
@@ -62,6 +63,10 @@ async function loadContext(db: Db, tenantId: number, recipient: Recipient, nodeI
   return { campaign, lead, node, values, phone };
 }
 
+/** Leadsparte einer Kampagne: eingetragen, sonst erkannt aus Name, Listen der Zielgruppe und Liste des Kontakts. */
+export function sparteOfCampaign(campaign: { leadSparte?: string | null; name?: string | null; audience?: unknown }, listName?: string | null): Sparte {
+  return sparteOf(campaign, [...audienceLists((campaign.audience ?? null) as never), listName ?? ""].filter(Boolean));
+}
 /** Entwurf ohne KI: die Vorlage mit den Daten des Leads gefüllt. */
 function templateDraft(node: NonNullable<ReturnType<typeof firstSendNode>>, values: Record<string, string>) {
   return { subject: fillPlaceholdersSafe(node.subject, values).slice(0, 300), text: blocksToPlainText(node.blocks, values) };
@@ -76,16 +81,21 @@ export function websiteOf(metadata: unknown, email: string | null | undefined): 
   const domain = email ? domainOf(email) : null; return domain && !isFreemailDomain(domain) ? domain : null;
 }
 
-const SYSTEM = `Du schreibst für Tanesco Digital (einer der größten Leadlieferanten Deutschlands für Photovoltaik und Wärmepumpen) Akquise-E-Mails an Fachbetriebe und Energieversorger – jede einzeln, wie von Hand geschrieben, nie wie ein Serienbrief. Je nach Auftrag schreibst du die Erst-E-Mail oder eine Nachfass-Mail, als die verlangten Vorschläge (Ansätze), alle persönlich auf genau diesen Empfänger zugeschnitten.
+/** Anweisungen an die KI – auf die Leadsparte der Kampagne zugeschnitten (Hausnotruf-Firmen bekommen Hausnotruf-Texte, nie Wärmepumpen). */
+function systemFor(sparte: Sparte): string {
+  const energy = isEnergySparte(sparte);
+  return `Du schreibst für Tanesco Digital (einer der größten Leadlieferanten Deutschlands) Akquise-E-Mails an ${sparte.recipients} – jede einzeln, wie von Hand geschrieben, nie wie ein Serienbrief. Je nach Auftrag schreibst du die Erst-E-Mail oder eine Nachfass-Mail, als die verlangten Vorschläge (Ansätze), alle persönlich auf genau diesen Empfänger zugeschnitten.
 
-Was Tanesco anbietet (nur diese Fakten verwenden): PV- und Wärmepumpen-Leads, eigene Generierung über Meta-Kampagnen (Facebook/Instagram), in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt. Test-Angebot: 20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – baue dieses Angebot in den individuellen UND in den Drittanbieter-Ansatz ein (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
+LEADSPARTE dieser Kampagne: ${sparte.label}. Jede E-Mail handelt ausschließlich von ${sparte.leads} – Interessenten für ${sparte.topic}, die Tanesco gewinnt und an den Empfänger übergibt. Keine andere Sparte erwähnen${energy ? "" : " – kein Wort zu Photovoltaik, Solar, PV oder Wärmepumpen"}. Vorlage und Beispiel unten können aus einer anderen Sparte stammen: übernimm daraus nur Aufbau und Ton, nie das Thema.
+
+Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, eigene Generierung über Meta-Kampagnen (Facebook/Instagram), in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt. Test-Angebot: 20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – baue dieses Angebot in den individuellen UND in den Drittanbieter-Ansatz ein (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
 
 1) "individuell" – Individueller Ansatz. So soll er klingen (Beispiel, nicht kopieren):
 "Sehr geehrter Herr Wiebe,
 auf Ihrer Website steht „Keine Anzahlung, 0 % Risiko“. Genau so arbeiten wir auch, nur auf der anderen Seite des Tisches.
 Mit 12 Standorten von Oldenburg bis Konstanz brauchen Sie vermutlich in jeder Region einen stetigen Strom an Anfragen. Die übliche Erfahrung mit Lead-Anbietern ist eine andere: Leads, die an fünf Betriebe gleichzeitig gehen, falsche Nummern, Interessenten, die sich an nichts erinnern, und Vorkasse für all das.
-Wir von Tanesco Digital gehören zu den größten Lead-Lieferanten in Deutschland. Unsere PV- und Wärmepumpen-Leads sind telefonisch qualifiziert und gehen exklusiv per Schnittstelle direkt an Sie. Wir arbeiten grundsätzlich ohne Vorkasse.
-Damit Sie das ohne Risiko prüfen können, bekommen Sie 20 Test-Leads kostenlos – individuell für Ihre Standorte und in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet.
+Wir von Tanesco Digital gehören zu den größten Lead-Lieferanten in Deutschland. Unsere ${sparte.leads} sind telefonisch qualifiziert und gehen exklusiv per Schnittstelle direkt an Sie. Wir arbeiten grundsätzlich ohne Vorkasse.
+Damit Sie das ohne Risiko prüfen können, bekommen Sie 20 Test-Leads kostenlos – individuell für Ihre Standorte und in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet.
 Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter 0611 000000.
 Vielen Dank"
 → Einstieg mit etwas Konkretem von der Webseite oder aus den Daten (ein Zitat, ein Versprechen, Standorte, Spezialisierung), daraus eine Brücke zu uns, dann der typische Schmerz mit Lead-Anbietern, dann unser Angebot. Keine Aufzählung, 90–150 Wörter. Die Drittanbieter-Kernbotschaft (Leads kommen über Zwischenhändler, Umwege oder Dritte an) kommt im individuellen Ansatz NICHT vor – auch nicht angedeutet.
@@ -96,11 +106,12 @@ Vielen Dank"
 
 Aroundhome erwähnst du NIE – weder den Namen noch Zahlen, Antworten, Bewertungen oder Anfragen von dort, auch nicht umschrieben. Auch keine anderen Portale oder Vermittler beim Namen. Bewertungen darfst du nur ansprechen, wenn in den Daten ausdrücklich Google-Bewertungen stehen – dann als „Google-Bewertungen“ und nur mit genau diesen Zahlen; sonst gar keine Bewertungen erwähnen.
 Formulierung zur Qualifizierung immer so: „in der Regel anhand von zehn Fragen telefonisch vorqualifiziert“ – nie „qualifiziert über … Fragen“.
-Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlich, in Nachfass-Mails in ein bis zwei Sätzen): das Test-Angebot (20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert) und wie wir qualifizieren (in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet). Den Firmennamen des Betriebs nennen wir dabei NICHT – das darf nirgends stehen. Fehlt von den Pflichtinhalten etwas, ist die E-Mail falsch.
+Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlich, in Nachfass-Mails in ein bis zwei Sätzen): das Test-Angebot (20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert) und wie wir qualifizieren (in der Regel anhand von zehn Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet). Den Firmennamen des Betriebs nennen wir dabei NICHT – das darf nirgends stehen. Fehlt von den Pflichtinhalten etwas, ist die E-Mail falsch.
 
 Regeln für alle drei: Deutsch, Sie-Form. Für die Anrede gibt es genau zwei Formen: „Sehr geehrter Herr Nachname,“ / „Sehr geehrte Frau Nachname,“ – oder „Sehr geehrte Damen und Herren,“. Nie „Hallo“, „Hi“, „Moin“, nie „Guten Tag Vorname Nachname“, nie nur der Vorname. Herr oder Frau darfst du aus einem eindeutigen Vornamen ableiten (Stefan → Herr, Katrin → Frau); ist der Vorname nicht eindeutig oder fehlt der Nachname, schreibst du „Sehr geehrte Damen und Herren“. Steht in den Angaben kein Ansprechpartner, suche im Webseiten-Auszug (besonders im Impressum) nach dem Geschäftsführer oder Inhaber und sprich diese Person in ALLEN drei Vorschlägen direkt mit Herr/Frau und Nachnamen an (ohne Vornamen und Titel) – aber nur, wenn der Name wörtlich im Auszug steht, nie geraten. Erst wenn es gar keinen Namen gibt: „Sehr geehrte Damen und Herren“ – nie „Hallo“ ohne Namen. Nichts erfinden: keine Zahlen, Standorte, Zitate, Namen oder Fakten, die nicht in den Angaben oder auf der Webseite stehen – Webseiten-Zitate nur wörtlich aus dem Auszug. Keine Floskeln, kein „ich habe Ihre Webseite besucht“, keine Links, kein Knopf, keine Terminbuchung, keine Ausrufezeichen. Der Schluss ist immer gleich aufgebaut: vorletzter Absatz = ein klarer Satz, was zu tun ist – „Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter <Telefon des Absenders>.“ (Telefon steht in den Angaben; fehlt es: nur „antworten Sie einfach auf diese E-Mail“; eine Variante wie „Lassen Sie uns gerne sprechen: …“ ist erlaubt, die Nummer muss dann trotzdem drinstehen) – und die letzte Zeile lautet genau „Vielen Dank“. KEINE Grußformel danach – kein „Mit freundlichen Grüßen“, kein „Viele Grüße“, kein Name: Die Signatur, die das System automatisch anhängt, enthält Gruß und Namen schon. Betreff je Vorschlag: konkret, persönlich, höchstens 70 Zeichen, kein Clickbait.
-Die Vorlage der Kampagne zeigt den gewünschten Inhalt/Ton – nutze sie als Grundlage, besonders für den freien Vorschlag.
+Die Vorlage der Kampagne zeigt den gewünschten Aufbau und Ton – nutze sie als Grundlage, besonders für den freien Vorschlag; das Thema ist dabei immer die Leadsparte oben.
 Nachfass-Mails (wenn der Auftrag sagt, dass schon E-Mails raus sind): kurz (50–110 Wörter), knüpfen in einem Halbsatz an die vorige E-Mail an, ohne sie zu wiederholen – danach ein NEUER Aufhänger oder konkreter Mehrwert (eine Frage zum Bedarf, ein passender Punkt von der Webseite, ein Angebot wie kostenlose Test-Leads, ein konkreter Terminvorschlag). Keine erneute lange Vorstellung von Tanesco, derselbe Ansatz wie verlangt, genauso individuell.`;
+}
 
 /** Grußformel am Textende entfernen – die Signatur aus den E-Mail-Einstellungen bringt „Mit freundlichen Grüßen“ und den Namen schon mit (sonst stünde es doppelt). */
 export function stripClosing(text: string): string {
@@ -143,12 +154,12 @@ export function fixGreeting(text: string, greeting: string): string {
   return [head, ...lines.slice(1)].join("\n").replace(/^([^\n]+,)\n(?!\n)/, "$1\n\n");
 }
 /** Fehlen Test-Angebot oder Qualifizierung, kommen sie als eigener Absatz vor den Schluss – damit kein Entwurf ohne die Kerninhalte rausgeht. */
-export function ensureFacts(text: string, followUp: boolean): string {
+export function ensureFacts(text: string, followUp: boolean, partner = "Fachbetrieb"): string {
   const hasOffer = /test-?leads?/i.test(text) && /\b20\b/.test(text); const hasQualify = /\b10\s+(qualifizierungs)?fragen/i.test(text) || /zehn\s+fragen/i.test(text);
   if (hasOffer && (hasQualify || followUp)) return text;
-  const add = !hasOffer && !hasQualify && !followUp ? "Damit Sie das ohne Risiko prüfen können: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und in der Regel anhand von zehn Fragen telefonisch vorqualifiziert, sodass der Interessent weiß, dass sich ein Fachbetrieb bei ihm meldet."
+  const add = !hasOffer && !hasQualify && !followUp ? `Damit Sie das ohne Risiko prüfen können: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und in der Regel anhand von zehn Fragen telefonisch vorqualifiziert, sodass der Interessent weiß, dass sich ein ${partner} bei ihm meldet.`
     : !hasOffer ? "Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert."
-    : "Jeder Interessent wird in der Regel anhand von zehn Fragen telefonisch vorqualifiziert, sodass er weiß, dass sich ein Fachbetrieb bei ihm meldet.";
+    : `Jeder Interessent wird in der Regel anhand von zehn Fragen telefonisch vorqualifiziert, sodass er weiß, dass sich ein ${partner} bei ihm meldet.`;
   const parts = text.split(/\n{2,}/); const last = parts.length - 1;
   const ctaAt = parts.length > 1 && CTA_RE.test(parts[last]) ? last : -1;
   if (ctaAt > 0) parts.splice(ctaAt, 0, add); else parts.push(add);
@@ -183,21 +194,22 @@ export function dropCompanyNameClaim(text: string): string {
   }).join("").replace(/[ \t]{2,}/g, " ");
 }
 /** Alle Regeln auf einen Entwurf anwenden – gilt für KI-Texte wie für Vorlagen-Rückfälle. */
-export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean }): string {
-  return cleanDraftText(ensureClosing(ensureFacts(fixGreeting(dropCompanyNameClaim(text.trim()), options.greeting), options.followUp), options.phone));
+export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean; partner?: string }): string {
+  return cleanDraftText(ensureClosing(ensureFacts(fixGreeting(dropCompanyNameClaim(text.trim()), options.greeting), options.followUp, options.partner), options.phone));
 }
 type FollowUpInfo = { index: number; sentSubjects: string[] } | null; // Nr. der E-Mail im Ablauf (0 = Erst-E-Mail) und was schon raus ist
-async function aiDrafts(base: { subject: string; text: string }, info: Record<string, string>, site: { url: string; text: string } | null = null, options: { approaches?: DraftApproach[]; followUp?: FollowUpInfo; stepLabel?: string | null; phone?: string | null } = {}): Promise<DraftOption[] | null> {
+async function aiDrafts(base: { subject: string; text: string }, info: Record<string, string>, site: { url: string; text: string } | null = null, options: { approaches?: DraftApproach[]; followUp?: FollowUpInfo; stepLabel?: string | null; phone?: string | null; sparte?: Sparte } = {}): Promise<DraftOption[] | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   try {
     const wanted = options.approaches?.length ? DRAFT_APPROACHES.filter((approach) => options.approaches!.includes(approach.key)) : DRAFT_APPROACHES;
+    const sparte = options.sparte ?? DEFAULT_SPARTE;
     const facts = Object.entries(info).filter(([, value]) => value && String(value).trim()).map(([key, value]) => `${key}: ${String(value).slice(0, 300)}`).join("\n") + `\nTelefon des Absenders (für den Schluss): ${options.phone?.trim() || "nicht hinterlegt – dann nur „antworten Sie einfach auf diese E-Mail“"}`;
     const option = { type: "object", additionalProperties: false, required: ["subject", "text"], properties: { subject: { type: "string" }, text: { type: "string" } } };
     const followUp = options.followUp && options.followUp.index > 0 ? `\n\nDies ist eine NACHFASS-MAIL (E-Mail Nr. ${options.followUp.index + 1} der Serie${options.stepLabel ? `, Schritt „${options.stepLabel}“` : ""}). Schon gesendet: ${options.followUp.sentSubjects.length ? options.followUp.sentSubjects.map((subject) => `„${subject}“`).join(", ") : "die Erst-E-Mail"}. Halte dich an die Nachfass-Regeln.` : "";
     const task = wanted.length === DRAFT_APPROACHES.length ? "Schreibe die drei Vorschläge für diesen Empfänger." : `Schreibe NUR diese${wanted.length === 1 ? "n" : ""} Vorschl${wanted.length === 1 ? "ag" : "äge"} für diesen Empfänger: ${wanted.map((approach) => `"${approach.key}"`).join(", ")}.`;
-    const response = await invokeLLM({ maxTokens: wanted.length === 1 ? 1200 : 3000, temperature: 0.7, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: `Empfänger:\n${facts}${site ? `\n\nWebseite (${site.url}), Auszug:\n${site.text.slice(0, 9000)}` : "\n\n(Keine Webseite verfügbar – nur die Angaben oben nutzen.)"}\n\nVorlage dieses Schritts – Betreff: ${base.subject}\n\n${base.text}${followUp}\n\n${task}` }], outputSchema: { name: "vorschlaege", schema: { type: "object", additionalProperties: false, required: wanted.map((approach) => approach.key), properties: Object.fromEntries(wanted.map((approach) => [approach.key, option])) } } });
+    const response = await invokeLLM({ maxTokens: wanted.length === 1 ? 1200 : 3000, temperature: 0.7, messages: [{ role: "system", content: systemFor(sparte) }, { role: "user", content: `Leadsparte: ${sparte.label}\nEmpfänger:\n${facts}${site ? `\n\nWebseite (${site.url}), Auszug:\n${site.text.slice(0, 9000)}` : "\n\n(Keine Webseite verfügbar – nur die Angaben oben nutzen.)"}\n\nVorlage dieses Schritts – Betreff: ${base.subject}\n\n${base.text}${followUp}\n\n${task}` }], outputSchema: { name: "vorschlaege", schema: { type: "object", additionalProperties: false, required: wanted.map((approach) => approach.key), properties: Object.fromEntries(wanted.map((approach) => [approach.key, option])) } } });
     const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as Record<string, { subject?: unknown; text?: unknown } | undefined>;
-    const list = wanted.map((approach) => { const raw = parsed[approach.key]; const subject = String(raw?.subject ?? "").trim().slice(0, 300); const text = stripClosing(String(raw?.text ?? "").trim()); return subject && text.length > 40 && fitsApproach(approach.key, `${subject}\n${text}`) ? { key: approach.key, label: approach.label, subject, text } : null; }).filter((item): item is DraftOption => Boolean(item)); // Text im falschen Ansatz (z. B. „Zwischenhändler“ im individuellen) zählt nicht
+    const list = wanted.map((approach) => { const raw = parsed[approach.key]; const subject = String(raw?.subject ?? "").trim().slice(0, 300); const text = stripClosing(String(raw?.text ?? "").trim()); return subject && text.length > 40 && fitsApproach(approach.key, `${subject}\n${text}`) && fitsSparte(sparte, `${subject}\n${text}`) ? { key: approach.key, label: approach.label, subject, text } : null; }).filter((item): item is DraftOption => Boolean(item)); // Text im falschen Ansatz (z. B. „Zwischenhändler“ im individuellen) oder in der falschen Sparte (Wärmepumpe an Hausnotruf-Firmen) zählt nicht
     return list.length ? list : null;
   } catch { return null; }
 }
@@ -214,7 +226,8 @@ export function draftFitsNode(recipient: Pick<Recipient, "draftNodeId" | "sentCo
 export async function draftForRecipient(db: Db, tenantId: number, recipientId: number, options: { nodeId?: string | null; onlyApproach?: DraftApproach | null } = {}) {
   const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.id, recipientId), eq(emailCampaignRecipients.tenantId, tenantId))).limit(1))[0];
   if (!recipient) throw new Error("Empfänger nicht gefunden.");
-  const { campaign, lead, node, values, phone } = await loadContext(db, tenantId, recipient, options.nodeId);
+  const context = await loadContext(db, tenantId, recipient, options.nodeId); const { campaign, lead, node, phone } = context;
+  const sparte = sparteOfCampaign(campaign, lead?.listName); const values = withSparte(context.values, sparte); // Leadsparte: Hausnotruf-Firmen bekommen Hausnotruf-Texte
   const sentEvents = await db.select({ nodeId: emailCampaignEvents.nodeId, subject: emailCampaignEvents.subject }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, recipient.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
   if (sentEvents.some((event) => event.nodeId === node.id)) throw new Error(`Die E-Mail „${node.label?.trim() || node.subject}“ ist an diesen Kontakt schon raus.`);
   const base = templateDraft(node, values);
@@ -226,14 +239,14 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const site = rawSite ? { ...rawSite, text: rawSite.text.split(/\n+/).filter((line) => !PORTAL_RE.test(line)).join("\n") } : null; // Portal-Hinweise der Webseite (z. B. Aroundhome-Siegel) nicht an die KI
   const ansatz: DraftApproach = options.onlyApproach ?? kiAnsatzOf(campaign); // der gewählte Ansatz – IMMER der Haupt-Entwurf
   const followUp: FollowUpInfo = { index: sentEvents.length, sentSubjects: sentEvents.map((event) => event.subject ?? "").filter(Boolean).slice(-4) };
-  const finish = (text: string) => finishDraft(text, { greeting: values.begruessung, phone, followUp: sentEvents.length > 0 });
+  const finish = (text: string) => finishDraft(text, { greeting: values.begruessung, phone, followUp: sentEvents.length > 0, partner: sparte.partner });
   const polish = (items: DraftOption[] | null) => items?.map((item) => ({ ...item, subject: PORTAL_RE.test(item.subject) ? base.subject : item.subject, text: finish(item.text) })) ?? null; // nie Aroundhome – auch nicht im Betreff
-  const aiOptions = { followUp, stepLabel: node.label ?? node.subject, phone };
+  const aiOptions = { followUp, stepLabel: node.label ?? node.subject, phone, sparte };
   let ai = polish(await aiDrafts(base, info, site, { ...aiOptions, approaches: options.onlyApproach ? [options.onlyApproach] : undefined }));
   // Fehlt der gewählte Ansatz (KI hat ihn nicht sauber geliefert oder der Text passte nicht zum Ansatz): noch einmal NUR diesen schreiben lassen – nie stillschweigend ein anderer Ansatz
   if (!ai?.some((item) => item.key === ansatz) && process.env.ANTHROPIC_API_KEY) { const again = polish(await aiDrafts(base, info, site, { ...aiOptions, approaches: [ansatz] })); if (again?.length) ai = [...again, ...(ai ?? []).filter((item) => item.key !== ansatz)]; }
   // Ohne KI: Individuell = Vorlage mit den Daten, Drittanbieter = feste Vorlage (nur sinnvoll für die Erst-E-Mail)
-  const third = thirdPartyTemplate(values);
+  const third = thirdPartyTemplate(values, sparte);
   const fallback: DraftOption[] = [{ key: "individuell", label: approachLabel("individuell"), subject: base.subject, text: finish(base.text) }, ...(sentEvents.length === 0 ? [{ key: "drittanbieter" as const, label: approachLabel("drittanbieter"), subject: third.subject, text: finish(third.text) }] : [])];
   // Der Ansatz der Kampagne ist der Haupt-Vorschlag – die anderen bleiben als Alternativen wählbar. Hat die KI ihn nicht geschrieben, steht die Vorlage dieses Ansatzes vorn (als „Ersatz aus Vorlage“ – geht im Auto-Modus nie raus).
   const candidates: DraftOption[] = ai?.length ? (ai.some((item) => item.key === ansatz) ? ai : [...fallback.filter((item) => item.key === ansatz), ...ai]) : fallback;
