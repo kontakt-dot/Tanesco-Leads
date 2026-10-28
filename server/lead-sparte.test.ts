@@ -48,22 +48,23 @@ describe("Leadsparte: die KI schreibt passend zur Sparte – nie Wärmepumpen an
     expect(ensureFacts("Sehr geehrte Damen und Herren,\n\nkurzer Text.", false, "Anbieter")).toContain("dass sich ein Anbieter bei ihm meldet");
     expect(thirdPartyTemplate({ firma: "Solar GmbH" }).text).toContain("im Bereich Photovoltaik und Wärmepumpen"); // Standard bleibt wie bisher
   });
-  it("„Sie zahlen nur für Leads, die passen“: nur bei PV & WP – im individuellen Ansatz immer, in anderen Sparten nie", () => {
+  it("„Sie zahlen nur für Leads, die passen“: nur bei PV & WP – im freien Vorschlag immer, in anderen Sparten nie", () => {
     const pv = resolveSparte("PV & WP")!; const hausnotruf = resolveSparte("Hausnotruf")!;
     const draft = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Website steht etwas Konkretes.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail.\n\nVielen Dank";
-    const withFit = applyPayFit(draft, { sparte: pv, approach: "individuell" });
+    const withFit = applyPayFit(draft, { sparte: pv, approach: "frei" });
     expect(withFit).toContain(PAY_FIT_SENTENCE); expect(withFit.indexOf(PAY_FIT_SENTENCE)).toBeLessThan(withFit.indexOf("Wenn das für Sie interessant ist")); // vor dem Schluss
-    expect(applyPayFit(withFit, { sparte: pv, approach: "individuell" })).toBe(withFit); // nie doppelt
-    expect(applyPayFit(draft, { sparte: pv, approach: "individuell", followUp: true })).toBe(draft); // Nachfass-Mail: kein Muss
+    expect(applyPayFit(withFit, { sparte: pv, approach: "frei" })).toBe(withFit); // nie doppelt
+    expect(applyPayFit(draft, { sparte: pv, approach: "frei", followUp: true })).toBe(draft); // Nachfass-Mail: kein Muss
     expect(applyPayFit(draft, { sparte: pv, approach: "drittanbieter" })).toBe(draft);
+    expect(applyPayFit(draft, { sparte: pv, approach: "individuell" })).toBe(draft); // den individuellen Ansatz gibt es nicht mehr
     const wrong = "Sehr geehrte Damen und Herren,\n\nunsere Hausnotruf-Leads sind exklusiv. Sie zahlen nur für Leads, die zu Ihnen passen. Keine Vorkasse.\n\nVielen Dank";
-    const cleaned = applyPayFit(wrong, { sparte: hausnotruf, approach: "individuell" });
+    const cleaned = applyPayFit(wrong, { sparte: hausnotruf, approach: "frei" });
     expect(mentionsPayFit(cleaned)).toBe(false); expect(cleaned).toContain("unsere Hausnotruf-Leads sind exklusiv."); expect(cleaned).toContain("Keine Vorkasse.");
     for (const text of ["Bezahlt werden nur passende Leads.", "Abgerechnet werden ausschließlich Leads, die passen.", "Sie zahlen nur für Anfragen, die wirklich passen."]) expect(mentionsPayFit(text)).toBe(true);
     expect(mentionsPayFit("Keine Vorkasse, keine lange Vertragsbindung.")).toBe(false);
     // ganzer Entwurf: PV bekommt den Satz, Hausnotruf nie
-    expect(finishDraft("Sehr geehrter Herr Wiebe,\n\nkurzer Text.", { greeting: "Sehr geehrter Herr Wiebe", phone: "", followUp: false, sparte: pv, approach: "individuell" })).toContain(PAY_FIT_SENTENCE);
-    expect(finishDraft("Sehr geehrte Damen und Herren,\n\nSie zahlen nur für Leads, die passen.", { greeting: "Sehr geehrte Damen und Herren", phone: "", followUp: false, sparte: hausnotruf, approach: "individuell", partner: "Anbieter" })).not.toMatch(/zahlen nur/);
+    expect(finishDraft("Sehr geehrter Herr Wiebe,\n\nkurzer Text.", { greeting: "Sehr geehrter Herr Wiebe", phone: "", followUp: false, sparte: pv, approach: "frei" })).toContain(PAY_FIT_SENTENCE);
+    expect(finishDraft("Sehr geehrte Damen und Herren,\n\nSie zahlen nur für Leads, die passen.", { greeting: "Sehr geehrte Damen und Herren", phone: "", followUp: false, sparte: hausnotruf, approach: "frei", partner: "Anbieter" })).not.toMatch(/zahlen nur/);
     expect(thirdPartyTemplate({ firma: "Solar GmbH" }, pv).text).toContain("Sie zahlen nur für Leads, die zu Ihnen passen");
     expect(thirdPartyTemplate({ firma: "Notruf GmbH" }, hausnotruf).text).not.toMatch(/zahlen nur/);
   });
@@ -106,7 +107,7 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     expect(thirdPartyTemplate({ firma: "Solar GmbH" }).text).toContain("anhand von in der Regel zehn Fragen"); // Standard bleibt
     // die KI übernimmt „zehn“ aus der Vorlage → im fertigen Entwurf steht trotzdem die Zahl der Sparte
     const ai = "Sehr geehrter Herr Wiebe,\n\nIhre Notrufzentrale ist rund um die Uhr besetzt. Unsere Hausnotruf-Leads sind in der Regel anhand von zehn Fragen telefonisch vorqualifiziert. Zum Kennenlernen: 20 Test-Leads kostenlos.";
-    const done = finishDraft(ai, { greeting: "Sehr geehrter Herr Wiebe", phone: "", followUp: false, partner: "Anbieter", sparte: hausnotruf, approach: "individuell" });
+    const done = finishDraft(ai, { greeting: "Sehr geehrter Herr Wiebe", phone: "", followUp: false, partner: "Anbieter", sparte: hausnotruf, approach: "frei" });
     expect(done).toContain("anhand von sechs Fragen"); expect(done).not.toMatch(/zehn Fragen/);
   });
   it("Vorlagen im Ablauf: Hausnotruf bekommt sechs Fragen, PV & WP bleibt bei zehn", () => {

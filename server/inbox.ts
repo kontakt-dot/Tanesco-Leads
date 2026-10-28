@@ -9,7 +9,7 @@ import { decideReply, describeAssessment, DEFAULT_REPLY_AI, isAutoReply, matches
 import { assessReply } from "./reply-ai";
 import { isStage } from "../shared/sales-pipeline";
 import { extractPhone } from "../shared/pipeline-extras";
-import { inTimeOfDay, summarizeSent, trackingForSend, type SentReaction, type SentTracking } from "../shared/sent-tracking";
+import { inTimeOfDay, summarizeSent, trackingForSend, type DeliveryGroup, type SentReaction, type SentTracking } from "../shared/sent-tracking";
 import { addSuppression, isSuppressed, removeSuppressionByEmail } from "./pipeline-extras";
 import { deliverMail } from "./email-onboarding";
 import type { Db } from "./lead-pipeline";
@@ -378,7 +378,7 @@ export type SentKind = "kampagne" | "antwort" | "einzel";
  * Filter: Suche (Adresse, Betreff), Zeitraum, Kampagne, Art und Reaktion (geöffnet, geklickt, geantwortet …).
  * Je Kampagnen-Mail steht dabei, was danach passiert ist (siehe shared/sent-tracking.ts) – und der Kontakt ist verlinkt.
  */
-export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null; limit?: number } = {}) {
+export async function listSent(db: Db, tenantId: number, options: { search?: string | null; from?: Date | null; to?: Date | null; campaignId?: number | null; kind?: SentKind | null; reaction?: SentReaction | null; delivery?: DeliveryGroup | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null; limit?: number } = {}) {
   const limit = Math.min(500, Math.max(10, options.limit ?? 200));
   // Zeitraum (Datum + Uhrzeit) und Kampagne direkt in der Abfrage – sonst fielen ältere E-Mails hinter die neuesten 200.
   // Mit Zeitraum oder Uhrzeit werden bis zu 3000 Mails geholt, damit Liste und Zähler für den ganzen Zeitraum stimmen.

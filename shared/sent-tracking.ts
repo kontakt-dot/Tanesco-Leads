@@ -107,8 +107,14 @@ export function inTimeOfDay(at: Date, timeFrom?: string | null, timeTo?: string 
   return start <= end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
 }
 
-export type SentFilter = { search?: string | null; from?: Date | string | null; to?: Date | string | null; campaignId?: number | null; kind?: string | null; reaction?: SentReaction | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null };
-type SentRow = { kind: string; campaignId?: number | null; campaignName?: string | null; leadId?: number | null; at: Date | string; to: string; name?: string | null; subject: string; tracking: SentTracking | null; origin?: { source: SentSource } | null };
+/** Zustellung je gesendeter E-Mail – zusammengefasst für Filter und Zähler: zugestellt, verzögert, nicht angekommen (unzustellbar, blockiert, Spam, Fehler), ohne Meldung. */
+export type DeliveryGroup = "zugestellt" | "verzoegert" | "probleme" | "offen";
+export const DELIVERY_LABEL: Record<string, string> = { zugestellt: "Zugestellt", verzoegert: "Zustellung verzögert", unzustellbar: "Unzustellbar", blockiert: "Blockiert", spam: "Als Spam gemeldet", fehler: "Fehler beim Versanddienst" };
+export const DELIVERY_GROUP_LABEL: Record<DeliveryGroup, string> = { zugestellt: "Zugestellt", verzoegert: "Verzögert", probleme: "Nicht angekommen", offen: "Ohne Meldung" };
+export const isBadDelivery = (status: string | null | undefined) => status === "unzustellbar" || status === "blockiert" || status === "spam" || status === "fehler";
+export const deliveryGroupOf = (status: string | null | undefined): DeliveryGroup => status === "zugestellt" ? "zugestellt" : status === "verzoegert" ? "verzoegert" : isBadDelivery(status) ? "probleme" : "offen";
+export type SentFilter = { search?: string | null; from?: Date | string | null; to?: Date | string | null; campaignId?: number | null; kind?: string | null; reaction?: SentReaction | null; delivery?: DeliveryGroup | null; timeFrom?: string | null; timeTo?: string | null; leadId?: number | null; email?: string | null };
+type SentRow = { kind: string; campaignId?: number | null; campaignName?: string | null; leadId?: number | null; at: Date | string; to: string; name?: string | null; subject: string; tracking: SentTracking | null; origin?: { source: SentSource } | null; delivery?: { status: string } | null };
 /** Gehört eine gesendete Mail zu diesem Kontakt? Über die Kontakt-Nummer oder – falls die fehlt – über die Adresse. */
 export const sentToContact = (item: { leadId?: number | null; to: string }, filter: { leadId?: number | null; email?: string | null }) => {
   if (!filter.leadId && !filter.email) return true;
@@ -128,14 +134,15 @@ export function summarizeSent<T extends SentRow>(items: T[], filter: SentFilter,
   const inPeriod = (at: Date | string) => { const when = new Date(at); return (!from || when >= from) && (!to || when < to) && inTimeOfDay(when, filter.timeFrom, filter.timeTo); };
   const scoped = items.filter((item) => inPeriod(item.at) && (!filter.campaignId || item.campaignId === filter.campaignId) && sentToContact(item, filter));
   const search = (filter.search ?? "").trim().toLowerCase();
-  const filtered = scoped.filter((item) => (!filter.kind || item.kind === filter.kind) && (!filter.reaction || item.tracking?.reaction === filter.reaction)
+  const filtered = scoped.filter((item) => (!filter.kind || item.kind === filter.kind) && (!filter.reaction || item.tracking?.reaction === filter.reaction) && (!filter.delivery || (item.kind === "kampagne" && deliveryGroupOf(item.delivery?.status) === filter.delivery))
     && (!search || `${item.to} ${item.name ?? ""} ${item.subject} ${item.campaignName ?? ""}`.toLowerCase().includes(search)));
   const pool = options.overview ?? items.flatMap((item) => item.campaignId && item.campaignName ? [{ campaignId: item.campaignId, name: item.campaignName, at: item.at }] : []);
   const byCampaign = new Map<number, { id: number; name: string; count: number }>();
   for (const row of pool) if (inPeriod(row.at)) { const entry = byCampaign.get(row.campaignId) ?? { id: row.campaignId, name: row.name, count: 0 }; entry.count += 1; byCampaign.set(row.campaignId, entry); }
   const kindCount = (kind: string) => scoped.filter((item) => item.kind === kind).length;
   const origins = { ki: 0, hand: 0, "entwurf-vorlage": 0, vorlage: 0 } as Record<SentSource, number>; for (const item of filtered) if (item.origin) origins[item.origin.source] += 1;
-  return { items: filtered.slice(0, options.limit ?? 200), total: filtered.length, counts: { alle: scoped.length, kampagne: kindCount("kampagne"), antwort: kindCount("antwort"), einzel: kindCount("einzel") }, reactions: countReactions(scoped), campaigns: Array.from(byCampaign.values()).sort((a, b) => b.count - a.count), origins };
+  const deliveries: Record<DeliveryGroup, number> = { zugestellt: 0, verzoegert: 0, probleme: 0, offen: 0 }; for (const item of scoped) if (item.kind === "kampagne") deliveries[deliveryGroupOf(item.delivery?.status)] += 1; // Zustellung der Kampagnen-Mails im Bereich
+  return { items: filtered.slice(0, options.limit ?? 200), total: filtered.length, counts: { alle: scoped.length, kampagne: kindCount("kampagne"), antwort: kindCount("antwort"), einzel: kindCount("einzel") }, reactions: countReactions(scoped), deliveries, campaigns: Array.from(byCampaign.values()).sort((a, b) => b.count - a.count), origins };
 }
 /** Je Kampagne: wie viele E-Mails persönlich rausgingen (KI-Text oder selbst geschrieben), wie viele als Vorlage, wie viele ohne Angabe (vor der Speicherung). */
 export function sentOriginCounts(rows: Array<{ source: string | null | undefined; count: number }>) {

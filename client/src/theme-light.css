@@ -944,6 +944,10 @@ html:not(.dark) .inbox-sent-range button { color: #111318 !important; }
 html:not(.dark) .inbox-reaction-chip { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .inbox-reaction-chip:hover { border-color: #e8ecf1 !important; }
 html:not(.dark) .inbox-reaction-chip.is-active { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-zugestellt { color: #338074 !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-verzoegert { color: #8b7e4b !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-probleme { color: #0f172a !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-offen { color: #4b5568 !important; }
 html:not(.dark) .inbox-reaction-chip.is-geoeffnet { color: #4b5568 !important; }
 html:not(.dark) .inbox-reaction-chip.is-geklickt { color: #0f172a !important; }
 html:not(.dark) .inbox-reaction-chip.is-geantwortet { color: #5b8572 !important; }
@@ -1433,6 +1437,9 @@ html:not(.dark) .cd-filters button { border: 1px solid #e8ecf1 !important; color
 html:not(.dark) .cd-filters button i { color: #8a94a6 !important; }
 html:not(.dark) .cd-filters button.is-active { background: #111318 !important; border-color: #111318 !important; color: #0f172a !important; }
 html:not(.dark) .cd-filters button.is-active i { color: #0f172a !important; }
+html:not(.dark) .cd-filters button.is-ok i { color: #338074 !important; }
+html:not(.dark) .cd-filters button.is-bad i { color: #8a5a5a !important; }
+html:not(.dark) .cd-filters button.is-active.is-ok i, html:not(.dark) .cd-filters button.is-active.is-bad i { color: #0f172a !important; }
 html:not(.dark) .cd-empty { color: #8a94a6 !important; }
 html:not(.dark) .cd-rows>li:hover, html:not(.dark) .cd-rows>li.is-active { background: #f8fafb !important; border-color: #e8ecf1 !important; }
 html:not(.dark) .cd-rows>li.is-active { border-color: #111318 !important; }
@@ -1441,9 +1448,12 @@ html:not(.dark) .cd-who strong { color: #0f172a !important; }
 html:not(.dark) .cd-who small { color: #8a94a6 !important; }
 html:not(.dark) .cd-progress i { border: 1px dashed #e8ecf1 !important; color: #0f172a !important; }
 html:not(.dark) .cd-progress i:nth-child(1).is-on { background: #f3f6f8 !important; color: #4b5568 !important; }
-html:not(.dark) .cd-progress i:nth-child(2).is-on { color: #506c8b !important; }
-html:not(.dark) .cd-progress i:nth-child(3).is-on { color: #8a742a !important; }
-html:not(.dark) .cd-progress i:nth-child(4).is-on { color: #3c7f64 !important; }
+html:not(.dark) .cd-progress i:nth-child(2).is-on { color: #338074 !important; }
+html:not(.dark) .cd-progress i:nth-child(3).is-on { color: #506c8b !important; }
+html:not(.dark) .cd-progress i:nth-child(4).is-on { color: #8a742a !important; }
+html:not(.dark) .cd-progress i:nth-child(5).is-on { color: #3c7f64 !important; }
+html:not(.dark) .cd-progress i.is-bad { color: #8a5a5a !important; }
+html:not(.dark) .cd-progress i.is-wait { color: #8a742a !important; }
 html:not(.dark) .cd-next small { color: #111318 !important; }
 html:not(.dark) .cd-next em { color: #8a94a6 !important; }
 html:not(.dark) .cd-rows>li.is-problem .cd-next small { color: #8b5a60 !important; }
@@ -1497,6 +1507,9 @@ html:not(.dark) .cj-event-top strong { color: #0f172a !important; }
 html:not(.dark) .cj-timeline li.is-quiet .cj-event-top strong { color: #4b5568 !important; }
 html:not(.dark) .cj-event-top time { color: #8a94a6 !important; }
 html:not(.dark) .cj-subject { color: #0f172a !important; }
+html:not(.dark) .cj-delivery.is-ok { color: #338074 !important; }
+html:not(.dark) .cj-delivery.is-bad { color: #8a5a5a !important; }
+html:not(.dark) .cj-delivery.is-wait { color: #8b7e4b !important; }
 html:not(.dark) .cj-event small { color: #8a94a6 !important; }
 html:not(.dark) .cj-empty, html:not(.dark) .cj-start { color: #8a94a6 !important; }
 html:not(.dark) .cj-runs li { background: #f8fafb !important; }
@@ -3336,9 +3349,12 @@ html:not(.dark) .cd-next small { color: #344054 !important; }
 html:not(.dark) .cd-rows > li.is-problem .cd-next small { color: #be123c !important; }
 html:not(.dark) .cd-progress i { border-color: #d0d5dd !important; color: #c0c6d1 !important; background: transparent !important; }
 html:not(.dark) .cd-progress i:nth-child(1).is-on { background: #fde7ea !important; color: #bc001d !important; }
-html:not(.dark) .cd-progress i:nth-child(2).is-on { background: #dbeafe !important; color: #1d4ed8 !important; }
-html:not(.dark) .cd-progress i:nth-child(3).is-on { background: #fef3c7 !important; color: #b45309 !important; }
-html:not(.dark) .cd-progress i:nth-child(4).is-on { background: #d1fae5 !important; color: #047857 !important; }
+html:not(.dark) .cd-progress i:nth-child(2).is-on { background: #ccfbf1 !important; color: #0f766e !important; }
+html:not(.dark) .cd-progress i:nth-child(3).is-on { background: #dbeafe !important; color: #1d4ed8 !important; }
+html:not(.dark) .cd-progress i:nth-child(4).is-on { background: #fef3c7 !important; color: #b45309 !important; }
+html:not(.dark) .cd-progress i:nth-child(5).is-on { background: #d1fae5 !important; color: #047857 !important; }
+html:not(.dark) .cd-progress i.is-bad { background: #fee2e2 !important; color: #b91c1c !important; border-color: #fecaca !important; }
+html:not(.dark) .cd-progress i.is-wait { border-style: solid !important; border-color: #fcd34d !important; color: #b45309 !important; }
 html:not(.dark) .cd-feed li button:hover:not(:disabled) { background: #f8fafc !important; }
 html:not(.dark) .cd-feed-text { color: #344054 !important; }
 html:not(.dark) .cd-feed-dot { background: #fde7ea !important; color: #bc001d !important; }
@@ -3566,6 +3582,16 @@ html:not(.dark) .inbox-track-step.is-delivered { color: #047857 !important; back
 html:not(.dark) .inbox-track-step.is-wait { color: #92400e !important; background: #fffbeb !important; border: 1px solid #fcd34d !important; }
 html:not(.dark) .cl-mail-missing { color: #991b1b !important; background: #fef2f2 !important; border-color: #fecaca !important; }
 html:not(.dark) .cl-mail-missing strong { color: #7f1d1d !important; }
+html:not(.dark) .cd-filters button.is-ok i { color: #0f766e !important; }
+html:not(.dark) .cd-filters button.is-bad i { color: #b91c1c !important; }
+html:not(.dark) .cd-filters button.is-active.is-ok i, html:not(.dark) .cd-filters button.is-active.is-bad i { color: rgba(255,255,255,.85) !important; }
+html:not(.dark) .cj-delivery.is-ok { color: #0f766e !important; background: #ccfbf1 !important; }
+html:not(.dark) .cj-delivery.is-bad { color: #b91c1c !important; background: #fee2e2 !important; }
+html:not(.dark) .cj-delivery.is-wait { color: #92400e !important; background: #fef3c7 !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-zugestellt { color: #0f766e !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-verzoegert { color: #92400e !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-probleme { color: #b91c1c !important; }
+html:not(.dark) .inbox-reaction-chip.is-delivery-offen { color: #667085 !important; }
 html:not(.dark) .dash-pill.is-ki { color: #0e7490 !important; border-color: #a5f3fc !important; background: #ecfeff !important; }
 html:not(.dark) .cd-chip.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
 

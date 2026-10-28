@@ -741,7 +741,7 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
   it("Leadsparte: eingetragen oder aus dem Namen erkannt – Entwürfe und Vorlage passen zur Sparte (kein Wort zu Wärmepumpen)", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "Notruf-Demo", rows: [{ firstName: "Nora", lastName: "Notruf", company: "Notruf Süd GmbH", email: "nora@notruf-demo.example" }] });
-    const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Notruf-Demo" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, kiModus: "freigabe", kiAnsatz: "individuell" };
+    const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Notruf-Demo" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, kiModus: "freigabe", kiAnsatz: "frei" };
     const saved = await call("leadops.saveEmailCampaign", { ...base, name: "Notruf-Demo", leadSparte: "Hausnotruf" });
     const listed = (await call("leadops.listEmailCampaigns")).find((row: any) => row.id === saved.id);
     expect(listed.sparte).toMatchObject({ label: "Hausnotruf", source: "eingetragen" });
@@ -767,6 +767,8 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(listed.delivery).toMatchObject({ total: 1, zugestellt: 1, probleme: 0 });
     const mails = await call("leadops.listSent", { campaignId: saved.id }); expect(mails.items[0].delivery).toMatchObject({ status: "zugestellt" });
     expect((await call("leadops.campaignDailyStatus")).mail).toEqual({ ready: true, simulated: false });
+    const detail = await call("leadops.getEmailCampaign", { id: saved.id }); expect(detail.stats.delivery).toMatchObject({ total: 1, zugestellt: 1 }); expect(detail.recipients[0].delivery).toMatchObject({ status: "zugestellt" });
+    expect((await call("leadops.listSent", { campaignId: saved.id, delivery: "zugestellt" })).items).toHaveLength(1); expect((await call("leadops.listSent", { campaignId: saved.id, delivery: "probleme" })).items).toHaveLength(0);
   });
   it("KI-Ansatz umgestellt: offene Entwürfe folgen dem gewählten Ansatz, die Builder-Vorschau zeigt nur diesen", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
@@ -775,9 +777,15 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     const saved = await call("leadops.saveEmailCampaign", base); await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
     const row = () => getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === saved.id)!;
     expect(row()).toMatchObject({ draftState: "entwurf", draftApproach: "drittanbieter" });
-    expect((await call("leadops.saveEmailCampaign", { ...base, id: saved.id, kiAnsatz: "individuell" })).realigned).toBe(1);
-    expect(row()).toMatchObject({ draftState: "entwurf", draftApproach: "individuell" }); expect(String(row().draftText)).not.toContain("Zwischenhändler");
-    const samples = await call("leadops.campaignDraftSamples", { campaignId: saved.id }); expect(samples.map((item: any) => item.approach)).toContain("individuell");
+    expect((row().draftOptions as Array<{ key: string }>).map((item) => item.key)).toEqual(["frei", "drittanbieter"]); // nur noch zwei Vorschläge
+    expect((await call("leadops.saveEmailCampaign", { ...base, id: saved.id, kiAnsatz: "frei" })).realigned).toBe(1);
+    expect(row()).toMatchObject({ draftState: "entwurf", draftApproach: "frei", draftSource: "vorlage" }); expect(String(row().draftText)).not.toContain("Zwischenhändler");
+    expect((await call("leadops.getEmailCampaign", { id: saved.id })).kiAnsatz).toBe("frei");
+    const samples = await call("leadops.campaignDraftSamples", { campaignId: saved.id }); expect(samples.map((item: any) => item.approach)).toContain("frei");
+    expect((await call("leadops.saveEmailCampaign", { ...base, id: saved.id, kiAnsatz: "individuell" })).realigned).toBe(0); // alter Wert gilt als frei
+    // alter individueller Entwurf: unter „Freigeben“ ohne den alten Ansatz
+    Object.assign(row(), { draftApproach: "individuell", draftOptions: [{ key: "individuell", label: "Individueller Ansatz", subject: "Alt", text: "Alt" }, ...(row().draftOptions as unknown[])] });
+    const queue = await call("leadops.campaignReviewQueue", { campaignId: saved.id }); expect(queue.items[0].draftApproach).toBeNull(); expect(queue.items[0].draftOptions.map((item: any) => item.key)).toEqual(["frei", "drittanbieter"]);
   });
   it("Übersicht: wann die nächsten Follow-ups rausgehen (nach der Wartezeit, pausiert ohne Zeiten)", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
@@ -839,7 +847,7 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(getStore().tables.emailCampaignEvents.filter((event) => event.recipientId === row().id && event.kind === "gesendet").map((event) => event.subject)).toEqual(["Persönlich 1", "Persönlich 2"]);
     // Auto-Modus: Demo schreibt die persönliche Fassung selbst und sendet sofort
     await call("leadops.importColdList", { listName: "KI-Demo-Auto", rows: [{ firstName: "Udo", lastName: "Auto", company: "Auto Solar", email: "udo@ki-demo-auto.example" }] });
-    const auto = await call("leadops.saveEmailCampaign", { ...base, name: "KI-Demo-Auto", audience: { source: "liste", listName: "KI-Demo-Auto" }, tree: { start: "a1", nodes: [{ id: "a1", type: "send", label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "auto", kiAnsatz: "individuell" });
+    const auto = await call("leadops.saveEmailCampaign", { ...base, name: "KI-Demo-Auto", audience: { source: "liste", listName: "KI-Demo-Auto" }, tree: { start: "a1", nodes: [{ id: "a1", type: "send", label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "auto", kiAnsatz: "frei" });
     await call("leadops.startEmailCampaign", { id: auto.id }); await call("leadops.runEmailCampaigns");
     const udo = getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === auto.id)!;
     expect(udo.sentCount).toBe(1); expect(udo.status).toBe("fertig");

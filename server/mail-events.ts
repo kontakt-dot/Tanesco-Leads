@@ -89,7 +89,8 @@ export function providerEventKind(type: string): "open" | "click" | null {
 type FetchLike = typeof fetch;
 const lastSync = new Map<number, number>();
 /** Brevo-HTTP: geöffnete und geklickte E-Mails der letzten zwei Tage abholen und eintragen (höchstens alle `everyMinutes`). */
-export async function syncBrevoEvents(db: Db, options: { tenantId?: number | null; force?: boolean; everyMinutes?: number; fetchImpl?: FetchLike } = {}) {
+export async function syncBrevoEvents(db: Db, options: { tenantId?: number | null; force?: boolean; everyMinutes?: number; fetchImpl?: FetchLike; days?: number } = {}) {
+  const days = Math.max(1, Math.min(30, Math.round(options.days ?? 2))); // sonst die letzten zwei Tage; einmal nach dem Start eine Woche (Zustellung älterer E-Mails nachholen)
   const every = (options.everyMinutes ?? Number(process.env.EMAIL_EVENTS_SYNC_MINUTES ?? 10)) * 60_000;
   const rows = await db.select({ tenantId: mailSettings.tenantId, provider: mailSettings.provider, password: mailSettings.password, enabled: mailSettings.enabled }).from(mailSettings).where(options.tenantId ? eq(mailSettings.tenantId, options.tenantId) : eq(mailSettings.provider, "brevo_api"));
   let applied = 0; let checked = 0; const errors: string[] = [];
@@ -99,7 +100,7 @@ export async function syncBrevoEvents(db: Db, options: { tenantId?: number | nul
     for (const event of ["opened", "clicks", ...BREVO_DELIVERY_EVENTS] as const) {
       for (let offset = 0; offset < 10_000; offset += 2500) {
         let body: unknown;
-        try { body = await brevoGet(`/smtp/statistics/events?event=${event}&days=2&limit=2500&offset=${offset}&sort=desc`, row.password, { fetchImpl: options.fetchImpl }); }
+        try { body = await brevoGet(`/smtp/statistics/events?event=${event}&days=${days}&limit=2500&offset=${offset}&sort=desc`, row.password, { fetchImpl: options.fetchImpl }); }
         catch (error) { errors.push(error instanceof Error ? error.message : String(error)); break; }
         const list = (body && typeof body === "object" && Array.isArray((body as { events?: unknown }).events) ? (body as { events: Array<Record<string, unknown>> }).events : []);
         for (const item of list) {

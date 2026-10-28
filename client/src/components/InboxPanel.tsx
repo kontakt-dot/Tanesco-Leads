@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { PIPELINE_STAGES, stageLabel } from "../../../shared/sales-pipeline";
-import { REACTION_LABEL, type SentReaction } from "../../../shared/sent-tracking";
+import { DELIVERY_GROUP_LABEL, REACTION_LABEL, type DeliveryGroup, type SentReaction } from "../../../shared/sent-tracking";
 import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, Check, MailOpen, ChevronLeft, Inbox, Mail, Megaphone, Paperclip, RefreshCw, Reply, Search, ShieldCheck, Sparkles, Trash2, UserPlus, X } from "lucide-react";
 import { ATTACHMENT_LIMITS, checkAttachments, formatBytes } from "../../../shared/email-signature";
 import { INBOX_AI_FILTERS, inboxAiFilterLabel, periodRange, REPLY_KIND_LABEL, type InboxAiFilter, type InboxPeriod, type ReplyAction, type ReplyKind } from "../../../shared/reply-ai";
@@ -244,6 +244,7 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
   const fixed = typeof fixedCampaignId === "number" && fixedCampaignId > 0;
   const [kind, setKind] = useState<"alle" | "kampagne" | "antwort" | "einzel">(fixed ? "kampagne" : "alle");
   const [reaction, setReaction] = useState<SentReaction | null>(null);
+  const [delivery, setDelivery] = useState<DeliveryGroup | null>(null); // Zustellung: zugestellt, verzögert, nicht angekommen, ohne Meldung
   const [campaignIdState, setCampaignId] = useState<number | null>(null); const campaignId = fixed ? fixedCampaignId! : campaignIdState;
   const [period, setPeriod] = useState<"alle" | "heute" | "gestern" | "7tage" | "30tage" | "eigener">("alle");
   const [fromText, setFromText] = useState(""); const [toText, setToText] = useState(""); // eigener Zeitraum: Datum + Uhrzeit
@@ -253,7 +254,7 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
   const range = useMemo(() => { const now = new Date(); const day = (offset: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset); const parse = (text: string, plusMinute = false) => { if (!text) return null; const value = new Date(text); return Number.isNaN(value.getTime()) ? null : new Date(value.getTime() + (plusMinute ? 60_000 : 0)); };
     return period === "heute" ? { from: day(0), to: null } : period === "gestern" ? { from: day(-1), to: day(0) } : period === "7tage" ? { from: day(-6), to: null } : period === "30tage" ? { from: day(-29), to: null } : period === "eigener" ? { from: parse(fromText), to: parse(toText, true) } : { from: null, to: null }; }, [period, fromText, toText]);
   const timeOk = (value: string) => /^\d{2}:\d{2}$/.test(value);
-  const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, reaction, campaignId, search: search.trim() || null, from: range.from, to: range.to, timeFrom: timeOk(timeFrom) ? timeFrom : null, timeTo: timeOk(timeTo) ? timeTo : null }, { retry: false });
+  const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, reaction, delivery, campaignId, search: search.trim() || null, from: range.from, to: range.to, timeFrom: timeOk(timeFrom) ? timeFrom : null, timeTo: timeOk(timeTo) ? timeTo : null }, { retry: false });
   const items = sent.data?.items ?? [];
   const filtered = period !== "alle" || timeOk(timeFrom) || timeOk(timeTo);
   const resetWhen = () => { setPeriod("alle"); setFromText(""); setToText(""); setTimeFrom(""); setTimeTo(""); };
@@ -299,6 +300,7 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
     </div>
     {whenSentence && <p className="inbox-sent-range" aria-live="polite"><span><strong>{whenSentence.head}</strong>{whenSentence.detail ? ` – ${whenSentence.detail}` : ""}.</span>{whenSentence.tail ? <span>{whenSentence.tail}</span> : null}<button type="button" onClick={resetWhen}>Zeitfilter zurücksetzen</button></p>}
     {sent.data?.origins && (sent.data.origins.ki + sent.data.origins.hand + sent.data.origins.vorlage + sent.data.origins["entwurf-vorlage"]) > 0 && <div className={`inbox-sent-origins ${sent.data.origins.vorlage + sent.data.origins["entwurf-vorlage"] ? "has-template" : ""}`}><strong>Was rausging:</strong><span className="is-ki">{sent.data.origins.ki} mit KI-Text</span>{sent.data.origins.hand ? <span className="is-ki">{sent.data.origins.hand} eigener Text</span> : null}{sent.data.origins["entwurf-vorlage"] ? <span className="is-tpl">{sent.data.origins["entwurf-vorlage"]} Ersatz aus Vorlage</span> : null}{sent.data.origins.vorlage ? <span className="is-tpl">{sent.data.origins.vorlage} mit Vorlage</span> : null}<small>Klick auf eine E-Mail zeigt den Text, der wirklich verschickt wurde.</small></div>}
+    {(() => { const counts = (sent.data as { deliveries?: Record<DeliveryGroup, number> } | undefined)?.deliveries; if (!counts || counts.zugestellt + counts.verzoegert + counts.probleme === 0) return null; return <div className="inbox-sent-reactions is-delivery" role="group" aria-label="Nach Zustellung filtern" title="Zustellung laut Versanddienst: „Gesendet“ heißt übergeben – hier steht, ob die E-Mail wirklich ankam"><span>Zustellung:</span>{(["zugestellt", "verzoegert", "probleme", "offen"] as const).filter((key) => counts[key] > 0 || delivery === key).map((key) => <button key={key} type="button" className={`inbox-reaction-chip is-delivery-${key} ${delivery === key ? "is-active" : ""}`} onClick={() => setDelivery(delivery === key ? null : key)}>{DELIVERY_GROUP_LABEL[key]} {counts[key]}</button>)}{delivery && <button type="button" className="inbox-reaction-reset" onClick={() => setDelivery(null)}>alle</button>}</div>; })()}
     <div className="inbox-sent-reactions" role="group" aria-label="Nach Reaktion filtern"><span>Reaktion:</span>{REACTION_FILTERS.map((key) => <button key={key} type="button" className={`inbox-reaction-chip is-${key} ${reaction === key ? "is-active" : ""}`} onClick={() => setReaction(reaction === key ? null : key)}>{REACTION_LABEL[key]}{sent.data ? ` ${sent.data.reactions[key]}` : ""}</button>)}{reaction && <button type="button" className="inbox-reaction-reset" onClick={() => setReaction(null)}>alle</button>}</div>
     {sent.isLoading ? <p className="py-10 text-center text-sm text-slate-500">Wird geladen …</p>
       : !items.length ? <p className="py-10 text-center text-sm text-slate-500">Noch nichts gesendet{search || campaignId || kind !== "alle" || filtered || reaction ? " – oder keine Treffer für diese Filter" : ""}.</p>

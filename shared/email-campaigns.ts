@@ -486,22 +486,27 @@ export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[
   return [{ id: "draft-text", type: "text", text: cleanDraftText(text.trim()) }, ...keep];
 }
 
-/* ── Drei Ansätze je Erst-E-Mail: Individuell, Drittanbieter, Freier Vorschlag ─────────────────── */
-export type DraftApproach = "individuell" | "drittanbieter" | "frei";
+/* ── Zwei Ansätze je E-Mail: Drittanbieter und Freier Vorschlag ───────────────────────────────────
+ * Den „individuellen Ansatz“ gibt es seit dem 28.10.2026 nicht mehr (er war bei allen Firmen zu ähnlich). Alte Werte
+ * „individuell“ in Kampagnen gelten als „frei“; alte Entwürfe darin stellt eine einmalige Umstellung nach dem Start um. */
+export type DraftApproach = "drittanbieter" | "frei";
+/** Der frühere individuelle Ansatz – nur noch zum Erkennen alter Entwürfe und Kampagnen. */
+export const LEGACY_APPROACH = "individuell";
+/** Gültiger Ansatz oder `null` (alter Wert „individuell“, leer, unbekannt). */
+export const approachOf = (value: string | null | undefined): DraftApproach | null => value === "drittanbieter" || value === "frei" ? value : null;
 /** `source`: „ki“ = von der KI für genau diesen Kontakt geschrieben, „vorlage“ = Ersatz aus der Vorlage (die KI hat diesen Ansatz nicht geliefert). `refs`: was die KI von der Firma aufgegriffen hat. */
 export type DraftOption = { key: DraftApproach; label: string; subject: string; text: string; source?: "ki" | "vorlage"; refs?: string[] };
 export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: string }> = [
-  { key: "individuell", label: "Individueller Ansatz", hint: "Greift etwas Konkretes der Firma auf (Webseite, Standorte, Leistungen) und spiegelt es auf unser Angebot – kurz, persönlich, ohne Aufzählung." },
   { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Unsere Leads kommen schon über Drittpartner bei der Firma an – wir sind die direkte Quelle und bieten die direkte Zusammenarbeit an." },
-  { key: "frei", label: "Freier Vorschlag", hint: "Eigene Idee der KI – ein anderer Einstieg, aber genauso persönlich auf die Firma zugeschnitten." },
+  { key: "frei", label: "Freier Vorschlag", hint: "Eigene, kreative Idee der KI – persönlich auf genau diese Firma zugeschnitten (Webseite, Impressum, Anrede)." },
 ];
-export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? "Entwurf";
+export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? (key === LEGACY_APPROACH ? "Individueller Ansatz (alt)" : "Entwurf");
 /**
  * Die Drittanbieter-KERNBOTSCHAFT: Leads, die bei der Firma (über Zwischenhändler) ankommen, stammen in Wahrheit von uns. Nur genau
- * diese Behauptung gehört nicht in den individuellen oder freien Vorschlag. Ganz normale Sätze über unser Angebot bleiben erlaubt –
+ * diese Behauptung gehört nicht in den freien Vorschlag. Ganz normale Sätze über unser Angebot bleiben erlaubt –
  * „Unsere Leads werden nicht an Dritte weiterverkauft“, „ohne Umweg über Portale“, „aus unserer eigenen Generierung“, „viele
  * Drittanbieter verkaufen Leads mehrfach“. (Früher wurde der ganze KI-Text schon wegen solcher Sätze verworfen und durch die Vorlage
- * ersetzt – deshalb war der individuelle Ansatz bei allen gleich.)
+ * ersetzt.)
  */
 const CLAIM_DIRECT = /(ohnehin|eigentlich|ursprünglich|in wahrheit|im grunde)\s+(?:\S+\s+){0,2}?(von uns|aus unserer)/i;
 const CLAIM_HEDGE = /wahrscheinlich|vermutlich|vermuten|davon aus|mitbekommen|erfahren|unsere[rn]? quellen|nicht selten|\boft\b|häufig|teilweise|zum teil/i;
@@ -513,9 +518,9 @@ export const isThirdPartyClaim = (sentence: string) => CLAIM_DIRECT.test(sentenc
 const claimSentences = (line: string) => line.split(/(?<=[.!?])\s+/);
 /** Enthält der Text die Drittanbieter-Kernbotschaft? */
 export const hasThirdPartyClaim = (text: string) => text.split(/\n+/).some((line) => claimSentences(line).some(isThirdPartyClaim));
-/** Passt der Text zum Ansatz? Individuell/frei: ohne die Drittanbieter-Kernbotschaft. (Drittanbieter wird nicht geprüft – Nachfass-Mails wiederholen sie nicht immer.) */
+/** Passt der Text zum Ansatz? Frei: ohne die Drittanbieter-Kernbotschaft. (Drittanbieter wird nicht geprüft – Nachfass-Mails wiederholen sie nicht immer.) */
 export function fitsApproach(key: DraftApproach, text: string): boolean { return key === "drittanbieter" || !hasThirdPartyClaim(text); }
-/** Individuell/frei: nur die Sätze mit der Drittanbieter-Kernbotschaft herausnehmen – der Rest des KI-Textes bleibt, nie wird deshalb der ganze Text verworfen. */
+/** Frei: nur die Sätze mit der Drittanbieter-Kernbotschaft herausnehmen – der Rest des KI-Textes bleibt, nie wird deshalb der ganze Text verworfen. */
 export function dropThirdPartyClaim(text: string): string {
   if (!hasThirdPartyClaim(text)) return text;
   return text.split(/(\n+)/).map((part) => (/^\n+$/.test(part) ? part : claimSentences(part).filter((sentence) => !isThirdPartyClaim(sentence)).join(" "))).join("").replace(/\n{3,}/g, "\n\n").trim();
@@ -525,7 +530,7 @@ const shingles = (text: string, size = 6) => { const words = sentenceWords(text)
 const MANDATORY_RE = /test-?leads|vorqualifi|anhand (?:von|gezielter)|antworten sie|rufen sie|vielen dank|sehr geehrte|zahlen dabei nur/i;
 /**
  * Hat die KI die Vorlage abgeschrieben? Ohne die Pflichtsätze (Anrede, Test-Angebot, Qualifizierung, Schluss) steht mehr als 40 %
- * des Textes wörtlich (in Folgen von sechs Wörtern, Satz für Satz) in der Vorlage → dann ist es kein individueller Text.
+ * des Textes wörtlich (in Folgen von sechs Wörtern, Satz für Satz) in der Vorlage → dann ist es kein eigener Text.
  * Satzweise statt absatzweise: steht die Qualifizierung mitten im Absatz, zählen die anderen Sätze des Absatzes trotzdem.
  */
 export function copiesTemplate(text: string, template: string): boolean {
@@ -538,8 +543,9 @@ export function copiesTemplate(text: string, template: string): boolean {
 }
 /**
  * Auto-Modus: welcher gespeicherte Entwurf darf raus? Nur einer im Ansatz der Kampagne – außer du hast ihn freigegeben oder
- * selbst geschrieben. Steht der Haupt-Entwurf in einem anderen Ansatz, aber unter den gespeicherten KI-Vorschlägen ist einer im
- * richtigen Ansatz, wird der genommen. `null` = neu schreiben lassen. (Ob der Entwurf zum Schritt passt, prüft der Aufrufer.)
+ * selbst geschrieben. Steht der Haupt-Entwurf in einem anderen Ansatz (auch im alten individuellen), aber unter den gespeicherten
+ * KI-Vorschlägen ist einer im richtigen Ansatz, wird der genommen. `null` = neu schreiben lassen. (Ob der Entwurf zum Schritt passt,
+ * prüft der Aufrufer.)
  */
 export function autoDraftFor(row: { draftSubject?: string | null; draftText?: string | null; draftState?: string | null; draftSource?: string | null; draftApproach?: string | null; draftOptions?: unknown }, approach: KiAnsatz): { subject: string; text: string; approach: string } | null {
   if (!row.draftSubject?.trim() || !row.draftText?.trim() || (row.draftState !== "freigegeben" && row.draftState !== "entwurf")) return null;
@@ -549,21 +555,22 @@ export function autoDraftFor(row: { draftSubject?: string | null; draftText?: st
 }
 /* ---------------------------------------------------------------- KI-Versand: Betriebsart und Ansatz je Kampagne */
 export type KiModus = "aus" | "freigabe" | "auto";
-export type KiAnsatz = "individuell" | "drittanbieter";
+export type KiAnsatz = DraftApproach;
 export const KI_MODUS_OPTIONS: Array<{ key: KiModus; label: string; hint: string }> = [
   { key: "aus", label: "Aus – Vorlagen senden", hint: "Jeder Schritt verschickt die Vorlage aus dem Builder, nur die Platzhalter werden gefüllt." },
   { key: "freigabe", label: "Mit Freigabe", hint: "Die KI schreibt jede E-Mail persönlich (jeder Schritt, jeder Kontakt) – du liest unter „Freigeben“ und schickst los. Ohne deine Freigabe geht nichts raus." },
   { key: "auto", label: "Automatisch", hint: "Die KI schreibt jede E-Mail persönlich im Hintergrund und der Versand läuft sofort weiter – ohne Freigabe. Ist die KI nicht erreichbar, wartet die E-Mail und die KI versucht es im nächsten Lauf erneut – es geht nie still die Vorlage raus." },
 ];
 export const KI_ANSATZ_OPTIONS: Array<{ key: KiAnsatz; label: string; hint: string }> = [
-  { key: "individuell", label: "Individueller Ansatz", hint: "Einstieg mit etwas Konkretem von der Webseite oder aus den Daten, dann unser Angebot – wie von Hand geschrieben." },
-  { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Kernbotschaft: Leads kommen sehr wahrscheinlich über Zwischenhändler an und stammen ohnehin von uns – deshalb direkte Zusammenarbeit. Trotzdem individuell je Firma." },
+  { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Kernbotschaft: Leads kommen sehr wahrscheinlich über Zwischenhändler an und stammen ohnehin von uns – deshalb direkte Zusammenarbeit. Trotzdem persönlich je Firma." },
+  { key: "frei", label: "Freier Vorschlag", hint: "Eigene, kreative Idee der KI für jede Firma – persönlich aus Webseite und Impressum (mit Anrede des Geschäftsführers), ohne die Drittanbieter-Botschaft." },
 ];
 /** Betriebsart einer Kampagne – alte Kampagnen mit „Erst-E-Mail einzeln freigeben“ zählen als „freigabe“. */
 export function kiModusOf(campaign: { kiModus?: string | null; reviewFirst?: boolean | null }): KiModus {
   return campaign.kiModus === "auto" || campaign.kiModus === "freigabe" || campaign.kiModus === "aus" ? campaign.kiModus : campaign.reviewFirst ? "freigabe" : "aus";
 }
-export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { return campaign.kiAnsatz === "drittanbieter" ? "drittanbieter" : "individuell"; }
+/** Ansatz einer Kampagne: Drittanbieter, sonst der freie Vorschlag (auch für alte Kampagnen mit „individuell“ oder ohne Angabe). */
+export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { return campaign.kiAnsatz === "drittanbieter" ? "drittanbieter" : "frei"; }
 
 /** Ohne KI: der Drittanbieter-Ansatz als feste Vorlage mit den Daten der Firma. */
 export function thirdPartyTemplate(values: Record<string, string | null | undefined>, sparte: { topic: string; partner: string; key?: string; questions?: number | null } = { topic: "Photovoltaik und Wärmepumpen", partner: "Fachbetrieb" }): { subject: string; text: string } {

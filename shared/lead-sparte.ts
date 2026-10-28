@@ -100,15 +100,16 @@ const PAY_FIT_RE = /\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*\b[^.!?\n]{0
 export const mentionsPayFit = (text: string) => PAY_FIT_RE.test(text);
 const CLOSING_RE = /antworten sie|rufen sie|anrufen|\{\{kontaktweg\}\}|lassen sie uns|vielen dank/i;
 /**
- * PV & WP: im individuellen Ansatz steht in der Erst-E-Mail immer, dass nur passende Leads bezahlt werden (fehlt der Satz,
- * kommt er vor den Schluss). In allen anderen Sparten fliegt jeder Satz dazu raus – das gilt dort nicht.
+ * PV & WP: im freien Vorschlag steht in der Erst-E-Mail immer, dass nur passende Leads bezahlt werden (fehlt der Satz, kommt er
+ * vor den Schluss) – früher galt das für den individuellen Ansatz, den der freie Vorschlag ersetzt. In allen anderen Sparten
+ * fliegt jeder Satz dazu raus – das gilt dort nicht.
  */
 export function applyPayFit(text: string, options: { sparte: Pick<Sparte, "key">; approach?: string | null; followUp?: boolean }): string {
   if (!paysOnlyFitting(options.sparte)) {
     if (!mentionsPayFit(text)) return text;
     return text.split(/(\n+)/).map((part) => part.split(/(?<=[.!?])\s+/).filter((sentence) => !mentionsPayFit(sentence)).join(" ")).join("").replace(/\n{3,}/g, "\n\n").trim();
   }
-  if (options.approach !== "individuell" || options.followUp || mentionsPayFit(text)) return text;
+  if (options.approach !== "frei" || options.followUp || mentionsPayFit(text)) return text;
   const parts = text.split(/\n{2,}/); let at = parts.length;
   for (let index = parts.length - 1; index > 0; index -= 1) { if (CLOSING_RE.test(parts[index])) at = index; else break; } // vor den Schluss (Kontaktweg, „Vielen Dank“)
   parts.splice(at, 0, PAY_FIT_SENTENCE); return parts.join("\n\n");
