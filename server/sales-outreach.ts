@@ -7,9 +7,10 @@ import type { FollowUpPlan } from "../shared/follow-up-plan";
 import { deliveryCounts, isBadDelivery, sentOriginCounts } from "../shared/sent-tracking";
 import { DEFAULT_SPARTE, OLD_ENERGY_PHRASE, resolveSparte, SPARTE_PHRASE, sparteOf, withSparte } from "../shared/lead-sparte";
 import { fixTreeQuestions } from "../shared/email-campaigns";
+import { cleanFolderName, folderKey, folderNameIssue, MAX_FOLDERS, planSparteFolders, sortFolders, sortSummary } from "../shared/campaign-folders";
 import crypto from "node:crypto";
 import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
-import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
+import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignFolders, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
 import { autoDraftFor, draftToBlocks, modernizeTree, smoothQualifyPhrase, cleanDraftText, sentSourceOf, type SentSource, PORTAL_RE, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow, SEND_WINDOW_PRESET} from "../shared/email-campaigns";
 import { addSuppression, autoAssign, suppressedSet } from "./pipeline-extras";
 import { companyFooterText, DEFAULT_DESIGN, starterBlocks, type EmailDesign } from "../shared/email-design";
@@ -256,7 +257,7 @@ export async function listEmailCampaigns(db: Db, tenantId: number) {
   // Kamen sie wirklich an? Zustellung laut Versanddienst (Brevo) je Kampagne
   const deliveryRows = await db.select({ campaignId: emailCampaignEvents.campaignId, delivery: emailCampaignEvents.delivery, count: sql<number>`count(*)` }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"))).groupBy(emailCampaignEvents.campaignId, emailCampaignEvents.delivery);
   const deliveryOf = (campaignId: number) => deliveryCounts(deliveryRows.filter((row) => row.campaignId === campaignId).map((row) => ({ delivery: row.delivery, count: Number(row.count) || 0 })));
-  return rows.map((row) => ({ followUps: plans.get(row.id) ?? null, sentOrigins: originsOf(row.id), delivery: deliveryOf(row.id), leadSparte: row.leadSparte ?? null, sparte: sparteView(row), id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.isTemplate ? withoutLists(row.audience as Audience | null) : (row.audience ?? { source: "alle" })) as Audience, audienceInfo: infos.get(row.id) ?? null, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, archivedAt: row.archivedAt ?? null, createdAt: row.createdAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), reviewFirst: kiModusOf(row) === "freigabe", kiModus: kiModusOf(row), kiAnsatz: kiAnsatzOf(row), review: kiModusOf(row) === "freigabe" ? { zurFreigabe: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState !== "freigegeben").length, freigegeben: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState === "freigegeben").length } : null, sendWindow: sendWindowOf(row), stats: { ...summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))), mails: mailsOf(row.id) } }));
+  return rows.map((row) => ({ followUps: plans.get(row.id) ?? null, sentOrigins: originsOf(row.id), delivery: deliveryOf(row.id), leadSparte: row.leadSparte ?? null, sparte: sparteView(row), folderId: row.folderId ?? null, id: row.id, name: row.name, status: row.status, fromName: row.fromName, fromEmail: row.fromEmail, audience: (row.isTemplate ? withoutLists(row.audience as Audience | null) : (row.audience ?? { source: "alle" })) as Audience, audienceInfo: infos.get(row.id) ?? null, steps: tree(row).nodes.filter((node) => node.type === "send").length, startedAt: row.startedAt, archivedAt: row.archivedAt ?? null, createdAt: row.createdAt, updatedAt: row.updatedAt, isTemplate: row.isTemplate, abTest: hasAbTest(tree(row)), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), reviewFirst: kiModusOf(row) === "freigabe", kiModus: kiModusOf(row), kiAnsatz: kiAnsatzOf(row), review: kiModusOf(row) === "freigabe" ? { zurFreigabe: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState !== "freigegeben").length, freigegeben: recipients.filter((item) => item.campaignId === row.id && item.sentCount === 0 && (item.status === "wartet" || item.status === "laeuft") && item.draftState === "freigegeben").length } : null, sendWindow: sendWindowOf(row), stats: { ...summarizeCampaign(recipients.filter((item) => item.campaignId === row.id).map((item) => ({ ...item, variant: (item.variant ?? null) as "A" | "B" | null }))), mails: mailsOf(row.id) } }));
 }
 export async function getEmailCampaign(db: Db, tenantId: number, id: number) {
   await repairPickedDrafts(db, tenantId);
@@ -306,7 +307,7 @@ async function tenantDesign(db: Db, tenantId: number): Promise<Partial<EmailDesi
   const text = companyFooterText({ footer: row.footer, website: row.website, appointment: row.appointment });
   return { footerText: `${text}\nDu erhältst diese E-Mail, weil du dich für unser Angebot interessiert hast. {{abmelden}}` };
 }
-export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null; stopOnReply?: boolean | null; maxRuns?: number | null; reviewFirst?: boolean | null; kiModus?: string | null; kiAnsatz?: string | null; leadSparte?: string | null }) {
+export async function saveEmailCampaign(db: Db, tenantId: number, userId: number, input: { id?: number | null; name: string; fromName?: string | null; fromEmail?: string | null; replyTo?: string | null; audience: Audience; tree: EmailTree; design: Partial<EmailDesign>; sendWindow?: unknown; isTemplate?: boolean | null; abSplit?: number | null; stopOnReply?: boolean | null; maxRuns?: number | null; reviewFirst?: boolean | null; kiModus?: string | null; kiAnsatz?: string | null; leadSparte?: string | null; folderId?: number | null }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
   const before = input.id ? (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0] : undefined;
   // Zahl der Fragen in der Vorlage passend zur Leadsparte (Hausnotruf 6, Elektrorollstuhl 6, Alarmanlage 8, PV & WP 10) – nur wenn die Sparte eingetragen oder erkannt ist
@@ -325,7 +326,7 @@ export async function saveEmailCampaign(db: Db, tenantId: number, userId: number
     if (before && newLists.length && before.status !== "entwurf" && !before.isTemplate) { const result = await addListsToEmailCampaign(db, tenantId, { id: input.id, listNames: newLists }, process.env.APP_URL ?? ""); return { id: input.id, enrolled: result.added, removed: dropped, realigned, fixedQuestions }; }
     return { id: input.id, enrolled: 0, removed: dropped, realigned, fixedQuestions };
   }
-  const inserted = await db.insert(emailCampaigns).values({ ...values, ...(input.sendWindow === undefined ? { sendWindow: { ...DEFAULT_SEND_WINDOW, enabled: false } } : {}) }); return { id: Number(inserted[0]?.insertId) || 0, enrolled: 0, removed: 0, realigned: 0, fixedQuestions }; // ohne Angabe: kein Versandfenster (wie bisher), aber schon im neuen Schema – die einmalige Umstellung lässt sie in Ruhe
+  const inserted = await db.insert(emailCampaigns).values({ ...values, folderId: input.isTemplate ? null : await ownFolderId(db, tenantId, input.folderId) /* neue Kampagne landet im gerade geöffneten Ordner */, ...(input.sendWindow === undefined ? { sendWindow: { ...DEFAULT_SEND_WINDOW, enabled: false } } : {}) }); return { id: Number(inserted[0]?.insertId) || 0, enrolled: 0, removed: 0, realigned: 0, fixedQuestions }; // ohne Angabe: kein Versandfenster (wie bisher), aber schon im neuen Schema – die einmalige Umstellung lässt sie in Ruhe
 }
 export function starterCampaign(kind: "kaltakquise" | "angebot" | "aufwecken" = "kaltakquise") {
   if (kind === "angebot") return { tree: followUpTree({ first: starterBlocks("angebot"), second: starterBlocks("nachfassen") }, { firstSubject: "Noch Fragen zu unserem Angebot, {{vorname}}?", secondSubject: "Kurz nachgefragt: unser Angebot für {{firma}}", waitHours: 96 }), design: DEFAULT_DESIGN, name: "Nachfassen nach Angebot" };
@@ -333,10 +334,10 @@ export function starterCampaign(kind: "kaltakquise" | "angebot" | "aufwecken" = 
   return { tree: starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") }), design: DEFAULT_DESIGN, name: "" };
 }
 /** Kampagne oder Vorlage kopieren (Ablauf + Design, ohne Empfänger) – als neue Kampagne oder als Vorlage. */
-export async function duplicateEmailCampaign(db: Db, tenantId: number, userId: number, input: { id: number; name?: string | null; asTemplate?: boolean }) {
+export async function duplicateEmailCampaign(db: Db, tenantId: number, userId: number, input: { id: number; name?: string | null; asTemplate?: boolean; folderId?: number | null }) {
   const row = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Kampagne nicht gefunden.");
   const name = (input.name?.trim() || `${row.name} ${input.asTemplate ? "(Vorlage)" : "(Kopie)"}`).slice(0, 160);
-  const inserted = await db.insert(emailCampaigns).values({ tenantId, name, status: "entwurf", fromName: row.fromName, fromEmail: row.fromEmail, replyTo: row.replyTo, audience: withoutLists(row.audience as Audience | null), /* Listen der alten Kampagne werden nie mitkopiert – auch nicht in Vorlagen */ tree: row.tree, design: row.design, sendWindow: row.sendWindow, isTemplate: Boolean(input.asTemplate), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), reviewFirst: row.reviewFirst, kiModus: row.kiModus, kiAnsatz: row.kiAnsatz ? kiAnsatzOf(row) : null, leadSparte: row.leadSparte ?? null, createdByUserId: userId });
+  const inserted = await db.insert(emailCampaigns).values({ tenantId, name, status: "entwurf", fromName: row.fromName, fromEmail: row.fromEmail, replyTo: row.replyTo, audience: withoutLists(row.audience as Audience | null), /* Listen der alten Kampagne werden nie mitkopiert – auch nicht in Vorlagen */ tree: row.tree, design: row.design, sendWindow: row.sendWindow, isTemplate: Boolean(input.asTemplate), abSplit: row.abSplit, stopOnReply: stopsOnReply(row), maxRuns: maxRunsOf(row), reviewFirst: row.reviewFirst, kiModus: row.kiModus, kiAnsatz: row.kiAnsatz ? kiAnsatzOf(row) : null, leadSparte: row.leadSparte ?? null, /* Kopie bleibt im Ordner des Originals – oder im angegebenen (z. B. Kampagne aus Vorlage im geöffneten Ordner); Vorlagen liegen in keinem Ordner */ folderId: input.asTemplate ? null : input.folderId !== undefined ? await ownFolderId(db, tenantId, input.folderId) : row.isTemplate ? null : row.folderId ?? null, createdByUserId: userId });
   return { id: Number(inserted[0]?.insertId) || 0, name };
 }
 /** Listen gehören nie in Kopien oder Vorlagen – Stufe/Tag/Alle bleiben erhalten. */
@@ -358,6 +359,65 @@ export async function archiveEmailCampaign(db: Db, tenantId: number, id: number,
   return { success: true as const, status, archived };
 }
 export async function deleteEmailCampaign(db: Db, tenantId: number, id: number) { await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, id))); await db.delete(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id))); await db.delete(emailCampaigns).where(and(eq(emailCampaigns.id, id), eq(emailCampaigns.tenantId, tenantId))); return { success: true as const }; }
+/* ---------- Ordner der Kampagnen-Übersicht (z. B. je Leadsparte) – nur Ablage, an Versand und Zahlen ändert sich nichts ---------- */
+/** Ordner-ID nur, wenn der Ordner zum Mandanten gehört – sonst „ohne Ordner“. */
+async function ownFolderId(db: Db, tenantId: number, folderId: number | null | undefined) {
+  if (!folderId) return null;
+  const row = (await db.select({ id: emailCampaignFolders.id }).from(emailCampaignFolders).where(and(eq(emailCampaignFolders.id, folderId), eq(emailCampaignFolders.tenantId, tenantId))).limit(1))[0];
+  return row?.id ?? null;
+}
+export async function listEmailCampaignFolders(db: Db, tenantId: number) {
+  const rows = await db.select({ id: emailCampaignFolders.id, name: emailCampaignFolders.name, sortOrder: emailCampaignFolders.sortOrder, createdAt: emailCampaignFolders.createdAt }).from(emailCampaignFolders).where(eq(emailCampaignFolders.tenantId, tenantId));
+  return sortFolders(rows);
+}
+/** Ordner anlegen (ohne id) oder umbenennen – Namen sind je Mandant eindeutig (Groß-/Kleinschreibung egal). */
+export async function saveEmailCampaignFolder(db: Db, tenantId: number, input: { id?: number | null; name: string }) {
+  const folders = await db.select({ id: emailCampaignFolders.id, name: emailCampaignFolders.name }).from(emailCampaignFolders).where(eq(emailCampaignFolders.tenantId, tenantId));
+  const issue = folderNameIssue(input.name, folders, input.id ?? null); if (issue) throw new Error(issue);
+  const name = cleanFolderName(input.name);
+  if (input.id) {
+    if (!folders.some((folder) => folder.id === input.id)) throw new Error("Ordner nicht gefunden – bitte die Seite neu laden.");
+    await db.update(emailCampaignFolders).set({ name }).where(and(eq(emailCampaignFolders.id, input.id), eq(emailCampaignFolders.tenantId, tenantId)));
+    return { id: input.id, name, created: false };
+  }
+  if (folders.length >= MAX_FOLDERS) throw new Error(`Es gehen höchstens ${MAX_FOLDERS} Ordner – bitte erst einen leeren Ordner löschen.`);
+  const inserted = await db.insert(emailCampaignFolders).values({ tenantId, name });
+  return { id: Number(inserted[0]?.insertId) || 0, name, created: true };
+}
+/** Ordner löschen – die Kampagnen darin bleiben erhalten und stehen danach unter „Ohne Ordner“. */
+export async function deleteEmailCampaignFolder(db: Db, tenantId: number, id: number) {
+  const folder = (await db.select({ id: emailCampaignFolders.id }).from(emailCampaignFolders).where(and(eq(emailCampaignFolders.id, id), eq(emailCampaignFolders.tenantId, tenantId))).limit(1))[0]; if (!folder) throw new Error("Ordner nicht gefunden – bitte die Seite neu laden.");
+  const inside = await db.select({ id: emailCampaigns.id }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.folderId, id)));
+  if (inside.length) await db.update(emailCampaigns).set({ folderId: null, updatedAt: sql`${emailCampaigns.updatedAt}` /* „zuletzt bearbeitet“ bleibt */ }).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.folderId, id)));
+  await db.delete(emailCampaignFolders).where(and(eq(emailCampaignFolders.id, id), eq(emailCampaignFolders.tenantId, tenantId)));
+  return { success: true as const, released: inside.length };
+}
+/** Kampagnen in einen Ordner legen (folderId null = ohne Ordner). Vorlagen liegen in keinem Ordner; „zuletzt bearbeitet“ bleibt. */
+export async function moveEmailCampaignsToFolder(db: Db, tenantId: number, input: { ids: number[]; folderId: number | null }) {
+  const folderId = input.folderId ? await ownFolderId(db, tenantId, input.folderId) : null; if (input.folderId && !folderId) throw new Error("Ordner nicht gefunden – bitte die Seite neu laden.");
+  const ids = Array.from(new Set(input.ids)).slice(0, 500); if (!ids.length) return { moved: 0, folderId };
+  const rows = await db.select({ id: emailCampaigns.id, isTemplate: emailCampaigns.isTemplate, folderId: emailCampaigns.folderId }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, ids)));
+  if (!rows.length) throw new Error("Kampagne nicht gefunden.");
+  const move = rows.filter((row) => !row.isTemplate && (row.folderId ?? null) !== folderId).map((row) => row.id);
+  if (move.length) await db.update(emailCampaigns).set({ folderId, updatedAt: sql`${emailCampaigns.updatedAt}` }).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, move)));
+  return { moved: move.length, folderId };
+}
+/**
+ * „Nach Leadsparte einsortieren“: je Leadsparte ein Ordner (vorhandene werden genommen, auch z. B. „PV & WP“), darin alle Kampagnen,
+ * die noch in keinem Ordner liegen – laufende, Entwürfe und archivierte. Schon einsortierte bleiben, wo sie sind.
+ */
+export async function sortEmailCampaignsBySparte(db: Db, tenantId: number) {
+  const folders = await db.select({ id: emailCampaignFolders.id, name: emailCampaignFolders.name }).from(emailCampaignFolders).where(eq(emailCampaignFolders.tenantId, tenantId));
+  const rows = await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.isTemplate, false)));
+  const plan = planSparteFolders(rows.map((row) => ({ id: row.id, folderId: row.folderId ?? null, sparte: sparteOf(row, audienceLists((row.audience ?? null) as Audience | null)) })), folders);
+  if (folders.length + plan.create.length > MAX_FOLDERS) throw new Error(`Es gehen höchstens ${MAX_FOLDERS} Ordner – bitte erst leere Ordner löschen.`);
+  const created = new Map<string, number>();
+  for (const name of plan.create) { const inserted = await db.insert(emailCampaignFolders).values({ tenantId, name }); created.set(folderKey(name), Number(inserted[0]?.insertId) || 0); }
+  const byFolder = new Map<number, number[]>();
+  for (const move of plan.moves) { const target = move.folderId ?? created.get(folderKey(move.folderName)) ?? 0; if (!target) continue; byFolder.set(target, [...(byFolder.get(target) ?? []), move.id]); }
+  for (const [folderId, ids] of Array.from(byFolder.entries())) await db.update(emailCampaigns).set({ folderId, updatedAt: sql`${emailCampaigns.updatedAt}` }).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, ids)));
+  return { created: plan.create.length, moved: plan.moves.length, folders: sortSummary(plan.moves) };
+}
 async function audienceContacts(db: Db, tenantId: number, audience: Audience) {
   const conditions = [eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")]; // Zielgruppen bestehen nur aus Vertriebskontakten – nie aus Leads zum Verkauf
   if (isPickAudience(audience)) return []; // „Nur ausgewählte Kontakte“: niemand kommt automatisch dazu

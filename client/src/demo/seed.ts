@@ -7,7 +7,8 @@ import { assessReplyByRules, decideReply, DEFAULT_REPLY_AI } from "../../../shar
 import { heatPumpCategoryFields, pvCategoryFieldMappings, pvCategoryFields } from "../../../server/category-fields";
 import { emptyStore, insert, money, randomId, update, type Row, type Store } from "./store";
 import { answerQuestionsHeuristically, decideByQuestions, type QualificationQuestion } from "../../../shared/call-qualification";
-import { followUpTree, starterTree } from "../../../shared/email-campaigns";
+import { fixTreeQuestions, followUpTree, starterTree } from "../../../shared/email-campaigns";
+import { resolveSparte } from "../../../shared/lead-sparte";
 import { DEFAULT_DESIGN, fillPlaceholders, starterBlocks } from "../../../shared/email-design";
 import { contractStarter } from "../../../shared/contracts";
 import { formatCallNote, heuristicCallSummary } from "../../../shared/call-notes";
@@ -497,6 +498,11 @@ export function buildSeed(): Store {
   insert(store, "contractEvents", { tenantId: tenant.id, contractId: draftContract.id, kind: "erstellt", note: null, ip: null, userAgent: null, actorUserId: owner.id, createdAt: at(0, 9, 5) });
   insert(store, "contractTemplates", { tenantId: tenant.id, name: "Leadliefervertrag PV (Standard)", title: "Leadliefervertrag Photovoltaik", blocks: contractStarter("leadliefervertrag").blocks, createdByUserId: owner.id, createdAt: at(12, 10), updatedAt: at(12, 10) });
   insert(store, "emailCampaigns", { tenantId: tenant.id, name: "Vorlage: Kaltakquise Handwerk", status: "entwurf", fromName: "Tanesco Digital", fromEmail: "vertrieb@tanesco.digital", replyTo: null, audience: { source: "alle" }, tree: starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") }), design: DEFAULT_DESIGN, sendWindow: null, isTemplate: true, abSplit: 50, stopOnReply: true, startedAt: null, createdByUserId: owner.id, createdAt: at(20, 10), updatedAt: at(20, 10) });
+  // Zwei Entwürfe in anderen Leadsparten – „Nach Leadsparte einsortieren“ legt dafür eigene Ordner an (Hausnotruf, Alarmanlage)
+  for (const [name, leadSparte, days] of [["Hausnotruf-Anbieter – Erstkontakt", "Hausnotruf", 2], ["Alarmanlagen-Errichter NRW", "Alarmanlage", 4]] as const) {
+    const tree = starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") });
+    insert(store, "emailCampaigns", { tenantId: tenant.id, name, status: "entwurf", fromName: "Tanesco Digital", fromEmail: "vertrieb@tanesco.digital", replyTo: null, audience: { source: "auswahl" }, tree: fixTreeQuestions(tree, resolveSparte(leadSparte)!) ?? tree, design: DEFAULT_DESIGN, sendWindow: null, isTemplate: false, abSplit: 50, stopOnReply: true, kiModus: "freigabe", reviewFirst: true, kiAnsatz: "frei", leadSparte, folderId: null, startedAt: null, createdByUserId: owner.id, createdAt: at(days, 10), updatedAt: at(days, 10) });
+  }
   insert(store, "pipelineSettings", { tenantId: tenant.id, settings: { staleDays: 5, staleCampaignId: wakeSeries.id, stageCampaigns: { angebot: offerSeries.id }, dispositionCampaigns: { interessiert: offerSeries.id }, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "regeln", rules: [{ id: "r1", userId: taner?.id ?? owner.id, postcodePrefixes: ["6", "5", "3"], categoryIds: [], maxOpen: null }, { id: "r2", userId: francesco?.id ?? owner.id, postcodePrefixes: ["8", "9", "7"], categoryIds: [], maxOpen: 120 }], fallback: "reihum" }, dailyTargets: { [String(taner?.id ?? owner.id)]: { calls: 40, appointments: 2, deals: 1 }, [String(francesco?.id ?? owner.id)]: { calls: 40, appointments: 2, deals: 1 } } }, distributionCursor: 3, updatedAt: at(3, 9) });
   // Sperrliste als Protokoll: Bounces, Abmeldungen, Beschwerden, Posteingang, Manuell – jede Adresse mit Grund, Quelle und Datum
   insert(store, "emailSuppressions", { tenantId: tenant.id, email: "buchhaltung@alt-dach.example", reason: "bounce", note: "Mailbox existiert nicht (550)", source: "Kampagne „Dachdecker Hessen – Erstkontakt“", createdAt: at(8, 11) });

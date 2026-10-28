@@ -3317,6 +3317,48 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(JSON.stringify((await owner.leadops.getEmailCampaign({ id: pv.id })).tree)).toContain("zehn Fragen"); // PV bleibt
     expect(await fixQuestionCounts(db)).toEqual({ campaigns: 0, drafts: 0 }); // mehrfach ohne Nebenwirkung
   }, 40000);
+  it("63l. Kampagnen-Ordner: anlegen, umbenennen, doppelte Namen, verschieben ohne „zuletzt bearbeitet“, neue Kampagne/Kopie im Ordner, nach Leadsparte einsortieren, löschen gibt frei, fremde Ordner tabu", async () => {
+    const outreach = await import("./sales-outreach"); const { starterBlocks } = await import("../shared/email-design");
+    const starter = await owner.leadops.emailCampaignStarter();
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
+    const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "auswahl" as const }, tree, design: starter.design as unknown as Record<string, unknown> };
+    // Ordner anlegen, doppelte Namen (Groß-/Kleinschreibung egal), umbenennen
+    const notruf = await owner.leadops.saveEmailCampaignFolder({ name: "  Notruf  " }); expect(notruf).toMatchObject({ name: "Notruf", created: true });
+    await expect(owner.leadops.saveEmailCampaignFolder({ name: "NOTRUF" })).rejects.toThrow("gibt es schon");
+    expect(await owner.leadops.saveEmailCampaignFolder({ id: notruf.id, name: "Hausnotruf Bayern" })).toMatchObject({ id: notruf.id, name: "Hausnotruf Bayern", created: false });
+    // Neue Kampagne direkt im Ordner; Kopie bleibt im Ordner des Originals, Vorlage nie
+    const alarm = await owner.leadops.saveEmailCampaign({ ...base, name: "Ordner-Test Errichter", leadSparte: "Alarmanlage" } as never);
+    const inside = await owner.leadops.saveEmailCampaign({ ...base, name: "Ordner-Test Senioren", leadSparte: "Hausnotruf", folderId: notruf.id } as never);
+    const rows = () => owner.leadops.listEmailCampaigns(); const find = async (id: number) => (await rows()).find((row) => row.id === id)!;
+    expect((await find(inside.id)).folderId).toBe(notruf.id); expect((await find(alarm.id)).folderId).toBeNull();
+    const copy = await owner.leadops.duplicateEmailCampaign({ id: inside.id }); const template = await owner.leadops.duplicateEmailCampaign({ id: inside.id, asTemplate: true, name: "Vorlage Ordner-Test" });
+    expect((await find(copy.id)).folderId).toBe(notruf.id); expect((await find(template.id)).folderId).toBeNull();
+    // Verschieben ist kein Bearbeiten: „zuletzt bearbeitet“ bleibt; Vorlagen bleiben draußen; zurück „ohne Ordner“
+    await db.update(emailCampaigns).set({ updatedAt: new Date("2026-01-02T03:04:05Z") }).where(eq(emailCampaigns.id, alarm.id));
+    expect(await owner.leadops.moveEmailCampaignsToFolder({ ids: [alarm.id], folderId: notruf.id })).toEqual({ moved: 1, folderId: notruf.id });
+    const moved = await find(alarm.id); expect(moved.folderId).toBe(notruf.id); expect(new Date(moved.updatedAt).toISOString()).toBe("2026-01-02T03:04:05.000Z");
+    expect((await owner.leadops.moveEmailCampaignsToFolder({ ids: [template.id], folderId: notruf.id })).moved).toBe(0);
+    expect((await owner.leadops.moveEmailCampaignsToFolder({ ids: [alarm.id], folderId: null })).moved).toBe(1); expect((await find(alarm.id)).folderId).toBeNull();
+    // Ordner eines anderen Mandanten: nicht sichtbar, nicht nutzbar, nicht änderbar
+    const foreign = await outreach.saveEmailCampaignFolder(db, 987654, { name: "Fremd" });
+    await expect(owner.leadops.moveEmailCampaignsToFolder({ ids: [alarm.id], folderId: foreign.id })).rejects.toThrow("Ordner nicht gefunden");
+    await expect(owner.leadops.saveEmailCampaignFolder({ id: foreign.id, name: "Gekapert" })).rejects.toThrow("Ordner nicht gefunden");
+    await expect(owner.leadops.deleteEmailCampaignFolder({ id: foreign.id })).rejects.toThrow("Ordner nicht gefunden");
+    expect((await owner.leadops.listEmailCampaignFolders()).map((folder) => folder.name)).toEqual(["Hausnotruf Bayern"]);
+    // Nach Leadsparte einsortieren: „Hausnotruf Bayern“ wird für Hausnotruf genommen, Alarmanlage kommt neu dazu; schon einsortierte bleiben
+    const sorted = await owner.leadops.sortEmailCampaignsBySparte();
+    expect(sorted.created).toBeGreaterThanOrEqual(1); expect(sorted.moved).toBeGreaterThanOrEqual(1); expect(sorted.folders.map((item) => item.name)).toContain("Alarmanlage");
+    const folders = await owner.leadops.listEmailCampaignFolders(); const alarmFolder = folders.find((folder) => folder.name === "Alarmanlage")!;
+    expect(alarmFolder).toBeTruthy(); expect(folders.some((folder) => folder.name === "Hausnotruf")).toBe(false); // kein zweiter Hausnotruf-Ordner
+    expect((await find(alarm.id)).folderId).toBe(alarmFolder.id); expect((await find(inside.id)).folderId).toBe(notruf.id); expect((await find(template.id)).folderId).toBeNull();
+    expect((await rows()).filter((row) => !row.isTemplate).every((row) => row.folderId !== null)).toBe(true); // jede Kampagne liegt jetzt in einem Ordner (auch archivierte)
+    expect(await owner.leadops.sortEmailCampaignsBySparte()).toEqual({ created: 0, moved: 0, folders: [] }); // zweites Mal: nichts zu tun
+    // Ordner löschen: die Kampagnen bleiben und stehen danach ohne Ordner
+    const removed = await owner.leadops.deleteEmailCampaignFolder({ id: notruf.id }); expect(removed.released).toBeGreaterThanOrEqual(2);
+    expect((await find(inside.id)).folderId).toBeNull(); expect((await find(copy.id)).folderId).toBeNull();
+    expect((await owner.leadops.listEmailCampaignFolders()).some((folder) => folder.id === notruf.id)).toBe(false);
+  }, 40000);
+
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);
     const probe = leadOptions.find((row) => row.name) ?? leadOptions[0]; expect((await owner.leadops.contractLeadOptions({ query: (probe.name || probe.email).slice(0, 4) })).some((row) => row.id === probe.id)).toBe(true);

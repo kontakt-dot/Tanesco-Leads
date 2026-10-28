@@ -2830,6 +2830,52 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 /* Schmalere Liste (z. B. Seitenleiste offen): Kennzahlen über die ganze Breite unter Name und Knöpfen – nie gequetscht */
 @container (max-width:1320px){.cl-card{grid-template-areas:"head side" "funnel funnel" "main main"}.cl-funnel{width:auto}.cl-main{align-self:start}}
 @container (max-width:720px){.cl-card{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "funnel" "main" "side";padding:14px}.cl-funnel{grid-template-columns:repeat(3,minmax(0,1fr))}.cl-f:nth-child(4){box-shadow:none}.cl-f:nth-child(n+4){border-top:1px solid rgba(255,255,255,.06)}.cl-audience-name{max-width:100%}.cl-side{justify-content:flex-start;flex-wrap:wrap}} /* Handy: Kennzahlen in zwei Reihen, Karte nie breiter als der Bildschirm */
+/* Ordner der Kampagnen: Leiste über Kennzahlen und Liste – „Alle“, die Ordner, „Ohne Ordner“; rechts „Neuer Ordner“ und „Nach Leadsparte einsortieren“.
+   Beim Ziehen einer Kampagne werden die Ordner zu Ablagen (gestrichelt, die getroffene leuchtet). */
+.cl-folders{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;margin:0 0 14px}
+.cl-folder-rail{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.cl-folder{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;height:34px;padding:0;border-radius:10px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.03);color:#c9c6ee;font-size:13px;font-weight:600;line-height:1;transition:border-color .15s,background-color .15s,color .15s}
+button.cl-folder,.cl-folder-pick{display:inline-flex;align-items:center;gap:7px;height:100%;padding:0 12px;white-space:nowrap;cursor:pointer}
+.cl-folder-pick{border:0;background:none;color:inherit;font:inherit}
+button.cl-folder{font-family:inherit} /* Größe und Gewicht wie die Ordner (13px, halbfett) */
+.cl-folder.is-active .cl-folder-pick{padding-right:4px}
+.cl-folder svg{width:15px;height:15px;flex:0 0 auto;opacity:.75}
+.cl-folder span{max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.cl-folder i{display:inline-grid;place-items:center;min-width:20px;height:19px;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.08);color:#a5a1d7;font-size:11px;font-style:normal;font-weight:700;font-variant-numeric:tabular-nums}
+.cl-folder:hover{border-color:rgba(255,255,255,.2);color:#f1f0ff}
+.cl-folder.is-active{border-color:rgba(130,120,255,.7);background:rgba(130,120,255,.17);color:#fff}
+.cl-folder.is-active svg{opacity:1;color:#c4bdff}
+.cl-folder.is-active i{background:rgba(130,120,255,.4);color:#fff}
+.cl-folder.is-none{border-style:dashed}
+.cl-folder-more{display:inline-grid;place-items:center;width:26px;height:26px;margin-right:4px;border:0;border-radius:7px;background:transparent;color:inherit;cursor:pointer}
+.cl-folder-more:hover{background:rgba(255,255,255,.12)}
+.cl-folder-more svg{width:15px;height:15px;opacity:1}
+.cl-folders.is-dragging{position:sticky;top:12px;z-index:40;border-radius:12px;background:#17152e;box-shadow:0 0 0 10px #17152e,0 18px 34px -14px rgba(0,0,0,.8)} /* beim Ziehen bleiben die Ordner oben sichtbar, auch wenn die Karte weiter unten liegt */
+.cl-folders.is-dragging .cl-folder:not(.is-all){border-style:dashed;border-color:rgba(130,120,255,.6)}
+.cl-folders.is-dragging .cl-folder.is-all{opacity:.4}
+.cl-folders.is-dragging .cl-folder *{pointer-events:none} /* sonst flackert die Ablage über Symbol und Zahl */
+.cl-folder.is-over{border-style:solid!important;border-color:#a79cff!important;background:rgba(130,120,255,.32)!important;color:#fff}
+.cl-folder-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.cl-folder-act{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:10px;border:1px solid transparent;background:transparent;color:#a5a1d7;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;transition:background-color .15s,color .15s,border-color .15s}
+.cl-folder-act svg{width:15px;height:15px}
+.cl-folder-act:hover{background:rgba(255,255,255,.06);color:#f1f0ff}
+.cl-folder-act.is-sort{border-color:rgba(130,120,255,.4);color:#ddd9ff}
+.cl-folder-act.is-sort:hover{background:rgba(130,120,255,.14)}
+.cl-folder-act:disabled{opacity:.5;cursor:default}
+.cl-folder:focus-within,.cl-folder-act:focus-visible{outline:none}
+button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:focus-visible,.cl-folder-act:focus-visible{outline:2px solid rgba(129,120,255,.75);outline-offset:2px;border-radius:9px}
+.cl-card.is-dragged{opacity:.45;border-style:dashed}
+.cl-meta-folder{display:inline-flex;align-items:center;gap:4px;color:#c4bdff;font-weight:600}
+.cl-meta-folder svg{width:12px;height:12px}
+.cl-folder-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:44px 20px;text-align:center;font-size:13px;line-height:1.5;color:#8a87a8}
+.cl-folder-empty svg{width:28px;height:28px;margin-bottom:2px;color:#6f6aa8}
+.cl-folder-empty strong{font-size:14px;color:#e7e5ff}
+.cl-folder-empty span{max-width:520px}
+.cl-folder-menu{max-height:min(360px,var(--radix-dropdown-menu-content-available-height,360px));overflow-y:auto}
+.cl-folder-menu-name{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.campaign-act-sub svg{width:15px;height:15px;opacity:.8}
+/* Handy: Ordner in einer Reihe zum Wischen, Knöpfe darunter */
+@media (max-width:720px){.cl-folders{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:8px}.cl-folder-rail{flex-wrap:nowrap;overflow-x:auto;padding:2px;scrollbar-width:none}.cl-folder-rail::-webkit-scrollbar{display:none}.cl-folder span{max-width:180px}.cl-folder-actions{justify-content:flex-start}}
 /* ===== v185: Kontakte, Sperrliste, Upload-Verlauf – gleiche Sprache wie die Kampagnenseite ===== */
 .xl-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
 .xl-head h2{display:flex;align-items:center;gap:8px;font-size:18px;font-weight:800;letter-spacing:-.01em;color:#f5f3ff;margin:0}

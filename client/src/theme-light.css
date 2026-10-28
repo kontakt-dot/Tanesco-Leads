@@ -1539,6 +1539,23 @@ html:not(.dark) .cl-f small.is-bad { color: #8a5a5a !important; }
 html:not(.dark) .cl-f small.is-wait { color: #8a742a !important; }
 html:not(.dark) .cl-f i { background: #111318 !important; }
 html:not(.dark) .cl-seg { background: #f8fafb !important; }
+html:not(.dark) .cl-folder { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #111318 !important; }
+html:not(.dark) .cl-folder i { background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .cl-folder:hover { border-color: #e8ecf1 !important; color: #0f172a !important; }
+html:not(.dark) .cl-folder.is-active { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .cl-folder.is-active svg { color: #4b5568 !important; }
+html:not(.dark) .cl-folder.is-active i { background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .cl-folder-more:hover { background: #f8fafb !important; }
+html:not(.dark) .cl-folders.is-dragging { background: #ffffff !important; box-shadow: 0 0 0 10px rgba(15, 23, 42, .05),0 18px 34px -14px rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .cl-folders.is-dragging .cl-folder:not(.is-all) { border-color: #d9dfe7 !important; }
+html:not(.dark) .cl-folder.is-over { border-color: #111318 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .cl-folder-act { color: #4b5568 !important; }
+html:not(.dark) .cl-folder-act:hover { background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .cl-folder-act.is-sort { border-color: #d9dfe7 !important; color: #0f172a !important; }
+html:not(.dark) .cl-folder-act.is-sort:hover { background: #f3f6f8 !important; }
+html:not(.dark) .cl-meta-folder { color: #4b5568 !important; }
+html:not(.dark) .cl-folder-empty { color: #8a94a6 !important; }
+html:not(.dark) .cl-folder-empty strong { color: #0f172a !important; }
 html:not(.dark) .xl-head h2 { color: #0f172a !important; }
 html:not(.dark) .xl-head h2 span { color: #4b5568 !important; background: #f8fafb !important; }
 html:not(.dark) .xl-head p { color: #8a94a6 !important; }
@@ -3785,3 +3802,25 @@ html:not(.dark) .cj-mail-toggle { background: #fff5f5 !important; border-color: 
 html:not(.dark) .rv-portal { color: #067647 !important; background: #ecfdf3 !important; border-color: #abefc6 !important; }
 html:not(.dark) .rv-portal.is-bad { color: #b42318 !important; background: #fef3f2 !important; border-color: #fecdca !important; }
 html:not(.dark) .cd-kpi-note { color: #475467 !important; background: #f8fafc !important; border-color: #e2e8f0 !important; }
+
+/* Ordner der Kampagnen: helle Chips, aktiver Ordner in Tanesco-Rot, beim Ziehen gestrichelte Ablagen */
+html:not(.dark) .cl-folder, html:not(.dark) button.cl-folder { border-color: #e4e7ec !important; background: #ffffff !important; color: #344054 !important; }
+html:not(.dark) .cl-folder:hover { border-color: #cfd4dc !important; color: #101828 !important; }
+html:not(.dark) .cl-folder svg { color: #667085 !important; }
+html:not(.dark) .cl-folder i { background: #f2f4f7 !important; color: #475467 !important; }
+html:not(.dark) .cl-folder.is-active { border-color: #bc001d !important; background: #fff1f2 !important; color: #9f1239 !important; }
+html:not(.dark) .cl-folder.is-active svg { color: #bc001d !important; }
+html:not(.dark) .cl-folder.is-active i { background: #bc001d !important; color: #ffffff !important; }
+html:not(.dark) .cl-folder-more:hover { background: rgba(188, 0, 29, .1) !important; }
+html:not(.dark) .cl-folders.is-dragging { background: #ffffff !important; box-shadow: 0 0 0 10px #ffffff, 0 16px 30px -12px rgba(16, 24, 40, .28) !important; }
+html:not(.dark) .cl-folders.is-dragging .cl-folder:not(.is-all) { border-color: #f19aa6 !important; }
+html:not(.dark) .cl-folder.is-over { border-color: #bc001d !important; background: #ffe4e8 !important; color: #9f1239 !important; }
+html:not(.dark) .cl-folder-act { color: #475467 !important; background: transparent !important; }
+html:not(.dark) .cl-folder-act:hover { background: #f2f4f7 !important; color: #101828 !important; }
+html:not(.dark) .cl-folder-act.is-sort { border-color: #fecdd3 !important; background: #ffffff !important; color: #9f1239 !important; }
+html:not(.dark) .cl-folder-act.is-sort:hover { background: #fff1f2 !important; }
+html:not(.dark) button.cl-folder:focus-visible, html:not(.dark) .cl-folder-pick:focus-visible, html:not(.dark) .cl-folder-more:focus-visible, html:not(.dark) .cl-folder-act:focus-visible { outline-color: rgba(188, 0, 29, .55) !important; }
+html:not(.dark) .cl-meta-folder { color: #9f1239 !important; }
+html:not(.dark) .cl-folder-empty { color: #667085 !important; }
+html:not(.dark) .cl-folder-empty svg { color: #98a2b3 !important; }
+html:not(.dark) .cl-folder-empty strong { color: #101828 !important; }
