@@ -1,15 +1,15 @@
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import { DELIVERY_LABEL } from "../../../shared/sent-tracking";
+import { DELIVERY_LABEL, isBadDelivery } from "../../../shared/sent-tracking";
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
-import { AlertTriangle, Ban, CalendarClock, Clock3, ExternalLink, Eye, Flag, GitBranch, Mail, MousePointerClick, Reply, Send, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, Ban, CalendarClock, CheckCheck, Clock3, ExternalLink, Eye, Flag, GitBranch, Mail, MailX, MousePointerClick, Reply, Send, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
 import { SentMailPreview } from "@/components/InboxPanel";
 
 /**
  * Kontakt in einer E-Mail-Kampagne – Seitenleiste rechts statt großem Fenster.
- * Oben: wer, Stand und die vier Meilensteine (gesendet → geöffnet → geklickt → geantwortet).
+ * Oben: wer, Stand und die fünf Meilensteine (gesendet → zugestellt → geöffnet → geklickt → geantwortet).
  * Dann „Als Nächstes“ (was wann passiert) und darunter EIN Verlauf mit allem, was passiert ist – neueste zuerst.
  * Unten die Aktionen (geantwortet, unzustellbar, Beschwerde, entfernen, Karte öffnen).
  */
@@ -59,8 +59,13 @@ export default function CampaignContactDrawer({ recipientId, onClose, onChanged,
   const status = r ? (r.status === "fertig" && r.repliedAt ? { label: "Gestoppt – hat geantwortet", tone: "is-done" } : STATUS[r.status] ?? { label: r.status, tone: "is-wait" }) : null;
   const name = r ? r.name || data?.lead?.name || r.email : "";
   const initials = name.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
-  const milestones = r ? [
+  // Zustellung laut Versanddienst (wie in der Kampagnen-Liste): „nicht angekommen“ gewinnt, sonst der Stand der letzten gesendeten E-Mail
+  let delivery: { status: string; at: string | Date | null; note: string | null } | null = null;
+  for (const event of data?.events ?? []) { if (event.kind !== "gesendet") continue; if (delivery && isBadDelivery(delivery.status)) continue; const item = event as { delivery?: string | null; deliveryNote?: string | null; deliveryAt?: string | Date | null }; delivery = item.delivery ? { status: item.delivery, at: item.deliveryAt ?? null, note: item.deliveryNote ?? null } : null; }
+  const deliveryBad = Boolean(delivery && isBadDelivery(delivery.status));
+  const milestones: Array<{ key: string; icon: typeof Mail; label: string; at: string | Date | null | undefined; on: boolean; extra: string | null; tone?: string; empty?: string; title?: string }> = r ? [
     { key: "send", icon: Send, label: "Gesendet", at: r.lastSentAt, on: r.sentCount > 0, extra: r.sentCount > 1 ? `${r.sentCount} E-Mails` : null },
+    { key: "delivery", icon: deliveryBad ? MailX : CheckCheck, label: deliveryBad ? "Nicht angekommen" : delivery?.status === "verzoegert" ? "Verzögert" : "Zugestellt", at: delivery?.at ?? null, on: delivery?.status === "zugestellt", extra: deliveryBad && delivery ? DELIVERY_LABEL[delivery.status] ?? null : null, tone: deliveryBad ? "is-bad" : delivery?.status === "verzoegert" ? "is-wait" : "", empty: r.sentCount > 0 ? "keine Meldung" : "noch nicht", title: delivery?.note ?? undefined },
     { key: "open", icon: Eye, label: "Geöffnet", at: r.openedAt ?? r.clickedAt ?? r.repliedAt, on: Boolean(r.openedAt || r.clickedAt || r.repliedAt), extra: null },
     { key: "click", icon: MousePointerClick, label: "Geklickt", at: r.clickedAt, on: Boolean(r.clickedAt), extra: null },
     { key: "reply", icon: Reply, label: "Geantwortet", at: r.repliedAt, on: Boolean(r.repliedAt), extra: null },
@@ -88,7 +93,7 @@ export default function CampaignContactDrawer({ recipientId, onClose, onChanged,
         </header>
 
         <div className="cj-body">
-          <ol className="cj-milestones" aria-label="Fortschritt">{milestones.map((item) => { const Icon = item.icon; return <li key={item.key} className={item.on ? "is-on" : ""}><span className="cj-ms-dot"><Icon className="h-4 w-4" aria-hidden="true" /></span><strong>{item.label}</strong><small>{item.on ? when(item.at) ?? "ja" : "noch nicht"}{item.extra ? ` · ${item.extra}` : ""}</small></li>; })}</ol>
+          <ol className="cj-milestones" aria-label="Fortschritt">{milestones.map((item) => { const Icon = item.icon; const shown = item.on || Boolean(item.tone); return <li key={item.key} className={`ms-${item.key}${item.on ? " is-on" : ""}${item.tone ? ` ${item.tone}` : ""}`} title={item.title}><span className="cj-ms-dot"><Icon className="h-4 w-4" aria-hidden="true" /></span><strong>{item.label}</strong><small>{shown ? when(item.at) ?? "ja" : item.empty ?? "noch nicht"}{item.extra ? ` · ${item.extra}` : ""}</small></li>; })}</ol>
 
           {data.errors.length > 0 && <section className="cj-alert"><AlertTriangle className="h-4 w-4" aria-hidden="true" /><div><strong>{data.errors.length === 1 ? "Versand hat nicht geklappt" : `${data.errors.length} Fehler beim Versand`}</strong>{data.errors.slice(0, 3).map((error, index) => <small key={index}>{when(error.at)} · {error.note}</small>)}</div></section>}
 

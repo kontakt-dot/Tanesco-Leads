@@ -1269,9 +1269,13 @@ html:not(.dark) .cj-btn:hover:not(:disabled) { background: #f8fafc !important; }
 html:not(.dark) .cj-btn.is-danger { color: #be123c !important; border-color: #fecdd3 !important; }
 html:not(.dark) .cj-ms-dot { border-color: #d0d5dd !important; color: #98a2b3 !important; }
 html:not(.dark) .cj-milestones li.is-on .cj-ms-dot { color: #ffffff !important; background: #bc001d !important; }
-html:not(.dark) .cj-milestones li:nth-child(2).is-on .cj-ms-dot { background: #2563eb !important; }
-html:not(.dark) .cj-milestones li:nth-child(3).is-on .cj-ms-dot { background: #d97706 !important; }
-html:not(.dark) .cj-milestones li:nth-child(4).is-on .cj-ms-dot { background: #059669 !important; }
+html:not(.dark) .cj-milestones li.ms-delivery.is-on .cj-ms-dot { background: #0f766e !important; }
+html:not(.dark) .cj-milestones li.ms-delivery.is-bad .cj-ms-dot { border: 0 !important; color: #ffffff !important; background: #dc2626 !important; }
+html:not(.dark) .cj-milestones li.ms-delivery.is-wait .cj-ms-dot { border: 1.5px solid #fcd34d !important; color: #b45309 !important; }
+html:not(.dark) .cj-milestones li.ms-delivery.is-bad strong { color: #b91c1c !important; }
+html:not(.dark) .cj-milestones li.ms-open.is-on .cj-ms-dot { background: #2563eb !important; }
+html:not(.dark) .cj-milestones li.ms-click.is-on .cj-ms-dot { background: #d97706 !important; }
+html:not(.dark) .cj-milestones li.ms-reply.is-on .cj-ms-dot { background: #059669 !important; }
 html:not(.dark) .cj-milestones li:not(:last-child)::after { background: #eaecf0 !important; }
 html:not(.dark) .cj-milestones li.is-on:not(:last-child)::after { background: #f4a3ae !important; }
 html:not(.dark) .cj-alert { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #be123c !important; }
