@@ -137,3 +137,9 @@ export function summarizeSent<T extends SentRow>(items: T[], filter: SentFilter,
   const origins = { ki: 0, hand: 0, "entwurf-vorlage": 0, vorlage: 0 } as Record<SentSource, number>; for (const item of filtered) if (item.origin) origins[item.origin.source] += 1;
   return { items: filtered.slice(0, options.limit ?? 200), total: filtered.length, counts: { alle: scoped.length, kampagne: kindCount("kampagne"), antwort: kindCount("antwort"), einzel: kindCount("einzel") }, reactions: countReactions(scoped), campaigns: Array.from(byCampaign.values()).sort((a, b) => b.count - a.count), origins };
 }
+/** Je Kampagne: wie viele E-Mails persönlich rausgingen (KI-Text oder selbst geschrieben), wie viele als Vorlage, wie viele ohne Angabe (vor der Speicherung). */
+export function sentOriginCounts(rows: Array<{ source: string | null | undefined; count: number }>) {
+  let personal = 0; let template = 0; let unknown = 0;
+  for (const row of rows) { if (row.source === "ki" || row.source === "hand") personal += row.count; else if (row.source === "vorlage" || row.source === "entwurf-vorlage") template += row.count; else unknown += row.count; }
+  return { personal, template, unknown };
+}

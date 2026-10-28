@@ -1710,6 +1710,7 @@ html:not(.dark) .sparte-field small strong { color: #0f172a !important; }
 html:not(.dark) .sparte-field small.sparte-warn { color: #8a7758 !important; }
 html:not(.dark) .sparte-fix { color: #0f172a !important; }
 html:not(.dark) .dash-pill.is-sparte { color: #0f172a !important; border-color: #d9dfe7 !important; background: #f3f6f8 !important; }
+html:not(.dark) .dash-pill.is-ki { color: #5a858a !important; }
 html:not(.dark) .cd-chip.is-sparte { border-color: #d9dfe7 !important; color: #0f172a !important; background: #f8fafb !important; }
 html:not(.dark) .rv-preview-toggle { color: #4b5568 !important; }
 html:not(.dark) .rv-preview-toggle:hover { color: #0f172a !important; }
@@ -3551,6 +3552,7 @@ html:not(.dark) .sparte-field small strong { color: #101828 !important; }
 html:not(.dark) .sparte-field small.sparte-warn { color: #92400e !important; background: #fffbeb !important; border-color: #fcd34d !important; }
 html:not(.dark) .sparte-fix { color: #78350f !important; background: #fef3c7 !important; border-color: #f59e0b !important; }
 html:not(.dark) .dash-pill.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
+html:not(.dark) .dash-pill.is-ki { color: #0e7490 !important; border-color: #a5f3fc !important; background: #ecfeff !important; }
 html:not(.dark) .cd-chip.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
 
 html:not(.dark) .rv-preview-toggle { color: #667085 !important; }

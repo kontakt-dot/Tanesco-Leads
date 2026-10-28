@@ -3217,6 +3217,7 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .sparte-field small.sparte-warn{color:#fcd9a0;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:8px;padding:6px 8px}
 .sparte-fix{display:inline-flex;margin-left:6px;padding:2px 8px;border-radius:999px;border:1px solid rgba(251,191,36,.45);background:rgba(251,191,36,.14);color:#fde7c2;font-size:11px;font-weight:700;cursor:pointer}.sparte-fix:hover{background:rgba(251,191,36,.24)}
 .dash-pill.is-sparte{color:#d9d4ff;border-color:rgba(129,120,255,.45);background:rgba(129,120,255,.12)}
+.dash-pill.is-ki{color:#a5f3fc;border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.1)}
 .cd-chip.is-sparte{border-color:rgba(129,120,255,.45);color:#d9d4ff;background:rgba(129,120,255,.1)}
 
 /* Freigeben: Vorschau der fertigen E-Mail (Design + Footer aus dem Builder) */

@@ -1,5 +1,6 @@
 /** E-Mail-Kampagnen mit Ablauf-Baum: Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst … Gemeinsame Logik für Server und Chat-Demo. */
 import { renderEmailHtml, renderEmailText, type EmailBlock, type EmailDesign, usesSignature } from "./email-design";
+import { COUNT_SRC, countValue, fixQuestionCount, numberWord, partnerGenitive, qualifyBy } from "./lead-sparte";
 export type EmailNode =
   | { id: string; type: "send"; label?: string; subject: string; subjectB?: string | null; preheader?: string; blocks: EmailBlock[]; attachments?: CampaignAttachment[]; next: string | null }
   | { id: string; type: "wait"; hours: number; next: string | null }
@@ -232,6 +233,21 @@ export function modernizeTree(tree: EmailTree): EmailTree | null {
   });
   return changed ? { ...tree, nodes } : null;
 }
+/** Zahl der Fragen in allen E-Mails eines Ablaufs an die Sparte anpassen (Hausnotruf 6, Alarmanlage 8, PV & WP 10 …). null = nichts zu ändern. */
+export function fixTreeQuestions(tree: EmailTree, sparte: { key?: string; questions?: number | null }): EmailTree | null {
+  let changed = false;
+  const fix = (text: string) => { const next = fixQuestionCount(text, sparte); if (next !== text) changed = true; return next; };
+  const nodes = (tree.nodes ?? []).map((node) => {
+    if (node.type !== "send") return node;
+    const blocks = node.blocks.map((block) => {
+      if (block.type === "text" || block.type === "heading") { const text = fix(block.text); return text === block.text ? block : { ...block, text }; }
+      if (block.type === "bullets") { const items = block.items.map(fix); return items.every((item, index) => item === block.items[index]) ? block : { ...block, items }; }
+      return block;
+    });
+    return blocks.every((block, index) => block === node.blocks[index]) ? node : { ...node, blocks };
+  });
+  return changed ? { ...tree, nodes } : null;
+}
 /** Knopf zur (nie vorhandenen) Terminbuchung aus alten Vorlagen – wird nirgends mehr gezeigt. */
 export const isDeadButton = (block: EmailBlock) => block.type === "button" && (/tanesco\.digital\/termin/i.test(block.url ?? "") || !(block.url ?? "").trim());
 export function fillPlaceholdersSafe(text: string, values: Record<string, string | null | undefined>) { return text.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => values[key] ?? ""); }
@@ -441,12 +457,17 @@ export function sentSourceOf(input: { bodySource?: string | null; subject?: stri
   if ((input.templateSubjects ?? []).some((template) => subjectFromTemplate(template, subject))) return { source: "vorlage", known: false };
   return { source: "ki", known: false };
 }
-/** Holprige Formulierung „telefonisch qualifiziert über (in der Regel) 10 Fragen“ → „in der Regel anhand von zehn Fragen telefonisch vorqualifiziert“ – für gespeicherte Vorlagen, KI-Entwürfe und den Versand. */
+/**
+ * Holprige Formulierung „telefonisch qualifiziert über (in der Regel) 10 Fragen“ → „in der Regel anhand von zehn Fragen telefonisch
+ * vorqualifiziert“ – für gespeicherte Vorlagen, KI-Entwürfe und den Versand. Die Zahl bleibt, wie sie im Text steht (die passende
+ * Zahl je Sparte setzt fixQuestionCount).
+ */
 export function smoothQualifyPhrase(text: string): string {
   const cap = (match: string, value: string) => (/^[A-ZÄÖÜ]/.test(match) ? value.charAt(0).toUpperCase() + value.slice(1) : value);
+  const word = (token: string) => { const value = countValue(token); return value ? numberWord(value) : token.toLowerCase(); };
   return text
-    .replace(/(?:telefonisch\s+)?(?:vor)?qualifiziert(?:\s*[–,-]\s*|\s+)(?:in der Regel\s+|rund\s+|meist\s+)?über\s+(?:in der Regel\s+|rund\s+)?(?:10|zehn)\s+(?:Qualifizierungs)?[Ff]ragen(?:\s+am Telefon)?(\s*–(?=\s+und\b))?/gi, (match) => cap(match, "in der Regel anhand von zehn Fragen telefonisch vorqualifiziert"))
-    .replace(/((?:Vor)?[Qq]ualifizierung(?:\s+jedes Interessenten)?)(?:\s*[–,-]\s*|\s+)(?:in der Regel\s+)?über\s+(?:in der Regel\s+|rund\s+)?(?:10|zehn)\s+(?:Qualifizierungs)?[Ff]ragen(?:\s+am Telefon)?/g, "$1 anhand von in der Regel zehn Fragen");
+    .replace(new RegExp(`(?:telefonisch\\s+)?(?:vor)?qualifiziert(?:\\s*[–,-]\\s*|\\s+)(?:in der Regel\\s+|rund\\s+|meist\\s+)?über\\s+(?:in der Regel\\s+|rund\\s+)?(${COUNT_SRC})\\s+(?:Qualifizierungs)?[Ff]ragen(?:\\s+am Telefon)?(\\s*–(?=\\s+und\\b))?`, "gi"), (match, count: string) => cap(match, `in der Regel anhand von ${word(count)} Fragen telefonisch vorqualifiziert`))
+    .replace(new RegExp(`((?:Vor)?[Qq]ualifizierung(?:\\s+jedes Interessenten)?)(?:\\s*[–,-]\\s*|\\s+)(?:in der Regel\\s+)?über\\s+(?:in der Regel\\s+|rund\\s+)?(${COUNT_SRC})\\s+(?:Qualifizierungs)?[Ff]ragen(?:\\s+am Telefon)?`, "g"), (_match, head: string, count: string) => `${head} anhand von in der Regel ${word(count)} Fragen`);
 }
 /** Aroundhome wird in E-Mails nie erwähnt – Sätze mit „Aroundhome“ (auch „Around Home“) fliegen raus, samt Zahlen dazu. */
 export const PORTAL_RE = /around[\s-]*home/i;
@@ -467,17 +488,34 @@ export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[
 
 /* ── Drei Ansätze je Erst-E-Mail: Individuell, Drittanbieter, Freier Vorschlag ─────────────────── */
 export type DraftApproach = "individuell" | "drittanbieter" | "frei";
-export type DraftOption = { key: DraftApproach; label: string; subject: string; text: string };
+/** `source`: „ki“ = von der KI für genau diesen Kontakt geschrieben, „vorlage“ = Ersatz aus der Vorlage (die KI hat diesen Ansatz nicht geliefert). */
+export type DraftOption = { key: DraftApproach; label: string; subject: string; text: string; source?: "ki" | "vorlage" };
 export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: string }> = [
   { key: "individuell", label: "Individueller Ansatz", hint: "Greift etwas Konkretes der Firma auf (Webseite, Standorte, Leistungen) und spiegelt es auf unser Angebot – kurz, persönlich, ohne Aufzählung." },
   { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Unsere Leads kommen schon über Drittpartner bei der Firma an – wir sind die direkte Quelle und bieten die direkte Zusammenarbeit an." },
   { key: "frei", label: "Freier Vorschlag", hint: "Eigene Idee der KI – ein anderer Einstieg, aber genauso persönlich auf die Firma zugeschnitten." },
 ];
 export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? "Entwurf";
-/** Kernbotschaft des Drittanbieter-Ansatzes (Leads kommen über Zwischenhändler/Umwege an) – gehört NICHT in den individuellen oder freien Vorschlag. */
-const THIRD_PARTY_CORE = /zwischenh(?:ä|ae)ndler|weitergereicht|umweg über|über umwege|drittanbieter|drittpartner|über dritte/i;
+/**
+ * Kernbotschaft des Drittanbieter-Ansatzes: UNSERE Leads kommen schon (über Zwischenhändler/Dritte) bei der Firma an. Die gehört
+ * nicht in den individuellen oder freien Vorschlag – allgemeiner Ärger mit Lead-Anbietern („viele Drittanbieter verkaufen
+ * Leads mehrfach“) dagegen schon, der ist Teil des individuellen Ansatzes.
+ */
+const THIRD_PARTY_CLAIM = /(ohnehin|eigentlich|ursprünglich|in wahrheit)\s+(von uns|aus unserer)|stamm\w*[^.!?\n]{0,50}\b(von uns|aus unserer)|(unsere|von uns generierte\w*)\s+(leads|anfragen)[^.!?\n]{0,80}(zwischenh(?:ä|ae)ndler|drittanbieter|drittpartner|dritte\b|weitergereicht|umweg)|(zwischenh(?:ä|ae)ndler|drittanbieter|drittpartner)[^.!?\n]{0,80}(von uns|unsere leads|aus unserer generierung)/i;
 /** Passt der Text zum Ansatz? Individuell/frei: ohne die Drittanbieter-Kernbotschaft. (Drittanbieter wird nicht geprüft – Nachfass-Mails wiederholen sie nicht immer.) */
-export function fitsApproach(key: DraftApproach, text: string): boolean { return key === "drittanbieter" || !THIRD_PARTY_CORE.test(text); }
+export function fitsApproach(key: DraftApproach, text: string): boolean { return key === "drittanbieter" || !THIRD_PARTY_CLAIM.test(text); }
+const sentenceWords = (text: string) => text.toLowerCase().replace(/[„“"'’,;:.!?()–—-]/g, " ").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+const shingles = (text: string, size = 6) => { const words = sentenceWords(text); const out = new Set<string>(); for (let index = 0; index + size <= words.length; index += 1) out.add(words.slice(index, index + size).join(" ")); return out; };
+const MANDATORY_RE = /test-?leads|vorqualifi|anhand (?:von|gezielter)|antworten sie|rufen sie|vielen dank|sehr geehrte|zahlen dabei nur/i;
+/**
+ * Hat die KI die Vorlage abgeschrieben? Ohne die Pflichtabsätze (Test-Angebot, Qualifizierung, Schluss) steht mehr als 40 %
+ * des Textes wörtlich (in Folgen von sechs Wörtern) in der Vorlage → dann ist es kein individueller Text.
+ */
+export function copiesTemplate(text: string, template: string): boolean {
+  const own = shingles(text.split(/\n{2,}/).filter((part) => !MANDATORY_RE.test(part)).join("\n")); if (own.size < 8) return false;
+  const base = shingles(template); let hit = 0; for (const item of Array.from(own)) if (base.has(item)) hit += 1;
+  return hit / own.size > 0.4;
+}
 /**
  * Auto-Modus: welcher gespeicherte Entwurf darf raus? Nur einer im Ansatz der Kampagne – außer du hast ihn freigegeben oder
  * selbst geschrieben. Steht der Haupt-Entwurf in einem anderen Ansatz, aber unter den gespeicherten KI-Vorschlägen ist einer im
@@ -508,8 +546,8 @@ export function kiModusOf(campaign: { kiModus?: string | null; reviewFirst?: boo
 export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { return campaign.kiAnsatz === "drittanbieter" ? "drittanbieter" : "individuell"; }
 
 /** Ohne KI: der Drittanbieter-Ansatz als feste Vorlage mit den Daten der Firma. */
-export function thirdPartyTemplate(values: Record<string, string | null | undefined>, sparte: { topic: string; partner: string; key?: string } = { topic: "Photovoltaik und Wärmepumpen", partner: "Fachbetrieb" }): { subject: string; text: string } {
+export function thirdPartyTemplate(values: Record<string, string | null | undefined>, sparte: { topic: string; partner: string; key?: string; questions?: number | null } = { topic: "Photovoltaik und Wärmepumpen", partner: "Fachbetrieb" }): { subject: string; text: string } {
   const payFit = !sparte.key || ["pv-wp", "photovoltaik", "waermepumpe"].includes(sparte.key); // nur PV & WP: es werden nur passende Leads bezahlt
   const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = `${(values.begruessung ?? "").trim() || greetingFor({ firstName: values.vorname, lastName: values.nachname, salutation: values.anrede === "Frau" ? "frau" : values.anrede === "Herr" ? "herr" : null })},`;
-  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler. Dieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und am Ende leiden Aktualität und Datenqualität. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten anhand von in der Regel zehn Fragen; der Interessent erwartet danach die Rückmeldung eines ${sparte.partner === "Fachbetrieb" ? "Fachbetriebs" : sparte.partner === "Fachhändler" ? "Fachhändlers" : "Anbieters"}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
+  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler. Dieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und am Ende leiden Aktualität und Datenqualität. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten ${qualifyBy(sparte)}; der Interessent erwartet danach die Rückmeldung eines ${partnerGenitive(sparte)}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
 }

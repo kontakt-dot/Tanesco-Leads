@@ -19,21 +19,23 @@ export type Sparte = {
   partner: string;
   /** woran man die Sparte in Namen und Listen erkennt */
   match: RegExp;
+  /** mit wie vielen Fragen wir telefonisch vorqualifizieren (PV & WP 10, Hausnotruf 6, Elektrorollstuhl 6, Alarmanlage 8) – ohne Angabe nennen wir keine Zahl */
+  questions?: number | null;
 };
 
 const PV_RE = /photovoltaik|solar|\bpv\b|pv[-\s]|pv-?anlage/i;
 const WP_RE = /wärmepumpe|waermepumpe|\bwp\b/i;
 export const SPARTEN: Sparte[] = [
-  { key: "pv-wp", label: "Photovoltaik & Wärmepumpe", topic: "Photovoltaik und Wärmepumpen", leads: "PV- und Wärmepumpen-Leads", recipients: "PV- und Wärmepumpen-Fachbetriebe und Energieversorger", partner: "Fachbetrieb", match: /(?!)/ },
-  { key: "photovoltaik", label: "Photovoltaik", topic: "Photovoltaik", leads: "Photovoltaik-Leads", recipients: "Photovoltaik-Fachbetriebe und Solarteure", partner: "Fachbetrieb", match: PV_RE },
-  { key: "waermepumpe", label: "Wärmepumpe", topic: "Wärmepumpen", leads: "Wärmepumpen-Leads", recipients: "Wärmepumpen-Fachbetriebe und Heizungsbauer", partner: "Fachbetrieb", match: WP_RE },
-  { key: "hausnotruf", label: "Hausnotruf", topic: "Hausnotruf", leads: "Hausnotruf-Leads", recipients: "Anbieter von Hausnotruf-Systemen", partner: "Anbieter", match: /hausnotruf|notrufsystem|notruf|haus-notruf/i },
+  { key: "pv-wp", label: "Photovoltaik & Wärmepumpe", topic: "Photovoltaik und Wärmepumpen", leads: "PV- und Wärmepumpen-Leads", recipients: "PV- und Wärmepumpen-Fachbetriebe und Energieversorger", partner: "Fachbetrieb", match: /(?!)/, questions: 10 },
+  { key: "photovoltaik", label: "Photovoltaik", topic: "Photovoltaik", leads: "Photovoltaik-Leads", recipients: "Photovoltaik-Fachbetriebe und Solarteure", partner: "Fachbetrieb", match: PV_RE, questions: 10 },
+  { key: "waermepumpe", label: "Wärmepumpe", topic: "Wärmepumpen", leads: "Wärmepumpen-Leads", recipients: "Wärmepumpen-Fachbetriebe und Heizungsbauer", partner: "Fachbetrieb", match: WP_RE, questions: 10 },
+  { key: "hausnotruf", label: "Hausnotruf", topic: "Hausnotruf", leads: "Hausnotruf-Leads", recipients: "Anbieter von Hausnotruf-Systemen", partner: "Anbieter", match: /hausnotruf|notrufsystem|notruf|haus-notruf/i, questions: 6 },
   { key: "pflegebox", label: "Pflegebox", topic: "Pflegeboxen", leads: "Pflegebox-Leads", recipients: "Anbieter von Pflegeboxen und Pflegehilfsmitteln", partner: "Anbieter", match: /pflegebox|pflegehilfsmittel|pflege-box/i },
-  { key: "elektrorollstuhl", label: "Elektrorollstuhl", topic: "Elektrorollstühle", leads: "Elektrorollstuhl-Leads", recipients: "Fachhändler und Sanitätshäuser für Elektrorollstühle", partner: "Fachhändler", match: /elektro-?\s?rollst|e-?rollst|rollstuhl|rollstühle/i },
+  { key: "elektrorollstuhl", label: "Elektrorollstuhl", topic: "Elektrorollstühle", leads: "Elektrorollstuhl-Leads", recipients: "Fachhändler und Sanitätshäuser für Elektrorollstühle", partner: "Fachhändler", match: /elektro-?\s?rollst|e-?rollst|rollstuhl|rollstühle/i, questions: 6 },
   { key: "rollator", label: "Rollator", topic: "Rollatoren", leads: "Rollator-Leads", recipients: "Fachhändler und Sanitätshäuser für Rollatoren", partner: "Fachhändler", match: /rollator/i },
   { key: "treppenlift", label: "Treppenlift", topic: "Treppenlifte", leads: "Treppenlift-Leads", recipients: "Anbieter und Fachbetriebe für Treppenlifte", partner: "Fachbetrieb", match: /treppenlift|sitzlift|plattformlift/i },
   { key: "bad", label: "Barrierefreies Bad", topic: "barrierefreie Bäder", leads: "Leads für barrierefreie Bäder", recipients: "Fachbetriebe für barrierefreie Badumbauten", partner: "Fachbetrieb", match: /barrierefrei|badumbau|bäder|baeder|badsanierung/i },
-  { key: "alarmanlage", label: "Alarmanlage", topic: "Alarmanlagen", leads: "Alarmanlagen-Leads", recipients: "Errichter und Fachbetriebe für Alarmanlagen und Sicherheitstechnik", partner: "Fachbetrieb", match: /alarm|einbruchschutz|einbruchmelde|sicherheitstechnik/i },
+  { key: "alarmanlage", label: "Alarmanlage", topic: "Alarmanlagen", leads: "Alarmanlagen-Leads", recipients: "Errichter und Fachbetriebe für Alarmanlagen und Sicherheitstechnik", partner: "Fachbetrieb", match: /alarm|einbruchschutz|einbruchmelde|sicherheitstechnik/i, questions: 8 },
   { key: "fenster", label: "Fenster", topic: "Fenster", leads: "Fenster-Leads", recipients: "Fensterbauer und Fachbetriebe für Fenster", partner: "Fachbetrieb", match: /fenster/i },
   { key: "wintergarten", label: "Wintergarten", topic: "Wintergärten", leads: "Wintergarten-Leads", recipients: "Fachbetriebe für Wintergärten", partner: "Fachbetrieb", match: /wintergarten|wintergärten/i },
 ];
@@ -99,4 +101,54 @@ export function applyPayFit(text: string, options: { sparte: Pick<Sparte, "key">
   const parts = text.split(/\n{2,}/); let at = parts.length;
   for (let index = parts.length - 1; index > 0; index -= 1) { if (CLOSING_RE.test(parts[index])) at = index; else break; } // vor den Schluss (Kontaktweg, „Vielen Dank“)
   parts.splice(at, 0, PAY_FIT_SENTENCE); return parts.join("\n\n");
+}
+/** „eines Fachbetriebs“, „eines Fachhändlers“, „eines Anbieters“ */
+export const partnerGenitive = (sparte: Pick<Sparte, "partner">) => sparte.partner === "Fachbetrieb" ? "Fachbetriebs" : sparte.partner === "Fachhändler" ? "Fachhändlers" : "Anbieters";
+/* ---------------------------------------------------------------- Zahl der Fragen bei der Vorqualifizierung */
+const WORD_OF = ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf"];
+const VALUE_OF: Record<string, number> = { vier: 4, fünf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwölf: 12, dreizehn: 13, vierzehn: 14, fünfzehn: 15 };
+/** Zahlen bis zwölf als Wort („sechs“, „acht“, „zehn“), größere als Ziffer. */
+export const numberWord = (count: number) => WORD_OF[count] ?? String(count);
+/** „10“ / „Zehn“ → 10 */
+export const countValue = (token: string) => /^\d+$/.test(token) ? Number(token) : VALUE_OF[token.toLowerCase()] ?? null;
+/**
+ * Mit wie vielen Fragen wir in der Sparte telefonisch vorqualifizieren: PV & WP 10, Hausnotruf 6, Elektrorollstuhl 6, Alarmanlage 8.
+ * Andere Sparten haben (noch) keine feste Zahl → null, dann steht „anhand gezielter Fragen“ ohne Zahl. Ohne Sparte gilt der Standard (PV & WP).
+ */
+export function questionCount(sparte?: { key?: string; questions?: number | null } | null): number | null {
+  if (!sparte) return DEFAULT_SPARTE.questions ?? null;
+  if (sparte.questions !== undefined) return sparte.questions ?? null;
+  if (!sparte.key) return DEFAULT_SPARTE.questions ?? null;
+  return SPARTEN.find((item) => item.key === sparte.key)?.questions ?? null;
+}
+type QuestionSparte = { key?: string; questions?: number | null } | null | undefined;
+/** „in der Regel anhand von sechs Fragen telefonisch vorqualifiziert“ – ohne feste Zahl „anhand gezielter Fragen telefonisch vorqualifiziert“. */
+export function qualifyPhrase(sparte?: QuestionSparte): string { const count = questionCount(sparte); return count ? `in der Regel anhand von ${numberWord(count)} Fragen telefonisch vorqualifiziert` : "anhand gezielter Fragen telefonisch vorqualifiziert"; }
+/** Für Aufzählungen („Telefonische Vorqualifizierung jedes Interessenten …“): „anhand von in der Regel sechs Fragen“ / „anhand gezielter Fragen“. */
+export function qualifyBy(sparte?: QuestionSparte): string { const count = questionCount(sparte); return count ? `anhand von in der Regel ${numberWord(count)} Fragen` : "anhand gezielter Fragen"; }
+export const COUNT_SRC = "(?:1[0-5]|[4-9]|vierzehn|dreizehn|fünfzehn|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf)";
+const QUESTIONS_SRC = "(?:Qualifizierungs|Qualifikations)?[Ff]ragen";
+const COUNTED_RE = new RegExp(`\\b${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b|\\bgezielte[rn]?\\s+(?:Qualifizierungs)?[Ff]ragen\\b`, "i");
+/** Steht im Text schon, wie wir qualifizieren (eine Zahl von Fragen oder „gezielte Fragen“)? */
+export const mentionsQuestions = (text: string) => COUNTED_RE.test(text);
+const QUALIFY_CONTEXT = /qualifi|interessent|anfrage|lead/i;
+const cap = (match: string, value: string) => (/^[A-ZÄÖÜ]/.test(match) ? value.charAt(0).toUpperCase() + value.slice(1) : value);
+/**
+ * Zahl der Fragen in einem Text an die Sparte anpassen: „anhand von zehn Fragen“ wird bei Hausnotruf „anhand von sechs Fragen“,
+ * bei Alarmanlagen „acht“; Sparten ohne feste Zahl bekommen „anhand gezielter Fragen“. Nur in Sätzen über die Qualifizierung –
+ * eine „Frage an Sie“ bleibt unberührt.
+ */
+export function fixQuestionCount(text: string, sparte?: QuestionSparte): string {
+  if (!text || !COUNTED_RE.test(text)) return text;
+  const count = questionCount(sparte); const word = count ? numberWord(count) : null;
+  return text.replace(/[^.!?\n]+[.!?]*/g, (segment) => {
+    if (!QUALIFY_CONTEXT.test(segment) || !COUNTED_RE.test(segment)) return segment;
+    if (word) return segment
+      .replace(/(?:in der Regel\s+)?anhand gezielter (?:Qualifizierungs)?[Ff]ragen/gi, (match) => cap(match, `in der Regel anhand von ${word} Fragen`))
+      .replace(new RegExp(`\\b${COUNT_SRC}(?=\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b)`, "gi"), (match) => countValue(match) === count ? match : cap(match, word)); // stimmt die Zahl schon („10“ bei PV), bleibt sie so
+    return segment
+      .replace(new RegExp(`(?:in der Regel\\s+)?anhand von\\s+(?:in der Regel\\s+|rund\\s+|etwa\\s+|bis zu\\s+)?${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b`, "gi"), (match) => cap(match, "anhand gezielter Fragen"))
+      .replace(new RegExp(`\\b(mit|über|durch)\\s+(?:in der Regel\\s+|rund\\s+|etwa\\s+)?${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b`, "gi"), (_match, prep: string) => `${prep} ${/^mit$/i.test(prep) ? "gezielten" : "gezielte"} Fragen`)
+      .replace(new RegExp(`(?:\\b(?:rund|etwa)\\s+)?\\b${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b`, "gi"), (match) => cap(match, "gezielte Fragen"));
+  });
 }

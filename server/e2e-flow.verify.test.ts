@@ -3121,6 +3121,39 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const after = (await db.select({ design: emailCampaigns.design, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, copy.id)))[0];
     expect((after.design as { logoUrl?: string | null }).logoUrl).toBeNull(); expect(after.updatedAt.getTime()).toBe(stamp.getTime());
   }, 40000);
+  it("63i. Zahl der Fragen je Sparte (Hausnotruf 6, Alarmanlage 8, PV & WP 10): Vorlage beim Speichern angepasst, Entwürfe mit der richtigen Zahl, Bestand einmal umgestellt", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    await owner.leadops.importColdList({ listName: "Fragen-Test", toPipeline: false, rows: [{ firstName: "Anna", lastName: "Alarm", company: "Alarm Süd GmbH", email: "anna@fragen-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const tree = { start: "q1", nodes: [{ id: "q1", type: "send" as const, label: "Erste", subject: "Mehr Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
+    expect(JSON.stringify(tree)).toContain("zehn Fragen"); // die Startvorlage nennt zehn (PV & WP)
+    const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste" as const, listName: "Fragen-Test" }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } };
+    const saved = await owner.leadops.saveEmailCampaign({ ...base, name: "Fragen-Test", kiModus: "freigabe", kiAnsatz: "individuell", leadSparte: "Alarmanlage" } as never);
+    expect((saved as { fixedQuestions?: boolean }).fixedQuestions).toBe(true);
+    const stored = JSON.stringify((await owner.leadops.getEmailCampaign({ id: saved.id })).tree); expect(stored).toContain("anhand von acht Fragen"); expect(stored).not.toContain("zehn Fragen");
+    await owner.leadops.startEmailCampaign({ id: saved.id }); await owner.leadops.runEmailCampaigns();
+    const anna = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, saved.id)))[0];
+    expect(anna.draftText).toContain("acht Fragen"); expect(anna.draftText).not.toMatch(/zehn Fragen|10 Fragen/);
+    const options = anna.draftOptions as Array<{ key: string; text: string; source?: string }>;
+    expect(options.find((item) => item.key === "drittanbieter")?.text).toContain("anhand von in der Regel acht Fragen");
+    expect(options.every((item) => item.source === "vorlage")).toBe(true); expect(anna.draftSource).toBe("vorlage"); // ohne KI-Schlüssel: klar als Ersatz aus der Vorlage gekennzeichnet
+    // PV & WP: bleibt bei zehn, nichts angepasst
+    const pv = await owner.leadops.saveEmailCampaign({ ...base, name: "PV & WP • Fragen" } as never);
+    expect((pv as { fixedQuestions?: boolean }).fixedQuestions).toBe(false); expect(JSON.stringify((await owner.leadops.getEmailCampaign({ id: pv.id })).tree)).toContain("zehn Fragen");
+    // Bestand von vorher: Hausnotruf-Vorlage und offene Entwürfe mit „zehn Fragen“ → einmal nach dem Start angepasst, Reihenfolge der Kampagnen bleibt
+    const old = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Fragen alt" } as never); // Sparte aus dem Namen erkannt
+    await db.update(emailCampaigns).set({ tree }).where(eq(emailCampaigns.id, old.id));
+    const stamp = (await db.select({ updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, old.id)))[0].updatedAt;
+    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrte Frau Alarm,\n\nunsere Leads sind in der Regel anhand von zehn Fragen telefonisch vorqualifiziert.\n\nVielen Dank", draftOptions: [{ key: "individuell", label: "Individueller Ansatz", subject: "Ihr Einbruchschutz", text: "Jeder Lead wird über 10 Fragen qualifiziert." }] }).where(eq(emailCampaignRecipients.id, anna.id));
+    const { fixQuestionCounts } = await import("./campaign-review");
+    const result = await fixQuestionCounts(db); expect(result.campaigns).toBeGreaterThanOrEqual(1); expect(result.drafts).toBeGreaterThanOrEqual(1);
+    const repaired = (await db.select({ tree: emailCampaigns.tree, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, old.id)))[0];
+    expect(JSON.stringify(repaired.tree)).toContain("anhand von sechs Fragen"); expect(JSON.stringify(repaired.tree)).not.toContain("zehn Fragen"); expect(repaired.updatedAt.getTime()).toBe(stamp.getTime());
+    const annaAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, anna.id)))[0];
+    expect(annaAfter.draftText).toContain("anhand von acht Fragen"); expect((annaAfter.draftOptions as Array<{ text: string }>)[0].text).toBe("Jeder Lead wird über acht Fragen qualifiziert.");
+    expect(JSON.stringify((await owner.leadops.getEmailCampaign({ id: pv.id })).tree)).toContain("zehn Fragen"); // PV bleibt
+    expect(await fixQuestionCounts(db)).toEqual({ campaigns: 0, drafts: 0 }); // mehrfach ohne Nebenwirkung
+  }, 40000);
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);
     const probe = leadOptions.find((row) => row.name) ?? leadOptions[0]; expect((await owner.leadops.contractLeadOptions({ query: (probe.name || probe.email).slice(0, 4) })).some((row) => row.id === probe.id)).toBe(true);

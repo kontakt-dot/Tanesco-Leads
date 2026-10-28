@@ -750,6 +750,13 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(String(row.draftText)).toContain("für Hausnotruf"); expect(String(row.draftText)).not.toMatch(/Photovoltaik|Wärmepumpe/);
     const named = await call("leadops.saveEmailCampaign", { ...base, name: "Alarmanlage • Erstkontakt" });
     expect((await call("leadops.getEmailCampaign", { id: named.id })).sparte).toMatchObject({ label: "Alarmanlage", source: "erkannt" });
+    // Zahl der Fragen je Sparte: Hausnotruf sechs, Alarmanlage acht – Vorlage beim Speichern angepasst, Entwurf mit der richtigen Zahl
+    expect(saved.fixedQuestions).toBe(true); expect(named.fixedQuestions).toBe(true);
+    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: saved.id })).tree)).toContain("anhand von sechs Fragen");
+    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: named.id })).tree)).toContain("anhand von acht Fragen");
+    expect(String(row.draftText)).toContain("sechs Fragen"); expect(String(row.draftText)).not.toContain("zehn Fragen");
+    const pv = await call("leadops.saveEmailCampaign", { ...base, name: "PV & WP • Erstkontakt" }); expect(pv.fixedQuestions).toBe(false);
+    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: pv.id })).tree)).toContain("zehn Fragen");
   });
   it("KI-Ansatz umgestellt: offene Entwürfe folgen dem gewählten Ansatz, die Builder-Vorschau zeigt nur diesen", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
