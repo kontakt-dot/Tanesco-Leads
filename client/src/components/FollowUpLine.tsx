@@ -17,11 +17,12 @@ export function dayWord(value: Stamp, now = new Date()) {
   if (key === dateKey(new Date(now.getTime() + 86_400_000))) return "morgen";
   return `${date.toLocaleDateString("de-DE", { timeZone: ZONE, weekday: "short" }).replace(/\.$/, "")} ${date.toLocaleDateString("de-DE", { timeZone: ZONE, day: "2-digit", month: "2-digit" })}`;
 }
-const clock = (value: Stamp) => new Date(value).toLocaleTimeString("de-DE", { timeZone: ZONE, hour: "2-digit", minute: "2-digit" });
+export const clock = (value: Stamp) => new Date(value).toLocaleTimeString("de-DE", { timeZone: ZONE, hour: "2-digit", minute: "2-digit" });
 const mails = (count: number) => `${count} E-Mail${count === 1 ? "" : "s"}`;
 const followUps = (count: number) => `${count} Follow-up${count === 1 ? "" : "s"}`;
 
-export default function FollowUpLine({ plan, sentAny, className = "" }: { plan: FollowUpView | null | undefined; sentAny: boolean; className?: string }) {
+/** `withApproval={false}`: ohne den Freigabe-Hinweis – den zeigt dann der gemeinsame Freigabe-Hinweis der Kampagne (Erst-E-Mails und Follow-ups zusammen). */
+export default function FollowUpLine({ plan, sentAny, className = "", withApproval = true }: { plan: FollowUpView | null | undefined; sentAny: boolean; className?: string; withApproval?: boolean }) {
   if (!plan) return null;
   const now = new Date();
   if (plan.paused) return plan.total > 0 ? <span className={`cl-next is-paused ${className}`} title="Die Kampagne ist pausiert – die Follow-ups gehen erst raus, wenn du sie fortsetzt."><Pause aria-hidden="true" /><span>Pausiert – <span className="nw">{followUps(plan.total)}</span> {plan.total === 1 ? "wartet" : "warten"}</span></span> : null;
@@ -35,7 +36,7 @@ export default function FollowUpLine({ plan, sentAny, className = "" }: { plan: 
     plan.delayedByLimit ? "Das Tageslimit (für alle Kampagnen zusammen) schiebt einen Teil auf die nächsten Tage." : null,
     "Stand jetzt – wer vorher antwortet, bekommt kein Follow-up mehr.",
   ].filter(Boolean).join("\n");
-  const approvalLine = approval ? <span className={`cl-next is-approval ${className}`} title={hint}><PenLine aria-hidden="true" /><span>{approval.first && new Date(approval.first).getTime() > now.getTime() + 60_000 ? <><span className="nw">{followUps(approval.count)}</span> zur Freigabe ab <b>{dayWord(approval.first, now)} {clock(approval.first)} Uhr</b></> : <><span className="nw">{followUps(approval.count)}</span> {approval.count === 1 ? "wartet" : "warten"} auf deine Freigabe</>}</span></span> : null;
+  const approvalLine = approval && withApproval ? <span className={`cl-next is-approval ${className}`} title={hint}><PenLine aria-hidden="true" /><span>{approval.first && new Date(approval.first).getTime() > now.getTime() + 60_000 ? <><span className="nw">{followUps(approval.count)}</span> zur Freigabe ab <b>{dayWord(approval.first, now)} {clock(approval.first)} Uhr</b></> : <><span className="nw">{followUps(approval.count)}</span> {approval.count === 1 ? "wartet" : "warten"} auf deine Freigabe</>}</span></span> : null;
   if (!first) {
     if (approvalLine) return approvalLine;
     if (plan.later > 0) return <span className={`cl-next ${className}`} title={hint}><Clock3 aria-hidden="true" /><span>Nächste Follow-ups erst in mehr als 3 Wochen · {mails(plan.later)}</span></span>;

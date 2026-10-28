@@ -2876,6 +2876,43 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .campaign-act-sub svg{width:15px;height:15px;opacity:.8}
 /* Handy: Ordner in einer Reihe zum Wischen, Knöpfe darunter */
 @media (max-width:720px){.cl-folders{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:8px}.cl-folder-rail{flex-wrap:nowrap;overflow-x:auto;padding:2px;scrollbar-width:none}.cl-folder-rail::-webkit-scrollbar{display:none}.cl-folder span{max-width:180px}.cl-folder-actions{justify-content:flex-start}}
+/* Kampagne geöffnet: Kopf in der Sprache der Karten – Name, ruhige Zeile (Ordner · Ablauf · Start · Absender), rechts Stand und Knöpfe;
+   darunter die Einstellungen als Steckbrief (Zielgruppe, Leadsparte, KI, Versand, Bei Antwort), dann nur das Wichtige farbig */
+.ch{display:flex;flex-direction:column;gap:12px}
+.ch-top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px 24px}
+.ch-name{flex:1 1 420px;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ch-name h1{margin:0;font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.15;color:#f5f3ff;overflow-wrap:anywhere}
+.ch-meta{font-size:12.5px}
+.ch-side{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px;padding-top:2px}
+.ch-facts{display:flex;flex-wrap:wrap;margin:0;border-radius:12px;background:rgba(255,255,255,.035);overflow:hidden}
+.ch-fact{flex:1 1 150px;min-width:0;display:flex;flex-direction:column;gap:3px;padding:10px 16px 12px;box-shadow:-1px 0 0 rgba(255,255,255,.07),0 -1px 0 rgba(255,255,255,.07)} /* Linien nur zwischen den Feldern – außen schneidet der Rahmen sie ab */
+.ch-fact.is-wide{flex:1.5 1 220px}.ch-fact.is-time{flex:1.4 1 210px}.ch-fact.is-short{flex:.8 1 120px}
+.ch-nw{white-space:nowrap}
+.ch-fact dt{font-size:11px;font-weight:600;color:#8a87a8}
+.ch-fact dd{margin:0;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ch-value{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-size:13.5px;font-weight:650;line-height:1.35;color:#f1f0ff}
+.ch-value.is-warn{color:#fda4af}
+.ch-sub{font-size:11.5px;line-height:1.35;color:#8a87a8}
+.ch-alerts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.ch-alerts:empty{display:none}
+.ch-alerts .cl-next{margin-top:0;font-size:12.5px}
+/* Karte: Einstellungen als eine ruhige Zeile mit Angaben (Bezeichnung grau, Wert hell) – jede Angabe bleibt zusammen; Freigabe in EINEM Hinweis */
+.cl-specs{display:flex;flex-direction:column;gap:4px;font-size:12.5px;line-height:1.4}
+.cl-specs dl{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 22px;margin:0}
+.cl-spec{display:inline-flex;align-items:baseline;gap:7px;white-space:nowrap;min-width:0}
+.cl-spec dt{font-size:11px;font-weight:600;color:#8a87a8}
+.cl-spec dd{margin:0;font-weight:650;color:#ebe9ff}
+.cl-spec dd small{margin-left:6px;font-size:11.5px;font-weight:500;color:#a5a3c4}
+.cl-spec dd small::before{content:"· ";color:#6f6c8f}
+.cl-spec.is-warn dd{color:#fda4af}
+.cl-alerts:empty{display:none}
+.cl-approval{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-height:26px;padding:3px 12px 3px 10px;border-radius:999px;border:1px solid rgba(251,191,36,.45);background:rgba(251,191,36,.12);color:#fde68a;font-size:12px;font-weight:600;line-height:1.3;text-align:left;cursor:pointer;transition:background-color .15s}
+.cl-approval svg{width:13px;height:13px;flex:0 0 auto;color:#fcd34d}
+.cl-approval strong{font-weight:800;color:#fcd34d}
+.cl-approval span::before{content:"·";margin-right:8px;color:rgba(253,230,138,.55)}
+.cl-approval:hover{background:rgba(251,191,36,.2)}
+.cl-approval:focus-visible{outline:2px solid rgba(251,191,36,.7);outline-offset:2px}
+@media (max-width:720px){.ch-name{flex-basis:100%}.ch-name h1{font-size:22px}.ch-side{justify-content:flex-start}.ch-fact,.ch-fact.is-time,.ch-fact.is-short{flex-basis:140px;padding:9px 12px 10px}.ch-fact.is-wide{flex-basis:100%}}
 /* ===== v185: Kontakte, Sperrliste, Upload-Verlauf – gleiche Sprache wie die Kampagnenseite ===== */
 .xl-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
 .xl-head h2{display:flex;align-items:center;gap:8px;font-size:18px;font-weight:800;letter-spacing:-.01em;color:#f5f3ff;margin:0}
@@ -3052,9 +3089,9 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .node-leads-list .node-leads-stop{display:grid;place-items:center;width:28px;padding:0;height:28px;border-radius:8px;color:#a5a3c4;flex:0 0 auto}
 .node-leads-stop:hover{background:rgba(251,113,133,.14);color:#fda4af}
 /* Filter nach Liste (Kampagnen-Übersicht + Empfänger) und Startdatum */
-.cd-list-filter{position:relative;display:inline-flex;align-items:center;min-width:0;max-width:100%}
+.cd-list-filter{position:relative;display:inline-flex;align-items:center;min-width:0;max-width:min(360px,100%)} /* Breite am Rahmen begrenzen – sonst steht der Pfeil bei langen Listennamen neben der Auswahl */
 .cd-list-filter::after{content:"";position:absolute;right:12px;top:50%;width:6px;height:6px;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;color:#a5a3c4;transform:translateY(-70%) rotate(45deg);pointer-events:none}
-.cd-list-filter select{-webkit-appearance:none;appearance:none;height:34px;line-height:32px;max-width:min(360px,100%);padding:0 32px 0 12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#f1f0fb;font-size:12.5px;font-weight:600;text-overflow:ellipsis}
+.cd-list-filter select{-webkit-appearance:none;appearance:none;height:34px;line-height:32px;max-width:100%;padding:0 32px 0 12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#f1f0fb;font-size:12.5px;font-weight:600;text-overflow:ellipsis}
 .cd-list-filter select option{color:#0f172a;background:#fff}
 .cl-filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 18px 0}
 .cl-filter-count{font-size:12px;color:#a5a3c4}

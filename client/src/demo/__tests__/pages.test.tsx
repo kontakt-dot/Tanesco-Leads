@@ -86,9 +86,28 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     expect(cells).toEqual(["Empfänger", "Gesendet", "Zugestellt", "Geöffnet", "Geklickt", "Antwort"]);
     const delivered = card.querySelector(".cl-f.is-delivered")!; expect(delivered.textContent).toContain("1 nicht angekommen"); expect(delivered.getAttribute("title")).toContain("laut Versanddienst angekommen");
     expect(card.querySelector(".cl-f.is-total small")?.textContent).toBe("alle erreicht");
-    expect(Array.from(card.querySelectorAll(".cl-tags .cl-tag")).map((node) => node.textContent)).toContain("stoppt bei Antwort"); // Einstellungen in einer dezenten Zeile
+    // Einstellungen als zwei ruhige Zeilen mit Angaben – ohne Liste, ohne „persönlich“-Zähler, Drip „pro Stunde“, Versand mit ausgeschriebenen Tagen
+    const specs = Object.fromEntries(Array.from(card.querySelectorAll(".cl-spec")).map((node) => [node.querySelector("dt")?.textContent, node.querySelector("dd")?.textContent]));
+    expect(specs).toEqual({ Leadsparte: "Photovoltaik & Wärmepumpe", KI: "ausVorlage für alle", "Bei Antwort": "Serie stoppt", Versand: "Montag bis Freitag, 09:00–11:30 und 14:00–16:30", Drip: "40 pro Stunde", "A/B-Betreff": "A vorn" });
+    expect(card.textContent).not.toContain("Liste „Dachdecker Hessen“"); expect(card.textContent).not.toMatch(/persönlich|\/Std\./);
     const review = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
-    expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); expect(review.querySelector(".cl-alerts")?.textContent).toContain("zur Freigabe"); // wer noch keine E-Mail hat – und warum
+    expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); // wer noch keine E-Mail hat – und warum
+    expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe3 Erst-E-Mails warten"); // alles, was auf Freigabe wartet, in einem Hinweis
+    const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [node.querySelector("dt")?.textContent, node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe");
+  });
+  it("Kampagne geöffnet: Kopf wie die Karten – Name, ruhige Zeile, Stand und Knöpfe; Einstellungen als Steckbrief statt vieler Schilder", async () => {
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const { view } = mount(); await settle(300); await settle(300);
+    const open = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cl-card .cl-name")).find((node) => node.textContent?.includes("Solarteure Hessen – persönlich"))!;
+    await act(async () => { fireEvent.click(open); }); await settle(300); await settle(200);
+    const head = view.container.querySelector<HTMLElement>(".ch")!; expect(head).not.toBeNull();
+    expect(head.querySelector("h1")?.textContent).toBe("Solarteure Hessen – persönlich");
+    expect(Array.from(head.querySelectorAll(".ch-meta > span")).map((node) => node.textContent)).toEqual(["3 E-Mails im Ablauf", expect.stringMatching(/^gestartet am \d{2}\.\d{2}\.\d{4}, \d{2}:\d{2} Uhr$/)]);
+    expect(head.querySelector(".ch-side .cd-state")?.textContent).toBe("Aktiv"); expect(Array.from(head.querySelectorAll(".ch-side .campaign-act")).map((node) => node.textContent?.trim())).toEqual(["Pausieren", "Bearbeiten", "Karten verteilen", "Archivieren"]);
+    const facts = Object.fromEntries(Array.from(head.querySelectorAll(".ch-fact")).map((node) => [node.querySelector("dt")?.textContent, Array.from(node.querySelectorAll("dd > span")).map((part) => part.textContent)]));
+    expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], Leadsparte: ["Photovoltaik", "aus Name oder Liste erkannt"], KI: ["schreibt einzeln", "mit Freigabe · freier Vorschlag"], Versand: ["09:00–11:30 und 14:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
+    expect(head.querySelector(".ch-alerts .cl-approval")?.textContent).toBe("Zur Freigabe3 Erst-E-Mails warten"); // Freigabe in einem Hinweis, auch oben in der Kampagne
+    expect(head.querySelector(".cd-chips")).toBeNull(); // keine lange Schilder-Reihe mehr
   });
 });
 

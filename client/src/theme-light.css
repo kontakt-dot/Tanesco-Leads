@@ -1556,6 +1556,21 @@ html:not(.dark) .cl-folder-act.is-sort:hover { background: #f3f6f8 !important; }
 html:not(.dark) .cl-meta-folder { color: #4b5568 !important; }
 html:not(.dark) .cl-folder-empty { color: #8a94a6 !important; }
 html:not(.dark) .cl-folder-empty strong { color: #0f172a !important; }
+html:not(.dark) .ch-name h1 { color: #0f172a !important; }
+html:not(.dark) .ch-facts { background: #f8fafb !important; }
+html:not(.dark) .ch-fact { box-shadow: -1px 0 0 rgba(15, 23, 42, .05),0 -1px 0 rgba(15, 23, 42, .05) !important; }
+html:not(.dark) .ch-fact dt { color: #8a94a6 !important; }
+html:not(.dark) .ch-value { color: #0f172a !important; }
+html:not(.dark) .ch-value.is-warn { color: #8b5a60 !important; }
+html:not(.dark) .ch-sub { color: #8a94a6 !important; }
+html:not(.dark) .cl-spec dt { color: #8a94a6 !important; }
+html:not(.dark) .cl-spec dd { color: #0f172a !important; }
+html:not(.dark) .cl-spec dd small { color: #4b5568 !important; }
+html:not(.dark) .cl-spec.is-warn dd { color: #8b5a60 !important; }
+html:not(.dark) .cl-approval { color: #8b7e4b !important; }
+html:not(.dark) .cl-approval svg { color: #8a742a !important; }
+html:not(.dark) .cl-approval strong { color: #8a742a !important; }
+html:not(.dark) .cl-approval span::before { color: #8b7e4b !important; }
 html:not(.dark) .xl-head h2 { color: #0f172a !important; }
 html:not(.dark) .xl-head h2 span { color: #4b5568 !important; background: #f8fafb !important; }
 html:not(.dark) .xl-head p { color: #8a94a6 !important; }
@@ -3824,3 +3839,20 @@ html:not(.dark) .cl-meta-folder { color: #9f1239 !important; }
 html:not(.dark) .cl-folder-empty { color: #667085 !important; }
 html:not(.dark) .cl-folder-empty svg { color: #98a2b3 !important; }
 html:not(.dark) .cl-folder-empty strong { color: #101828 !important; }
+
+/* Kampagne geöffnet: Steckbrief der Einstellungen hell */
+html:not(.dark) .ch-name h1 { color: #0f172a !important; }
+html:not(.dark) .ch-facts { background: #f8fafc !important; box-shadow: inset 0 0 0 1px #eef0f4 !important; }
+html:not(.dark) .ch-fact { box-shadow: -1px 0 0 #e4e7ec, 0 -1px 0 #e4e7ec !important; }
+html:not(.dark) .ch-fact dt, html:not(.dark) .ch-sub { color: #667085 !important; }
+html:not(.dark) .ch-value { color: #101828 !important; }
+html:not(.dark) .ch-value.is-warn { color: #be123c !important; }
+html:not(.dark) .cl-approval { background: #fffaeb !important; border-color: #fedf89 !important; color: #93370d !important; }
+html:not(.dark) .cl-approval svg, html:not(.dark) .cl-approval strong { color: #b54708 !important; }
+html:not(.dark) .cl-approval span::before { color: #dc6803 !important; }
+html:not(.dark) .cl-approval:hover { background: #fef0c7 !important; }
+html:not(.dark) .cl-spec dt { color: #667085 !important; }
+html:not(.dark) .cl-spec dd { color: #101828 !important; }
+html:not(.dark) .cl-spec dd small { color: #475467 !important; }
+html:not(.dark) .cl-spec dd small::before { color: #98a2b3 !important; }
+html:not(.dark) .cl-spec.is-warn dd { color: #be123c !important; }
