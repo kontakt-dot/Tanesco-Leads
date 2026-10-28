@@ -2997,6 +2997,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const board = await owner.leadops.pipelineOverview({ source: "email", listName: "Versendet-Test" });
     expect(board.totals.leads).toBe(3); expect(board.lists.find((item) => item.name === "Versendet-Test")?.count).toBe(3);
     expect(board.stages.find((stage) => stage.key === "versendet")!.leads.map((lead) => lead.id).sort()).toEqual([ids.vera, ids.nora].sort());
+    // Zahl oben in der Spalte = alle Karten, auch wenn weniger geladen sind („weitere anzeigen“)
+    const capped = await owner.leadops.pipelineOverview({ source: "email", listName: "Versendet-Test", limitPerStage: 1 });
+    const sentColumn = capped.stages.find((stage) => stage.key === "versendet")!; expect(sentColumn.leads).toHaveLength(1); expect(sentColumn.total).toBe(2);
     expect((await owner.leadops.pipelineOverview({ source: "email" })).lists.some((item) => item.name === "Versendet-Test")).toBe(true);
     // „Früheren Stand wiederherstellen“ erkennt das automatische Einsortieren
     const preview = (await owner.leadops.pipelineStateAt({ at: beforeRun })).items;

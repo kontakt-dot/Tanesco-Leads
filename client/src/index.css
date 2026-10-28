@@ -2913,6 +2913,10 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .restore-list td small{display:block;color:#94a3b8;font-size:11px;overflow-wrap:anywhere}
 .restore-list tr.is-off td{opacity:.45}
 .restore-list td small.restore-new{color:#fcd34d}
+/* Board: mehr Karten als geladen – „weitere anzeigen“ unten in der Spalte */
+.pipeline-more{display:block;width:100%;margin:6px 0 2px;padding:8px 10px;border-radius:10px;border:1px dashed rgba(129,120,255,.45);background:rgba(129,120,255,.08);color:#d6d1ff;font-size:12px;font-weight:600;text-align:center}
+.pipeline-more:hover:not(:disabled){background:rgba(129,120,255,.16);border-style:solid}
+.pipeline-more[aria-busy="true"]{cursor:progress;opacity:.8}
 .restore-state{display:grid;gap:1px}
 .restore-state span{color:#94a3b8}
 .restore-state span.is-changed.is-now{color:#fca5a5;text-decoration:line-through;text-decoration-color:rgba(252,165,165,.5)}

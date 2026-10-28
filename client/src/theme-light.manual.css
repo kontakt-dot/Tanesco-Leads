@@ -1573,6 +1573,8 @@ html:not(.dark) .restore-state span.is-changed.is-now { color: #b91c1c !importan
 html:not(.dark) .restore-state span.is-changed.is-then { color: #15803d !important; }
 html:not(.dark) .restore-confirm { color: #b45309 !important; }
 html:not(.dark) .restore-list td small.restore-new { color: #b45309 !important; }
+html:not(.dark) .pipeline-more { background: #f5f3ff !important; border-color: #c4b5fd !important; color: #5b21b6 !important; }
+html:not(.dark) .pipeline-more:hover:not(:disabled) { background: #ede9fe !important; }
 /* Kontakte: gesendete E-Mails je Kontakt */
 html:not(.dark) .email-leads-mails { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #5b21b6 !important; }
 html:not(.dark) .email-leads-mails small { color: #6b7280 !important; }

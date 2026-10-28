@@ -1114,6 +1114,7 @@ describe("Pipeline „E-Mail-Kampagne“: Spalte „Versendet“ und Filter nach
     const board = await call("leadops.pipelineOverview", { source: "email", listName: "Versendet-Probe" });
     expect(board.totals.leads).toBe(2); expect(board.lists.some((item: { name: string; count: number }) => item.name === "Versendet-Probe" && item.count === 2)).toBe(true);
     expect(board.stages.find((stage: { key: string }) => stage.key === "versendet").leads.map((row: { id: number }) => row.id)).toEqual([vera.id]);
+    expect(board.stages.find((stage: { key: string }) => stage.key === "versendet").total).toBe(1);
   });
 });
 
