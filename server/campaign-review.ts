@@ -8,7 +8,7 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
 import { audienceLists, kiModusOf } from "../shared/email-campaigns";
-import { applyPayFit, DEFAULT_SPARTE, fitsSparte, fixQuestionCount, isEnergySparte, mentionsQuestions, numberWord, offersForeignLeads, paysOnlyFitting, qualifyPhrase, questionCount, questionTopics, sparteOf, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
+import { applyPayFit, DEFAULT_SPARTE, fitsSparte, fixQuestionCount, isEnergySparte, mentionsQuestions, numberWord, offerChain, offersForeignLeads, paysOnlyFitting, qualifyPhrase, questionCount, questionTopics, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
 import { extractProfile } from "../shared/lead-finder";
 import { cleanDraftText, dropAdPlatforms, shortParagraphs, PORTAL_RE, smoothQualifyPhrase, approachLabel, approachOf, LEGACY_APPROACH, DRAFT_APPROACHES, copiesTemplate, dropThirdPartyClaim, fixTreeQuestions, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
@@ -87,13 +87,15 @@ function systemFor(sparte: Sparte): string {
   const energy = isEnergySparte(sparte);
   const qualify = qualifyPhrase(sparte); const count = questionCount(sparte); // Hausnotruf 6, Elektrorollstuhl 6, Alarmanlage 8, PV & WP 10 – sonst ohne Zahl
   const countRule = count ? `Bei ${sparte.label} qualifizieren wir mit ${numberWord(count)} Fragen – nenne nie eine andere Zahl, auch wenn Vorlage oder Beispiel eine andere nennen${count !== 10 ? " (z. B. zehn)" : ""}.` : `Für ${sparte.label} nennst du keine Zahl von Fragen – schreibe „anhand gezielter Fragen“.`;
-  // Teaser in Klammern, worum es bei den Fragen geht: feste Punkte je Sparte – neue Sparten: die KI nennt drei passende
-  const topicRule = questionTopics(sparte) ? `Die Klammer nach der Zahl der Fragen gehört immer dazu – sie zeigt kurz, was wir abfragen. Inhalt genau so, Wortlaut darf leicht variieren.` : `Nenne direkt hinter „anhand gezielter Fragen“ in Klammern drei typische Punkte, die bei Anfragen zu ${sparte.topic} am Telefon abgefragt werden – kurz, konkret und passend zu ${sparte.topic}, z. B. „anhand gezielter Fragen (z. B. …, … und …) telefonisch vorqualifiziert“.`;
+  // Beispiele OHNE Klammern, worum es bei den Fragen geht (feste Punkte je Sparte – neue Sparten: die KI nennt drei passende), danach die Logik-Kette
+  const examples = topicsExamples(sparte); const chain = offerChain(sparte);
+  const topicRule = questionTopics(sparte) ? `Direkt nach diesem Satz folgt ein eigener Satz mit Beispielen, was wir abfragen – genau so, ohne Klammern: „${topicsSentence(sparte)}“` : `Direkt nach diesem Satz folgt ein eigener Satz mit drei typischen Punkten, die bei Anfragen zu ${sparte.topic} am Telefon abgefragt werden – ohne Klammern, kurz, konkret und passend zu ${sparte.topic}: „Abgefragt werden beispielsweise …, …, … usw.“`;
+  const chainRule = `Danach kommt die Logik-Kette, wörtlich oder sehr nah daran: „${chain}“ – der Interessent wartet auf den Anruf des Betriebs, damit er das Angebot bekommt. Nie Klammern für die Beispiele, nie „(z. B. …)“.`;
   return `Du schreibst für Tanesco Digital (einer der größten Leadlieferanten Deutschlands) Akquise-E-Mails an ${sparte.recipients} – jede einzeln, wie von Hand geschrieben, nie wie ein Serienbrief. Je nach Auftrag schreibst du die Erst-E-Mail oder eine Nachfass-Mail, als die verlangten Vorschläge (Ansätze), alle persönlich auf genau diesen Empfänger zugeschnitten.
 
 LEADSPARTE dieser Kampagne: ${sparte.label}. Jede E-Mail handelt ausschließlich von ${sparte.leads} – Interessenten für ${sparte.topic}, die Tanesco gewinnt und an den Empfänger übergibt. Keine andere Sparte erwähnen${energy ? "" : " – kein Wort zu Photovoltaik, Solar, PV oder Wärmepumpen"}. Vorlage und Beispiel unten können aus einer anderen Sparte stammen: übernimm daraus nur Aufbau und Ton, nie das Thema.
 
-Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selbst online generieren (eigene Online-Leadgenerierung), ${qualify}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt.${paysOnlyFitting(sparte) ? " Abrechnung: Der Betrieb zahlt nur für Leads, die zu ihm passen." : " Behaupte NICHT, dass der Betrieb nur für passende Leads zahlt – das gilt in dieser Sparte nicht."} Test-Angebot: 20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – baue dieses Angebot in beide Ansätze ein, Drittanbieter und freien Vorschlag (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
+Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selbst online generieren (eigene Online-Leadgenerierung), ${qualify}${examples ? ` – abgefragt werden ${examples}` : ""}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf den Anruf des Betriebs. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt.${paysOnlyFitting(sparte) ? " Abrechnung: Der Betrieb zahlt nur für Leads, die zu ihm passen." : " Behaupte NICHT, dass der Betrieb nur für passende Leads zahlt – das gilt in dieser Sparte nicht."} Test-Angebot: 20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – baue dieses Angebot in beide Ansätze ein, Drittanbieter und freien Vorschlag (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
 
 1) "drittanbieter" – Drittanbieter-Ansatz. Kernbotschaft, die IMMER enthalten sein muss: Wir sind einer der größten Lead-Lieferanten Deutschlands, und über unsere Quellen haben wir mitbekommen, dass bei der Firma sehr wahrscheinlich Leads ankommen, die ohnehin von uns stammen – nur weitergereicht über Zwischenhändler. Dieser Umweg macht Qualität und Preis kaputt: Die Leads werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und beim Betrieb kommen genervte Interessenten und falsche Kontaktdaten an. Genau deshalb streben wir die direkte Zusammenarbeit mit dieser Firma an (kürzere Lieferkette, besserer Preis ohne Zwischenstufen, mehr Transparenz, direkte Qualitätskontrolle). Formuliere es als begründete Vermutung („sehr wahrscheinlich“, „gehen wir davon aus“), nie als bewiesene Tatsache, und erfinde keinen konkreten Zwischenhändler-Namen. Seriös und förmlich, darf eine kurze Aufzählung der Vorteile haben, bittet um ein Telefonat mit dem Ansprechpartner aus dem Leadmanagement. Trotzdem IMMER persönlich und individuell, nie Serienbrief: mindestens zwei konkrete Bezüge auf genau diese Firma (etwas Wörtliches oder Konkretes von der Webseite, die Leistung/Spezialisierung, Region/Einzugsgebiet, Größe oder Geschäftsfeld) – einer davon im ersten Absatz, bevor die Kernbotschaft kommt, und die Vorteile auf die Situation der Firma bezogen. 120–200 Wörter.
 
@@ -104,8 +106,8 @@ Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selb
 
 Wie wir die Interessenten gewinnen: nur „online“ bzw. „eigene Online-Leadgenerierung“ – nenne NIE Meta, Facebook, Instagram, Google oder andere Plattformen.
 Aroundhome erwähnst du NIE – weder den Namen noch Zahlen, Antworten, Bewertungen oder Anfragen von dort, auch nicht umschrieben. Auch keine anderen Portale oder Vermittler beim Namen. Bewertungen darfst du nur ansprechen, wenn in den Daten ausdrücklich Google-Bewertungen stehen – dann als „Google-Bewertungen“ und nur mit genau diesen Zahlen; sonst gar keine Bewertungen erwähnen.
-Formulierung zur Qualifizierung immer so: „${qualify}“ – nie „qualifiziert über … Fragen“. ${countRule} ${topicRule}
-Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlich, in Nachfass-Mails in ein bis zwei Sätzen): das Test-Angebot (20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert) und wie wir qualifizieren (${qualify}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet). Den Firmennamen des Betriebs nennen wir dabei NICHT – das darf nirgends stehen. Fehlt von den Pflichtinhalten etwas, ist die E-Mail falsch.
+Formulierung zur Qualifizierung immer so: „${qualify}“ – nie „qualifiziert über … Fragen“. ${countRule} ${topicRule} ${chainRule}
+Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlich, in Nachfass-Mails in ein bis zwei Sätzen): das Test-Angebot (20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert), wie wir qualifizieren (${qualify}, mit den Beispielen) und die Logik-Kette (der Interessent weiß, dass sich ein ${sparte.partner} mit einem Angebot bei ihm meldet – er wartet auf den Anruf des Betriebs). Den Firmennamen des Betriebs nennen wir dabei NICHT – das darf nirgends stehen. Fehlt von den Pflichtinhalten etwas, ist die E-Mail falsch.
 
 Regeln für beide: Deutsch, Sie-Form. Kurze Absätze, damit die E-Mail leicht lesbar ist: je Absatz ein bis drei Sätze (etwa zwei bis drei Zeilen), dazwischen immer eine Leerzeile – nie ein langer Textblock. Für die Anrede gibt es genau zwei Formen: „Sehr geehrter Herr Nachname,“ / „Sehr geehrte Frau Nachname,“ – oder „Sehr geehrte Damen und Herren,“. Nie „Hallo“, „Hi“, „Moin“, nie „Guten Tag Vorname Nachname“, nie nur der Vorname. Herr oder Frau darfst du aus einem eindeutigen Vornamen ableiten (Stefan → Herr, Katrin → Frau); ist der Vorname nicht eindeutig oder fehlt der Nachname, schreibst du „Sehr geehrte Damen und Herren“. Steht in den Angaben kein Ansprechpartner, nimm den Geschäftsführer oder Inhaber aus dem Impressum (siehe „Geschäftsführung laut Impressum“ bzw. den Webseiten-Auszug) und sprich diese Person in BEIDEN Vorschlägen direkt mit Herr/Frau und Nachnamen an (ohne Vornamen und Titel) – aber nur, wenn der Name wörtlich im Auszug steht, nie geraten. Erst wenn es gar keinen Namen gibt: „Sehr geehrte Damen und Herren“ – nie „Hallo“ ohne Namen. Nichts erfinden: keine Zahlen, Standorte, Zitate, Namen oder Fakten, die nicht in den Angaben oder auf der Webseite stehen – Webseiten-Zitate nur wörtlich aus dem Auszug. Keine Floskeln, kein „ich habe Ihre Webseite besucht“, keine Links, kein Knopf, keine Terminbuchung, keine Ausrufezeichen. Der Schluss ist immer gleich aufgebaut: vorletzter Absatz = ein klarer Satz, was zu tun ist – „Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter <Telefon des Absenders>.“ (Telefon steht in den Angaben; fehlt es: nur „antworten Sie einfach auf diese E-Mail“; eine Variante wie „Lassen Sie uns gerne sprechen: …“ ist erlaubt, die Nummer muss dann trotzdem drinstehen) – und die letzte Zeile lautet genau „Vielen Dank“. KEINE Grußformel danach – kein „Mit freundlichen Grüßen“, kein „Viele Grüße“, kein Name: Die Signatur, die das System automatisch anhängt, enthält Gruß und Namen schon. Betreff je Vorschlag: konkret, persönlich, höchstens 70 Zeichen, kein Clickbait.
 Die Vorlage der Kampagne zeigt nur Thema und Ton – übernimm daraus keine Sätze; jede E-Mail wird neu für genau diese Firma geschrieben (Thema immer die Leadsparte oben).
@@ -153,13 +155,14 @@ export function fixGreeting(text: string, greeting: string): string {
   return [head, ...lines.slice(1)].join("\n").replace(/^([^\n]+,)\n(?!\n)/, "$1\n\n");
 }
 /** Fehlen Test-Angebot oder Qualifizierung, kommen sie als eigener Absatz vor den Schluss – damit kein Entwurf ohne die Kerninhalte rausgeht. Die Zahl der Fragen kommt aus der Sparte (Hausnotruf 6, Alarmanlage 8, PV & WP 10). */
-export function ensureFacts(text: string, followUp: boolean, partner = "Fachbetrieb", sparte?: Pick<Sparte, "key"> & { questions?: number | null }): string {
+export function ensureFacts(text: string, followUp: boolean, partner = "Fachbetrieb", sparte?: Pick<Sparte, "key"> & { questions?: number | null }): string { // Beispiele und Logik-Kette setzt danach withQuestionTopics dazu
   const hasOffer = /test-?leads?/i.test(text) && /\b20\b/.test(text); const hasQualify = mentionsQuestions(text);
   if (hasOffer && (hasQualify || followUp)) return text;
   const qualify = qualifyPhrase(sparte);
-  const add = !hasOffer && !hasQualify && !followUp ? `Damit Sie das ohne Risiko prüfen können: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und ${qualify}, sodass der Interessent weiß, dass sich ein ${partner} bei ihm meldet.`
+  void partner;
+  const add = !hasOffer && !hasQualify && !followUp ? `Damit Sie das ohne Risiko prüfen können: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und ${qualify}.`
     : !hasOffer ? "Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert."
-    : `Jeder Interessent wird ${qualify}, sodass er weiß, dass sich ein ${partner} bei ihm meldet.`;
+    : `Jeder Interessent wird ${qualify}.`;
   // vor den Schluss: Handlungsaufforderung und „Vielen Dank“ bleiben am Ende (früher stand das Test-Angebot manchmal unter „Vielen Dank“)
   const parts = text.split(/\n{2,}/); let at = parts.length;
   for (let index = parts.length - 1; index > 0; index -= 1) { if (CTA_RE.test(parts[index]) || THANKS_RE.test(parts[index])) at = index; else break; }
@@ -196,12 +199,13 @@ export function dropCompanyNameClaim(text: string): string {
   }).join("").replace(/[ \t]{2,}/g, " ");
 }
 /** Alle Regeln auf einen Entwurf anwenden – gilt für KI-Texte wie für Vorlagen-Rückfälle. */
-export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean; partner?: string; sparte?: Pick<Sparte, "key"> & { questions?: number | null }; approach?: string | null }): string {
+export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean; partner?: string; sparte?: Pick<Sparte, "key"> & { questions?: number | null; topics?: string[] | null; partner?: string }; approach?: string | null }): string {
   const withFacts = ensureFacts(fixGreeting(dropCompanyNameClaim(text.trim()), options.greeting), options.followUp, options.partner, options.sparte);
   const payFit = options.sparte ? applyPayFit(withFacts, { sparte: options.sparte, approach: options.approach, followUp: options.followUp }) : withFacts; // PV & WP: „nur passende Leads zahlen“ im freien Vorschlag – sonst nirgends erzwungen
   const done = cleanDraftText(ensureClosing(payFit, options.phone));
-  // Zahl der Fragen passend zur Sparte (auch wenn die KI „zehn“ aus der Vorlage übernimmt) – mit dem Teaser in Klammern, worum es geht
-  return options.sparte ? shortParagraphs(withQuestionTopics(fixQuestionCount(done, options.sparte), options.sparte)) : done;
+  // Zahl der Fragen passend zur Sparte (auch wenn die KI „zehn“ aus der Vorlage übernimmt) – dahinter Beispiele ohne Klammern und die Logik-Kette
+  const sparte = options.sparte ? { ...options.sparte, partner: options.sparte.partner ?? options.partner } : null;
+  return sparte ? shortParagraphs(withQuestionTopics(fixQuestionCount(done, sparte), sparte)) : done;
 }
 type FollowUpInfo = { index: number; sentSubjects: string[] } | null; // Nr. der E-Mail im Ablauf (0 = Erst-E-Mail) und was schon raus ist
 /** Ein KI-Vorschlag samt Schwächen („bezuege“ = zu wenig Bezug auf die Firma, „vorlage“ = zu nah an der Vorlage) – Schwächen führen zu einem zweiten Versuch, nie zum Wegwerfen. */
@@ -460,9 +464,10 @@ export async function addPayFitToDrafts(db: Db): Promise<number> {
   return changed;
 }
 /**
- * Einmal nach dem Serverstart: Zahl der Fragen passend zur Leadsparte samt Teaser in Klammern, worum es geht (Hausnotruf: Krankenkasse,
- * Pflegegrad, Wohnsituation …) – in den Vorlagen (Ablauf, nur bei eingetragener oder erkannter Sparte) und in allen offenen, noch nicht
- * gesendeten Entwürfen (auch freigegebenen). Dabei auch: nie Meta & Co. („online“), kurze Absätze. Hausnotruf und Elektrorollstuhl
+ * Einmal nach dem Serverstart: Zahl der Fragen passend zur Leadsparte, dahinter ohne Klammern „Abgefragt werden beispielsweise … usw.“
+ * (Hausnotruf: die Krankenkasse, der Pflegegrad, die Wohnsituation …) und die Logik-Kette „Der Interessent weiß danach, dass sich ein Fachbetrieb
+ * bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.“ – in den Vorlagen aller Kampagnen (die Zahl der Fragen
+ * nur bei eingetragener oder erkannter Sparte) und in allen offenen, noch nicht gesendeten Entwürfen (auch freigegebenen). Dabei auch: nie Meta & Co. („online“), kurze Absätze. Hausnotruf und Elektrorollstuhl
  * sechs Fragen, Alarmanlage acht, PV & WP zehn, andere Sparten ohne feste Zahl („anhand gezielter Fragen“). Mehrfach ausführbar.
  */
 export async function fixQuestionCounts(db: Db): Promise<{ campaigns: number; drafts: number }> {
@@ -470,11 +475,11 @@ export async function fixQuestionCounts(db: Db): Promise<{ campaigns: number; dr
   let fixedCampaigns = 0; let fixedDrafts = 0;
   for (const campaign of campaigns) {
     const sparte = sparteOfCampaign(campaign); const known = sparte.source !== "standard"; // Vorlagen nur bei eingetragener/erkannter Sparte – KI-Entwürfe sind immer für die Sparte der Kampagne geschrieben
-    const tree = known && campaign.tree ? fixTreeQuestions(campaign.tree as EmailTree, sparte) : null;
+    const tree = campaign.tree ? fixTreeQuestions(campaign.tree as EmailTree, sparte, { counts: known }) : null; // Beispiele und Kette in allen Kampagnen – die Zahl der Fragen nur bei gewählter/erkannter Sparte
     if (tree) { await db.update(emailCampaigns).set({ tree, updatedAt: campaign.updatedAt }).where(eq(emailCampaigns.id, campaign.id)); fixedCampaigns += 1; } // Reihenfolge der Kampagnen bleibt
     const rows = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText, draftOptions: emailCampaignRecipients.draftOptions }).from(emailCampaignRecipients)
       .where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), isNotNull(emailCampaignRecipients.draftState)));
-    // nie Meta & Co. („online“), kurze Absätze, Zahl der Fragen mit Teaser in Klammern
+    // nie Meta & Co. („online“), kurze Absätze, Zahl der Fragen mit Beispielen ohne Klammern und der Logik-Kette
     const refresh = (text: string) => shortParagraphs(withQuestionTopics(fixQuestionCount(cleanDraftText(text), sparte), sparte));
     for (const row of rows) {
       const text = row.draftText ? refresh(row.draftText) : row.draftText;

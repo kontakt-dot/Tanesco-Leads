@@ -18,6 +18,7 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
   });
   it("Sätze: „z. B.“, „u. a.“, Datum und Klammern trennen keinen Satz", () => {
     expect(splitSentences("Wir prüfen z. B. die Krankenkasse. Am 28. Oktober geht es los (u. a. in Kassel). Danach melden wir uns!")).toEqual(["Wir prüfen z. B. die Krankenkasse.", "Am 28. Oktober geht es los (u. a. in Kassel).", "Danach melden wir uns!"]);
+    expect(splitSentences("Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad usw. Der Interessent weiß danach Bescheid.")).toEqual(["Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad usw.", "Der Interessent weiß danach Bescheid."]); // „usw.“ am Satzende
   });
   it("kurze Absätze: lange Absätze werden an Satzgrenzen geteilt – zwei bis drei Zeilen, dann eine Leerzeile", () => {
     const long = "wir von Tanesco Digital gehören zu den größten Lead-Lieferanten in Deutschland für Hausnotruf. Die Interessenten gewinnen wir selbst online. Unsere Anfragen werden in der Regel anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert, sodass der Interessent weiß, dass sich der Anbieter bei ihm meldet. Die Übergabe läuft in Echtzeit per Schnittstelle, ohne Vorkasse und ohne lange Bindung.";
@@ -28,10 +29,16 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
     expect(out).toContain("• Punkt eins\n• Punkt zwei"); expect(out.endsWith("Vielen Dank")).toBe(true); // Aufzählung und Schluss bleiben
     expect(shortParagraphs(out)).toBe(out); // mehrfach ohne Nebenwirkung
     expect(shortParagraphs("Kurzer Absatz.\n\nNoch einer.")).toBe("Kurzer Absatz.\n\nNoch einer.");
+    // Qualifizierung und Beispiele bleiben zusammen, die Logik-Kette bekommt einen eigenen Absatz
+    const qualify = "Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.";
+    const chain = "Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.";
+    expect(shortParagraphs(`Wir sind Tanesco Digital. ${qualify} ${chain}`)).toBe(`Wir sind Tanesco Digital. ${qualify}\n\n${chain}`);
+    expect(shortParagraphs(`${qualify}\n\n${chain}`)).toBe(`${qualify}\n\n${chain}`);
   });
-  it("feste Vorlagen: online, kurze Absätze, Fragen mit Teaser", () => {
+  it("feste Vorlagen: online, kurze Absätze, Fragen mit Beispielen (ohne Klammern) und Logik-Kette", () => {
     const third = thirdPartyTemplate({ firma: "Notruf Nord GmbH" }, resolveSparte("Hausnotruf")!).text;
-    expect(third).not.toMatch(/Meta|Facebook|Instagram/); expect(third).toContain("Eigene Online-Leadgenerierung"); expect(third).toContain("sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)");
+    expect(third).not.toMatch(/Meta|Facebook|Instagram/); expect(third).toContain("Eigene Online-Leadgenerierung"); expect(third).not.toMatch(/\(z\. ?B\./);
+    expect(third).toContain("• Telefonische Vorqualifizierung jedes Interessenten anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.\n• Der Interessent weiß, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf\n");
     expect(third.split("\n\n").every((part) => part.length <= 260 || /\n/.test(part))).toBe(true);
     for (const kind of ["kaltakquise", "nachfassen", "angebot", "aufwecken"] as const) {
       const texts = starterBlocks(kind).flatMap((block) => block.type === "text" ? [block.text] : []);

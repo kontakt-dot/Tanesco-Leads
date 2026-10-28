@@ -21,7 +21,9 @@ describe("Freier Vorschlag: wirklich auf die Firma geschrieben – schwache Text
     // was die KI zu hören bekommt: Sparte, sechs Fragen, keine Sätze aus der Vorlage, Bezüge nennen
     const call = invoke.mock.calls[0][0] as { messages: Array<{ role: string; content: string }>; outputSchema: { schema: { properties: Record<string, { required: string[] }> } } };
     const system = call.messages[0].content; const user = call.messages[1].content;
-    expect(system).toContain("in der Regel anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert"); expect(system).not.toContain("zehn Fragen");
+    expect(system).toContain("in der Regel anhand von sechs Fragen telefonisch vorqualifiziert – abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw."); expect(system).not.toContain("zehn Fragen");
+    expect(system).toContain("ohne Klammern: „Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.“"); expect(system).toContain("Nie Klammern für die Beispiele"); // Beispiele als eigener Satz
+    expect(system).toContain("„Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.“"); // Logik-Kette
     expect(system).not.toMatch(/Meta-Kampagnen|\(Facebook/); expect(system).toContain("selbst online generieren"); expect(system).toContain("nenne NIE Meta, Facebook, Instagram"); // online statt Meta
     expect(system).toContain("je Absatz ein bis drei Sätze"); // kurze Absätze
     expect(system).toContain("Übernimm KEINEN Satz aus der Vorlage"); expect(system).toContain("mindestens zwei konkrete Punkte"); expect(system).toContain("Geschäftsführung laut Impressum"); expect(system).toContain("kreative Idee");
@@ -34,12 +36,12 @@ describe("Freier Vorschlag: wirklich auf die Firma geschrieben – schwache Text
     const second = invoke.mock.calls[1][0] as { messages: Array<{ content: string }>; outputSchema: { schema: { required: string[] } } };
     expect(second.outputSchema.schema.required).toEqual(["drittanbieter", "frei"]); expect(second.messages[1].content).toContain("Schreibe beide Vorschläge");
   });
-  it("neue Leadsparte: die KI nennt drei passende Punkte in Klammern – bekannte Sparten haben feste Punkte", async () => {
+  it("neue Leadsparte: die KI nennt drei passende Punkte als Beispiele (ohne Klammern) – bekannte Sparten haben feste Punkte", async () => {
     const { aiDrafts } = await import("./campaign-review"); const { resolveSparte } = await import("../shared/lead-sparte");
     invoke.mockResolvedValueOnce(answer({ frei: { subject: "Pools in Kassel", text: own, bezuege: ["Kassel", "Webseite"] } }));
     await aiDrafts(template, info, site, { approaches: ["frei"], sparte: resolveSparte("Pool-Bau")! });
     const system = (invoke.mock.calls[0][0] as { messages: Array<{ content: string }> }).messages[0].content;
-    expect(system).toContain("drei typische Punkte, die bei Anfragen zu Pool-Bau am Telefon abgefragt werden"); expect(system).toContain("anhand gezielter Fragen telefonisch vorqualifiziert");
+    expect(system).toContain("drei typischen Punkten, die bei Anfragen zu Pool-Bau am Telefon abgefragt werden – ohne Klammern"); expect(system).toContain("„Abgefragt werden beispielsweise …, …, … usw.“"); expect(system).toContain("anhand gezielter Fragen telefonisch vorqualifiziert");
   });
   it("abgeschriebene Vorlage oder ohne Bezüge auf die Firma → als schwach markiert (die KI schreibt ihn mit genauem Hinweis neu) – nie weggeworfen", async () => {
     const { aiDrafts, retryNoteFor } = await import("./campaign-review"); const { resolveSparte } = await import("../shared/lead-sparte");

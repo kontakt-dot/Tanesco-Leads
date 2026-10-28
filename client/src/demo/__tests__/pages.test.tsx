@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DemoApp from "../App.demo";
 import { localDemoLink } from "../link";
-import { resetStore } from "../backend";
+import { getStore, resetStore } from "../backend";
 
 const routes = [
   "page=Dashboard", "page=Statistik", "page=Statistik&view=Käufer", "page=Statistik&view=Lieferanten", "page=Statistik&view=Lieferketten", "page=Statistik&view=Integrationen",
@@ -94,6 +94,16 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); // wer noch keine E-Mail hat – und warum
     expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe3 Erst-E-Mails warten"); // alles, was auf Freigabe wartet, in einem Hinweis
     const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [node.querySelector("dt")?.textContent, node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe");
+  });
+  it("Versand: eine gespeicherte Tageszeit, die genau der normalen Zeit entspricht, steht nicht extra da – nur echte Abweichungen („freitags bis 13:00“)", async () => {
+    const row = getStore().tables.emailCampaigns.find((item) => item.name === "Dachdecker Hessen – Erstkontakt")!;
+    row.sendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00", timezone: "Europe/Berlin", preset: "2fenster-0900-1130-1400-1630", days: { "1": { from: "09:00", to: "16:30" }, "5": { from: "09:00", to: "13:00" } } };
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const { view } = mount(); await settle(300); await settle(300);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Dachdecker Hessen – Erstkontakt"))!;
+    const versand = Array.from(card.querySelectorAll<HTMLElement>(".cl-spec")).find((node) => node.querySelector("dt")?.textContent === "Versand")!;
+    expect(versand.querySelector("dd small")?.textContent).toBe("freitags bis 13:00"); // echte Abweichung bleibt
+    expect(versand.textContent).not.toContain("montags"); // Montag hat die normale Zeit – kein „montags bis 16:30“
   });
   it("Kampagne geöffnet: Kopf wie die Karten – Name, ruhige Zeile, Stand und Knöpfe; Einstellungen als Steckbrief statt vieler Schilder", async () => {
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");

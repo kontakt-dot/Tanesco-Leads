@@ -755,11 +755,16 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: saved.id })).tree)).toContain("anhand von sechs Fragen");
     expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: named.id })).tree)).toContain("anhand von acht Fragen");
     expect(String(row.draftText)).toContain("sechs Fragen"); expect(String(row.draftText)).not.toContain("zehn Fragen");
-    const pv = await call("leadops.saveEmailCampaign", { ...base, name: "PV & WP • Erstkontakt" }); expect(pv.fixedQuestions).toBe(true); // Zahl bleibt, der Teaser in Klammern kommt dazu
-    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: pv.id })).tree)).toContain("zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch)");
-    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: saved.id })).tree)).toContain("sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)");
-    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: named.id })).tree)).toContain("acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage)");
-    expect(String(row.draftText)).toContain("sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)"); // Entwurf mit Teaser
+    const pv = await call("leadops.saveEmailCampaign", { ...base, name: "PV & WP • Erstkontakt" }); expect(pv.fixedQuestions).toBe(true); // Zahl bleibt, die Beispiele kommen dazu (ohne Klammern)
+    const treeOf = async (id: number) => JSON.stringify((await call("leadops.getEmailCampaign", { id })).tree);
+    expect(await treeOf(pv.id)).toContain("zehn Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Eigentumsverhältnisse, der Zustand von Dach und Heizung, der aktuelle Stromverbrauch usw.");
+    expect(await treeOf(saved.id)).toContain("sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.");
+    expect(await treeOf(named.id)).toContain("acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Fläche, die abgesichert werden soll, die Objektart, um die es sich handelt, die gewünschte Art der Alarmanlage usw.");
+    expect(await treeOf(saved.id)).toContain("Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf."); // Logik-Kette, Partner passend zur Sparte
+    expect(await treeOf(named.id)).toContain("Der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
+    for (const id of [pv.id, saved.id, named.id]) expect(await treeOf(id)).not.toMatch(/\(z\. ?B\./); // nie mehr Klammern
+    expect(String(row.draftText)).toContain("sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw."); // Entwurf mit Beispielen
+    expect(String(row.draftText)).toContain("Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
     const pvTree = (await call("leadops.getEmailCampaign", { id: pv.id })).tree;
     expect((await call("leadops.saveEmailCampaign", { ...base, id: pv.id, name: "PV & WP • Erstkontakt", tree: pvTree })).fixedQuestions).toBe(false); // schon angepasst
   });

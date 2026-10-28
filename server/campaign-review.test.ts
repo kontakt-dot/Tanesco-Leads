@@ -28,7 +28,7 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(blocks.map((block) => block.type)).toEqual(["text", "signature"]); expect((blocks[0] as { text: string }).text).toBe("Hallo,\n\npersönlicher Text.");
   });
   it("Entwurf-Regeln: nie „Hallo“, Pflichtinhalte, Schluss mit Kontaktweg + Telefon und „Vielen Dank“", async () => {
-    const { fixGreeting, finishDraft } = await import("./campaign-review");
+    const { fixGreeting, finishDraft } = await import("./campaign-review"); const { DEFAULT_SPARTE } = await import("../shared/lead-sparte");
     const greeting = "Sehr geehrte Damen und Herren";
     expect(fixGreeting("Hallo Herr Wiebe,\n\nText.", greeting)).toBe("Sehr geehrter Herr Wiebe,\n\nText.");
     expect(fixGreeting("Hallo Frau Kurz,\nText.", greeting)).toBe("Sehr geehrte Frau Kurz,\n\nText.");
@@ -40,8 +40,10 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(fixGreeting("Sehr geehrte Frau Dr. Lenz,\n\nText.", greeting)).toBe("Sehr geehrte Frau Dr. Lenz,\n\nText."); // förmliche Anrede der KI (z. B. aus dem Impressum) bleibt
     expect(fixGreeting("Text ohne Anrede.", "Sehr geehrter Herr Muster")).toBe("Sehr geehrter Herr Muster,\n\nText ohne Anrede.");
     const thin = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Webseite steht etwas Konkretes.\n\nHätten Sie diese Woche 15 Minuten für ein Gespräch?";
-    const done = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false });
-    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).toContain("anhand von zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch) telefonisch vorqualifiziert"); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
+    const done = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false, sparte: DEFAULT_SPARTE });
+    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
+    expect(done).toContain("in der Regel anhand von zehn Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Eigentumsverhältnisse, der Zustand von Dach und Heizung, der aktuelle Stromverbrauch usw.\n\n"); // Beispiele ohne Klammern, im selben Absatz
+    expect(done).toContain("\n\nDer Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.\n\n"); expect(done).not.toMatch(/\(z\. ?B\./); // Logik-Kette als eigener Absatz
     expect(done).toMatch(/0611 123456/); expect(done.trim().endsWith("Vielen Dank")).toBe(true); expect(done).not.toMatch(/Grüßen/);
     expect(done.indexOf("20 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
     // Schon vollständig → bleibt bis auf den Schluss unverändert; keine doppelte Nummer, kein doppeltes „Vielen Dank“

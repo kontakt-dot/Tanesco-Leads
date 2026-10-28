@@ -1,6 +1,6 @@
 /** E-Mail-Kampagnen mit Ablauf-Baum: Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst … Gemeinsame Logik für Server und Chat-Demo. */
 import { renderEmailHtml, renderEmailText, type EmailBlock, type EmailDesign, usesSignature } from "./email-design";
-import { COUNT_SRC, countValue, fixQuestionCount, numberWord, partnerGenitive, qualifyBy, withQuestionTopics } from "./lead-sparte";
+import { COUNT_SRC, countValue, fixQuestionCount, numberWord, hasOfferChain, offerChainBullet, qualifyBy, withQuestionTopics } from "./lead-sparte";
 export type EmailNode =
   | { id: string; type: "send"; label?: string; subject: string; subjectB?: string | null; preheader?: string; blocks: EmailBlock[]; attachments?: CampaignAttachment[]; next: string | null }
   | { id: string; type: "wait"; hours: number; next: string | null }
@@ -236,18 +236,21 @@ export function modernizeTree(tree: EmailTree): EmailTree | null {
   return changed ? { ...tree, nodes } : null;
 }
 /**
- * Zahl der Fragen in allen E-Mails eines Ablaufs an die Sparte anpassen (Hausnotruf 6, Alarmanlage 8, PV & WP 10 …) – mit dem kurzen
- * Teaser in Klammern, worum es bei den Fragen geht (einmal je E-Mail). null = nichts zu ändern.
+ * Zahl der Fragen in allen E-Mails eines Ablaufs an die Sparte anpassen (Hausnotruf 6, Alarmanlage 8, PV & WP 10 …) – dahinter
+ * Beispiele ohne Klammern, worum es bei den Fragen geht, und die Logik-Kette (der Interessent wartet auf den Anruf mit dem Angebot) – einmal je E-Mail.
+ * `counts: false` (Kampagne ohne gewählte Sparte): nur Beispiele und Kette, die Zahl der Fragen bleibt. null = nichts zu ändern.
  */
-export function fixTreeQuestions(tree: EmailTree, sparte: { key?: string; questions?: number | null; topics?: string[] | null }): EmailTree | null {
-  let changed = false; let state = { done: false };
-  const fix = (text: string) => { const next = withQuestionTopics(fixQuestionCount(text, sparte), sparte, state); if (next !== text) changed = true; return next; };
+export function fixTreeQuestions(tree: EmailTree, sparte: { key?: string; questions?: number | null; topics?: string[] | null; partner?: string | null }, options: { counts?: boolean } = {}): EmailTree | null {
+  let changed = false; let state: { done: boolean; chain?: boolean; chainAfter?: boolean } = { done: false };
+  const counted = (text: string) => options.counts === false ? text : fixQuestionCount(text, sparte);
+  const fix = (text: string, insert = true, bullet = false) => { const next = withQuestionTopics(counted(text), sparte, state, { insert, bullet }); if (next !== text) changed = true; return next; };
   const nodes = (tree.nodes ?? []).map((node) => {
     if (node.type !== "send") return node;
-    state = { done: false };
+    // Steht die Kette schon irgendwo in dieser E-Mail (z. B. als Punkt der Aufzählung), kommt sie nicht noch einmal dazu
+    state = { done: false, chain: node.blocks.some((block) => (block.type === "text" ? [block.text] : block.type === "bullets" ? block.items : []).some((text) => hasOfferChain(text, sparte))) };
     const blocks = node.blocks.map((block) => {
-      if (block.type === "text" || block.type === "heading") { const text = fix(block.text); return text === block.text ? block : { ...block, text }; }
-      if (block.type === "bullets") { const items = block.items.map(fix); return items.every((item, index) => item === block.items[index]) ? block : { ...block, items }; }
+      if (block.type === "text" || block.type === "heading") { const fixed = fix(block.text, block.type === "text"); const text = block.type === "text" && fixed !== block.text ? shortParagraphs(fixed) : fixed; return text === block.text ? block : { ...block, text }; } // neue Sätze dazu → wieder kurze Absätze (Kette als eigener Absatz)
+      if (block.type === "bullets") { const items = block.items.flatMap((item) => { const next = fix(item, true, true); if (!state.chainAfter) return [next]; state.chainAfter = false; state.chain = true; changed = true; return [next, offerChainBullet(sparte)]; }); /* Kette als eigener Punkt direkt hinter der Qualifizierung */ return items.length === block.items.length && items.every((item, index) => item === block.items[index]) ? block : { ...block, items }; }
       return block;
     });
     return blocks.every((block, index) => block === node.blocks[index]) ? node : { ...node, blocks };
@@ -520,7 +523,7 @@ export function splitSentences(paragraph: string): string[] {
     if (depth > 0 || (char !== "." && char !== "!" && char !== "?")) continue;
     const gap = /^(\s+)(?=[A-ZÄÖÜ„"»0-9])/.exec(paragraph.slice(index + 1)); if (!gap) continue;
     const word = (/(\S+)$/.exec(paragraph.slice(start, index + 1))?.[1] ?? "").toLowerCase().replace(/^[(„"»]+/, "");
-    if (char === "." && (/^\d+\.$/.test(word) || ABBREVIATIONS.has(word) || /^[a-zäöü]\.$/.test(word))) continue; // Abkürzung, Datum, Initiale
+    if (char === "." && !/^(?:usw|etc)\.$/.test(word) && (/^\d+\.$/.test(word) || ABBREVIATIONS.has(word) || /^[a-zäöü]\.$/.test(word))) continue; // Abkürzung, Datum, Initiale – „… usw.“ vor einem großen Wort beendet den Satz
     out.push(paragraph.slice(start, index + 1).trim()); start = index + 1 + gap[1].length; index = start - 1;
   }
   const rest = paragraph.slice(start).trim(); if (rest) out.push(rest);
@@ -536,11 +539,14 @@ export function shortParagraphs(text: string, max = 260): string {
     const paragraph = part.trim();
     if (/^\n+$/.test(part) || paragraph.length <= max || /\n/.test(paragraph) || /^[•\-–*]\s/.test(paragraph) || /\{\{[^}]*$/.test(paragraph)) return part;
     const sentences = splitSentences(paragraph); if (sentences.length < 2) return part;
+    // Die Beispiele („Abgefragt werden beispielsweise …“) bleiben beim Satz zur Qualifizierung; die Logik-Kette beginnt danach einen neuen Absatz
+    const units: string[][] = []; for (const sentence of sentences) { if (/^Abgefragt werden beispielsweise\b/.test(sentence) && units.length) units[units.length - 1].push(sentence); else units.push([sentence]); }
     const chunks: string[] = []; let current: string[] = [];
-    for (const sentence of sentences) {
-      const length = current.join(" ").length;
-      if (current.length && (length + 1 + sentence.length > max || current.length >= 3)) { chunks.push(current.join(" ")); current = []; }
-      current.push(sentence);
+    for (const unit of units) {
+      const length = current.join(" ").length; const text = unit.join(" ");
+      const chainBreak = /^Der Interessent weiß danach\b/.test(unit[0]) && current.some((sentence) => /^Abgefragt werden beispielsweise\b/.test(sentence));
+      if (current.length && (chainBreak || length + 1 + text.length > max || current.length + unit.length > 3)) { chunks.push(current.join(" ")); current = []; }
+      current.push(...unit);
     }
     if (current.length) chunks.push(current.join(" "));
     return chunks.join("\n\n");
@@ -643,5 +649,5 @@ export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { r
 export function thirdPartyTemplate(values: Record<string, string | null | undefined>, sparte: { topic: string; partner: string; key?: string; questions?: number | null } = { topic: "Photovoltaik und Wärmepumpen", partner: "Fachbetrieb" }): { subject: string; text: string } {
   const payFit = !sparte.key || ["pv-wp", "photovoltaik", "waermepumpe"].includes(sparte.key); // nur PV & WP: es werden nur passende Leads bezahlt
   const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = `${(values.begruessung ?? "").trim() || greetingFor({ firstName: values.vorname, lastName: values.nachname, salutation: values.anrede === "Frau" ? "frau" : values.anrede === "Herr" ? "herr" : null })},`;
-  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}. Seit über vier Jahren sind wir erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler.\n\nDieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, und jeder Zwischenschritt schlägt auf den Preis auf. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Online-Leadgenerierung – die Interessenten gewinnen wir selbst\n• Telefonische Vorqualifizierung jedes Interessenten ${qualifyBy(sparte)}\n• Der Interessent erwartet danach die Rückmeldung eines ${partnerGenitive(sparte)}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
+  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}. Seit über vier Jahren sind wir erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler.\n\nDieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, und jeder Zwischenschritt schlägt auf den Preis auf. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Online-Leadgenerierung – die Interessenten gewinnen wir selbst\n• Telefonische Vorqualifizierung jedes Interessenten ${qualifyBy(sparte)}\n• ${offerChainBullet(sparte)}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
 }
