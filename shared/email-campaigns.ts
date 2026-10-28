@@ -1,6 +1,6 @@
 /** E-Mail-Kampagnen mit Ablauf-Baum: Senden → Warten → Wenn geöffnet/geklickt → Dann/Sonst … Gemeinsame Logik für Server und Chat-Demo. */
 import { renderEmailHtml, renderEmailText, type EmailBlock, type EmailDesign, usesSignature } from "./email-design";
-import { COUNT_SRC, countValue, fixQuestionCount, numberWord, partnerGenitive, qualifyBy } from "./lead-sparte";
+import { COUNT_SRC, countValue, fixQuestionCount, numberWord, partnerGenitive, qualifyBy, withQuestionTopics } from "./lead-sparte";
 export type EmailNode =
   | { id: string; type: "send"; label?: string; subject: string; subjectB?: string | null; preheader?: string; blocks: EmailBlock[]; attachments?: CampaignAttachment[]; next: string | null }
   | { id: string; type: "wait"; hours: number; next: string | null }
@@ -225,20 +225,26 @@ export function modernizeTree(tree: EmailTree): EmailTree | null {
   const nodes = tree.nodes.map((node) => {
     if (node.type !== "send") return node;
     const blocks = node.blocks.filter((block) => { const dead = isDeadButton(block); if (dead) changed = true; return !dead; }).map((block) => {
+      if (block.type === "bullets") { const items = block.items.map(dropAdPlatforms); if (items.some((item, index) => item !== block.items[index])) { changed = true; return { ...block, items }; } return block; }
       if (block.type !== "text" && block.type !== "heading") return block;
       const text = block.text.replace(/^(guten tag|hallo|liebe[r]?)\s*(\{\{\s*anrede\s*\}\}\s*\{\{\s*nachname\s*\}\}|\{\{\s*vorname\s*\}\}|\{\{\s*name\s*\}\})?\s*,/i, "{{begruessung}},").replace(/^(Kurz nachgefragt|Passt es gerade nicht|Noch Fragen zu unserem Angebot),\s*\{\{\s*vorname\s*\}\}(\??)$/i, (_m, head: string, q: string) => `${head}${q}`);
-      const smooth = smoothQualifyPhrase(text); if (smooth !== block.text) changed = true; return smooth === block.text ? block : { ...block, text: smooth };
+      const plain = dropAdPlatforms(smoothQualifyPhrase(text)); const smooth = block.type === "text" ? shortParagraphs(plain) : plain; // nie Meta & Co. – und kurze Absätze, damit die E-Mail leicht lesbar ist
+      if (smooth !== block.text) changed = true; return smooth === block.text ? block : { ...block, text: smooth };
     });
     return blocks === node.blocks ? node : { ...node, blocks };
   });
   return changed ? { ...tree, nodes } : null;
 }
-/** Zahl der Fragen in allen E-Mails eines Ablaufs an die Sparte anpassen (Hausnotruf 6, Alarmanlage 8, PV & WP 10 …). null = nichts zu ändern. */
-export function fixTreeQuestions(tree: EmailTree, sparte: { key?: string; questions?: number | null }): EmailTree | null {
-  let changed = false;
-  const fix = (text: string) => { const next = fixQuestionCount(text, sparte); if (next !== text) changed = true; return next; };
+/**
+ * Zahl der Fragen in allen E-Mails eines Ablaufs an die Sparte anpassen (Hausnotruf 6, Alarmanlage 8, PV & WP 10 …) – mit dem kurzen
+ * Teaser in Klammern, worum es bei den Fragen geht (einmal je E-Mail). null = nichts zu ändern.
+ */
+export function fixTreeQuestions(tree: EmailTree, sparte: { key?: string; questions?: number | null; topics?: string[] | null }): EmailTree | null {
+  let changed = false; let state = { done: false };
+  const fix = (text: string) => { const next = withQuestionTopics(fixQuestionCount(text, sparte), sparte, state); if (next !== text) changed = true; return next; };
   const nodes = (tree.nodes ?? []).map((node) => {
     if (node.type !== "send") return node;
+    state = { done: false };
     const blocks = node.blocks.map((block) => {
       if (block.type === "text" || block.type === "heading") { const text = fix(block.text); return text === block.text ? block : { ...block, text }; }
       if (block.type === "bullets") { const items = block.items.map(fix); return items.every((item, index) => item === block.items[index]) ? block : { ...block, items }; }
@@ -289,7 +295,10 @@ export function summarizeCampaign(recipients: Array<Pick<RecipientState, "status
   const total = recipients.length; const sent = recipients.filter((row) => row.sentCount > 0).length; const opened = recipients.filter((row) => row.openedAt || row.clickedAt || row.repliedAt).length; /* Klick oder Antwort beweist das Öffnen */ const clicked = recipients.filter((row) => row.clickedAt).length; const replied = recipients.filter((row) => row.repliedAt).length; const done = recipients.filter((row) => row.status === "fertig").length; const failed = recipients.filter((row) => row.status === "fehler").length; const bounced = recipients.filter((row) => row.status === "bounce" || row.status === "beschwerde").length; const unsubscribed = recipients.filter((row) => row.status === "abgemeldet").length;
   const variant = (key: AbVariant) => { const rows = recipients.filter((row) => row.variant === key && row.sentCount > 0); const openedV = rows.filter((row) => row.openedAt || row.clickedAt || row.repliedAt).length; const clickedV = rows.filter((row) => row.clickedAt).length; return { sent: rows.length, opened: openedV, clicked: clickedV, openRate: rows.length ? Math.round((openedV / rows.length) * 100) : 0, clickRate: rows.length ? Math.round((clickedV / rows.length) * 100) : 0 }; };
   const a = variant("A"); const b = variant("B");
-  return { total, sent, opened, clicked, replied, done, failed, bounced, unsubscribed, openRate: sent ? Math.round((opened / sent) * 100) : 0, clickRate: sent ? Math.round((clicked / sent) * 100) : 0, bounceRate: sent ? Math.round((bounced / sent) * 100) : 0, abTest: a.sent || b.sent ? { a, b, winner: a.sent && b.sent ? (a.openRate === b.openRate ? null : a.openRate > b.openRate ? "A" : "B") : null } : null };
+  // Noch ohne E-Mail: warten (Freigabe, Versandzeit, Tageslimit), gesperrt (abgemeldet, unzustellbar, Beschwerde) oder mit Fehler angehalten
+  const unsentRows = recipients.filter((row) => row.sentCount === 0);
+  const unsent = { total: unsentRows.length, waiting: unsentRows.filter((row) => row.status === "wartet" || row.status === "laeuft").length, blocked: unsentRows.filter((row) => row.status === "abgemeldet" || row.status === "bounce" || row.status === "beschwerde").length, failed: unsentRows.filter((row) => row.status === "fehler").length, done: unsentRows.filter((row) => row.status === "fertig").length };
+  return { total, sent, unsent, opened, clicked, replied, done, failed, bounced, unsubscribed, openRate: sent ? Math.round((opened / sent) * 100) : 0, clickRate: sent ? Math.round((clicked / sent) * 100) : 0, bounceRate: sent ? Math.round((bounced / sent) * 100) : 0, abTest: a.sent || b.sent ? { a, b, winner: a.sent && b.sent ? (a.openRate === b.openRate ? null : a.openRate > b.openRate ? "A" : "B") : null } : null };
 }
 
 /**
@@ -479,8 +488,66 @@ export function dropPortalMentions(text: string): string {
     return kept;
   }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
-/** Für gespeicherte Entwürfe und den Versand: Aroundhome raus, Formulierung zur Vorqualifizierung glätten. */
-export const cleanDraftText = (text: string) => smoothQualifyPhrase(dropPortalMentions(text));
+/* ── Wie wir Leads gewinnen: „online“ – nie Meta, Facebook, Instagram oder Social Media nennen ─────────── */
+const PLAT = "(?:Meta|Facebook|Instagram|Social[- ]Media)";
+const PLAT_JOIN = `(?:-?\\s*(?:und|&|\\/|,|sowie|oder)\\s*${PLAT})`;
+const PLAT_SUFFIX = "(?:[- ](?:Kampagnen|Kampagne|Anzeigen|Anzeige|Werbeanzeigen|Werbung|Ads))";
+const PLAT_PAREN = `(?:\\s*\\((?:auf\\s+|bei\\s+|über\\s+)?${PLAT}${PLAT_JOIN}*\\))`;
+const PLAT_TAIL = `(?:\\s+(?:auf|bei|über)\\s+${PLAT}${PLAT_JOIN}*)`;
+const PLAT_PHRASE = `(?:${PLAT}${PLAT_JOIN}*${PLAT_SUFFIX}?)${PLAT_PAREN}?${PLAT_TAIL}?`;
+const GENERATION_RE = new RegExp(`\\b((?:[Ee]igene[nrms]?|[Uu]nsere[nrms]?)\\s+)?(Lead-?[Gg]enerierung|Leadgewinnung|Generierung)\\s+(?:über|via|mit|durch|auf)\\s+(?:eigene[n]?\\s+|gezielte[n]?\\s+)?${PLAT_PHRASE}`, "g");
+const VIA_PLATFORM_RE = new RegExp(`(?<![\\wäöüßÄÖÜ])(?:über|via|mit|durch|auf|bei)\\s+(?:eigene[n]?\\s+|gezielte[n]?\\s+|unsere[n]?\\s+)?${PLAT_PHRASE}(?![-\\wäöüß])`, "gi");
+const PLATFORM_CAMPAIGNS_RE = new RegExp(`\\b${PLAT}${PLAT_JOIN}*${PLAT_SUFFIX}${PLAT_PAREN}?`, "gi");
+const PLATFORM_PAREN_RE = new RegExp(PLAT_PAREN, "gi");
+/** „über Meta-Kampagnen (Facebook und Instagram)“ → „online“, „Eigene Leadgenerierung über Meta-Kampagnen …“ → „Eigene Online-Leadgenerierung“. */
+export function dropAdPlatforms(text: string): string {
+  if (!text || !/meta|facebook|instagram|social[- ]media/i.test(text)) return text;
+  return text
+    .replace(GENERATION_RE, (_all, own: string | undefined, kind: string) => `${own ?? ""}Online-${kind.replace(/^Lead-?[Gg]/, "Leadg")}`)
+    .replace(VIA_PLATFORM_RE, (match: string) => (/^[A-ZÄÖÜ]/.test(match) ? "Online" : "online"))
+    .replace(PLATFORM_CAMPAIGNS_RE, "Online-Kampagnen")
+    .replace(PLATFORM_PAREN_RE, "")
+    .replace(/\bonline\s+online\b/gi, "online").replace(/[ \t]{2,}/g, " ").replace(/ ([,.;:!?])/g, "$1");
+}
+/* ── Kurze Absätze: zwei bis drei Zeilen, dann eine Leerzeile ─────────────────────────────────────────────── */
+const ABBREVIATIONS = new Set(["z.", "b.", "u.", "a.", "d.", "h.", "bzw.", "ca.", "evtl.", "ggf.", "inkl.", "zzgl.", "usw.", "etc.", "vgl.", "nr.", "dr.", "hr.", "fr.", "st.", "str.", "tel.", "mio.", "mrd.", "max.", "min.", "bspw.", "sog.", "ehem.", "gem.", "mtl.", "jährl.", "abs.", "allg.", "ggü.", "inh.", "geb.", "std.", "u.a.", "z.b.", "d.h.", "u.v.m.", "o.ä.", "s.o.", "s.u."]);
+/** Sätze eines Absatzes – „z. B.“, „u. a.“, „28. Oktober“ und Klammern trennen keinen Satz. */
+export function splitSentences(paragraph: string): string[] {
+  const out: string[] = []; let start = 0; let depth = 0;
+  for (let index = 0; index < paragraph.length; index += 1) {
+    const char = paragraph[index];
+    if (char === "(") depth += 1; else if (char === ")") depth = Math.max(0, depth - 1);
+    if (depth > 0 || (char !== "." && char !== "!" && char !== "?")) continue;
+    const gap = /^(\s+)(?=[A-ZÄÖÜ„"»0-9])/.exec(paragraph.slice(index + 1)); if (!gap) continue;
+    const word = (/(\S+)$/.exec(paragraph.slice(start, index + 1))?.[1] ?? "").toLowerCase().replace(/^[(„"»]+/, "");
+    if (char === "." && (/^\d+\.$/.test(word) || ABBREVIATIONS.has(word) || /^[a-zäöü]\.$/.test(word))) continue; // Abkürzung, Datum, Initiale
+    out.push(paragraph.slice(start, index + 1).trim()); start = index + 1 + gap[1].length; index = start - 1;
+  }
+  const rest = paragraph.slice(start).trim(); if (rest) out.push(rest);
+  return out;
+}
+/**
+ * Lange Absätze in kurze teilen – höchstens etwa zwei bis drei Zeilen (rund 260 Zeichen, höchstens drei Sätze) je Absatz, dazwischen eine
+ * Leerzeile. Aufzählungen, Absätze mit Zeilenumbruch und kurze Absätze bleiben, wie sie sind; Sätze werden nie zerschnitten.
+ */
+export function shortParagraphs(text: string, max = 260): string {
+  if (!text || text.length <= max) return text;
+  return text.split(/(\n{2,})/).map((part) => {
+    const paragraph = part.trim();
+    if (/^\n+$/.test(part) || paragraph.length <= max || /\n/.test(paragraph) || /^[•\-–*]\s/.test(paragraph) || /\{\{[^}]*$/.test(paragraph)) return part;
+    const sentences = splitSentences(paragraph); if (sentences.length < 2) return part;
+    const chunks: string[] = []; let current: string[] = [];
+    for (const sentence of sentences) {
+      const length = current.join(" ").length;
+      if (current.length && (length + 1 + sentence.length > max || current.length >= 3)) { chunks.push(current.join(" ")); current = []; }
+      current.push(sentence);
+    }
+    if (current.length) chunks.push(current.join(" "));
+    return chunks.join("\n\n");
+  }).join("");
+}
+/** Für gespeicherte Entwürfe und den Versand: Aroundhome raus, Formulierung zur Vorqualifizierung glätten, nie Meta & Co., kurze Absätze. */
+export const cleanDraftText = (text: string) => shortParagraphs(dropAdPlatforms(smoothQualifyPhrase(dropPortalMentions(text))));
 export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[] {
   const keep = original.filter((block) => block.type === "signature"); // nur die Signatur bleibt – keine Knöpfe (es gibt keine Terminbuchung)
   return [{ id: "draft-text", type: "text", text: cleanDraftText(text.trim()) }, ...keep];
@@ -576,5 +643,5 @@ export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { r
 export function thirdPartyTemplate(values: Record<string, string | null | undefined>, sparte: { topic: string; partner: string; key?: string; questions?: number | null } = { topic: "Photovoltaik und Wärmepumpen", partner: "Fachbetrieb" }): { subject: string; text: string } {
   const payFit = !sparte.key || ["pv-wp", "photovoltaik", "waermepumpe"].includes(sparte.key); // nur PV & WP: es werden nur passende Leads bezahlt
   const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = `${(values.begruessung ?? "").trim() || greetingFor({ firstName: values.vorname, lastName: values.nachname, salutation: values.anrede === "Frau" ? "frau" : values.anrede === "Herr" ? "herr" : null })},`;
-  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}, und seit über vier Jahren erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler. Dieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und am Ende leiden Aktualität und Datenqualität. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Leadgenerierung über Meta-Kampagnen (Facebook und Instagram)\n• Telefonische Vorqualifizierung jedes Interessenten ${qualifyBy(sparte)}; der Interessent erwartet danach die Rückmeldung eines ${partnerGenitive(sparte)}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz, schnellere Abstimmung und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
+  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}. Seit über vier Jahren sind wir erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler.\n\nDieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, und jeder Zwischenschritt schlägt auf den Preis auf. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Online-Leadgenerierung – die Interessenten gewinnen wir selbst\n• Telefonische Vorqualifizierung jedes Interessenten ${qualifyBy(sparte)}\n• Der Interessent erwartet danach die Rückmeldung eines ${partnerGenitive(sparte)}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
 }

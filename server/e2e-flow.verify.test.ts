@@ -3257,6 +3257,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignEvents).set({ delivery: null }).where(eq(emailCampaignEvents.id, sent[0].id));
     const hook = await (await realFetch(`${apiBase}/api/mail/bounce`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "delivered", email: "zora@zustell-e2e.example", "message-id": "<zu1@smtp-relay.mailin.fr>" }) })).json() as { handled: number };
     expect(hook.handled).toBe(1); expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.id, sent[0].id)))[0].delivery).toBe("zugestellt");
+    // Sammelabfrage hat eine ältere E-Mail nicht erwischt → gezielt je Empfänger-Adresse nachfragen (danach höchstens alle sechs Stunden)
+    const twoDays = new Date(Date.now() - 2 * 86_400_000);
+    await db.update(emailCampaignEvents).set({ delivery: null, deliveryNote: null, deliveryAt: null, createdAt: twoDays }).where(eq(emailCampaignEvents.id, sent[0].id));
+    let asked = 0;
+    const targeted = (async (input: string | URL | Request) => { const url = String(input); const mine = url.includes(`email=${encodeURIComponent("zora@zustell-e2e.example")}`); if (mine) asked += 1; return new Response(JSON.stringify({ events: mine ? [{ email: "zora@zustell-e2e.example", messageId: "<zu1@smtp-relay.mailin.fr>", date: new Date(twoDays.getTime() + 60_000).toISOString(), event: "delivered" }] : [] }), { status: 200, headers: { "content-type": "application/json" } }); }) as typeof fetch;
+    const filled = await mailEvents.fillMissingDeliveries(db, { tenantId: S.tenantId, apiKey: "xkeysib-e2e", fetchImpl: targeted });
+    expect(filled.applied).toBe(1); expect(asked).toBe(1); expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.id, sent[0].id)))[0].delivery).toBe("zugestellt");
+    await db.update(emailCampaignEvents).set({ delivery: null }).where(eq(emailCampaignEvents.id, sent[0].id));
+    expect((await mailEvents.fillMissingDeliveries(db, { tenantId: S.tenantId, apiKey: "xkeysib-e2e", fetchImpl: targeted })).emails).toBe(0); expect(asked).toBe(1); // eben erst gefragt
+    expect((await mailEvents.fillMissingDeliveries(db, { tenantId: S.tenantId, apiKey: "xkeysib-e2e", fetchImpl: targeted, now: Date.now() + 7 * 3_600_000 })).applied).toBe(1); expect(asked).toBe(2); // sechs Stunden später noch einmal
     // Ohne eingerichteten Versand (echte App): nichts wird als „gesendet“ gezählt – der Kontakt wartet mit klarem Hinweis
     const env = process.env.NODE_ENV; process.env.NODE_ENV = "production";
     try {
@@ -3287,9 +3297,12 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const options = anna.draftOptions as Array<{ key: string; text: string; source?: string }>;
     expect(options.find((item) => item.key === "drittanbieter")?.text).toContain("anhand von in der Regel acht Fragen");
     expect(options.every((item) => item.source === "vorlage")).toBe(true); expect(anna.draftSource).toBe("vorlage"); // ohne KI-Schlüssel: klar als Ersatz aus der Vorlage gekennzeichnet
-    // PV & WP: bleibt bei zehn, nichts angepasst
+    expect(stored).toContain("acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage)"); expect(anna.draftText).toContain("acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage)"); // Teaser in Klammern, worum es geht
+    // PV & WP: bleibt bei zehn – nur der Teaser kommt dazu; beim nächsten Speichern ändert sich nichts mehr
     const pv = await owner.leadops.saveEmailCampaign({ ...base, name: "PV & WP • Fragen" } as never);
-    expect((pv as { fixedQuestions?: boolean }).fixedQuestions).toBe(false); expect(JSON.stringify((await owner.leadops.getEmailCampaign({ id: pv.id })).tree)).toContain("zehn Fragen");
+    const pvTree = (await owner.leadops.getEmailCampaign({ id: pv.id })).tree;
+    expect((pv as { fixedQuestions?: boolean }).fixedQuestions).toBe(true); expect(JSON.stringify(pvTree)).toContain("zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch)");
+    expect(((await owner.leadops.saveEmailCampaign({ ...base, id: pv.id, name: "PV & WP • Fragen", tree: pvTree } as never)) as { fixedQuestions?: boolean }).fixedQuestions).toBe(false);
     // Bestand von vorher: Hausnotruf-Vorlage und offene Entwürfe mit „zehn Fragen“ → einmal nach dem Start angepasst, Reihenfolge der Kampagnen bleibt
     const old = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Fragen alt" } as never); // Sparte aus dem Namen erkannt
     await db.update(emailCampaigns).set({ tree }).where(eq(emailCampaigns.id, old.id));
@@ -3300,7 +3313,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const repaired = (await db.select({ tree: emailCampaigns.tree, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, old.id)))[0];
     expect(JSON.stringify(repaired.tree)).toContain("anhand von sechs Fragen"); expect(JSON.stringify(repaired.tree)).not.toContain("zehn Fragen"); expect(repaired.updatedAt.getTime()).toBe(stamp.getTime());
     const annaAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, anna.id)))[0];
-    expect(annaAfter.draftText).toContain("anhand von acht Fragen"); expect((annaAfter.draftOptions as Array<{ text: string }>)[0].text).toBe("Jeder Lead wird über acht Fragen qualifiziert.");
+    expect(annaAfter.draftText).toContain("anhand von acht Fragen"); expect((annaAfter.draftOptions as Array<{ text: string }>)[0].text).toBe("Jeder Lead wird über acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage) qualifiziert."); expect(annaAfter.draftText).toContain("acht Fragen (z. B. Objekt und Fläche");
     expect(JSON.stringify((await owner.leadops.getEmailCampaign({ id: pv.id })).tree)).toContain("zehn Fragen"); // PV bleibt
     expect(await fixQuestionCounts(db)).toEqual({ campaigns: 0, drafts: 0 }); // mehrfach ohne Nebenwirkung
   }, 40000);

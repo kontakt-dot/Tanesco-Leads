@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fixTreeQuestions, recipientValues, smoothQualifyPhrase, starterTree, thirdPartyTemplate } from "../shared/email-campaigns";
 import { starterBlocks } from "../shared/email-design";
-import { applyPayFit, detectSparte, fitsSparte, fixQuestionCount, foreignSparteIn, mentionsPayFit, mentionsQuestions, PAY_FIT_SENTENCE, qualifyBy, qualifyPhrase, questionCount, resolveSparte, sparteOf, withSparte } from "../shared/lead-sparte";
+import { applyPayFit, detectSparte, fitsSparte, fixQuestionCount, foreignSparteIn, mentionsPayFit, mentionsQuestions, PAY_FIT_SENTENCE, qualifyBy, qualifyPhrase, questionCount, resolveSparte, sparteOf, withSparte, questionTopics, SPARTEN, withQuestionTopics } from "../shared/lead-sparte";
 import { ensureFacts, finishDraft } from "./campaign-review";
 
 describe("Leadsparte: die KI schreibt passend zur Sparte – nie Wärmepumpen an Hausnotruf-Firmen", () => {
@@ -76,11 +76,15 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     expect([hausnotruf, rollstuhl, alarm, pv, resolveSparte("Photovoltaik")!, resolveSparte("Wärmepumpe")!].map((sparte) => questionCount(sparte))).toEqual([6, 6, 8, 10, 10, 10]);
     expect(questionCount(pflegebox)).toBeNull(); expect(questionCount(resolveSparte("Pool-Bau"))).toBeNull(); expect(questionCount(null)).toBe(10); // ohne Sparte: Standard PV & WP
     expect(questionCount({ ...hausnotruf, source: "erkannt" } as never)).toBe(6); // Sparte einer Kampagne (mit Herkunft)
-    expect(qualifyPhrase(hausnotruf)).toBe("in der Regel anhand von sechs Fragen telefonisch vorqualifiziert");
-    expect(qualifyPhrase(alarm)).toBe("in der Regel anhand von acht Fragen telefonisch vorqualifiziert");
-    expect(qualifyPhrase(pv)).toBe("in der Regel anhand von zehn Fragen telefonisch vorqualifiziert");
-    expect(qualifyPhrase(pflegebox)).toBe("anhand gezielter Fragen telefonisch vorqualifiziert"); // ohne feste Zahl: keine Zahl behaupten
-    expect(qualifyBy(rollstuhl)).toBe("anhand von in der Regel sechs Fragen"); expect(qualifyBy(pflegebox)).toBe("anhand gezielter Fragen");
+    // Zahl der Fragen und in Klammern ein kurzer Teaser, worum es bei den Fragen geht
+    expect(qualifyPhrase(hausnotruf)).toBe("in der Regel anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert");
+    expect(qualifyPhrase(alarm)).toBe("in der Regel anhand von acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage) telefonisch vorqualifiziert");
+    expect(qualifyPhrase(pv)).toBe("in der Regel anhand von zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch) telefonisch vorqualifiziert");
+    expect(qualifyPhrase(pflegebox)).toBe("anhand gezielter Fragen (z. B. Pflegegrad, Pflegekasse und Pflege zu Hause) telefonisch vorqualifiziert"); // ohne feste Zahl: keine Zahl behaupten
+    expect(qualifyPhrase(resolveSparte("Pool-Bau"))).toBe("anhand gezielter Fragen telefonisch vorqualifiziert"); // neue Sparte: keine festen Punkte – die KI nennt drei passende
+    expect(qualifyBy(rollstuhl)).toBe("anhand von in der Regel sechs Fragen (z. B. Krankenkasse, Pflegegrad und Nutzung drinnen oder draußen)"); expect(qualifyBy(pflegebox)).toBe("anhand gezielter Fragen (z. B. Pflegegrad, Pflegekasse und Pflege zu Hause)");
+    expect(questionTopics(hausnotruf)).toEqual(["Krankenkasse", "Pflegegrad", "Wohnsituation"]); expect(questionTopics(resolveSparte("Pool-Bau"))).toBeNull(); expect(questionTopics(null)).toEqual(questionTopics(pv)); // ohne Sparte: Standard PV & WP
+    expect(SPARTEN.every((item) => item.topics?.length === 3)).toBe(true); // jede bekannte Sparte hat drei Punkte
   });
   it("Texte werden auf die Zahl der Sparte gebracht – nur in Sätzen über die Qualifizierung", () => {
     const old = "Unsere Anfragen werden in der Regel anhand von zehn Fragen telefonisch vorqualifiziert, sodass der Interessent weiß, wer sich meldet.";
@@ -97,7 +101,7 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     expect(smoothQualifyPhrase("Unsere Anfragen werden telefonisch qualifiziert – in der Regel über 6 Fragen, sodass")).toBe("Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert, sodass"); // die Zahl bleibt, wie sie dasteht
   });
   it("Pflichtsätze, Drittanbieter-Vorlage und fertige KI-Entwürfe mit der richtigen Zahl", () => {
-    expect(ensureFacts("Sehr geehrte Damen und Herren,\n\nkurzer Text.", false, "Anbieter", hausnotruf)).toContain("in der Regel anhand von sechs Fragen telefonisch vorqualifiziert");
+    expect(ensureFacts("Sehr geehrte Damen und Herren,\n\nkurzer Text.", false, "Anbieter", hausnotruf)).toContain("in der Regel anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert");
     expect(ensureFacts("Sehr geehrte Damen und Herren,\n\nkurzer Text.", false, "Fachbetrieb", alarm)).toContain("acht Fragen");
     const has = "Sehr geehrte Damen und Herren,\n\nUnsere Leads sind in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. 20 Test-Leads kostenlos.";
     expect(ensureFacts(has, false, "Anbieter", hausnotruf)).toBe(has); // schon drin – kein zweiter Satz
@@ -108,13 +112,28 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     // die KI übernimmt „zehn“ aus der Vorlage → im fertigen Entwurf steht trotzdem die Zahl der Sparte
     const ai = "Sehr geehrter Herr Wiebe,\n\nIhre Notrufzentrale ist rund um die Uhr besetzt. Unsere Hausnotruf-Leads sind in der Regel anhand von zehn Fragen telefonisch vorqualifiziert. Zum Kennenlernen: 20 Test-Leads kostenlos.";
     const done = finishDraft(ai, { greeting: "Sehr geehrter Herr Wiebe", phone: "", followUp: false, partner: "Anbieter", sparte: hausnotruf, approach: "frei" });
-    expect(done).toContain("anhand von sechs Fragen"); expect(done).not.toMatch(/zehn Fragen/);
+    expect(done).toContain("anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)"); expect(done).not.toMatch(/zehn Fragen/);
+    expect(thirdPartyTemplate({ firma: "Notruf Nord GmbH" }, hausnotruf).text).toContain("sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)");
+  });
+  it("Teaser in Klammern: nur in Sätzen über die Qualifizierung, nie doppelt, fremde Teaser werden ersetzt", () => {
+    const text = "Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert.";
+    const once = withQuestionTopics(text, hausnotruf); expect(once).toBe("Unsere Anfragen werden in der Regel anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert.");
+    expect(withQuestionTopics(once, hausnotruf)).toBe(once); // schon da
+    expect(withQuestionTopics("Jeder Lead wird anhand von sechs Fragen zu Krankenkasse und Pflegegrad geprüft.", hausnotruf)).toBe("Jeder Lead wird anhand von sechs Fragen zu Krankenkasse und Pflegegrad geprüft."); // Punkte stehen schon im Satz
+    expect(withQuestionTopics("Ich hätte fünf kurze Fragen zu Ihrem Betrieb.", hausnotruf)).toBe("Ich hätte fünf kurze Fragen zu Ihrem Betrieb."); // keine Qualifizierung
+    const own = "Unsere Leads sind anhand von acht Fragen (z. B. Objekt, Fenster und Türen) vorqualifiziert."; expect(withQuestionTopics(own, alarm)).toBe(own); // eigener Teaser der KI bleibt
+    const pvText = withQuestionTopics("Unsere Anfragen werden in der Regel anhand von zehn Fragen telefonisch vorqualifiziert.", pv);
+    expect(withQuestionTopics(fixQuestionCount(pvText, resolveSparte("Pool-Bau")), resolveSparte("Pool-Bau"))).toBe("Unsere Anfragen werden anhand gezielter Fragen telefonisch vorqualifiziert."); // fremder Teaser fällt bei neuer Sparte weg
+    expect(fixQuestionCount(once, alarm)).toContain("acht Fragen (z. B. Krankenkasse"); // die Zahl ändert sich, der Teaser bleibt bis withQuestionTopics …
+    expect(withQuestionTopics(fixQuestionCount(once, alarm), alarm)).toBe("Unsere Anfragen werden in der Regel anhand von acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage) telefonisch vorqualifiziert."); // … der ihn ersetzt
   });
   it("Vorlagen im Ablauf: Hausnotruf bekommt sechs Fragen, PV & WP bleibt bei zehn", () => {
     const tree = starterTree({ first: [{ id: "t", type: "text", text: "Unsere Anfragen werden in der Regel anhand von zehn Fragen telefonisch vorqualifiziert." }, { id: "b", type: "bullets", items: ["In der Regel anhand von zehn Fragen telefonisch vorqualifiziert", "Keine Vorkasse"] }], followUp: [{ id: "f", type: "text", text: "Kurz nachgefragt – unsere Leads sind über 10 Fragen qualifiziert." }] });
     const fixed = fixTreeQuestions(tree, hausnotruf)!; const text = JSON.stringify(fixed);
-    expect(text).toContain("anhand von sechs Fragen telefonisch vorqualifiziert."); expect(text).toContain("In der Regel anhand von sechs Fragen"); expect(text).not.toContain("zehn Fragen"); expect(text).toContain("über sechs Fragen qualifiziert");
-    expect(fixTreeQuestions(tree, pv)).toBeNull(); // nichts zu ändern
-    expect(fixTreeQuestions(fixed, hausnotruf)).toBeNull();
+    // Teaser in Klammern – einmal je E-Mail (in der Aufzählung derselben E-Mail nicht noch einmal)
+    expect(text).toContain("anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert."); expect(text).toContain("In der Regel anhand von sechs Fragen telefonisch vorqualifiziert"); expect(text).not.toContain("zehn Fragen"); expect(text).toContain("über sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) qualifiziert");
+    const pvTree = fixTreeQuestions(tree, pv)!; expect(JSON.stringify(pvTree)).toContain("zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch)"); // PV & WP: Zahl bleibt, Teaser kommt dazu
+    expect(fixTreeQuestions(pvTree, pv)).toBeNull(); expect(fixTreeQuestions(fixed, hausnotruf)).toBeNull(); // mehrfach ohne Nebenwirkung
+    const toAlarm = JSON.stringify(fixTreeQuestions(fixed, alarm)); expect(toAlarm).toContain("acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage)"); expect(toAlarm).not.toContain("Krankenkasse"); // kopierte Vorlage: Teaser der anderen Sparte wird ersetzt
   });
 });

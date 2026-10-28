@@ -2640,6 +2640,7 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cd-kpi-open{font-size:12.5px;font-weight:600;color:#b9b3ff}
 .cd-kpi-open:hover{text-decoration:underline}
 .cd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+@media(min-width:1180px){.cd-kpibar .cd-kpis{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr)}} /* Übersicht: alle Kennzahlen in einer Reihe statt umgebrochen */
 .cd-kpi{position:relative;display:flex;flex-direction:column;gap:2px;padding:14px 16px 13px;border-radius:14px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);overflow:hidden}
 .cd-kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--kpi,transparent)}
 .cd-kpi.is-open{--kpi:#60a5fa}.cd-kpi.is-click{--kpi:#fbbf24}.cd-kpi.is-reply{--kpi:#34d399}.cd-kpi.is-bad{--kpi:#fb7185}.cd-kpi.is-delivered{--kpi:#2dd4bf}
@@ -2790,29 +2791,45 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 [data-slot="sheet-overlay"]{z-index:70!important}
 [data-slot="sheet-content"]{z-index:71!important}
 /* Kampagnenliste als Karten (v184) – keine breite Tabelle mehr, kein Quer-Scrollen */
-.cl-list{list-style:none;margin:0;padding:10px;display:flex;flex-direction:column;gap:8px}
-.cl-card{display:grid;grid-template-columns:minmax(240px,1.4fr) minmax(170px,.8fr) auto auto;align-items:center;gap:18px;padding:14px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.025);transition:border-color .15s,background .15s}
+.cl-list{list-style:none;margin:0;padding:10px;display:flex;flex-direction:column;gap:8px;container-type:inline-size}
+/* Kampagnen-Karte: oben Name und Knöpfe; darunter links Zielgruppe, Hinweise und Einstellungen, rechts die Kennzahlen als eine Reihe */
+.cl-card{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"head side" "main funnel";align-items:start;column-gap:28px;row-gap:10px;padding:14px 16px 14px 18px;border-radius:14px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.025);transition:border-color .15s,background .15s}
+.cl-head{grid-area:head;min-width:0;display:flex;flex-direction:column;gap:3px;cursor:pointer}
 .cl-card:hover{border-color:rgba(255,255,255,.14);background:rgba(255,255,255,.04)}
-@media(max-width:1320px){.cl-card{grid-template-columns:minmax(0,1fr) minmax(0,1fr);row-gap:12px}.cl-stats{grid-column:1/2}.cl-side{justify-content:flex-end}}
-@media(max-width:760px){.cl-card{grid-template-columns:minmax(0,1fr)}.cl-stats,.cl-side{grid-column:auto}.cl-side{justify-content:flex-start}}
-.cl-main{min-width:0}
+.cl-main{grid-area:main;min-width:0;display:flex;flex-direction:column;gap:6px;align-self:center;cursor:pointer}
 .cl-name{display:block;text-align:left;max-width:100%}
-.cl-name strong{display:block;font-size:14.5px;font-weight:700;color:#f5f3ff;line-height:1.3}
+.cl-name strong{display:block;font-size:15px;font-weight:700;color:#f5f3ff;line-height:1.3}
 .cl-name:hover strong{text-decoration:underline;text-underline-offset:3px}
-.cl-name small{display:block;font-size:11.5px;color:#8a87a8;margin-top:2px}
-.cl-main .dash-pill{font-size:11px}
-.cl-audience{min-width:0;display:flex;flex-direction:column;gap:5px}
-.cl-audience>small{font-size:11.5px;color:#a5a3c4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cl-stats{display:grid;grid-template-columns:repeat(5,minmax(66px,auto));gap:6px}
-.cl-stat{position:relative;display:flex;flex-direction:column;gap:1px;padding:8px 10px 10px;border-radius:10px;background:rgba(255,255,255,.035);min-width:70px;overflow:hidden}
-.cl-stat span{font-size:10.5px;font-weight:600;color:#8a87a8;white-space:nowrap}
-.cl-stat strong{font-size:16px;font-weight:800;color:#f5f3ff;font-variant-numeric:tabular-nums;line-height:1.2}
-.cl-stat small{font-size:10.5px;color:#8a87a8}
-.cl-stat i{position:absolute;left:0;bottom:0;height:3px;border-radius:0 3px 3px 0;background:var(--bar,#8278ff)}
-.cl-stat.is-open{--bar:#60a5fa}.cl-stat.is-click{--bar:#fbbf24}.cl-stat.is-reply{--bar:#34d399}
-@media(max-width:760px){.cl-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.cl-stat{min-width:0}} /* Handy: Karte nie breiter als der Bildschirm – Kennzahlen in zwei Reihen */
-.cl-side{display:flex;align-items:center;gap:10px}
+.cl-meta{display:flex;flex-wrap:wrap;gap:0 6px;margin:0;font-size:12px;line-height:1.45;color:#8a87a8}
+.cl-meta>span+span::before{content:"·";margin-right:6px;color:#5f5c7d}
+.cl-audience{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0;font-size:12px;color:#a5a3c4}
+.cl-audience-name{max-width:440px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cl-card .cl-audience .audience-status{margin-top:0}
+.cl-alerts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.cl-alerts .cl-next{margin-top:0}
+.cl-alerts .dash-pill{height:22px;font-size:11px}
+.cl-tags{display:flex;flex-wrap:wrap;gap:4px}
+.cl-tag{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;background:rgba(255,255,255,.055);font-size:11px;font-weight:600;color:#a5a1d7;white-space:nowrap}
+.cl-tag.is-sparte{color:#dcd8ff;background:rgba(129,120,255,.18)}
+.cl-tag.is-ki{color:#a5f3fc;background:rgba(34,211,238,.1)}
+.cl-side{grid-area:side;display:flex;align-items:center;justify-content:flex-end;gap:10px}
 .cl-side .campaign-actbar{flex-wrap:nowrap}
+.cl-funnel{grid-area:funnel;cursor:pointer;width:700px;max-width:100%;display:grid;grid-template-columns:.95fr .95fr 1.3fr .95fr .95fr .95fr;border-radius:12px;background:rgba(255,255,255,.035);overflow:hidden}
+.cl-f{position:relative;display:flex;flex-direction:column;gap:1px;padding:8px 12px 11px;min-width:0}
+.cl-f+.cl-f{box-shadow:inset 1px 0 0 rgba(255,255,255,.06)}
+.cl-f span{font-size:10.5px;font-weight:600;color:#8a87a8;white-space:nowrap}
+.cl-f strong{font-size:17px;font-weight:800;color:#f5f3ff;font-variant-numeric:tabular-nums;line-height:1.2}
+.cl-f small{font-size:10.5px;line-height:1.35;color:#8a87a8}
+.cl-f small.is-bad{color:#fca5a5;font-weight:600}
+.cl-f small.is-wait{color:#fcd34d}
+.cl-f i{position:absolute;left:0;bottom:0;height:3px;border-radius:0 3px 3px 0;background:var(--bar,#8278ff)}
+.cl-f.is-open{--bar:#60a5fa}.cl-f.is-click{--bar:#fbbf24}.cl-f.is-reply{--bar:#34d399}
+.cl-seg{position:absolute;left:0;right:0;bottom:0;height:3px;display:flex;background:rgba(255,255,255,.08)}
+.cl-seg em{display:block;height:100%}
+.cl-seg em.is-ok{background:#2dd4bf}.cl-seg em.is-wait{background:#fbbf24}.cl-seg em.is-bad{background:#f87171}
+/* Schmalere Liste (z. B. Seitenleiste offen): Kennzahlen über die ganze Breite unter Name und Knöpfen – nie gequetscht */
+@container (max-width:1320px){.cl-card{grid-template-areas:"head side" "funnel funnel" "main main"}.cl-funnel{width:auto}.cl-main{align-self:start}}
+@container (max-width:720px){.cl-card{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "funnel" "main" "side";padding:14px}.cl-funnel{grid-template-columns:repeat(3,minmax(0,1fr))}.cl-f:nth-child(4){box-shadow:none}.cl-f:nth-child(n+4){border-top:1px solid rgba(255,255,255,.06)}.cl-audience-name{max-width:100%}.cl-side{justify-content:flex-start;flex-wrap:wrap}} /* Handy: Kennzahlen in zwei Reihen, Karte nie breiter als der Bildschirm */
 /* ===== v185: Kontakte, Sperrliste, Upload-Verlauf – gleiche Sprache wie die Kampagnenseite ===== */
 .xl-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
 .xl-head h2{display:flex;align-items:center;gap:8px;font-size:18px;font-weight:800;letter-spacing:-.01em;color:#f5f3ff;margin:0}
@@ -3292,7 +3309,7 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#067647!important}
 /* Zielgruppen-Zeile in der Kampagnen-Karte: lange Hinweise („61 beim Start · 41 schon drin …“) umbrechen statt unter die Zahlen zu laufen */
 .cl-card .audience-status{min-width:0;max-width:100%;overflow:hidden}
-.cl-card .audience-status .is-muted{white-space:normal;line-height:1.35;flex:1 1 100%}
+.cl-card .audience-status .is-muted{white-space:normal;line-height:1.35}
 /* Auswahlkästchen in einer Linie: Kopfzeile „Alle auswählen“ und Zeilen gleich ausgerichtet */
 .email-leads-table th.email-leads-check,.email-leads-table td.email-leads-check{width:36px;min-width:36px;text-align:center;padding-left:10px;padding-right:6px}
 .email-leads-table .email-leads-check input{margin:0;vertical-align:middle}

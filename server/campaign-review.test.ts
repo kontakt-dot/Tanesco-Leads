@@ -41,7 +41,7 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(fixGreeting("Text ohne Anrede.", "Sehr geehrter Herr Muster")).toBe("Sehr geehrter Herr Muster,\n\nText ohne Anrede.");
     const thin = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Webseite steht etwas Konkretes.\n\nHätten Sie diese Woche 15 Minuten für ein Gespräch?";
     const done = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false });
-    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).toContain("anhand von zehn Fragen telefonisch vorqualifiziert"); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
+    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).toContain("anhand von zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch) telefonisch vorqualifiziert"); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
     expect(done).toMatch(/0611 123456/); expect(done.trim().endsWith("Vielen Dank")).toBe(true); expect(done).not.toMatch(/Grüßen/);
     expect(done.indexOf("20 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
     // Schon vollständig → bleibt bis auf den Schluss unverändert; keine doppelte Nummer, kein doppeltes „Vielen Dank“

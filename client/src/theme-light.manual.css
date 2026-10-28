@@ -1294,13 +1294,22 @@ html:not(.dark) .cj-runs li { background: #f8fafc !important; }
 /* Kampagnenliste als Karten – hell */
 html:not(.dark) .cl-card { background: #ffffff !important; border-color: #eceef3 !important; box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important; }
 html:not(.dark) .cl-card:hover { border-color: #d0d5dd !important; box-shadow: 0 4px 14px -6px rgba(16, 24, 40, .12) !important; }
-html:not(.dark) .cl-name strong, html:not(.dark) .cl-stat strong { color: #0f172a !important; }
-html:not(.dark) .cl-name small, html:not(.dark) .cl-stat span, html:not(.dark) .cl-stat small { color: #667085 !important; }
-html:not(.dark) .cl-audience > small { color: #475467 !important; }
-html:not(.dark) .cl-stat { background: #f8fafc !important; }
-html:not(.dark) .cl-stat.is-open { --bar: #2563eb; } html:not(.dark) .cl-stat.is-click { --bar: #d97706; } html:not(.dark) .cl-stat.is-reply { --bar: #059669; }
-html:not(.dark) .cl-stat:not(.is-open):not(.is-click):not(.is-reply) { --bar: #bc001d; }
-html:not(.dark) .cl-stat i { background: var(--bar) !important; }
+html:not(.dark) .cl-name strong, html:not(.dark) .cl-f strong { color: #0f172a !important; }
+html:not(.dark) .cl-meta, html:not(.dark) .cl-f span, html:not(.dark) .cl-f small { color: #667085 !important; }
+html:not(.dark) .cl-meta > span + span::before { color: #c4c9d4 !important; }
+html:not(.dark) .cl-audience { color: #475467 !important; }
+html:not(.dark) .cl-tag { background: #f2f4f7 !important; color: #475467 !important; }
+html:not(.dark) .cl-tag.is-sparte { background: #fdecef !important; color: #9f1239 !important; }
+html:not(.dark) .cl-tag.is-ki { background: #ecfeff !important; color: #0e7490 !important; }
+html:not(.dark) .cl-funnel { background: #f8fafc !important; }
+html:not(.dark) .cl-f + .cl-f { box-shadow: inset 1px 0 0 #e4e7ec !important; }
+html:not(.dark) .cl-f small.is-bad { color: #b91c1c !important; }
+html:not(.dark) .cl-f small.is-wait { color: #b45309 !important; }
+html:not(.dark) .cl-f.is-sent { --bar: #bc001d; } html:not(.dark) .cl-f.is-open { --bar: #2563eb; } html:not(.dark) .cl-f.is-click { --bar: #d97706; } html:not(.dark) .cl-f.is-reply { --bar: #059669; }
+html:not(.dark) .cl-f i { background: var(--bar) !important; }
+html:not(.dark) .cl-seg { background: #e4e7ec !important; }
+html:not(.dark) .cl-seg em.is-ok { background: #0d9488 !important; } html:not(.dark) .cl-seg em.is-wait { background: #f59e0b !important; } html:not(.dark) .cl-seg em.is-bad { background: #dc2626 !important; }
+@container (max-width: 720px) { html:not(.dark) .cl-f:nth-child(n+4) { border-top-color: #e4e7ec !important; } html:not(.dark) .cl-f:nth-child(4) { box-shadow: none !important; } }
 /* v185 – Kontakte, Sperrliste, Upload-Verlauf (hell) */
 html:not(.dark) .xl-head h2, html:not(.dark) .xl-person-text strong, html:not(.dark) .email-leads-table .email-leads-name, html:not(.dark) .uh-main strong, html:not(.dark) .uh-num b, html:not(.dark) .sp-main strong, html:not(.dark) .sp-title, html:not(.dark) .sp-how b { color: #0f172a !important; }
 html:not(.dark) .xl-head h2 span { background: #f2f4f7 !important; color: #475467 !important; }
@@ -1366,7 +1375,7 @@ html:not(.dark) .node-leads-stop { color: #667085 !important; }
 html:not(.dark) .node-leads-stop:hover { background: #ffe4e6 !important; color: #be123c !important; }
 html:not(.dark) .cd-list-filter::after { color: #475467 !important; }
 html:not(.dark) .cd-list-filter select { background: #ffffff !important; border-color: #e2e8f0 !important; color: #0f172a !important; }
-html:not(.dark) .cl-filter-count, html:not(.dark) .cl-name small.cl-started { color: #667085 !important; }
+html:not(.dark) .cl-filter-count, html:not(.dark) .cl-meta .cl-started { color: #667085 !important; }
 html:not(.dark) .cl-next { color: #4c1d95 !important; }
 html:not(.dark) .cl-next svg { color: #7c3aed !important; }
 html:not(.dark) .cl-next b { color: #2e1065 !important; }

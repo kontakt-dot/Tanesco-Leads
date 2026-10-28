@@ -7,7 +7,7 @@
  * passenden Kampagnen-Empfänger ein – über die Message-ID der gesendeten E-Mail, sonst über die E-Mail-Adresse.
  * Doppelte Meldungen zählen nicht doppelt.
  */
-import { and, desc, eq, isNotNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, mailSettings } from "../drizzle/schema";
 import { normalizeMessageId } from "../shared/message-id";
 import { isTooSoonAfterSend } from "../shared/tracking-guard";
@@ -113,7 +113,43 @@ export async function syncBrevoEvents(db: Db, options: { tenantId?: number | nul
         if (list.length < 2500) break;
       }
     }
+    // E-Mails, zu denen die Sammelabfrage nichts gebracht hat: gezielt je Empfänger-Adresse nachfragen
+    const missing = await fillMissingDeliveries(db, { tenantId: row.tenantId, apiKey: row.password, limit: options.force ? 120 : 40, fetchImpl: options.fetchImpl }).catch((error) => { errors.push(error instanceof Error ? error.message : String(error)); return null; });
+    if (missing) { applied += missing.applied; checked += missing.events; }
   }
   if (errors.length) console.error("[E-Mail-Ereignisse] Brevo:", errors[0]);
   return { applied, checked, errors };
+}
+const lookedUp = new Map<number, number>(); // gesendete Kampagnen-E-Mail → wann zuletzt gezielt nachgefragt
+/**
+ * Zustellung gezielt nachfragen: gesendete Kampagnen-E-Mails ohne Zustell-Meldung (älter als 20 Minuten, jünger als 30 Tage) – je
+ * Empfänger-Adresse direkt beim Versanddienst (alle Meldungen dieser Adresse der letzten 30 Tage: Zustellung, Öffnen, Klick). So fehlt
+ * keine Meldung, auch wenn die Sammelabfrage sie nicht erwischt (viele E-Mails im Konto, ältere Tage). Höchstens `limit` Adressen je
+ * Lauf, jede höchstens alle sechs Stunden noch einmal.
+ */
+export async function fillMissingDeliveries(db: Db, options: { tenantId: number; apiKey: string; limit?: number; fetchImpl?: FetchLike; now?: number }) {
+  const now = options.now ?? Date.now(); const limit = Math.max(1, Math.min(200, options.limit ?? 40));
+  const rows = await db.select({ id: emailCampaignEvents.id, email: emailCampaignRecipients.email }).from(emailCampaignEvents).innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId))
+    .where(and(eq(emailCampaignEvents.tenantId, options.tenantId), eq(emailCampaignEvents.kind, "gesendet"), isNull(emailCampaignEvents.delivery), gte(emailCampaignEvents.createdAt, new Date(now - 30 * 86_400_000)), lte(emailCampaignEvents.createdAt, new Date(now - 20 * 60_000))))
+    .orderBy(asc(emailCampaignEvents.createdAt)).limit(1000);
+  const emails: string[] = [];
+  for (const row of rows) {
+    if ((lookedUp.get(row.id) ?? 0) > now - 6 * 3_600_000) continue;
+    const email = row.email.trim().toLowerCase(); if (!email) continue;
+    if (!emails.includes(email)) { if (emails.length >= limit) continue; emails.push(email); }
+    lookedUp.set(row.id, now);
+  }
+  let applied = 0; let events = 0;
+  for (const email of emails) {
+    const body = await brevoGet(`/smtp/statistics/events?email=${encodeURIComponent(email)}&days=30&limit=100&sort=desc`, options.apiKey, { fetchImpl: options.fetchImpl });
+    const list = body && typeof body === "object" && Array.isArray((body as { events?: unknown }).events) ? (body as { events: Array<Record<string, unknown>> }).events : [];
+    for (const item of list) {
+      events += 1; const type = String(item.event ?? ""); const messageId = String(item.messageId ?? item["message-id"] ?? ""); const at = item.date ? new Date(String(item.date)) : null;
+      const status = deliveryStatusOf(type);
+      if (status) { if (await applyDeliveryEvent(db, { tenantId: options.tenantId, email: String(item.email ?? email), messageId, status, reason: typeof item.reason === "string" ? item.reason : null, at }).catch(() => false)) applied += 1; continue; }
+      const kind = providerEventKind(type); if (!kind) continue;
+      if (await applyProviderEvent(db, { tenantId: options.tenantId, email: String(item.email ?? email), messageId, kind, url: typeof item.link === "string" ? item.link : null, at }).catch(() => false)) applied += 1;
+    }
+  }
+  return { emails: emails.length, events, applied };
 }

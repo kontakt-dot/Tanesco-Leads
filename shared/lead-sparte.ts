@@ -21,23 +21,25 @@ export type Sparte = {
   match: RegExp;
   /** mit wie vielen Fragen wir telefonisch vorqualifizieren (PV & WP 10, Hausnotruf 6, Elektrorollstuhl 6, Alarmanlage 8) – ohne Angabe nennen wir keine Zahl */
   questions?: number | null;
+  /** worum es bei den Fragen geht – drei Punkte, in E-Mails als kurzer Teaser in Klammern („z. B. Krankenkasse, Pflegegrad und Wohnsituation“). Eigene Sparten: keine festen Punkte – die KI nennt drei passende. */
+  topics?: string[] | null;
 };
 
 const PV_RE = /photovoltaik|solar|\bpv\b|pv[-\s]|pv-?anlage/i;
 const WP_RE = /wärmepumpe|waermepumpe|\bwp\b/i;
 export const SPARTEN: Sparte[] = [
-  { key: "pv-wp", label: "Photovoltaik & Wärmepumpe", topic: "Photovoltaik und Wärmepumpen", leads: "PV- und Wärmepumpen-Leads", recipients: "PV- und Wärmepumpen-Fachbetriebe und Energieversorger", partner: "Fachbetrieb", match: /(?!)/, questions: 10 },
-  { key: "photovoltaik", label: "Photovoltaik", topic: "Photovoltaik", leads: "Photovoltaik-Leads", recipients: "Photovoltaik-Fachbetriebe und Solarteure", partner: "Fachbetrieb", match: PV_RE, questions: 10 },
-  { key: "waermepumpe", label: "Wärmepumpe", topic: "Wärmepumpen", leads: "Wärmepumpen-Leads", recipients: "Wärmepumpen-Fachbetriebe und Heizungsbauer", partner: "Fachbetrieb", match: WP_RE, questions: 10 },
-  { key: "hausnotruf", label: "Hausnotruf", topic: "Hausnotruf", leads: "Hausnotruf-Leads", recipients: "Anbieter von Hausnotruf-Systemen", partner: "Anbieter", match: /hausnotruf|notrufsystem|notruf|haus-notruf/i, questions: 6 },
-  { key: "pflegebox", label: "Pflegebox", topic: "Pflegeboxen", leads: "Pflegebox-Leads", recipients: "Anbieter von Pflegeboxen und Pflegehilfsmitteln", partner: "Anbieter", match: /pflegebox|pflegehilfsmittel|pflege-box/i },
-  { key: "elektrorollstuhl", label: "Elektrorollstuhl", topic: "Elektrorollstühle", leads: "Elektrorollstuhl-Leads", recipients: "Fachhändler und Sanitätshäuser für Elektrorollstühle", partner: "Fachhändler", match: /elektro-?\s?rollst|e-?rollst|rollstuhl|rollstühle/i, questions: 6 },
-  { key: "rollator", label: "Rollator", topic: "Rollatoren", leads: "Rollator-Leads", recipients: "Fachhändler und Sanitätshäuser für Rollatoren", partner: "Fachhändler", match: /rollator/i },
-  { key: "treppenlift", label: "Treppenlift", topic: "Treppenlifte", leads: "Treppenlift-Leads", recipients: "Anbieter und Fachbetriebe für Treppenlifte", partner: "Fachbetrieb", match: /treppenlift|sitzlift|plattformlift/i },
-  { key: "bad", label: "Barrierefreies Bad", topic: "barrierefreie Bäder", leads: "Leads für barrierefreie Bäder", recipients: "Fachbetriebe für barrierefreie Badumbauten", partner: "Fachbetrieb", match: /barrierefrei|badumbau|bäder|baeder|badsanierung/i },
-  { key: "alarmanlage", label: "Alarmanlage", topic: "Alarmanlagen", leads: "Alarmanlagen-Leads", recipients: "Errichter und Fachbetriebe für Alarmanlagen und Sicherheitstechnik", partner: "Fachbetrieb", match: /alarm|einbruchschutz|einbruchmelde|sicherheitstechnik/i, questions: 8 },
-  { key: "fenster", label: "Fenster", topic: "Fenster", leads: "Fenster-Leads", recipients: "Fensterbauer und Fachbetriebe für Fenster", partner: "Fachbetrieb", match: /fenster/i },
-  { key: "wintergarten", label: "Wintergarten", topic: "Wintergärten", leads: "Wintergarten-Leads", recipients: "Fachbetriebe für Wintergärten", partner: "Fachbetrieb", match: /wintergarten|wintergärten/i },
+  { key: "pv-wp", label: "Photovoltaik & Wärmepumpe", topic: "Photovoltaik und Wärmepumpen", leads: "PV- und Wärmepumpen-Leads", recipients: "PV- und Wärmepumpen-Fachbetriebe und Energieversorger", partner: "Fachbetrieb", match: /(?!)/, questions: 10, topics: ["Eigentum", "Dach und Heizung", "Stromverbrauch"] },
+  { key: "photovoltaik", label: "Photovoltaik", topic: "Photovoltaik", leads: "Photovoltaik-Leads", recipients: "Photovoltaik-Fachbetriebe und Solarteure", partner: "Fachbetrieb", match: PV_RE, questions: 10, topics: ["Eigentum", "Dachfläche", "Stromverbrauch"] },
+  { key: "waermepumpe", label: "Wärmepumpe", topic: "Wärmepumpen", leads: "Wärmepumpen-Leads", recipients: "Wärmepumpen-Fachbetriebe und Heizungsbauer", partner: "Fachbetrieb", match: WP_RE, questions: 10, topics: ["Eigentum", "Wohnfläche", "aktuelle Heizung"] },
+  { key: "hausnotruf", label: "Hausnotruf", topic: "Hausnotruf", leads: "Hausnotruf-Leads", recipients: "Anbieter von Hausnotruf-Systemen", partner: "Anbieter", match: /hausnotruf|notrufsystem|notruf|haus-notruf/i, questions: 6, topics: ["Krankenkasse", "Pflegegrad", "Wohnsituation"] },
+  { key: "pflegebox", label: "Pflegebox", topic: "Pflegeboxen", leads: "Pflegebox-Leads", recipients: "Anbieter von Pflegeboxen und Pflegehilfsmitteln", partner: "Anbieter", match: /pflegebox|pflegehilfsmittel|pflege-box/i, topics: ["Pflegegrad", "Pflegekasse", "Pflege zu Hause"] },
+  { key: "elektrorollstuhl", label: "Elektrorollstuhl", topic: "Elektrorollstühle", leads: "Elektrorollstuhl-Leads", recipients: "Fachhändler und Sanitätshäuser für Elektrorollstühle", partner: "Fachhändler", match: /elektro-?\s?rollst|e-?rollst|rollstuhl|rollstühle/i, questions: 6, topics: ["Krankenkasse", "Pflegegrad", "Nutzung drinnen oder draußen"] },
+  { key: "rollator", label: "Rollator", topic: "Rollatoren", leads: "Rollator-Leads", recipients: "Fachhändler und Sanitätshäuser für Rollatoren", partner: "Fachhändler", match: /rollator/i, topics: ["Krankenkasse", "Pflegegrad", "Einsatz im Alltag"] },
+  { key: "treppenlift", label: "Treppenlift", topic: "Treppenlifte", leads: "Treppenlift-Leads", recipients: "Anbieter und Fachbetriebe für Treppenlifte", partner: "Fachbetrieb", match: /treppenlift|sitzlift|plattformlift/i, topics: ["Treppenform", "Anzahl der Etagen", "Pflegegrad"] },
+  { key: "bad", label: "Barrierefreies Bad", topic: "barrierefreie Bäder", leads: "Leads für barrierefreie Bäder", recipients: "Fachbetriebe für barrierefreie Badumbauten", partner: "Fachbetrieb", match: /barrierefrei|badumbau|bäder|baeder|badsanierung/i, topics: ["gewünschter Umbau", "Größe des Bads", "Pflegegrad"] },
+  { key: "alarmanlage", label: "Alarmanlage", topic: "Alarmanlagen", leads: "Alarmanlagen-Leads", recipients: "Errichter und Fachbetriebe für Alarmanlagen und Sicherheitstechnik", partner: "Fachbetrieb", match: /alarm|einbruchschutz|einbruchmelde|sicherheitstechnik/i, questions: 8, topics: ["Objekt und Fläche", "Anzahl der Fenster", "Art der Alarmanlage"] },
+  { key: "fenster", label: "Fenster", topic: "Fenster", leads: "Fenster-Leads", recipients: "Fensterbauer und Fachbetriebe für Fenster", partner: "Fachbetrieb", match: /fenster/i, topics: ["Anzahl der Fenster", "Material", "Zeitrahmen"] },
+  { key: "wintergarten", label: "Wintergarten", topic: "Wintergärten", leads: "Wintergarten-Leads", recipients: "Fachbetriebe für Wintergärten", partner: "Fachbetrieb", match: /wintergarten|wintergärten/i, topics: ["Größe", "Art der Nutzung", "Zeitrahmen"] },
 ];
 export const DEFAULT_SPARTE = SPARTEN[0];
 /** Vorschläge für das Eingabefeld (frei eintragbar bleibt es trotzdem). */
@@ -133,11 +135,27 @@ export function questionCount(sparte?: { key?: string; questions?: number | null
   if (!sparte.key) return DEFAULT_SPARTE.questions ?? null;
   return SPARTEN.find((item) => item.key === sparte.key)?.questions ?? null;
 }
-type QuestionSparte = { key?: string; questions?: number | null } | null | undefined;
-/** „in der Regel anhand von sechs Fragen telefonisch vorqualifiziert“ – ohne feste Zahl „anhand gezielter Fragen telefonisch vorqualifiziert“. */
-export function qualifyPhrase(sparte?: QuestionSparte): string { const count = questionCount(sparte); return count ? `in der Regel anhand von ${numberWord(count)} Fragen telefonisch vorqualifiziert` : "anhand gezielter Fragen telefonisch vorqualifiziert"; }
-/** Für Aufzählungen („Telefonische Vorqualifizierung jedes Interessenten …“): „anhand von in der Regel sechs Fragen“ / „anhand gezielter Fragen“. */
-export function qualifyBy(sparte?: QuestionSparte): string { const count = questionCount(sparte); return count ? `anhand von in der Regel ${numberWord(count)} Fragen` : "anhand gezielter Fragen"; }
+type QuestionSparte = { key?: string; questions?: number | null; topics?: string[] | null } | null | undefined;
+/**
+ * Worum es bei den Fragen geht (drei Punkte je Sparte): Hausnotruf Krankenkasse, Pflegegrad, Wohnsituation; Alarmanlage Objekt und Fläche,
+ * Anzahl der Fenster, Art der Alarmanlage … Eigene Sparten haben keine festen Punkte → null (die KI nennt dann drei passende). Ohne Sparte: PV & WP.
+ */
+export function questionTopics(sparte?: QuestionSparte): string[] | null {
+  if (!sparte) return DEFAULT_SPARTE.topics ?? null;
+  if (sparte.topics !== undefined) return sparte.topics?.length ? sparte.topics : null;
+  if (!sparte.key) return DEFAULT_SPARTE.topics ?? null;
+  return SPARTEN.find((item) => item.key === sparte.key)?.topics ?? null;
+}
+const joinTopics = (topics: string[]) => topics.length < 2 ? topics.join("") : `${topics.slice(0, -1).join(", ")} ${topics.some((item) => / und /.test(item)) ? "sowie" : "und"} ${topics[topics.length - 1]}`;
+/** Kurzer Teaser in Klammern: „(z. B. Krankenkasse, Pflegegrad und Wohnsituation)“ – leer, wenn die Sparte keine festen Punkte hat. */
+export function topicsTeaser(sparte?: QuestionSparte): string { const topics = questionTopics(sparte); return topics ? `(z. B. ${joinTopics(topics)})` : ""; }
+/** „in der Regel anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert“ – ohne feste Zahl „anhand gezielter Fragen … telefonisch vorqualifiziert“. */
+export function qualifyPhrase(sparte?: QuestionSparte): string { const count = questionCount(sparte); const teaser = topicsTeaser(sparte); return `${count ? `in der Regel anhand von ${numberWord(count)} Fragen` : "anhand gezielter Fragen"}${teaser ? ` ${teaser}` : ""} telefonisch vorqualifiziert`; }
+/** Für Aufzählungen („Telefonische Vorqualifizierung jedes Interessenten …“): „anhand von in der Regel sechs Fragen (z. B. …)“ / „anhand gezielter Fragen“. */
+export function qualifyBy(sparte?: QuestionSparte): string { const count = questionCount(sparte); const teaser = topicsTeaser(sparte); return `${count ? `anhand von in der Regel ${numberWord(count)} Fragen` : "anhand gezielter Fragen"}${teaser ? ` ${teaser}` : ""}`; }
+/** Die Teaser aller bekannten Sparten – so erkennt man einen Teaser, der zu einer anderen Sparte gehört (z. B. nach einer kopierten Vorlage). */
+const KNOWN_TEASERS = new Set(SPARTEN.map((item) => topicsTeaser(item)).filter(Boolean).map((teaser) => teaser.toLowerCase()));
+const TEASER_SRC = "\\s*\\((?:z\\.\\s?B\\.|u\\.\\s?a\\.|etwa\\b|unter anderem\\b)[^()\\n]{2,160}\\)";
 export const COUNT_SRC = "(?:1[0-5]|[4-9]|vierzehn|dreizehn|fünfzehn|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf)";
 const QUESTIONS_SRC = "(?:Qualifizierungs|Qualifikations)?[Ff]ragen";
 const COUNTED_RE = new RegExp(`\\b${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b|\\bgezielte[rn]?\\s+(?:Qualifizierungs)?[Ff]ragen\\b`, "i");
@@ -162,5 +180,28 @@ export function fixQuestionCount(text: string, sparte?: QuestionSparte): string 
       .replace(new RegExp(`(?:in der Regel\\s+)?anhand von\\s+(?:in der Regel\\s+|rund\\s+|etwa\\s+|bis zu\\s+)?${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b`, "gi"), (match) => cap(match, "anhand gezielter Fragen"))
       .replace(new RegExp(`\\b(mit|über|durch)\\s+(?:in der Regel\\s+|rund\\s+|etwa\\s+)?${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b`, "gi"), (_match, prep: string) => `${prep} ${/^mit$/i.test(prep) ? "gezielten" : "gezielte"} Fragen`)
       .replace(new RegExp(`(?:\\b(?:rund|etwa)\\s+)?\\b${COUNT_SRC}\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b`, "gi"), (match) => cap(match, "gezielte Fragen"));
+  });
+}
+/**
+ * Teaser in Klammern hinter der Zahl der Fragen: „anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)“.
+ * Nur in Sätzen über die Qualifizierung und nur einmal je Text (`state.done` gilt über mehrere Bausteine einer E-Mail). Steht schon
+ * ein Teaser da, bleibt er – außer er gehört zu einer anderen Sparte (z. B. aus einer kopierten Vorlage): dann kommt der richtige
+ * hin, bei Sparten ohne feste Punkte fällt er weg. Nennt der Satz die Punkte schon („… Fragen zu Krankenkasse und Pflegegrad“), kommt nichts dazu.
+ */
+export function withQuestionTopics(text: string, sparte?: QuestionSparte, state: { done: boolean } = { done: false }): string {
+  if (!text || !COUNTED_RE.test(text)) return text;
+  const topics = questionTopics(sparte); const teaser = topicsTeaser(sparte);
+  const mention = new RegExp(`(\\b(?:${COUNT_SRC}|gezielte[rn]?)\\s+(?:kurze[n]?\\s+)?${QUESTIONS_SRC}\\b)(${TEASER_SRC})?`, "gi");
+  return text.replace(mention, (all: string, head: string, existing: string | undefined, offset: number, whole: string) => {
+    const around = whole.slice(Math.max(0, offset - 160), offset + all.length + 120);
+    if (!QUALIFY_CONTEXT.test(around) && !/vorqualifi|telefonisch/i.test(around)) return all; // eine „Frage an Sie“ bleibt unberührt
+    const current = (existing ?? "").trim(); const foreign = current && KNOWN_TEASERS.has(current.toLowerCase()) && current.toLowerCase() !== teaser.toLowerCase();
+    if (current && !foreign) { state.done = true; return all; } // eigener oder passender Teaser bleibt
+    if (!teaser) return foreign ? head : all; // Sparte ohne feste Punkte: fremden Teaser entfernen
+    if (state.done) return foreign ? head : all;
+    const after = whole.slice(offset + all.length, offset + all.length + 140).toLowerCase();
+    const keyWord = (topic: string) => topic.toLowerCase().split(/\s+/).filter((word) => word.length >= 5).sort((a, b) => b.length - a.length)[0] ?? topic.toLowerCase();
+    if (!current && topics!.some((topic) => new RegExp(`(^|[^a-zäöüß])${keyWord(topic)}`, "i").test(after))) { state.done = true; return all; } // Punkte stehen schon im Satz
+    state.done = true; return `${head} ${teaser}`;
   });
 }

@@ -72,6 +72,9 @@ describe("E-Mail-Kampagnen: Ablauf-Baum und Builder", () => {
     const sentBefore = sent.length; const notOpened = await advanceRecipient(tree, first.state, new Date(t0.getTime() + 73 * 3_600_000), send); expect(sent[sentBefore]).toContain("Haben Sie meine E-Mail gesehen"); expect(notOpened.events[0].note).toContain("nein → Sonst");
     const failing = await advanceRecipient(tree, start, t0, async () => false); expect(failing.state.status).toBe("fehler");
     expect(summarizeCampaign([{ status: "fertig", sentCount: 2, openedAt: new Date(), clickedAt: null, repliedAt: null }, { status: "wartet", sentCount: 1, openedAt: null, clickedAt: null, repliedAt: null }])).toMatchObject({ total: 2, sent: 2, opened: 1, openRate: 50 });
+    // Wer noch keine E-Mail hat – und warum: wartet (Freigabe, Versandzeit, Tageslimit), gesperrt oder mit Fehler angehalten
+    const none = (status: string) => ({ status, sentCount: 0, openedAt: null, clickedAt: null, repliedAt: null }) as never;
+    expect(summarizeCampaign([none("wartet"), none("laeuft"), none("abgemeldet"), none("bounce"), none("fehler"), { status: "fertig", sentCount: 1, openedAt: null, clickedAt: null, repliedAt: null }]).unsent).toEqual({ total: 5, waiting: 2, blocked: 2, failed: 1, done: 0 });
   });
   it("Antwort-Stopp: hat der Kontakt geantwortet, geht keine E-Mail mehr raus – egal wie der Ablauf gebaut ist", async () => {
     // Ablauf OHNE „Wenn geantwortet“-Verzweigung: E-Mail → 1 Std. warten → zweite E-Mail → dritte E-Mail

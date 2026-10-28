@@ -755,8 +755,13 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: saved.id })).tree)).toContain("anhand von sechs Fragen");
     expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: named.id })).tree)).toContain("anhand von acht Fragen");
     expect(String(row.draftText)).toContain("sechs Fragen"); expect(String(row.draftText)).not.toContain("zehn Fragen");
-    const pv = await call("leadops.saveEmailCampaign", { ...base, name: "PV & WP • Erstkontakt" }); expect(pv.fixedQuestions).toBe(false);
-    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: pv.id })).tree)).toContain("zehn Fragen");
+    const pv = await call("leadops.saveEmailCampaign", { ...base, name: "PV & WP • Erstkontakt" }); expect(pv.fixedQuestions).toBe(true); // Zahl bleibt, der Teaser in Klammern kommt dazu
+    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: pv.id })).tree)).toContain("zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch)");
+    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: saved.id })).tree)).toContain("sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)");
+    expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: named.id })).tree)).toContain("acht Fragen (z. B. Objekt und Fläche, Anzahl der Fenster sowie Art der Alarmanlage)");
+    expect(String(row.draftText)).toContain("sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation)"); // Entwurf mit Teaser
+    const pvTree = (await call("leadops.getEmailCampaign", { id: pv.id })).tree;
+    expect((await call("leadops.saveEmailCampaign", { ...base, id: pv.id, name: "PV & WP • Erstkontakt", tree: pvTree })).fixedQuestions).toBe(false); // schon angepasst
   });
   it("Zustellung (Demo): gesendete E-Mails zeigen „zugestellt“ – je Kampagne und in „Gesendet“; der Versand gilt als eingerichtet", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");

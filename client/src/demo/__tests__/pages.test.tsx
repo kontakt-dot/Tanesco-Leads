@@ -77,6 +77,19 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     expect(Array.from(view.container.querySelectorAll(".cl-card .campaign-act")).map((node) => node.textContent?.trim())).toContain("Wiederherstellen");
     expect(view.container.querySelector(".cl-archive-hint")?.textContent).toContain("Zahlen bleiben erhalten");
   });
+  it("Karte: Kennzahlen als eine Reihe – Empfänger, Gesendet, Zugestellt (mit Aufteilung), Geöffnet, Geklickt, Antwort; Einstellungen dezent", async () => {
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const { view } = mount(); await settle(300); await settle(300);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Dachdecker Hessen – Erstkontakt"))!;
+    expect(card).toBeTruthy();
+    const cells = Array.from(card.querySelectorAll(".cl-funnel .cl-f span")).map((node) => node.textContent);
+    expect(cells).toEqual(["Empfänger", "Gesendet", "Zugestellt", "Geöffnet", "Geklickt", "Antwort"]);
+    const delivered = card.querySelector(".cl-f.is-delivered")!; expect(delivered.textContent).toContain("1 nicht angekommen"); expect(delivered.getAttribute("title")).toContain("laut Versanddienst angekommen");
+    expect(card.querySelector(".cl-f.is-total small")?.textContent).toBe("alle erreicht");
+    expect(Array.from(card.querySelectorAll(".cl-tags .cl-tag")).map((node) => node.textContent)).toContain("stoppt bei Antwort"); // Einstellungen in einer dezenten Zeile
+    const review = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
+    expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); expect(review.querySelector(".cl-alerts")?.textContent).toContain("zur Freigabe"); // wer noch keine E-Mail hat – und warum
+  });
 });
 
 describe("Seitenleiste", () => {

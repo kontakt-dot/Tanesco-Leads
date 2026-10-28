@@ -3,7 +3,7 @@
  * (Betreff, Vorschautext, Bausteine) oder eine ganze Serie (Ablauf-Baum). Mit KI-Schlüssel schreibt die KI den Text,
  * ohne Schlüssel liefert der regelbasierte Entwurf eine brauchbare Vorlage. Gemeinsam für Server, Chat-Demo und Oberfläche.
  */
-import { newNodeId, type EmailNode, type EmailTree } from "./email-campaigns";
+import { dropAdPlatforms, newNodeId, shortParagraphs, type EmailNode, type EmailTree } from "./email-campaigns";
 import { newBlockId, type EmailBlock } from "./email-design";
 
 export type EmailGoal = "termin" | "rueckruf" | "angebot" | "info" | "reaktivierung" | "willkommen" | "frei";
@@ -83,7 +83,7 @@ export function heuristicEmailDraft(input: EmailBrief): EmailDraft {
     willkommen: { subject: `Willkommen bei ${company}, {{vorname}}!`, subjectB: `Danke für Ihre Anfrage – so geht es weiter`, preheader: "So geht es jetzt weiter.", heading: "Schön, dass Sie da sind", intro: `vielen Dank für Ihre Anfrage${!own ? ` zu ${category}` : topic ? ` zum Thema ${topic}` : ""}.`, body: "Hier kurz, was als Nächstes passiert – und wie Sie uns jederzeit erreichen.", bullets: ["Wir melden uns innerhalb von 24 Stunden", "Ein fester Ansprechpartner für Sie", "Alle Unterlagen kommen per E-Mail"] },
   };
   const scaffold = scaffolds[goal === "frei" ? "info" : goal];
-  const blocks: EmailBlock[] = [{ id: newBlockId(), type: "heading", text: scaffold.heading }, { id: newBlockId(), type: "text", text: `${greeting(tone)}\n\n${sentence(scaffold.intro)} ${sentence(scaffold.body)}` }];
+  const blocks: EmailBlock[] = [{ id: newBlockId(), type: "heading", text: scaffold.heading }, { id: newBlockId(), type: "text", text: `${greeting(tone)}\n\n${sentence(scaffold.intro)}\n\n${sentence(scaffold.body)}` }]; // kurze Absätze statt eines Textblocks
   if (length !== "kurz") blocks.push({ id: newBlockId(), type: "bullets", items: scaffold.bullets });
   if (length === "lang") blocks.push({ id: newBlockId(), type: "text", text: input.brief.trim() ? `Kurz zu uns: ${sentence(input.brief.trim().replace(/^[a-zäöü]/, (c) => c.toUpperCase()))}` : `Wir begleiten Sie von der ersten Frage bis zur Umsetzung – persönlich und ohne Umwege.` });
   void cta; blocks.push({ id: newBlockId(), type: "text", text: closing(tone, sender) }, { id: newBlockId(), type: "signature", name: sender, role: "Vertrieb", phone: "+49 69 000000" }); // kein Knopf – es gibt keine Terminbuchung
@@ -188,9 +188,13 @@ export function completeDraft(draft: EmailDraft, fallback: EmailDraft, tone: Ema
 }
 export function sanitizeDraft(raw: unknown, fallback: EmailDraft): EmailDraft {
   const data = normalizeRawDraft(raw);
-  const blocks = sanitizeBlocks(data.blocks); const subject = String(data.subject ?? "").trim().slice(0, 200);
+  const blocks = polishBlocks(sanitizeBlocks(data.blocks)); const subject = dropAdPlatforms(String(data.subject ?? "").trim().slice(0, 200));
   if (!subject || !blocks.length) return fallback;
-  return { label: String(data.label ?? fallback.label).trim().slice(0, 60) || fallback.label, subject, subjectB: data.subjectB ? String(data.subjectB).trim().slice(0, 200) : null, preheader: String(data.preheader ?? "").trim().slice(0, 200), blocks, notes: data.notes ? String(data.notes).slice(0, 300) : null };
+  return { label: String(data.label ?? fallback.label).trim().slice(0, 60) || fallback.label, subject, subjectB: data.subjectB ? dropAdPlatforms(String(data.subjectB).trim().slice(0, 200)) : null, preheader: dropAdPlatforms(String(data.preheader ?? "").trim().slice(0, 200)), blocks, notes: data.notes ? String(data.notes).slice(0, 300) : null };
+}
+/** Leicht lesbar und ohne Werbeplattformen: Texte in kurze Absätze (zwei bis drei Zeilen), nie Meta, Facebook oder Instagram – „online“. */
+export function polishBlocks(blocks: EmailBlock[]): EmailBlock[] {
+  return blocks.map((block) => block.type === "text" ? { ...block, text: shortParagraphs(dropAdPlatforms(block.text)) } : block.type === "heading" ? { ...block, text: dropAdPlatforms(block.text) } : block.type === "bullets" ? { ...block, items: block.items.map(dropAdPlatforms) } : block);
 }
 /** Text-Entwurf (SMS/WhatsApp/E-Mail-Text) ohne KI: aus dem passenden E-Mail-Entwurf den Kern ziehen. */
 export function heuristicMessageDraft(input: EmailBrief & { channel: "sms" | "whatsapp" | "email" }): { text: string; subject: string | null } {
