@@ -1820,6 +1820,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const sentCampaignMail = (await owner.leadops.listSent({ kind: "kampagne" })).items[0]; if (sentCampaignMail) expect((await owner.leadops.sentMailPreview({ id: sentCampaignMail.id })).html).toContain("Thomas Kutzbach");
     const preview = await owner.leadops.mailSignaturePreview({ signature: { role: "Geschäftsführung" } });
     expect(preview.html).toContain("Thomas Kutzbach"); expect(preview.html).toContain("Geschäftsführung"); expect(preview.html).toContain("tanesco-logo-mail.png"); expect(preview.text).toContain("Telefon: +49 (0) 178 33 59 146");
+    // Logo in der Signatur: standardmäßig aus; gespeicherte Signaturen mit Logo stellt Migration 0091 einmal um
+    const { normalizeSignature } = await import("../shared/email-signature"); expect(normalizeSignature({}).showLogo).toBe(false);
+    const { readFile } = await import("node:fs/promises"); await db.execute(sql.raw(await readFile("drizzle/0091_signatur_ohne_logo.sql", "utf8")));
+    expect(((await owner.leadops.getMailSettings()) as { signature?: { showLogo?: boolean } }).signature?.showLogo).toBe(false);
+    expect((await owner.leadops.mailSignaturePreview({ signature: { role: "Geschäftsführung" } })).html).not.toContain("tanesco-logo-mail.png");
     const incoming = await owner.leadops.storeInboxMessage({ fromEmail: "antwort@signatur-test.example", fromName: "Signatur Test", subject: "Angebot?", bodyText: "Können Sie mir ein Angebot schicken?" });
     const answered = (await db.select().from(inboxMessages).where(eq(inboxMessages.id, incoming.id)))[0];
     const result = await owner.leadops.replyInboxMessage({ messageId: answered.id, text: "Anbei das Angebot.", attachments: [{ filename: "Angebot.pdf", contentType: "application/pdf", contentBase64: Buffer.from("%PDF-1.4 test").toString("base64"), size: 13 }] });

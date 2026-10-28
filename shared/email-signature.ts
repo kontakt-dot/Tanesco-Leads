@@ -17,7 +17,7 @@ export type MailSignature = {
   showCompany: boolean; // Firmenblock aus der Fußzeile (Einstellungen → Branding)
 };
 
-export const DEFAULT_SIGNATURE: MailSignature = { enabled: true, greeting: "Mit freundlichen Grüßen", name: "", role: "", phone: "", email: "", website: "", showLogo: true, showCompany: true };
+export const DEFAULT_SIGNATURE: MailSignature = { enabled: true, greeting: "Mit freundlichen Grüßen", name: "", role: "", phone: "", email: "", website: "", showLogo: false /* Logo standardmäßig aus – Bilder lassen E-Mails öfter im Spam landen; unter Einstellungen → E-Mail-Versand zuschaltbar */, showCompany: true };
 
 export function normalizeSignature(input: Partial<MailSignature> | null | undefined): MailSignature {
   const value = input ?? {};

@@ -101,7 +101,7 @@ function SignatureSection({ form, setForm, onSave, saving }: { form: Form; setFo
         <label className="text-xs text-slate-400">Telefon<Input className="mt-1" value={sig.phone} maxLength={60} placeholder="+49 (0) 178 …" onChange={(event) => set({ phone: event.target.value })} /></label>
         <label className="text-xs text-slate-400">E-Mail<Input className="mt-1" value={sig.email} maxLength={200} placeholder={form.fromEmail || "kontakt@…"} onChange={(event) => set({ email: event.target.value })} /></label>
         <label className="text-xs text-slate-400">Webseite<Input className="mt-1" value={sig.website} maxLength={200} placeholder="www.tanescodigital.de" onChange={(event) => set({ website: event.target.value })} /></label>
-        <label className="flex items-center gap-2 text-sm text-slate-200"><input type="checkbox" checked={sig.showLogo} onChange={(event) => set({ showLogo: event.target.checked })} /> Logo zeigen</label>
+        <label className="flex items-center gap-2 text-sm text-slate-200"><input type="checkbox" checked={sig.showLogo} onChange={(event) => set({ showLogo: event.target.checked })} /> Logo zeigen <small className="text-xs text-slate-500">(aus empfohlen – ohne Bild seltener im Spam)</small></label>
         <label className="flex items-center gap-2 text-sm text-slate-200"><input type="checkbox" checked={sig.showCompany} onChange={(event) => set({ showCompany: event.target.checked })} /> Firma und Adresse zeigen</label>
       </div>
       <div className="signature-preview"><span className="text-xs text-slate-400">So sieht es beim Empfänger aus</span><iframe title="Vorschau der Signatur" className="signature-preview-frame" sandbox="allow-same-origin" srcDoc={doc} /></div>

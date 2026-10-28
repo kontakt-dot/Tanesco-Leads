@@ -1569,7 +1569,8 @@ describe("Antworten mit Signatur und Anhang (Chat-Build)", () => {
     const settings = await call("leadops.getMailSettings");
     expect(settings.signature).toMatchObject({ enabled: true, name: "Thomas Kutzbach" });
     const vorschau = await call("leadops.mailSignaturePreview", { signature: { name: "Taner Tanesco", role: "Vertrieb" } });
-    expect(vorschau.html).toContain("Taner Tanesco"); expect(vorschau.html).toContain("Vertrieb"); expect(vorschau.html).toContain("Tanesco Digital GbR"); expect(vorschau.html).toContain("tanesco-logo-mail.png");
+    expect(vorschau.html).toContain("Taner Tanesco"); expect(vorschau.html).toContain("Vertrieb"); expect(vorschau.html).toContain("Tanesco Digital GbR"); expect(vorschau.html).not.toContain("tanesco-logo-mail.png"); // Logo standardmäßig aus (weniger Spam)
+    expect((await call("leadops.mailSignaturePreview", { signature: { name: "Taner Tanesco", showLogo: true } })).html).toContain("tanesco-logo-mail.png"); // zuschaltbar
     await call("leadops.saveMailSettings", { provider: settings.provider, fromName: settings.fromName, fromEmail: settings.fromEmail, enabled: true, imapEnabled: true, imapHost: settings.imapHost, imapUsername: settings.imapUsername, signature: { ...settings.signature, name: "Taner Tanesco", showLogo: false } });
     const danach = await call("leadops.getMailSettings"); expect(danach.signature.name).toBe("Taner Tanesco"); expect(danach.signature.showLogo).toBe(false);
     expect((await call("leadops.mailSignaturePreview", {})).html).not.toContain("<img");

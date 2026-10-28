@@ -1,0 +1,1 @@
+UPDATE `mailSettings` SET `signature` = JSON_SET(`signature`, '$.showLogo', CAST('false' AS JSON)) WHERE `signature` IS NOT NULL AND JSON_EXTRACT(`signature`, '$.showLogo') = CAST('true' AS JSON);

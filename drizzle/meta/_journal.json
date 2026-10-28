@@ -638,6 +638,13 @@
       "when": 1793600000000,
       "tag": "0090_kampagnen_ohne_logo",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "5",
+      "when": 1793700000000,
+      "tag": "0091_signatur_ohne_logo",
+      "breakpoints": true
     }
   ]
 }
