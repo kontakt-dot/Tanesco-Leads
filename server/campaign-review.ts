@@ -335,6 +335,25 @@ export async function alignStoredDrafts(db: Db, before = ALIGN_DRAFTS_BEFORE): P
   }
   return switched;
 }
+/**
+ * Einmal nach dem Serverstart: Entwürfe, die noch mit der alten Anweisung (immer PV & WP) geschrieben wurden, in Kampagnen einer
+ * anderen Leadsparte verwerfen – z. B. Wärmepumpen-Texte an Hausnotruf-Firmen. Die KI schreibt sie im richtigen Thema neu (mit
+ * Freigabe: neu freigeben). Selbst geschriebene Texte bleiben. Mehrfach ausführbar ohne Nebenwirkung.
+ */
+export async function clearWrongSparteDrafts(db: Db): Promise<number> {
+  const campaigns = (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience, isTemplate: emailCampaigns.isTemplate }).from(emailCampaigns).where(isNull(emailCampaigns.archivedAt))).filter((row) => !row.isTemplate);
+  let cleared = 0;
+  for (const campaign of campaigns) {
+    const sparte = sparteOfCampaign(campaign); if (isEnergySparte(sparte)) continue;
+    const rows = await db.select({ id: emailCampaignRecipients.id, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, draftSource: emailCampaignRecipients.draftSource }).from(emailCampaignRecipients)
+      .where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), isNotNull(emailCampaignRecipients.draftState)));
+    for (const row of rows) {
+      if (row.draftSource === "hand" || fitsSparte(sparte, `${row.draftSubject ?? ""}\n${row.draftText ?? ""}`)) continue;
+      await db.update(emailCampaignRecipients).set({ draftState: null, draftSubject: null, draftText: null, draftOptions: null, draftApproach: null, draftNodeId: null, draftSource: null, draftAt: null }).where(eq(emailCampaignRecipients.id, row.id)); cleared += 1;
+    }
+  }
+  return cleared;
+}
 /** Die nächsten Entwürfe schreiben – für Empfänger, deren aktueller Schritt eine E-Mail ist und die noch keinen passenden Entwurf haben; oder für bestimmte Empfänger neu. */
 export async function generateDrafts(db: Db, tenantId: number, input: { campaignId: number; recipientIds?: number[] | null; limit?: number | null }) {
   const limit = Math.max(1, Math.min(10, input.limit ?? 5));

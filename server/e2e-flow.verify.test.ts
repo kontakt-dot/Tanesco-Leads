@@ -3077,6 +3077,12 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(nina.draftApproach).toBe("drittanbieter"); expect(nina.draftText).toContain("im Bereich Hausnotruf"); expect(nina.draftText).not.toMatch(/Photovoltaik|Wärmepumpe/);
     const individuell = (nina.draftOptions as Array<{ key: string; text: string }>).find((item) => item.key === "individuell")!;
     expect(individuell.text).toContain("Lead-Lieferanten in Deutschland für Hausnotruf"); expect(individuell.text).not.toMatch(/Photovoltaik|Wärmepumpe/); // Vorlage mit {{sparte}}
+    // alter Entwurf mit Wärmepumpen-Text in der Hausnotruf-Kampagne (vor dieser Version geschrieben) → einmal nach dem Start verworfen; eigener Text bleibt
+    const { clearWrongSparteDrafts } = await import("./campaign-review");
+    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrte Frau Notruf,\n\nunsere PV- und Wärmepumpen-Leads …", draftSource: "ki" }).where(eq(emailCampaignRecipients.id, nina.id));
+    expect(await clearWrongSparteDrafts(db)).toBeGreaterThanOrEqual(1); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, nina.id)))[0].draftText).toBeNull();
+    await db.update(emailCampaignRecipients).set({ draftState: "entwurf", draftSubject: "Eigener Text", draftText: "Mein eigener Text über Wärmepumpen", draftSource: "hand" }).where(eq(emailCampaignRecipients.id, nina.id));
+    await clearWrongSparteDrafts(db); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, nina.id)))[0].draftText).toBe("Mein eigener Text über Wärmepumpen");
     // ohne Eintrag: aus dem Namen erkannt
     const named = await owner.leadops.saveEmailCampaign({ ...base, name: "Elektrorollstuhl • Erstkontakt" } as never);
     expect((await owner.leadops.getEmailCampaign({ id: named.id })).sparte).toMatchObject({ label: "Elektrorollstuhl", source: "erkannt" });
