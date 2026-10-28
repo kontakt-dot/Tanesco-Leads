@@ -24,7 +24,21 @@ import { intervalWindowOpen, runScheduledDeliveries } from "./delivery-scheduler
 import { buildProviderPayload } from "./lead-integration-export";
 
 vi.mock("./_core/llm", () => ({
-  invokeLLM: vi.fn(async (params: { messages: Array<{ role: string; content: unknown }> }) => {
+  invokeLLM: vi.fn(async (params: { messages: Array<{ role: string; content: unknown }>; outputSchema?: { name?: string; schema?: { properties?: Record<string, unknown> } } }) => {
+    // KI-Entwürfe für Kampagnen-Mails (wie die echte KI): je verlangtem Ansatz Betreff, Text und Bezüge – Verhalten je Aufruf über globalThis.__draftPlan
+    if (params.outputSchema?.name === "vorschlaege") {
+      const prompt = String(params.messages.find((message) => message.role === "user")?.content ?? "");
+      const mode = ((globalThis as { __draftPlan?: string[] }).__draftPlan ?? []).shift() ?? "gut";
+      if (mode === "kaputt") throw new Error("Die KI-Anfrage ist fehlgeschlagen (HTTP 529): overloaded");
+      const firma = /Firma: (.+)/.exec(prompt)?.[1]?.trim() ?? "Ihr Betrieb"; const ort = /Ort: (.+)/.exec(prompt)?.[1]?.trim() ?? "Ihrer Region";
+      const template = (/Vorlage dieses Schritts – Betreff: [^\n]*\n\n([\s\S]*?)\n\n(?:Dies ist eine NACHFASS-MAIL|Schreibe )/.exec(prompt)?.[1] ?? "").trim();
+      const own = (key: string) => key === "drittanbieter"
+        ? `Sehr geehrte Damen und Herren,\n\n${firma} in ${ort} ist uns aufgefallen. Über unsere Quellen haben wir mitbekommen, dass bei Ihnen sehr wahrscheinlich Leads ankommen, die ohnehin von uns stammen – nur über Zwischenhändler weitergereicht. Deshalb möchten wir direkt mit Ihnen zusammenarbeiten.\n\nZum Kennenlernen: 20 Test-Leads kostenlos.\n\nVielen Dank`
+        : `Sehr geehrte Damen und Herren,\n\nals ${firma} betreuen Sie Familien in ${ort}, die schnell eine verlässliche Lösung brauchen – genau diese Menschen melden sich bei uns. Für einen Betrieb wie ${firma} mit festem Einzugsgebiet rund um ${ort} passt jede Anfrage, die direkt aus der Region kommt.\n\nZum Kennenlernen: 20 Test-Leads kostenlos.\n\nVielen Dank`;
+      const keys = Object.keys(params.outputSchema.schema?.properties ?? {});
+      const answer = Object.fromEntries(keys.map((key) => [key, mode === "kopie" && key !== "drittanbieter" ? { subject: `Anfragen für ${firma}`, text: template, bezuege: ["Firma", "Ort"] } : { subject: `${key === "drittanbieter" ? "Direkt statt über Zwischenhändler" : "Anfragen aus"} ${ort} für ${firma}`, text: own(key), bezuege: [`Firma ${firma}`, `Region ${ort}`] }]));
+      return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(answer) }, finish_reason: "stop" }] };
+    }
     const text = String(params.messages.find((message) => message.role === "user")?.content ?? "").toLowerCase();
     const good = /gerne|einverstanden|eigentümer/.test(text); const bad = /nicht angerufen|löschen/.test(text);
     const score = bad ? 1 : good ? 9 : 5;
@@ -3120,6 +3134,110 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const { readFile } = await import("node:fs/promises"); await db.execute(sql.raw(await readFile("drizzle/0090_kampagnen_ohne_logo.sql", "utf8")));
     const after = (await db.select({ design: emailCampaigns.design, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, copy.id)))[0];
     expect((after.design as { logoUrl?: string | null }).logoUrl).toBeNull(); expect(after.updatedAt.getTime()).toBe(stamp.getTime());
+  }, 40000);
+  it("63j. KI schreibt wirklich (mit KI-Schlüssel): Auto-Modus schickt den KI-Text, Mit Freigabe liegt ein KI-Entwurf, abgeschriebene Vorlage wird neu geschrieben, KI gestört → nie still die Vorlage", async () => {
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key"; const plan = globalThis as { __draftPlan?: string[] };
+    try {
+      const { starterBlocks } = await import("../shared/email-design");
+      await owner.leadops.importColdList({ listName: "KI-Echt", toPipeline: false, rows: [{ firstName: "Eva", lastName: "Sommer", company: "Hausnotruf Nord GmbH", city: "Hamburg", email: "eva.sommer.ki@gmx.de" }, { firstName: "Jan", lastName: "Kraft", company: "Notruf Kraft", city: "Bremen", email: "jan.kraft.ki@gmx.de" }] });
+      const starter = await owner.leadops.emailCampaignStarter();
+      const tree = { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Mehr Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
+      const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste" as const, listName: "KI-Echt" }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } };
+      // Automatisch: die KI schreibt jede E-Mail – raus geht genau dieser Text (KI-Text, mit der Firma), nie die Vorlage
+      plan.__draftPlan = [];
+      const auto = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Auto KI", kiModus: "auto", kiAnsatz: "individuell" } as never);
+      await owner.leadops.startEmailCampaign({ id: auto.id }); await owner.leadops.runEmailCampaigns();
+      const sentAuto = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, auto.id), eq(emailCampaignEvents.kind, "gesendet")));
+      expect(sentAuto).toHaveLength(2); expect(sentAuto.every((event) => event.bodySource === "ki")).toBe(true);
+      expect(sentAuto.map((event) => event.body).join(" ")).toContain("Hausnotruf Nord GmbH"); expect(sentAuto.map((event) => event.body).join(" ")).toContain("Notruf Kraft");
+      expect(sentAuto[0].body).toContain("anhand von sechs Fragen"); // Pflichtsatz mit der Zahl der Sparte ergänzt
+      const listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === auto.id)!; expect(listed.sentOrigins).toMatchObject({ personal: 2, template: 0 });
+      // Mit Freigabe: KI-Entwurf (kein Ersatz aus der Vorlage), alle Vorschläge als KI gekennzeichnet; „Alle freigeben“ → geht raus
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, auto.id));
+      const review = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Freigabe KI", kiModus: "freigabe", kiAnsatz: "individuell" } as never);
+      await owner.leadops.startEmailCampaign({ id: review.id }); await owner.leadops.runEmailCampaigns();
+      const drafts = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, review.id));
+      expect(drafts.every((row) => row.draftState === "entwurf" && row.draftSource === "ki" && row.draftApproach === "individuell")).toBe(true);
+      expect(drafts.every((row) => (row.draftOptions as Array<{ source?: string }>).every((option) => option.source === "ki"))).toBe(true);
+      expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: review.id, approve: true })).toMatchObject({ approved: 2, templateOnly: 0 });
+      await owner.leadops.runEmailCampaigns();
+      const sentReview = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, review.id), eq(emailCampaignEvents.kind, "gesendet")));
+      expect(sentReview).toHaveLength(2); expect(sentReview.every((event) => event.bodySource === "ki")).toBe(true);
+      // Die KI schreibt erst die Vorlage ab → wird verworfen und gleich neu geschrieben (eigener Text kommt durch)
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, review.id));
+      const copy = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Kopie KI", kiModus: "freigabe", kiAnsatz: "individuell" } as never);
+      plan.__draftPlan = ["kopie", "gut", "kopie", "gut"];
+      await owner.leadops.startEmailCampaign({ id: copy.id }); await owner.leadops.runEmailCampaigns();
+      const copied = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, copy.id));
+      expect(copied.every((row) => row.draftSource === "ki" && row.draftApproach === "individuell")).toBe(true);
+      expect(copied.every((row) => !/wir von Tanesco Digital gehören zu den größten/i.test(String(row.draftText)))).toBe(true); expect(copied).toHaveLength(2);
+      // KI gestört (z. B. überlastet): Automatisch schickt dann NICHTS (keine Vorlage als Ersatz) und versucht es später wieder
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, copy.id));
+      const broken = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • KI gestört", kiModus: "auto", kiAnsatz: "individuell" } as never);
+      plan.__draftPlan = ["kaputt", "kaputt", "kaputt", "kaputt"];
+      await owner.leadops.startEmailCampaign({ id: broken.id }); await owner.leadops.runEmailCampaigns();
+      expect(await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, broken.id), eq(emailCampaignEvents.kind, "gesendet")))).toHaveLength(0);
+      const waiting = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, broken.id));
+      expect(waiting.every((row) => row.status === "wartet" && row.sentCount === 0)).toBe(true);
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, broken.id));
+      // Mit Freigabe und gestörter KI: nur „Ersatz aus der Vorlage“ – nach dem nächsten Start verworfen, damit die KI sie individuell neu schreibt (freigegebene bleiben)
+      const review2 = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Freigabe gestört", kiModus: "freigabe", kiAnsatz: "individuell" } as never);
+      plan.__draftPlan = ["kaputt", "kaputt", "kaputt", "kaputt"];
+      await owner.leadops.startEmailCampaign({ id: review2.id }); await owner.leadops.runEmailCampaigns();
+      const fallbacks = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, review2.id));
+      expect(fallbacks.every((row) => row.draftState === "entwurf" && row.draftSource === "vorlage")).toBe(true);
+      await db.update(emailCampaignRecipients).set({ draftState: "freigegeben" }).where(eq(emailCampaignRecipients.id, fallbacks[0].id)); // bewusst freigegeben → bleibt
+      const { clearTemplateFallbackDrafts } = await import("./campaign-review");
+      expect(await clearTemplateFallbackDrafts(db)).toBeGreaterThanOrEqual(1);
+      const after = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, review2.id));
+      expect(after.find((row) => row.id === fallbacks[0].id)?.draftState).toBe("freigegeben"); expect(after.find((row) => row.id === fallbacks[1].id)?.draftState).toBeNull();
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, review2.id));
+    } finally { plan.__draftPlan = []; if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
+  }, 60000);
+  it("63k. Zustellung: „gesendet“ heißt übergeben – der Versanddienst meldet zugestellt/unzustellbar; ohne eingerichteten Versand wird in der echten App nie „gesendet“ angezeigt", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const mailEvents = await import("./mail-events");
+    await owner.leadops.importColdList({ listName: "Zustell-Test", toPipeline: false, rows: [{ firstName: "Zora", lastName: "Zu", company: "Zu GmbH", email: "zora@zustell-e2e.example" }, { firstName: "Bert", lastName: "Bounce", company: "Bounce KG", email: "bert@zustell-e2e.example" }] });
+    const starter = await owner.leadops.emailCampaignStarter();
+    const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste" as const, listName: "Zustell-Test" }, tree: { start: "z1", nodes: [{ id: "z1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } };
+    const campaign = await owner.leadops.saveEmailCampaign({ ...base, name: "Zustell-Test" } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+    const [zora, bert] = recipients; expect(zora.sentCount).toBe(1); expect(bert.sentCount).toBe(1);
+    await db.update(emailCampaignEvents).set({ messageId: "zu1@smtp-relay.mailin.fr" }).where(and(eq(emailCampaignEvents.recipientId, zora.id), eq(emailCampaignEvents.kind, "gesendet")));
+    await db.update(emailCampaignEvents).set({ messageId: "zu2@smtp-relay.mailin.fr" }).where(and(eq(emailCampaignEvents.recipientId, bert.id), eq(emailCampaignEvents.kind, "gesendet")));
+    const [settingsBefore] = await db.select().from(mailSettings).where(eq(mailSettings.tenantId, S.tenantId));
+    await db.update(mailSettings).set({ provider: "brevo_api", password: "xkeysib-e2e", enabled: true }).where(eq(mailSettings.tenantId, S.tenantId));
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const byEvent: Record<string, Array<Record<string, unknown>>> = { delivered: [{ email: "zora@zustell-e2e.example", messageId: "<zu1@smtp-relay.mailin.fr>", date: at }, { email: "bert@zustell-e2e.example", messageId: "<zu2@smtp-relay.mailin.fr>", date: at }], deferred: [{ email: "zora@zustell-e2e.example", messageId: "<zu1@smtp-relay.mailin.fr>", date: at, reason: "try again later" }], hardBounces: [{ email: "bert@zustell-e2e.example", messageId: "<zu2@smtp-relay.mailin.fr>", date: at, reason: "550 user unknown" }] };
+    const fake = (async (input: string | URL | Request) => { const url = String(input); const event = /event=([a-zA-Z]+)/.exec(url)?.[1] ?? ""; return new Response(JSON.stringify({ events: url.includes("offset=0") ? byEvent[event] ?? [] : [] }), { status: 200, headers: { "content-type": "application/json" } }); }) as typeof fetch;
+    try {
+      const first = await mailEvents.syncBrevoEvents(db, { tenantId: S.tenantId, force: true, fetchImpl: fake }); expect(first.applied).toBe(3); // zugestellt ×2, unzustellbar ×1 (verzögert nach „zugestellt“ ändert nichts)
+      expect((await mailEvents.syncBrevoEvents(db, { tenantId: S.tenantId, force: true, fetchImpl: fake })).applied).toBe(0); // doppelte Meldungen ändern nichts
+    } finally { if (settingsBefore) await db.update(mailSettings).set({ provider: settingsBefore.provider, password: settingsBefore.password, enabled: settingsBefore.enabled }).where(eq(mailSettings.tenantId, S.tenantId)); }
+    const sent = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.recipientId));
+    expect(sent.map((event) => event.delivery)).toEqual(["zugestellt", "unzustellbar"]); expect(sent[1].deliveryNote).toBe("550 user unknown");
+    expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, bert.id)))[0].status).toBe("bounce"); // gestoppt und gesperrt
+    const listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+    expect(listed.delivery).toMatchObject({ total: 2, zugestellt: 1, unzustellbar: 1, probleme: 1, offen: 0 });
+    const mails = await owner.leadops.listSent({ campaignId: campaign.id });
+    expect(mails.items.map((item) => (item as { delivery?: { status: string } | null }).delivery?.status).sort()).toEqual(["unzustellbar", "zugestellt"]);
+    // Webhook meldet „delivered“ für eine neue Mail → zugestellt
+    await db.update(emailCampaignEvents).set({ delivery: null }).where(eq(emailCampaignEvents.id, sent[0].id));
+    const hook = await (await realFetch(`${apiBase}/api/mail/bounce`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "delivered", email: "zora@zustell-e2e.example", "message-id": "<zu1@smtp-relay.mailin.fr>" }) })).json() as { handled: number };
+    expect(hook.handled).toBe(1); expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.id, sent[0].id)))[0].delivery).toBe("zugestellt");
+    // Ohne eingerichteten Versand (echte App): nichts wird als „gesendet“ gezählt – der Kontakt wartet mit klarem Hinweis
+    const env = process.env.NODE_ENV; process.env.NODE_ENV = "production";
+    try {
+      expect(await owner.leadops.campaignDailyStatus()).toMatchObject({ mail: { ready: false, simulated: false } });
+      await owner.leadops.importColdList({ listName: "Ohne-Versand", toPipeline: false, rows: [{ firstName: "Nina", lastName: "Nichts", company: "Nichts AG", email: "nina@ohne-versand-e2e.example" }] });
+      const none = await owner.leadops.saveEmailCampaign({ ...base, name: "Ohne Versand", audience: { source: "liste", listName: "Ohne-Versand" } } as never);
+      await owner.leadops.startEmailCampaign({ id: none.id }); await owner.leadops.runEmailCampaigns();
+      expect(await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, none.id), eq(emailCampaignEvents.kind, "gesendet")))).toHaveLength(0);
+      const nina = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, none.id)))[0];
+      expect(nina.status).toBe("wartet"); expect(nina.sentCount).toBe(0); expect(nina.lastError).toContain("Kein E-Mail-Versand eingerichtet");
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, none.id));
+    } finally { process.env.NODE_ENV = env; }
+    expect(await owner.leadops.campaignDailyStatus()).toMatchObject({ mail: { ready: false, simulated: true } }); // beim Testen wird simuliert
   }, 40000);
   it("63i. Zahl der Fragen je Sparte (Hausnotruf 6, Alarmanlage 8, PV & WP 10): Vorlage beim Speichern angepasst, Entwürfe mit der richtigen Zahl, Bestand einmal umgestellt", async () => {
     const { starterBlocks } = await import("../shared/email-design");

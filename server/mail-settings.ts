@@ -81,6 +81,11 @@ export async function transportFor(db: Db | null, tenantId: number | null) {
   if (process.env.SMTP_URL) return { transport: nodemailer.createTransport({ url: process.env.SMTP_URL, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 } as never) as unknown as MailTransport, from: process.env.SMTP_FROM ?? "Tanesco Leads <no-reply@tanesco.digital>", replyTo: tenantRow ? (tenantRow.replyTo?.trim() || (tenantRow.imapEnabled && /@/.test(tenantRow.imapUsername ?? "") ? tenantRow.imapUsername!.trim() : undefined)) : undefined, source: "hosting" as const }; // auch beim Versand über den Hosting-Server: Antworten ins Abhol-Postfach
   return null;
 }
+/** Ist ein E-Mail-Versand eingerichtet? `simulated`: ohne Versand wird nur beim Entwickeln/Testen simuliert – in der echten App geht dann nichts raus. */
+export async function mailReadyFor(db: Db, tenantId: number): Promise<{ ready: boolean; simulated: boolean }> {
+  const ready = Boolean(await transportFor(db, tenantId).catch(() => null));
+  return { ready, simulated: !ready && !(process.env.NODE_ENV === "production" && process.env.EMAIL_SIMULATE !== "1") };
+}
 export async function sendTest(db: Db, tenantId: number, to: string) {
   const row = await ensureSettings(db, tenantId); const target = to.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) throw new Error("Bitte eine gültige Empfängeradresse angeben.");

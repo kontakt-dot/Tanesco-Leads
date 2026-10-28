@@ -52,6 +52,10 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     // Ohne Telefon: nur „antworten Sie einfach auf diese E-Mail“; Nachfass-Mail braucht nur das Test-Angebot
     const noPhone = finishDraft("Hallo,\n\nkurzer Nachfass ohne Angebot.", { greeting, phone: "", followUp: true });
     expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("20 Test-Leads"); expect(noPhone).not.toContain("zehn Fragen");
+    // Die KI schreibt „Vielen Dank“ schon selbst: das ergänzte Test-Angebot kommt VOR den Schluss, „Vielen Dank“ steht genau einmal ganz unten
+    const ki = "Sehr geehrte Damen und Herren,\n\nSie planen Alarmanlagen nach DIN EN 50131. Wir qualifizieren jeden Kontakt in der Regel anhand von acht Fragen telefonisch vor.\n\nWenn Sie das testen möchten, antworten Sie einfach auf diese E-Mail oder rufen Sie mich an unter 0611 123456.\n\nVielen Dank";
+    const ordered = finishDraft(ki, { greeting, phone: "0611 123456", followUp: false });
+    expect(ordered.indexOf("20 Test-Leads")).toBeLessThan(ordered.indexOf("Wenn Sie das testen möchten")); expect(ordered.match(/Vielen Dank/g)).toHaveLength(1); expect(ordered.trim().endsWith("Vielen Dank")).toBe(true);
   });
   it("Tagesbeginn in Berlin (Sommer- und Winterzeit)", () => {
     expect(dayStartIn(new Date("2026-07-15T10:30:00Z")).toISOString()).toBe("2026-07-14T22:00:00.000Z");

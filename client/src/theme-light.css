@@ -956,6 +956,8 @@ html:not(.dark) .inbox-sent-contact:hover { color: #0f172a !important; }
 html:not(.dark) .inbox-track-step { color: #8a94a6 !important; background: #f8fafb !important; border: 1px dashed #e8ecf1 !important; }
 html:not(.dark) .inbox-track-step.is-done { color: #4b5568 !important; background: #f3f6f8 !important; border-color: #d9dfe7 !important; }
 html:not(.dark) .inbox-track-step.is-done.is-reply { color: #5b8572 !important; }
+html:not(.dark) .inbox-track-step.is-delivered { color: #5b8572 !important; }
+html:not(.dark) .inbox-track-step.is-wait { color: #8b7e4b !important; }
 html:not(.dark) .inbox-track-step.is-bad { color: #0f172a !important; }
 html:not(.dark) .inbox-reaction.is-geoeffnet { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .inbox-reaction.is-geklickt { color: #0f172a !important; }
@@ -1710,6 +1712,11 @@ html:not(.dark) .sparte-field small strong { color: #0f172a !important; }
 html:not(.dark) .sparte-field small.sparte-warn { color: #8a7758 !important; }
 html:not(.dark) .sparte-fix { color: #0f172a !important; }
 html:not(.dark) .dash-pill.is-sparte { color: #0f172a !important; border-color: #d9dfe7 !important; background: #f3f6f8 !important; }
+html:not(.dark) .rv-refs { color: #4b5568 !important; }
+html:not(.dark) .rv-refs svg { color: #44748a !important; }
+html:not(.dark) .rv-refs strong { color: #0f172a !important; }
+html:not(.dark) .cl-mail-missing { color: #0f172a !important; }
+html:not(.dark) .cl-mail-missing strong { color: #0f172a !important; }
 html:not(.dark) .dash-pill.is-ki { color: #5a858a !important; }
 html:not(.dark) .cd-chip.is-sparte { border-color: #d9dfe7 !important; color: #0f172a !important; background: #f8fafb !important; }
 html:not(.dark) .rv-preview-toggle { color: #4b5568 !important; }
@@ -3552,6 +3559,13 @@ html:not(.dark) .sparte-field small strong { color: #101828 !important; }
 html:not(.dark) .sparte-field small.sparte-warn { color: #92400e !important; background: #fffbeb !important; border-color: #fcd34d !important; }
 html:not(.dark) .sparte-fix { color: #78350f !important; background: #fef3c7 !important; border-color: #f59e0b !important; }
 html:not(.dark) .dash-pill.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
+html:not(.dark) .rv-refs { color: #475467 !important; }
+html:not(.dark) .rv-refs strong { color: #101828 !important; }
+html:not(.dark) .rv-refs svg { color: #0e7490 !important; }
+html:not(.dark) .inbox-track-step.is-delivered { color: #047857 !important; background: #ecfdf5 !important; border: 1px solid #a7f3d0 !important; }
+html:not(.dark) .inbox-track-step.is-wait { color: #92400e !important; background: #fffbeb !important; border: 1px solid #fcd34d !important; }
+html:not(.dark) .cl-mail-missing { color: #991b1b !important; background: #fef2f2 !important; border-color: #fecaca !important; }
+html:not(.dark) .cl-mail-missing strong { color: #7f1d1d !important; }
 html:not(.dark) .dash-pill.is-ki { color: #0e7490 !important; border-color: #a5f3fc !important; background: #ecfeff !important; }
 html:not(.dark) .cd-chip.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
 

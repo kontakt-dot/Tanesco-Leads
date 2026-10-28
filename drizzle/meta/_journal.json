@@ -645,6 +645,13 @@
       "when": 1793700000000,
       "tag": "0091_signatur_ohne_logo",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "5",
+      "when": 1793800000000,
+      "tag": "0092_zustellung",
+      "breakpoints": true
     }
   ]
 }

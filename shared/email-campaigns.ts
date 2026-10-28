@@ -488,8 +488,8 @@ export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[
 
 /* ── Drei Ansätze je Erst-E-Mail: Individuell, Drittanbieter, Freier Vorschlag ─────────────────── */
 export type DraftApproach = "individuell" | "drittanbieter" | "frei";
-/** `source`: „ki“ = von der KI für genau diesen Kontakt geschrieben, „vorlage“ = Ersatz aus der Vorlage (die KI hat diesen Ansatz nicht geliefert). */
-export type DraftOption = { key: DraftApproach; label: string; subject: string; text: string; source?: "ki" | "vorlage" };
+/** `source`: „ki“ = von der KI für genau diesen Kontakt geschrieben, „vorlage“ = Ersatz aus der Vorlage (die KI hat diesen Ansatz nicht geliefert). `refs`: was die KI von der Firma aufgegriffen hat. */
+export type DraftOption = { key: DraftApproach; label: string; subject: string; text: string; source?: "ki" | "vorlage"; refs?: string[] };
 export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: string }> = [
   { key: "individuell", label: "Individueller Ansatz", hint: "Greift etwas Konkretes der Firma auf (Webseite, Standorte, Leistungen) und spiegelt es auf unser Angebot – kurz, persönlich, ohne Aufzählung." },
   { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Unsere Leads kommen schon über Drittpartner bei der Firma an – wir sind die direkte Quelle und bieten die direkte Zusammenarbeit an." },
@@ -497,24 +497,44 @@ export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: 
 ];
 export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? "Entwurf";
 /**
- * Kernbotschaft des Drittanbieter-Ansatzes: UNSERE Leads kommen schon (über Zwischenhändler/Dritte) bei der Firma an. Die gehört
- * nicht in den individuellen oder freien Vorschlag – allgemeiner Ärger mit Lead-Anbietern („viele Drittanbieter verkaufen
- * Leads mehrfach“) dagegen schon, der ist Teil des individuellen Ansatzes.
+ * Die Drittanbieter-KERNBOTSCHAFT: Leads, die bei der Firma (über Zwischenhändler) ankommen, stammen in Wahrheit von uns. Nur genau
+ * diese Behauptung gehört nicht in den individuellen oder freien Vorschlag. Ganz normale Sätze über unser Angebot bleiben erlaubt –
+ * „Unsere Leads werden nicht an Dritte weiterverkauft“, „ohne Umweg über Portale“, „aus unserer eigenen Generierung“, „viele
+ * Drittanbieter verkaufen Leads mehrfach“. (Früher wurde der ganze KI-Text schon wegen solcher Sätze verworfen und durch die Vorlage
+ * ersetzt – deshalb war der individuelle Ansatz bei allen gleich.)
  */
-const THIRD_PARTY_CLAIM = /(ohnehin|eigentlich|ursprünglich|in wahrheit)\s+(von uns|aus unserer)|stamm\w*[^.!?\n]{0,50}\b(von uns|aus unserer)|(unsere|von uns generierte\w*)\s+(leads|anfragen)[^.!?\n]{0,80}(zwischenh(?:ä|ae)ndler|drittanbieter|drittpartner|dritte\b|weitergereicht|umweg)|(zwischenh(?:ä|ae)ndler|drittanbieter|drittpartner)[^.!?\n]{0,80}(von uns|unsere leads|aus unserer generierung)/i;
+const CLAIM_DIRECT = /(ohnehin|eigentlich|ursprünglich|in wahrheit|im grunde)\s+(?:\S+\s+){0,2}?(von uns|aus unserer)/i;
+const CLAIM_HEDGE = /wahrscheinlich|vermutlich|vermuten|davon aus|mitbekommen|erfahren|unsere[rn]? quellen|nicht selten|\boft\b|häufig|teilweise|zum teil/i;
+const CLAIM_ORIGIN = /\bvon uns\b|aus unserer (?:eigenen )?(?:lead)?(?:generierung|quelle|produktion)/i;
+const CLAIM_PATH = /zwischenh(?:ä|ae)ndler|drittpartner|\bdritte\b|weitergereicht|weiterverkauft|umweg|bei ihnen an|bei ihnen landen|kaufen sie|beziehen sie|erhalten sie|bekommen sie/i;
+const CLAIM_FACT = /(?:unsere|von uns generierte\w*)\s+(?:leads|anfragen|interessenten)\s+(?:(?!nicht\b|nie\b|niemals\b|ohne\b|kein\w*\b)\S+\s+){0,6}?(?:über|via)\s+(?:zwischenh\S*|drittpartner\S*|dritte\b|umwege?\b)/i;
+/** Ein Satz mit der Drittanbieter-Kernbotschaft? */
+export const isThirdPartyClaim = (sentence: string) => CLAIM_DIRECT.test(sentence) || CLAIM_FACT.test(sentence) || (CLAIM_HEDGE.test(sentence) && CLAIM_ORIGIN.test(sentence) && CLAIM_PATH.test(sentence));
+const claimSentences = (line: string) => line.split(/(?<=[.!?])\s+/);
+/** Enthält der Text die Drittanbieter-Kernbotschaft? */
+export const hasThirdPartyClaim = (text: string) => text.split(/\n+/).some((line) => claimSentences(line).some(isThirdPartyClaim));
 /** Passt der Text zum Ansatz? Individuell/frei: ohne die Drittanbieter-Kernbotschaft. (Drittanbieter wird nicht geprüft – Nachfass-Mails wiederholen sie nicht immer.) */
-export function fitsApproach(key: DraftApproach, text: string): boolean { return key === "drittanbieter" || !THIRD_PARTY_CLAIM.test(text); }
+export function fitsApproach(key: DraftApproach, text: string): boolean { return key === "drittanbieter" || !hasThirdPartyClaim(text); }
+/** Individuell/frei: nur die Sätze mit der Drittanbieter-Kernbotschaft herausnehmen – der Rest des KI-Textes bleibt, nie wird deshalb der ganze Text verworfen. */
+export function dropThirdPartyClaim(text: string): string {
+  if (!hasThirdPartyClaim(text)) return text;
+  return text.split(/(\n+)/).map((part) => (/^\n+$/.test(part) ? part : claimSentences(part).filter((sentence) => !isThirdPartyClaim(sentence)).join(" "))).join("").replace(/\n{3,}/g, "\n\n").trim();
+}
 const sentenceWords = (text: string) => text.toLowerCase().replace(/[„“"'’,;:.!?()–—-]/g, " ").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
 const shingles = (text: string, size = 6) => { const words = sentenceWords(text); const out = new Set<string>(); for (let index = 0; index + size <= words.length; index += 1) out.add(words.slice(index, index + size).join(" ")); return out; };
 const MANDATORY_RE = /test-?leads|vorqualifi|anhand (?:von|gezielter)|antworten sie|rufen sie|vielen dank|sehr geehrte|zahlen dabei nur/i;
 /**
- * Hat die KI die Vorlage abgeschrieben? Ohne die Pflichtabsätze (Test-Angebot, Qualifizierung, Schluss) steht mehr als 40 %
- * des Textes wörtlich (in Folgen von sechs Wörtern) in der Vorlage → dann ist es kein individueller Text.
+ * Hat die KI die Vorlage abgeschrieben? Ohne die Pflichtsätze (Anrede, Test-Angebot, Qualifizierung, Schluss) steht mehr als 40 %
+ * des Textes wörtlich (in Folgen von sechs Wörtern, Satz für Satz) in der Vorlage → dann ist es kein individueller Text.
+ * Satzweise statt absatzweise: steht die Qualifizierung mitten im Absatz, zählen die anderen Sätze des Absatzes trotzdem.
  */
 export function copiesTemplate(text: string, template: string): boolean {
-  const own = shingles(text.split(/\n{2,}/).filter((part) => !MANDATORY_RE.test(part)).join("\n")); if (own.size < 8) return false;
-  const base = shingles(template); let hit = 0; for (const item of Array.from(own)) if (base.has(item)) hit += 1;
-  return hit / own.size > 0.4;
+  const base = shingles(template); let own = 0; let hit = 0;
+  for (const sentence of text.split(/\n+|(?<=[.!?])\s+/)) {
+    if (!sentence.trim() || MANDATORY_RE.test(sentence)) continue;
+    for (const item of Array.from(shingles(sentence))) { own += 1; if (base.has(item)) hit += 1; }
+  }
+  return own >= 8 && hit / own > 0.4;
 }
 /**
  * Auto-Modus: welcher gespeicherte Entwurf darf raus? Nur einer im Ansatz der Kampagne – außer du hast ihn freigegeben oder
@@ -533,7 +553,7 @@ export type KiAnsatz = "individuell" | "drittanbieter";
 export const KI_MODUS_OPTIONS: Array<{ key: KiModus; label: string; hint: string }> = [
   { key: "aus", label: "Aus – Vorlagen senden", hint: "Jeder Schritt verschickt die Vorlage aus dem Builder, nur die Platzhalter werden gefüllt." },
   { key: "freigabe", label: "Mit Freigabe", hint: "Die KI schreibt jede E-Mail persönlich (jeder Schritt, jeder Kontakt) – du liest unter „Freigeben“ und schickst los. Ohne deine Freigabe geht nichts raus." },
-  { key: "auto", label: "Automatisch", hint: "Die KI schreibt jede E-Mail persönlich im Hintergrund und der Versand läuft sofort weiter – ohne Freigabe. Ist die KI nicht erreichbar, geht die Vorlage raus." },
+  { key: "auto", label: "Automatisch", hint: "Die KI schreibt jede E-Mail persönlich im Hintergrund und der Versand läuft sofort weiter – ohne Freigabe. Ist die KI nicht erreichbar, wartet die E-Mail und die KI versucht es im nächsten Lauf erneut – es geht nie still die Vorlage raus." },
 ];
 export const KI_ANSATZ_OPTIONS: Array<{ key: KiAnsatz; label: string; hint: string }> = [
   { key: "individuell", label: "Individueller Ansatz", hint: "Einstieg mit etwas Konkretem von der Webseite oder aus den Daten, dann unser Angebot – wie von Hand geschrieben." },

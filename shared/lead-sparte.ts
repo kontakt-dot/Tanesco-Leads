@@ -72,6 +72,17 @@ export const isEnergySparte = (sparte: Pick<Sparte, "key">) => sparte.key === "p
 const isEnergy = isEnergySparte;
 /** Passt der Text zur Sparte? In jeder Sparte außer PV/WP darf nichts von Photovoltaik oder Wärmepumpen stehen. */
 export function fitsSparte(sparte: Pick<Sparte, "key"> & { label?: string }, text: string): boolean { const energyLabel = sparte.key === "eigene" && (PV_RE.test(sparte.label ?? "") || WP_RE.test(sparte.label ?? "")); /* eigene Sparte wie „Batteriespeicher für PV“ */ return isEnergy(sparte) || energyLabel || !(PV_RE.test(text) || WP_RE.test(text)); }
+const ENERGY_WORD = "(?:photovoltaik\\w*|solar\\w*|pv(?:-?anlagen?)?|wärmepumpe\\w*|waermepumpe\\w*)";
+const LEAD_WORD = "(?:leads?|anfragen|interessenten|kundenanfragen|lead-?lieferant\\w*|leadlieferant\\w*)";
+const FOREIGN_LEADS_RE = new RegExp(`\\b${ENERGY_WORD}[\\s-]*(?:(?:und|&|/)[\\s-]*${ENERGY_WORD}[\\s-]*)?${LEAD_WORD}|\\b${LEAD_WORD}\\s+(?:\\S+\\s+){0,3}?(?:für|zu|im bereich|rund um)\\s+(?:\\S+\\s+){0,2}?${ENERGY_WORD}`, "i");
+/**
+ * KI-Texte: bietet der Text Leads der falschen Sparte an (z. B. „unsere PV- und Wärmepumpen-Leads“ an eine Hausnotruf-Firma)? Nur das
+ * ist ein harter Fehler – ein Detail von der Webseite der Firma („Außensirene mit Solarpanel“) ist es nicht.
+ */
+export function offersForeignLeads(sparte: Pick<Sparte, "key"> & { label?: string }, text: string): boolean {
+  const energyLabel = sparte.key === "eigene" && (PV_RE.test(sparte.label ?? "") || WP_RE.test(sparte.label ?? ""));
+  return !isEnergy(sparte) && !energyLabel && FOREIGN_LEADS_RE.test(text);
+}
 /** Hinweis im Builder: Vorlage spricht von Photovoltaik/Wärmepumpe, die Kampagne hat aber eine andere Sparte. */
 export function foreignSparteIn(sparte: Pick<Sparte, "key"> & { label?: string }, text: string): string | null { return fitsSparte(sparte, text) ? null : "Photovoltaik/Wärmepumpe"; }
 /** Der Satzteil in alten Vorlagen, der fest auf PV & WP stand – wird durch den Platzhalter {{sparte}} ersetzt. */

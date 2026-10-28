@@ -758,6 +758,16 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     const pv = await call("leadops.saveEmailCampaign", { ...base, name: "PV & WP • Erstkontakt" }); expect(pv.fixedQuestions).toBe(false);
     expect(JSON.stringify((await call("leadops.getEmailCampaign", { id: pv.id })).tree)).toContain("zehn Fragen");
   });
+  it("Zustellung (Demo): gesendete E-Mails zeigen „zugestellt“ – je Kampagne und in „Gesendet“; der Versand gilt als eingerichtet", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Zustell-Demo", rows: [{ firstName: "Zoe", lastName: "Zustell", company: "Zustell GmbH", email: "zoe@zustell-demo.example" }] });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Zustell-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Zustell-Demo" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, kiModus: "aus" });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    const listed = (await call("leadops.listEmailCampaigns")).find((row: any) => row.id === saved.id);
+    expect(listed.delivery).toMatchObject({ total: 1, zugestellt: 1, probleme: 0 });
+    const mails = await call("leadops.listSent", { campaignId: saved.id }); expect(mails.items[0].delivery).toMatchObject({ status: "zugestellt" });
+    expect((await call("leadops.campaignDailyStatus")).mail).toEqual({ ready: true, simulated: false });
+  });
   it("KI-Ansatz umgestellt: offene Entwürfe folgen dem gewählten Ansatz, die Builder-Vorschau zeigt nur diesen", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "Ansatz-Demo", rows: [{ firstName: "Ansgar", lastName: "Ansatz", company: "Ansatz Solar", email: "ansgar@ansatz-demo.example" }] });

@@ -7,7 +7,7 @@
  * passenden Kampagnen-Empfänger ein – über die Message-ID der gesendeten E-Mail, sonst über die E-Mail-Adresse.
  * Doppelte Meldungen zählen nicht doppelt.
  */
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lte } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, mailSettings } from "../drizzle/schema";
 import { normalizeMessageId } from "../shared/message-id";
 import { isTooSoonAfterSend } from "../shared/tracking-guard";
@@ -43,6 +43,40 @@ export async function applyProviderEvent(db: Db, input: ProviderEvent): Promise<
   return true;
 }
 
+/* ---------------------------------------------------------------- Zustellung: kam die E-Mail wirklich an? */
+/** Zustand einer gesendeten E-Mail laut Versanddienst. „gesendet“ heißt nur „an den Versanddienst übergeben“ – erst das hier sagt, ob sie ankam. */
+export type DeliveryStatus = "zugestellt" | "verzoegert" | "unzustellbar" | "blockiert" | "spam" | "fehler";
+const DELIVERY_RANK: Record<DeliveryStatus, number> = { verzoegert: 1, zugestellt: 2, fehler: 3, spam: 3, blockiert: 4, unzustellbar: 4 };
+/** Brevo-Ereignis (Abfrage „delivered“, „hardBounces“ … oder Webhook „delivered“, „hard_bounce“ …) → Zustand; null = kein Zustellungs-Ereignis. */
+export function deliveryStatusOf(type: string): DeliveryStatus | null {
+  const value = type.toLowerCase().replace(/[^a-z]/g, "");
+  if (value === "delivered" || value === "delivery") return "zugestellt";
+  if (value === "deferred" || value === "softbounce" || value === "softbounces") return "verzoegert";
+  if (value === "hardbounce" || value === "hardbounces" || value === "invalid" || value === "invalidemail") return "unzustellbar";
+  if (value === "blocked") return "blockiert";
+  if (value === "spam" || value === "complaint") return "spam";
+  if (value === "error") return "fehler";
+  return null;
+}
+/**
+ * Zustellungs-Meldung eintragen – bei der gesendeten E-Mail (über die Message-ID, sonst die letzte E-Mail an diese Adresse davor).
+ * Ein schlechterer Zustand gewinnt („zugestellt“ → „Spam gemeldet“), doppelte Meldungen ändern nichts. Unzustellbar/Spam stoppen den
+ * Kontakt und sperren die Adresse (wie der Knopf „Unzustellbar“) – `stop: false`, wenn das schon jemand anders erledigt (Webhook).
+ */
+export async function applyDeliveryEvent(db: Db, input: { tenantId?: number | null; email: string; messageId?: string | null; status: DeliveryStatus; reason?: string | null; at?: Date | null; stop?: boolean }): Promise<boolean> {
+  const email = input.email.trim().toLowerCase(); const messageId = normalizeMessageId(input.messageId);
+  const at = input.at && !Number.isNaN(input.at.getTime()) && input.at.getTime() <= Date.now() + 60_000 ? input.at : new Date();
+  const pick = { id: emailCampaignEvents.id, tenantId: emailCampaignEvents.tenantId, recipientId: emailCampaignEvents.recipientId, delivery: emailCampaignEvents.delivery };
+  let row = messageId ? (await db.select(pick).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.messageId, messageId), eq(emailCampaignEvents.kind, "gesendet"))).limit(1))[0] : undefined;
+  if (!row && email) row = (await db.select(pick).from(emailCampaignEvents).innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId)).where(and(eq(emailCampaignEvents.kind, "gesendet"), eq(emailCampaignRecipients.email, email), ...(input.tenantId ? [eq(emailCampaignEvents.tenantId, input.tenantId)] : []), lte(emailCampaignEvents.createdAt, new Date(at.getTime() + 60_000)))).orderBy(desc(emailCampaignEvents.createdAt)).limit(1))[0];
+  if (!row) return false;
+  if ((DELIVERY_RANK[row.delivery as DeliveryStatus] ?? 0) >= DELIVERY_RANK[input.status]) return false; // schon so oder schlechter bekannt
+  await db.update(emailCampaignEvents).set({ delivery: input.status, deliveryNote: (input.reason ?? "").trim().slice(0, 255) || null, deliveryAt: at }).where(eq(emailCampaignEvents.id, row.id));
+  if (input.stop !== false && (input.status === "unzustellbar" || input.status === "spam")) { const { markBounced } = await import("./pipeline-extras"); await markBounced(db, row.tenantId, { recipientId: row.recipientId, kind: input.status === "spam" ? "beschwerde" : "bounce", note: `Versanddienst: ${input.reason?.trim() || (input.status === "spam" ? "als Spam gemeldet" : "unzustellbar")}`.slice(0, 400) }).catch(() => null); }
+  return true;
+}
+const BREVO_DELIVERY_EVENTS = ["delivered", "deferred", "softBounces", "hardBounces", "invalid", "blocked", "spam", "error"] as const;
+
 /** Webhook-Ereignisse verschiedener Anbieter erkennen: Brevo „opened/unique_opened/click“, Mailgun „opened/clicked“, Postmark „Open/Click“. */
 export function providerEventKind(type: string): "open" | "click" | null {
   const value = type.toLowerCase();
@@ -62,15 +96,18 @@ export async function syncBrevoEvents(db: Db, options: { tenantId?: number | nul
   for (const row of rows) {
     if (row.provider !== "brevo_api" || !row.password || row.enabled === false) continue;
     const last = lastSync.get(row.tenantId) ?? 0; if (!options.force && Date.now() - last < every) continue; lastSync.set(row.tenantId, Date.now());
-    for (const event of ["opened", "clicks"] as const) {
+    for (const event of ["opened", "clicks", ...BREVO_DELIVERY_EVENTS] as const) {
       for (let offset = 0; offset < 10_000; offset += 2500) {
         let body: unknown;
         try { body = await brevoGet(`/smtp/statistics/events?event=${event}&days=2&limit=2500&offset=${offset}&sort=desc`, row.password, { fetchImpl: options.fetchImpl }); }
         catch (error) { errors.push(error instanceof Error ? error.message : String(error)); break; }
         const list = (body && typeof body === "object" && Array.isArray((body as { events?: unknown }).events) ? (body as { events: Array<Record<string, unknown>> }).events : []);
         for (const item of list) {
-          const kind = event === "clicks" ? "click" : "open"; checked += 1;
-          if (await applyProviderEvent(db, { tenantId: row.tenantId, email: String(item.email ?? ""), messageId: String(item.messageId ?? item["message-id"] ?? ""), kind, url: typeof item.link === "string" ? item.link : null, at: item.date ? new Date(String(item.date)) : null }).catch(() => false)) applied += 1;
+          checked += 1; const email = String(item.email ?? ""); const messageId = String(item.messageId ?? item["message-id"] ?? ""); const at = item.date ? new Date(String(item.date)) : null;
+          const status = event === "opened" || event === "clicks" ? null : deliveryStatusOf(event);
+          if (status) { if (await applyDeliveryEvent(db, { tenantId: row.tenantId, email, messageId, status, reason: typeof item.reason === "string" ? item.reason : null, at }).catch(() => false)) applied += 1; continue; }
+          const kind = event === "clicks" ? "click" : "open";
+          if (await applyProviderEvent(db, { tenantId: row.tenantId, email, messageId, kind, url: typeof item.link === "string" ? item.link : null, at }).catch(() => false)) applied += 1;
         }
         if (list.length < 2500) break;
       }

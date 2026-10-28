@@ -72,7 +72,9 @@ export async function readWebsiteText(website: string, options: { maxPages?: num
   // Impressum zuerst: dort stehen Geschäftsführer/Inhaber – die KI spricht diese Person an, wenn die Liste keinen Ansprechpartner hat
   const legal = hrefs.filter((href) => /impressum|imprint|legal-notice/i.test(href)).map(toUrl).find((url): url is string => Boolean(url)) ?? null;
   const subpages: string[] = []; for (const href of links) { const url = toUrl(href); if (url && url !== legal) subpages.push(url); if (subpages.length >= maxPages - 1) break; }
-  const legalText = legal ? await grab(legal).then((html) => html ? `Impressum:\n${stripHtml(html).slice(0, 1600)}` : "") : "";
+  // kein Impressum-Link gefunden (z. B. Menü per Skript): die üblichen Adressen direkt versuchen – dort steht der Geschäftsführer für die Anrede
+  const legalHtml = legal ? await grab(legal) : await (async () => { for (const path of ["/impressum", "/impressum.html"]) { const html = await grab(new URL(path, base).toString()); if (html && /impressum|imprint|geschäftsführ|inhaber|vertreten durch/i.test(html)) return html; } return null; })();
+  const legalText = legalHtml ? `Impressum:\n${stripHtml(legalHtml).slice(0, 1600)}` : "";
   const extra = await Promise.all(subpages.map(async (url) => { const html = await grab(url); return html ? stripHtml(html).slice(0, Math.floor(maxChars * 0.25)) : ""; }));
   const text = [...texts, legalText, ...extra].filter((part) => part.trim()).join("\n\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").slice(0, maxChars).trim();
   return text.length >= 80 ? { url: base.toString(), text, pages: 1 + (legalText ? 1 : 0) + extra.filter(Boolean).length } : null;

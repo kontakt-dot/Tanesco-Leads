@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoDraftFor, copiesTemplate, fitsApproach } from "../shared/email-campaigns";
+import { autoDraftFor, copiesTemplate, dropThirdPartyClaim, fitsApproach } from "../shared/email-campaigns";
 
 const individual = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Website steht „Keine Anzahlung, 0 % Risiko“. Genau so arbeiten wir auch.";
 const thirdParty = "Sehr geehrter Herr Wiebe,\n\nsehr wahrscheinlich kommen bei Ihnen Leads an, die ohnehin von uns stammen – nur über Zwischenhändler weitergereicht.";
@@ -14,6 +14,13 @@ describe("KI-Ansatz: es geht nur der gewählte Ansatz raus", () => {
     // allgemeiner Ärger mit Lead-Anbietern gehört zum individuellen Ansatz – das ist NICHT die Drittanbieter-Kernbotschaft (früher fälschlich verworfen → Vorlage statt KI-Text)
     expect(fitsApproach("individuell", "Viele Drittanbieter verkaufen dieselbe Anfrage an mehrere Betriebe – bei uns geht jeder Lead nur an Sie.")).toBe(true);
     expect(fitsApproach("individuell", "Wer Leads über Zwischenhändler einkauft, kennt falsche Nummern und Vorkasse.")).toBe(true);
+    // ganz normale Sätze über unser Angebot – wurden früher fälschlich aussortiert (dann kam die Vorlage, der individuelle Ansatz war bei allen gleich)
+    for (const text of ["Unsere Leads werden nicht an Dritte weiterverkauft – jede Anfrage geht nur an Sie.", "Unsere Anfragen kommen ohne Umweg über Portale direkt zu Ihnen.", "Die Leads stammen aus unserer eigenen Generierung über Facebook und Instagram.", "Viele Drittanbieter verkaufen dieselbe Anfrage an mehrere Betriebe – unsere Leads gehen exklusiv an Sie.", "Unsere Interessenten stammen von unseren eigenen Kampagnen.", "Unsere Leads werden nicht über Zwischenhändler verkauft.", "Vermutlich haben Sie schon von uns gehört."]) expect(fitsApproach("individuell", text)).toBe(true);
+    for (const text of ["Die Leads, die Sie heute über Zwischenhändler kaufen, stammen oft von uns.", "Wir gehen davon aus, dass Sie schon Leads von uns bekommen – nur über Umwege."]) expect(fitsApproach("frei", text)).toBe(false);
+    // steht die Kernbotschaft doch im individuellen Text, fliegt nur dieser Satz raus – der Rest des KI-Textes bleibt
+    const mixed = "Sehr geehrter Herr Wiebe,\n\nIhre Notrufzentrale ist rund um die Uhr besetzt. Sehr wahrscheinlich stammen Ihre Anfragen ohnehin von uns. Unsere Leads gehen exklusiv an Sie.\n\nVielen Dank";
+    expect(dropThirdPartyClaim(mixed)).toBe("Sehr geehrter Herr Wiebe,\n\nIhre Notrufzentrale ist rund um die Uhr besetzt. Unsere Leads gehen exklusiv an Sie.\n\nVielen Dank");
+    expect(dropThirdPartyClaim(individual)).toBe(individual);
     expect(fitsApproach("drittanbieter", thirdParty)).toBe(true); expect(fitsApproach("drittanbieter", individual)).toBe(true);
   });
   it("individuell heißt individuell: ein Text, der die Vorlage nur mit anderem Namen wiederholt, zählt nicht als KI-Text", () => {

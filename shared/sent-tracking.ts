@@ -143,3 +143,16 @@ export function sentOriginCounts(rows: Array<{ source: string | null | undefined
   for (const row of rows) { if (row.source === "ki" || row.source === "hand") personal += row.count; else if (row.source === "vorlage" || row.source === "entwurf-vorlage") template += row.count; else unknown += row.count; }
   return { personal, template, unknown };
 }
+/**
+ * Je Kampagne: kamen die gesendeten E-Mails wirklich an? (laut Versanddienst – „gesendet“ heißt nur „übergeben“)
+ * `offen` = noch keine Rückmeldung (oder ein Versanddienst ohne Rückmeldung).
+ */
+export function deliveryCounts(rows: Array<{ delivery: string | null | undefined; count: number }>) {
+  const out = { total: 0, zugestellt: 0, verzoegert: 0, unzustellbar: 0, blockiert: 0, spam: 0, fehler: 0, offen: 0, probleme: 0 };
+  for (const row of rows) {
+    out.total += row.count;
+    if (row.delivery === "zugestellt" || row.delivery === "verzoegert" || row.delivery === "unzustellbar" || row.delivery === "blockiert" || row.delivery === "spam" || row.delivery === "fehler") out[row.delivery] += row.count; else out.offen += row.count;
+  }
+  out.probleme = out.unzustellbar + out.blockiert + out.spam + out.fehler;
+  return out;
+}
