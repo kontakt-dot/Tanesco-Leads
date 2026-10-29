@@ -219,7 +219,7 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
             <div className="inbox-lead-form-actions"><Button className="flux-button" disabled={createLead.isPending} onClick={() => createLead.mutate({ messageId: selected.id, pipeline: leadForm.pipeline, stage: leadForm.stage, ownerUserId: leadForm.ownerUserId ? Number(leadForm.ownerUserId) : null, categoryId: leadForm.categoryId ? Number(leadForm.categoryId) : null, firstName: leadForm.firstName || null, lastName: leadForm.lastName || null, company: leadForm.company || null, phone: leadForm.phone || null })}>{selected.lead ? "Übernehmen" : "Lead anlegen"}</Button><Button variant="ghost" onClick={() => setLeadForm(null)}>Abbrechen</Button></div>
           </div>}
           <SentThread items={(selected as { sentBefore?: PriorMail[] }).sentBefore ?? []} to={selected.fromEmail} />
-          {((selected as { sentBefore?: PriorMail[] }).sentBefore ?? []).length > 0 && <div className="thread-mail is-reply"><div className="thread-mail-head"><span className={`inbox-avatar av-${hueOf(selected.fromEmail)} thread-avatar`} aria-hidden="true">{initialsOf(selected.fromName, selected.fromEmail)}</span><div className="thread-mail-who"><strong>{selected.fromName || selected.fromEmail}</strong><small>{selected.fromEmail} · Antwort an uns</small></div><time dateTime={new Date(selected.receivedAt).toISOString()}>{stamp(selected.receivedAt)}</time></div></div>}
+          {((selected as { sentBefore?: PriorMail[] }).sentBefore ?? []).length > 0 && <div className="thread-mail is-reply"><div className="thread-mail-head"><span className={`inbox-avatar av-${hueOf(selected.fromEmail)} thread-avatar`} aria-hidden="true">{initialsOf(selected.fromName, selected.fromEmail)}</span><div className="thread-mail-lines"><span className="thread-line"><em>Von</em><strong>{selected.fromName || selected.fromEmail}</strong>{selected.fromName ? <small>{selected.fromEmail}</small> : null}</span><span className="thread-line"><em>An</em><span>uns</span><small>Antwort</small></span></div><time dateTime={new Date(selected.receivedAt).toISOString()}>{stamp(selected.receivedAt)}</time></div></div>}
           <pre className="inbox-body">{selected.bodyText || "(kein Text)"}</pre>
           </div>
           <footer className="inbox-compose">
@@ -369,7 +369,7 @@ export function ContactSentMails({ leadId, email }: { leadId: number; email: str
   </div>;
 }
 
-type PriorMail = { id: string; step: number; subject: string; at: string | Date; excerpt: string | null; source: string | null; testLeads: number | null };
+type PriorMail = { id: string; step: number; subject: string; at: string | Date; excerpt: string | null; source: string | null; testLeads: number | null; fromName?: string | null; fromEmail?: string | null };
 /**
  * Was wir diesem Kontakt davor geschickt haben – direkt über der Antwort: die letzte E-Mail mit Betreff, Datum und Textanfang,
  * ältere eingeklappt; „Ansehen“ zeigt die E-Mail so, wie sie rausging. So weiß man beim Antworten, worauf sich der Kontakt bezieht
@@ -388,14 +388,14 @@ function SentThread({ items, to }: { items: PriorMail[]; to: string }) {
   </section>;
 }
 function ThreadMail({ mail, to }: { mail: PriorMail; to: string }) {
-  const [open, setOpen] = useState(true); const [height, setHeight] = useState(360);
+  const [open, setOpen] = useState(false); const [height, setHeight] = useState(360); // zugeklappt, bis man draufklickt – wie im Postfach
   const preview = trpc.leadops.sentMailPreview.useQuery({ id: mail.id }, { retry: false, enabled: open, staleTime: 5 * 60_000 });
   const from = (preview.data as { from?: { name: string | null; email: string | null } | null } | undefined)?.from ?? null;
-  const senderName = from?.name || "Wir"; const senderEmail = from?.email || "";
+  const senderName = mail.fromName || from?.name || "Wir"; const senderEmail = mail.fromEmail || from?.email || "";
   return <article className={`thread-mail ${open ? "is-open" : "is-closed"}`}>
     <button type="button" className="thread-mail-head" aria-expanded={open} onClick={() => setOpen((value) => !value)} title={open ? "E-Mail zuklappen" : "E-Mail aufklappen"}>
       <span className="inbox-avatar av-us thread-avatar" aria-hidden="true">{initialsOf(senderName, senderEmail)}</span>
-      <div className="thread-mail-who"><strong>{senderName}{senderEmail ? <small> {senderEmail}</small> : null}</strong><small>an {to}{mail.testLeads ? ` · ${mail.testLeads} Test-Leads versprochen` : ""}</small></div>
+      <div className="thread-mail-lines"><span className="thread-line"><em>Von</em><strong>{senderName}</strong>{senderEmail ? <small>{senderEmail}</small> : null}</span><span className="thread-line"><em>An</em><span>{to}</span>{mail.testLeads ? <small>{mail.testLeads} Test-Leads versprochen</small> : null}</span></div>
       <span className={`rv-kind ${mail.step > 1 ? "is-followup" : "is-first"}`}>{mail.step > 1 ? `Follow-up ${mail.step}` : "Erst-E-Mail"}</span>
       <time dateTime={new Date(mail.at).toISOString()}>{stamp(mail.at)}</time>
       <ChevronDown className="thread-chevron" aria-hidden="true" />
@@ -406,7 +406,7 @@ function ThreadMail({ mail, to }: { mail: PriorMail; to: string }) {
         {preview.data.note && <small className={`thread-note ${"source" in preview.data && preview.data.source ? `is-src-${preview.data.source}` : ""}`}>{"source" in preview.data && preview.data.source ? <b>{SENT_SOURCE_LABEL[preview.data.source as SentSource]}: </b> : null}{preview.data.note}</small>}
         <iframe title={`Gesendete E-Mail: ${mail.subject}`} className="thread-frame" style={{ height }} srcDoc={preview.data.html} sandbox="allow-same-origin" onLoad={(event) => { try { const doc = event.currentTarget.contentDocument; const next = Math.max(doc?.body?.scrollHeight ?? 0, doc?.documentElement?.scrollHeight ?? 0); if (next > 40) setHeight(next + 24); } catch { /* fremde Seite – Höhe bleibt */ } }} />
       </>}
-    </div> : <p className="thread-collapsed">{mail.subject || "(ohne Betreff)"}{mail.excerpt ? ` – ${mail.excerpt.slice(0, 140)}…` : ""}</p>}
+    </div> : <p className="thread-collapsed"><strong>{mail.subject || "(ohne Betreff)"}</strong>{mail.excerpt ? <span> – {mail.excerpt.slice(0, 160)}…</span> : null}</p>}
   </article>;
 }
 

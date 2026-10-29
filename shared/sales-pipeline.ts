@@ -140,3 +140,7 @@ export function mapMetaFieldData(fieldData: Array<{ name: string; values?: unkno
 }
 /** Beschriftung der Schritte im Karten-Verlauf (Stufen + Ereignisse der Erweiterungen). */
 export const historyLabel = (toStage: string, stageDefs: StageDef[]) => ({ besitzer: "Zuteilung", notiz: "Notiz", wiedervorlage: "Wiedervorlage", erledigt: "Erledigt", termin_gesetzt: "Termin", termin_entfernt: "Termin entfernt", angebotswert: "Angebotswert", sms: "SMS", whatsapp: "WhatsApp", email: "E-Mail", serie: "E-Mail-Serie", kontakt: "Kontaktdaten", anruf: "Anruf" } as Record<string, string>)[toStage] ?? stageLabel(toStage, stageDefs);
+
+/** Kennung der Kaltakquise-Liste als „Kampagne“ in der Pipeline (Spalte adCampaignId) – aus dem Listennamen, gekürzt auf die Spaltenlänge. */
+export const LIST_CAMPAIGN_ID_MAX = 120;
+export function listCampaignId(listName: string): string { return `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, LIST_CAMPAIGN_ID_MAX); }

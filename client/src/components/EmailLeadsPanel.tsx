@@ -1,7 +1,6 @@
 import { undoIdOf, withUndo } from "@/components/UndoPanel";
 import { Fragment, useState, type ReactNode } from "react";
-import { Ban, History, Phone } from "lucide-react";
-import RestoreStateDialog from "@/components/RestoreStateDialog";
+import { Ban, Phone } from "lucide-react";
 import BlockContactDialog, { UnblockButton } from "@/components/BlockContactDialog";
 import { CallDialog } from "@/components/CallLog";
 import { ContactSentMails } from "@/components/InboxPanel";
@@ -51,7 +50,6 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const [onlyBlocked, setOnlyBlocked] = useState(false); // nur gesperrte Kontakte (Sperrliste)
   const [blockFor, setBlockFor] = useState<{ ids: number[]; label: string } | null>(null); // Sperren-Fenster (Zeile oder Auswahl)
   const [mailsFor, setMailsFor] = useState<number | null>(null); // aufgeklappt: welche E-Mails an diesen Kontakt rausgingen
-  const [restoreOpen, setRestoreOpen] = useState(false); // Fenster „Früheren Stand wiederherstellen“
   const data = trpc.leadops.emailLeads.useQuery({ search: search.trim() || null, listName, campaignId, activity, stage: stageFilter, ownerUserId: owner, blocked: onlyBlocked ? true : null, ...(pipeline ? { source, inPipeline: true, withoutEmail: true } : {}) }, { retry: false });
   const owners = trpc.leadops.pipelineOwners.useQuery(undefined, { retry: false });
   const stages = trpc.leadops.pipelineStages.useQuery({ source: pipeline ? source : target }, { retry: false }); // Stufen der jeweiligen Pipeline (E-Mail-Akquise: Stufen der gewählten Ziel-Pipeline)
@@ -106,7 +104,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
   const campaignWordPlural = pipeline && source === "kaltakquise" ? "Alle Kaltakquise-Kampagnen" : pipeline ? "Alle E-Mail-Kampagnen" : "Alle Kampagnen";
 
   return <section className="surface-panel operations-panel p-5">
-    <div className="xl-head"><div><h2>{pipeline ? "Kontakte dieser Pipeline" : "Kontakte"} <span>{data.data?.total ?? 0}</span></h2><p>{pipeline ? "Alle Kontakte als Liste – Klick öffnet die Lead-Seite, ankreuzen für Stufe, Zuteilung oder Löschen." : "Wer steckt in den Serien und was ist passiert – Klick öffnet die Lead-Seite, ankreuzen für Kampagne, Pipeline oder Löschen."}</p></div><button type="button" className="email-leads-restore" title="Kontakte so zurücksetzen, wie sie zu einem Zeitpunkt standen (Pipeline, Stufe, Vertriebler) – mit Vorschau" onClick={() => setRestoreOpen(true)}><History className="h-3.5 w-3.5" aria-hidden="true" /> Früheren Stand wiederherstellen</button></div>
+    <div className="xl-head"><div><h2>{pipeline ? "Kontakte dieser Pipeline" : "Kontakte"} <span>{data.data?.total ?? 0}</span></h2><p>{pipeline ? "Alle Kontakte als Liste – Klick öffnet die Lead-Seite, ankreuzen für Stufe, Zuteilung oder Löschen." : "Wer steckt in den Serien und was ist passiert – Klick öffnet die Lead-Seite, ankreuzen für Kampagne, Pipeline oder Löschen."}</p></div></div>
 
     <div className="email-leads-filters">
       <input className="email-leads-search" placeholder={pipeline ? `Suchen: Name, Firma, Telefon, E-Mail, Ort, PLZ, Liste, ${campaignWord}` : "Suchen: Name, Firma, E-Mail, Ort, Liste"} value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -172,7 +170,6 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
         </table></div>
       </>}
     <BlockContactDialog leadIds={blockFor?.ids ?? []} label={blockFor?.label ?? ""} source={pipeline ? "Vertriebspipeline (Kontakte)" : "E-Mail-Kampagnen (Kontakte)"} open={Boolean(blockFor)} onClose={() => setBlockFor(null)} onDone={() => { setPicked([]); data.refetch(); onChanged?.(); }} />
-    <RestoreStateDialog open={restoreOpen} onClose={() => { setRestoreOpen(false); data.refetch(); }} />
     {callFor && <CallDialog publicId={callFor.publicId} name={callFor.name} phone={callFor.phone} onDone={() => { setCallFor(null); data.refetch(); onChanged?.(); }} onCancel={() => setCallFor(null)} onPhoneSaved={() => data.refetch()} />}
   </section>;
 }

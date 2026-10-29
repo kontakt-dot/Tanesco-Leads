@@ -113,15 +113,21 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
     const thread = view.container.querySelector(".thread"); expect(thread).toBeTruthy(); expect(thread!.textContent).toContain("2 E-Mails an info@hansen-bedachungen.de");
     const mails = Array.from(thread!.querySelectorAll<HTMLElement>(".thread-mail")); expect(mails.length).toBe(2);
     expect(mails.map((mail) => mail.querySelector(".rv-kind")?.textContent?.trim())).toEqual(["Erst-E-Mail", "Follow-up 2"]); // älteste zuerst, wie ein Postfach
-    expect(mails[0].querySelector(".thread-mail-who strong")?.textContent).toContain("Tanesco Digital"); expect(mails[0].querySelector(".thread-mail-who > small")?.textContent).toContain("an info@hansen-bedachungen.de"); expect(mails[0].querySelector(".thread-mail-who > small")?.textContent).toContain("20 Test-Leads versprochen");
-    expect(mails[0].querySelector(".thread-subject")?.textContent).toBe("Mehr Anfragen für Hansen Bedachungen – ohne Risiko"); expect(mails[1].querySelector(".thread-subject")?.textContent).toBe("Kurze Frage zu Ihrem Bedarf, Peter");
-    const frame = mails[0].querySelector<HTMLIFrameElement>("iframe.thread-frame"); expect(frame).toBeTruthy(); expect(frame!.getAttribute("srcdoc")).toContain("Hansen"); expect(frame!.getAttribute("srcdoc")).toContain("20 Test-Leads"); // die ganze E-Mail, wie sie rausging
-    // danach die Antwort – mit Kopf wie im Postfach
-    const reply = view.container.querySelector(".thread-mail.is-reply"); expect(reply).toBeTruthy(); expect(reply!.textContent).toContain("Peter Hansen"); expect(reply!.textContent).toContain("Antwort an uns");
+    // zugeklappt: Absender und Empfänger sauber übereinander (Von / An), darunter Betreff und Anfang des Textes – keine ganze E-Mail
+    expect(mails.every((mail) => mail.classList.contains("is-closed") && !mail.querySelector("iframe"))).toBe(true);
+    const lines = (mail: HTMLElement) => Array.from(mail.querySelectorAll(".thread-line")).map((line) => line.textContent?.replace(/\s+/g, " ").trim());
+    expect(lines(mails[0])).toEqual(["VonTanesco Digitalvertrieb@tanesco.digital", "Aninfo@hansen-bedachungen.de20 Test-Leads versprochen"]);
+    expect(mails[0].querySelector(".thread-collapsed strong")?.textContent).toBe("Mehr Anfragen für Hansen Bedachungen – ohne Risiko"); expect(mails[1].querySelector(".thread-collapsed strong")?.textContent).toBe("Kurze Frage zu Ihrem Bedarf, Peter");
+    // aufklappen: die ganze E-Mail, wie sie rausging
+    await act(async () => { fireEvent.click(mails[0].querySelector<HTMLButtonElement>(".thread-mail-head")!); }); await settle(400); await settle(300);
+    expect(mails[0].classList.contains("is-open")).toBe(true); expect(mails[0].querySelector(".thread-subject")?.textContent).toBe("Mehr Anfragen für Hansen Bedachungen – ohne Risiko");
+    const frame = mails[0].querySelector<HTMLIFrameElement>("iframe.thread-frame"); expect(frame).toBeTruthy(); expect(frame!.getAttribute("srcdoc")).toContain("Hansen"); expect(frame!.getAttribute("srcdoc")).toContain("20 Test-Leads");
+    // danach die Antwort – mit demselben Kopf (Von / An)
+    const reply = view.container.querySelector<HTMLElement>(".thread-mail.is-reply"); expect(reply).toBeTruthy(); expect(lines(reply!)).toEqual(["VonPeter Hanseninfo@hansen-bedachungen.de", "AnunsAntwort"]);
     expect(thread!.compareDocumentPosition(view.container.querySelector(".inbox-body")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // zuklappen: nur noch eine Zeile
+    // wieder zuklappen
     await act(async () => { fireEvent.click(mails[0].querySelector<HTMLButtonElement>(".thread-mail-head")!); }); await settle(50);
-    expect(mails[0].classList.contains("is-closed")).toBe(true); expect(mails[0].querySelector("iframe")).toBeNull(); expect(mails[0].querySelector(".thread-collapsed")?.textContent).toContain("Mehr Anfragen für Hansen Bedachungen");
+    expect(mails[0].classList.contains("is-closed")).toBe(true); expect(mails[0].querySelector("iframe")).toBeNull();
   });
 
   it("Gesendet: Auswahl nach Lead-Kategorie mit Zähler, jede Zeile zeigt ihre Kategorie, Auswahl filtert", async () => {
@@ -254,5 +260,50 @@ describe("Vertriebspipeline: Lead-Kategorien (Chat-Build)", () => {
     const only = await call("leadops.pipelineOverview", { source: "alle", categoryId: other.id, limitPerStage: 1 });
     expect(only.totals.leads).toBe(other.count); expect(only.stages.flatMap((stage: any) => stage.leads).every((lead: any) => lead.categoryId === other.id)).toBe(true);
     expect(only.categories.find((item: any) => item.id === other.id).count).toBe(other.count); expect(only.categories.some((item: any) => item.id === pv.id)).toBe(true); // Auswahl bleibt vollständig
+  });
+  it("„Webseite geklickt“: Kontakte, die in einer Kampagnen-E-Mail einen Link geklickt haben", async () => {
+    const board = await call("leadops.pipelineOverview", { source: "email" }); expect(board.smartLists.geklickt).toBeGreaterThan(0); expect(board.smartLists.geklickt).toBeLessThanOrEqual(board.smartLists.geoeffnet);
+    const clicked = await call("leadops.pipelineOverview", { source: "email", campaignId: "__geklickt" }); expect(clicked.totals.leads).toBe(board.smartLists.geklickt);
+    const clickedLeadIds = new Set(getStore().tables.emailCampaignRecipients.filter((row) => row.leadId && row.clickedAt).map((row) => row.leadId));
+    expect(clicked.stages.flatMap((stage: any) => stage.leads).every((lead: any) => clickedLeadIds.has(lead.id))).toBe(true);
+  });
+});
+
+describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Klick auf das Kategorie-Schild öffnet die Auswahl, die Karte bekommt die neue Kategorie (mit Vermerk im Verlauf)", async () => {
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const view = mount(); await settle(400); await settle(400);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".pipeline-card")).find((item) => item.querySelector(".cat-pick-trigger"))!; expect(card).toBeTruthy();
+    const trigger = card.querySelector<HTMLButtonElement>(".cat-pick-trigger")!; const before = trigger.textContent?.trim() ?? ""; expect(before).toContain("Photovoltaik");
+    await act(async () => { fireEvent.keyDown(trigger, { key: "ArrowDown" }); }); await settle(300);
+    const menu = document.querySelector(".cat-pick-menu"); expect(menu).toBeTruthy(); expect(menu!.textContent).toContain("Kategorie wechseln");
+    const items = Array.from(menu!.querySelectorAll<HTMLElement>(".cat-pick-item")); expect(items.length).toBeGreaterThan(2); expect(items.find((item) => item.classList.contains("is-current"))?.textContent).toContain("Photovoltaik");
+    const target = items.find((item) => item.textContent?.includes("Alarmanlagen"))!; expect(target).toBeTruthy();
+    await act(async () => { fireEvent.click(target); }); await settle(400); await settle(300);
+    const publicId = (await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.categoryName === "Alarmanlagen")?.publicId; expect(publicId).toBeTruthy();
+    const history = await call("leadops.pipelineHistory", { publicId }); expect(history.some((event: any) => /Kategorie geändert: „Alarmanlagen“ \(vorher „Photovoltaik“\)/.test(event.note ?? ""))).toBe(true);
+    expect(Array.from(view.container.querySelectorAll(".cat-pick-trigger")).some((node) => node.textContent?.includes("Alarmanlagen"))).toBe(true); // Karte zeigt die neue Kategorie
+  });
+});
+
+describe("Reiter „Verlauf“ (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("heißt „Verlauf“ und hat darin „Upload“ und „Früheren Stand wiederherstellen“; im Kontakte-Reiter gibt es den Knopf nicht mehr", async () => {
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=verlauf");
+    const view = mount(); await settle(300); await settle(300);
+    const tabs = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".email-tabs button")).map((node) => node.textContent?.trim() ?? "");
+    expect(tabs.some((text) => text.startsWith("Verlauf"))).toBe(true); expect(tabs.some((text) => text.startsWith("Upload-Verlauf"))).toBe(false);
+    const parts = view.container.querySelector(".history-parts"); expect(parts).toBeTruthy();
+    const buttons = Array.from(parts!.querySelectorAll<HTMLButtonElement>("button")); expect(buttons.map((node) => node.textContent?.trim())).toEqual(["Upload", "Früheren Stand wiederherstellen"]); expect(buttons[0].getAttribute("aria-selected")).toBe("true");
+    await act(async () => { fireEvent.click(buttons[1]); }); await settle(300);
+    expect(view.container.querySelector(".restore-inline")).toBeTruthy(); expect(view.container.querySelector(".restore-when input")).toBeTruthy(); expect(view.container.textContent).toContain("Stand von");
+    expect(document.querySelector('[role="dialog"]')).toBeNull(); // direkt auf der Seite, kein Fenster
+    cleanup();
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kontakte");
+    const contacts = mount(); await settle(300); await settle(300);
+    expect(contacts.container.querySelector(".email-leads-restore")).toBeNull(); expect(contacts.container.textContent).not.toContain("Früheren Stand wiederherstellen");
   });
 });

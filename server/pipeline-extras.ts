@@ -169,6 +169,17 @@ export async function setContact(db: Db, tenantId: number, input: { publicId: st
   await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "kontakt", actorUserId: input.actorUserId, note: notes.join(" · ").slice(0, 400) });
   return { success: true as const, phone: patch.phone ?? lead.phone, email: patch.email ?? lead.email };
 }
+/** Lead-Kategorie einer Karte wechseln (z. B. von „Photovoltaik“ auf „Alarmanlage“) – mit Vermerk im Verlauf. */
+export async function setCategory(db: Db, tenantId: number, input: { publicId: string; categoryId: number; actorUserId: number | null }) {
+  const lead = await leadByPublicId(db, tenantId, input.publicId);
+  const rows = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false), inArray(leadCategories.id, [input.categoryId, lead.categoryId])));
+  const next = rows.find((row) => row.id === input.categoryId); if (!next) throw new Error("Kategorie nicht gefunden.");
+  if (lead.categoryId === next.id) return { success: true as const, categoryId: next.id, categoryName: next.name };
+  const before = rows.find((row) => row.id === lead.categoryId);
+  await db.update(leads).set({ categoryId: next.id }).where(eq(leads.id, lead.id));
+  await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "kategorie", actorUserId: input.actorUserId, note: `Kategorie geändert: „${next.name}“${before ? ` (vorher „${before.name}“)` : ""}` });
+  return { success: true as const, categoryId: next.id, categoryName: next.name };
+}
 export async function setDealValue(db: Db, tenantId: number, input: { publicId: string; dealValue: number | null; actorUserId: number | null }) {
   const lead = await leadByPublicId(db, tenantId, input.publicId); const value = input.dealValue === null ? null : Math.max(0, Math.round(input.dealValue * 100) / 100);
   await db.update(leads).set({ dealValue: value === null ? null : value.toFixed(2) }).where(eq(leads.id, lead.id));

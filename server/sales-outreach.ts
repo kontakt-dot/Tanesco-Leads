@@ -9,7 +9,7 @@ import { DEFAULT_SPARTE, OLD_ENERGY_PHRASE, resolveSparte, SPARTE_PHRASE, sparte
 import { fixTreeQuestions, testLeadsOfSent } from "../shared/email-campaigns";
 import { cleanFolderName, folderKey, folderNameIssue, MAX_FOLDERS, planSparteFolders, sortFolders, sortSummary } from "../shared/campaign-folders";
 import crypto from "node:crypto";
-import { isColdLike, isCustomSource, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
+import { isColdLike, isCustomSource, listCampaignId, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignFolders, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
 import { blocksToPlainText, nodeWithTestOffer, promisedTestLeads, withTestOffer } from "../shared/email-campaigns";
 import { autoDraftFor, draftToBlocks, modernizeTree, smoothQualifyPhrase, cleanDraftText, sentSourceOf, type SentSource, PORTAL_RE, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow, SEND_WINDOW_PRESET} from "../shared/email-campaigns";
@@ -80,7 +80,7 @@ export async function importColdList(db: Db, tenantId: number, input: { pipeline
       updated += 1; continue;
     }
     const publicId = `KALT-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
-    const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(websiteFromEmail(emailKey, row.extra) ? { website: websiteFromEmail(emailKey, row.extra) } : {}), ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}`, adPlatform: coldPlatform, company: row.company ?? null, listName, inPipeline: toPipeline });
+    const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: row.firstName ?? null, lastName: row.lastName ?? row.company ?? null, email: emailKey || null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Kaltakquise", metadata: { salutation: row.salutation ?? undefined, notes: row.notes ?? undefined, kaltakquise: { liste: listName }, ...(websiteFromEmail(emailKey, row.extra) ? { website: websiteFromEmail(emailKey, row.extra) } : {}), ...(row.extra && Object.keys(row.extra).length ? { felder: row.extra } : {}) }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: listCampaignId(listName), adCampaignName: `Liste: ${listName}`, adPlatform: coldPlatform, company: row.company ?? null, listName, inPipeline: toPipeline });
     const leadId = Number(inserted[0]?.insertId) || 0; leadIds.push(leadId); created += 1;
     const self = { id: leadId, status: "neu", phone: row.phone ?? null, email: emailKey || null, firstName: row.firstName ?? null, lastName: row.lastName ?? null, company: row.company ?? null, postcode: row.postcode ?? null, city: row.city ?? null, metadata: null } as Known;
     if (phoneKey) byPhone.set(phoneKey, self); if (emailKey) byEmail.set(emailKey, self);
@@ -142,7 +142,7 @@ export async function createPipelineContact(db: Db, tenantId: number, input: { s
   const coldLike = isColdLike(input.source);
   const listName = coldLike ? (clean(input.listName) ?? "Eigene Kontakte") : null;
   const platform = platformForSource(input.source);
-  const campaignId = coldLike ? `liste-${listName!.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : input.source === "email" ? "email-manuell" : "manuell";
+  const campaignId = coldLike ? listCampaignId(listName!) : input.source === "email" ? "email-manuell" : "manuell";
   const campaignName = coldLike ? `Liste: ${listName}` : "Manuell angelegt";
   const felder: Record<string, string> = {}; if (clean(input.street, 200)) felder.strasse = clean(input.street, 200)!; if (clean(input.website, 300)) felder.webseite = clean(input.website, 300)!;
   const publicId = `${coldLike ? "KALT" : input.source === "email" ? "MAIL" : "LEAD"}-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
@@ -490,7 +490,7 @@ async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaig
   const maxRuns = maxRunsOf(campaign); const abTest = hasAbTest(tree(campaign)); let index = previousRows.length;
   let added = 0; let skipped = 0; let repeated = 0;
   // Lead-Kategorie der Kampagne (gewählte Kategorie bzw. die zur Leadsparte passende): Kontakte, die über diese Kampagne in die Pipeline kommen, bekommen sie
-  const { campaignCategoryFor } = await import("./inbox"); const campaignCategoryId = await campaignCategoryFor(db, tenantId, campaign).catch(() => null);
+  const { campaignCategoryFor } = await import("./inbox"); const campaignCategoryId = await campaignCategoryFor(db, tenantId, campaign, { create: true }).catch(() => null);
   for (const row of rows) { const previous = previousOf.get(row.email!.toLowerCase()) ?? []; if ((options.onlyNew && previous.length) || !canEnroll(previous, maxRuns).ok) { skipped += 1; continue; } previousOf.set(row.email!.toLowerCase(), [...previous, { status: "wartet", repliedAt: null }]); if (previous.length) repeated += 1; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date(), ...(campaignCategoryId ? { categoryId: campaignCategoryId } : {}) }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); }
     await db.insert(emailCampaignRecipients).values({ tenantId, campaignId: id, leadId: row.id, email: row.email!, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: crypto.randomBytes(16).toString("hex"), nodeId: tree(campaign).start, nextActionAt: new Date(Date.now() - 2000), status: "wartet", sentCount: 0, variant: abTest ? abVariantFor(index, campaign.abSplit) : null, pickedAt: options.picked ? new Date() : null }); index += 1; added += 1; } /* 2 s in der Vergangenheit: MySQL rundet Sekunden auf */
   return { added, skipped, repeated, maxRuns };
@@ -1216,7 +1216,7 @@ export async function renameListImport(db: Db, tenantId: number, input: { id: nu
   if (!row) throw new Error("Diesen Upload gibt es nicht mehr.");
   if (row.undoneAt) throw new Error("Dieser Upload wurde zurückgenommen.");
   const ids = Array.isArray(row.leadIds) ? (row.leadIds as number[]) : [];
-  if (ids.length) await db.update(leads).set({ listName, adCampaignId: `liste-${listName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, adCampaignName: `Liste: ${listName}` }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, ids)));
+  if (ids.length) await db.update(leads).set({ listName, adCampaignId: listCampaignId(listName), adCampaignName: `Liste: ${listName}` }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, ids)));
   await db.update(listImports).set({ listName }).where(eq(listImports.id, row.id));
   await logActivity(db, tenantId, { kind: "sonstiges", title: `Liste umbenannt: „${row.listName}“ → „${listName}“ (${ids.length} Kontakte)`, actorUserId, refType: "listImport", refId: row.id });
   return { renamed: ids.length, from: row.listName, listName };

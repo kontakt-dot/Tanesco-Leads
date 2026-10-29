@@ -214,14 +214,14 @@ export async function listInbox(db: Db, tenantId: number, options: { filter?: In
   const blockedCount = options.filter === "gesperrt" ? rows.length : Number((await db.select({ count: sql<number>`COUNT(*)` }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.blocked, true))))[0]?.count ?? 0);
   const suppressed = new Set((await db.select({ email: emailSuppressions.email }).from(emailSuppressions).where(eq(emailSuppressions.tenantId, tenantId))).map((row) => row.email));
   const campaignIds = Array.from(new Set(rows.map((row) => row.message.campaignRecipientId).filter((id): id is number => typeof id === "number")));
-  const recipients = campaignIds.length ? await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, campaignName: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(inArray(emailCampaignRecipients.id, campaignIds)) : [];
+  const recipients = campaignIds.length ? await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, campaignName: emailCampaigns.name, campaignFromName: emailCampaigns.fromName, campaignFromEmail: emailCampaigns.fromEmail, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(inArray(emailCampaignRecipients.id, campaignIds)) : [];
   // Lead-Kategorie je Kampagne (für „Als Lead in Pipeline“: die Kategorie der Kampagne ist vorausgewählt)
   const categoryRows = recipients.length ? await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false))) : [];
   const categoryByCampaign = new Map<number, { id: number; name: string } | null>();
   for (const recipient of recipients) { if (categoryByCampaign.has(recipient.campaignId)) continue; const id = await campaignCategoryFor(db, tenantId, recipient); categoryByCampaign.set(recipient.campaignId, id ? categoryRows.find((row) => row.id === id) ?? null : null); }
   // Welche E-Mails wir diesem Kontakt davor geschickt haben – zum Nachlesen neben der Antwort (neueste zuerst, höchstens fünf)
   const sentRows = campaignIds.length ? await db.select({ id: emailCampaignEvents.id, recipientId: emailCampaignEvents.recipientId, nodeId: emailCampaignEvents.nodeId, subject: emailCampaignEvents.subject, body: emailCampaignEvents.body, bodySource: emailCampaignEvents.bodySource, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), inArray(emailCampaignEvents.recipientId, campaignIds))).orderBy(desc(emailCampaignEvents.id)) : [];
-  const sentBeforeOf = (recipientId: number) => { const own = sentRows.filter((row) => row.recipientId === recipientId); const total = own.length; return own.slice(0, 5).map((row, index) => ({ id: `k${row.id}`, step: total - index, subject: row.subject ?? "", at: row.createdAt, excerpt: row.body ? row.body.replace(/\s+/g, " ").trim().slice(0, 600) : null, source: row.bodySource ?? null, testLeads: testLeadsOfSent(row) })); };
+  const sentBeforeOf = (recipientId: number) => { const own = sentRows.filter((row) => row.recipientId === recipientId); const total = own.length; const recipient = recipients.find((item) => item.id === recipientId); return own.slice(0, 5).map((row, index) => ({ id: `k${row.id}`, step: total - index, subject: row.subject ?? "", at: row.createdAt, excerpt: row.body ? row.body.replace(/\s+/g, " ").trim().slice(0, 600) : null, source: row.bodySource ?? null, testLeads: testLeadsOfSent(row), fromName: recipient?.campaignFromName ?? null, fromEmail: recipient?.campaignFromEmail ?? null })); };
   // Von uns beantwortet: Antworten aus dem Posteingang hängen an der eingegangenen Mail (outboundMessages.inboxMessageId)
   const answered = new Map<number, Date>(); const messageIds = rows.map((row) => row.message.id);
   for (let i = 0; i < messageIds.length; i += 1000) { const chunk = messageIds.slice(i, i + 1000); if (!chunk.length) continue; for (const row of await db.select({ inboxMessageId: outboundMessages.inboxMessageId, at: outboundMessages.createdAt }).from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), inArray(outboundMessages.inboxMessageId, chunk)))) { if (!row.inboxMessageId) continue; const before = answered.get(row.inboxMessageId); if (!before || before < row.at) answered.set(row.inboxMessageId, row.at); } }
@@ -293,9 +293,28 @@ export function campaignCategoryFrom(rows: CategoryRow[], campaign: CampaignLike
   const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") return null;
   return categoriesForSparte(rows.filter((row) => row.status !== "inaktiv"), sparte)[0] ?? null;
 }
-export async function campaignCategoryFor(db: Db, tenantId: number, campaign: CampaignLike): Promise<number | null> {
+/**
+ * Lead-Kategorie der Kampagne. Mit `create`: Gibt es zur Leadsparte der Kampagne noch keine Kategorie (z. B. „Alarmanlage“,
+ * „Hausnotruf“), wird sie angelegt – Kontakte aus der Kampagne sollen in der Pipeline immer ihre Kategorie tragen.
+ */
+export async function campaignCategoryFor(db: Db, tenantId: number, campaign: CampaignLike, options: { create?: boolean } = {}): Promise<number | null> {
   const rows = await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false)));
-  return campaignCategoryFrom(rows, campaign)?.id ?? null;
+  const found = campaignCategoryFrom(rows, campaign)?.id ?? null; if (found || !options.create) return found;
+  const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") return null;
+  return (await createCategoryForSparte(db, tenantId, sparte.label)).id;
+}
+/** Lead-Kategorie zu einer Leadsparte anlegen (Name = Sparte, Kürzel aus dem Namen, Emoji passend) – einmalig je Mandant. */
+export async function createCategoryForSparte(db: Db, tenantId: number, label: string): Promise<{ id: number; name: string }> {
+  const name = label.trim().slice(0, 160);
+  const existing = (await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false))));
+  const same = existing.find((row) => row.name.trim().toLowerCase() === name.toLowerCase()); if (same) return { id: same.id, name: same.name };
+  const base = name.toUpperCase().replace(/Ä/g, "AE").replace(/Ö/g, "OE").replace(/Ü/g, "UE").replace(/ß/gi, "SS").replace(/[^A-Z0-9]/g, "").slice(0, 8) || "KAT";
+  const codes = new Set(existing.map((row) => row.shortcode.toUpperCase())); let code = base; for (let n = 2; codes.has(code); n += 1) code = `${base.slice(0, 6)}${n}`;
+  const { suggestCategoryEmoji } = await import("../shared/category-emoji");
+  await db.insert(leadCategories).values({ tenantId, shortcode: code, name, color: null, emoji: suggestCategoryEmoji(name), status: "aktiv", geocodingRequired: true, marketplaceEnabled: false });
+  const row = (await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.shortcode, code))).orderBy(desc(leadCategories.id)).limit(1))[0];
+  const { logActivity } = await import("./activity"); await logActivity(db, tenantId, { kind: "sonstiges", title: `Lead-Kategorie „${name}“ angelegt`, detail: "Automatisch zur Leadsparte einer E-Mail-Kampagne – damit Kontakte aus der Kampagne in der Pipeline ihre Kategorie tragen.", refType: "leadCategory", refId: row.id });
+  return row;
 }
 const CATEGORY_FIX_NOTE = "Kategorie an die Kampagne";
 /**
@@ -317,6 +336,8 @@ export async function fixCampaignLeadCategories(db: Db): Promise<number> {
     const campaignOf = (lead: { id: number; adCampaignId: string | null }) => { const linked = Number(String(lead.adCampaignId ?? "").startsWith("email-") ? String(lead.adCampaignId).slice(6) : ""); return Number.isInteger(linked) && linked > 0 ? linked : latestCampaign.get(lead.id) ?? null; };
     const campaignIds = Array.from(new Set(own.map(campaignOf).filter((id): id is number => typeof id === "number")));
     const campaigns = campaignIds.length ? await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, campaignIds))) : [];
+    // Fehlt zur Leadsparte einer Kampagne noch die Kategorie (z. B. „Alarmanlage“), wird sie angelegt
+    for (const campaign of campaigns) { if (campaignCategoryFrom(categoryRows, campaign)) continue; const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") continue; const created = await createCategoryForSparte(db, tenantId, sparte.label); if (!categoryRows.some((row) => row.id === created.id)) categoryRows.push({ id: created.id, name: created.name, status: "aktiv" }); }
     for (const lead of own) {
       const campaign = campaigns.find((row) => row.id === campaignOf(lead)); if (!campaign) continue;
       const wanted = campaignCategoryFrom(categoryRows, campaign); if (!wanted || wanted.id === lead.categoryId) continue;
@@ -336,7 +357,7 @@ export async function createLeadFromMessage(db: Db, tenantId: number, input: { m
   if (message.blocked) throw new Error("Dieser Absender ist gesperrt – erst die Sperre aufheben.");
   // Lead-Kategorie: gewählt → die der E-Mail-Kampagne (ihre Lead-Kategorien bzw. die zur Leadsparte passende) → sonst die erste aktive
   const campaignOf = message.campaignRecipientId ? (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte }).from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(eq(emailCampaignRecipients.id, message.campaignRecipientId)).limit(1))[0] ?? null : null;
-  const campaignCategoryId = campaignOf ? await campaignCategoryFor(db, tenantId, campaignOf) : null;
+  const campaignCategoryId = campaignOf ? await campaignCategoryFor(db, tenantId, campaignOf, { create: true }) : null;
   const existing = message.leadId ? (await db.select().from(leads).where(and(eq(leads.id, message.leadId), eq(leads.kind, "vertrieb"))).limit(1))[0] : (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.email, message.fromEmail))).limit(1))[0];
   if (existing) {
     const newCategory = input.categoryId ?? campaignCategoryId; // Kategorie der Kampagne übernehmen (bzw. die gewählte)

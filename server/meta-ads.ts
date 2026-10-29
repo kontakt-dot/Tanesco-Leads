@@ -159,16 +159,17 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const pipelineLeads = rows.filter((row) => (row as { inPipeline?: boolean }).inPipeline !== false).filter((row) => row.adCampaignId || row.adPlatform || row.pipelineStage).filter((row) => source === "alle" ? true : pipelineSourceOf(row.adPlatform) === source).map((row) => ({ ...row, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || row.publicId }));
   // Smarte Listen (E-Mail-Kampagne): „Interesse“ = Antwort im Posteingang, die die KI als interessiert einstuft; „Geöffnet“ = Kampagnen-Mail geöffnet/geklickt/beantwortet
   const leadIdsAll = pipelineLeads.map((lead) => lead.id);
-  const interestIds = new Set<number>(); const openedIds = new Set<number>();
+  const interestIds = new Set<number>(); const openedIds = new Set<number>(); const clickedIds = new Set<number>();
   if (leadIdsAll.length) {
     for (const row of await db.select({ leadId: inboxMessages.leadId, recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.aiKind, "interessiert"), eq(inboxMessages.blocked, false)))) if (row.leadId) interestIds.add(row.leadId);
     const recipientRows = await db.select({ id: emailCampaignRecipients.id, leadId: emailCampaignRecipients.leadId, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), isNotNull(emailCampaignRecipients.leadId)));
     const recipientLead = new Map(recipientRows.map((row) => [row.id, row.leadId]));
     for (const row of await db.select({ recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.aiKind, "interessiert"), isNotNull(inboxMessages.campaignRecipientId)))) { const leadId = row.recipientId ? recipientLead.get(row.recipientId) : null; if (leadId) interestIds.add(leadId); }
     for (const row of recipientRows) if (row.leadId && (row.openedAt || row.clickedAt || row.repliedAt)) openedIds.add(row.leadId);
+    for (const row of recipientRows) if (row.leadId && row.clickedAt) clickedIds.add(row.leadId); // „Webseite geklickt“: Link in einer Kampagnen-E-Mail angeklickt
   }
-  const smartLists = { interesse: pipelineLeads.filter((lead) => interestIds.has(lead.id)).length, geoeffnet: pipelineLeads.filter((lead) => openedIds.has(lead.id)).length };
-  const byCampaign = options.campaignId === "__interesse" ? pipelineLeads.filter((lead) => interestIds.has(lead.id)) : options.campaignId === "__geoeffnet" ? pipelineLeads.filter((lead) => openedIds.has(lead.id)) : options.campaignId ? pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === options.campaignId) : pipelineLeads;
+  const smartLists = { interesse: pipelineLeads.filter((lead) => interestIds.has(lead.id)).length, geoeffnet: pipelineLeads.filter((lead) => openedIds.has(lead.id)).length, geklickt: pipelineLeads.filter((lead) => clickedIds.has(lead.id)).length };
+  const byCampaign = options.campaignId === "__interesse" ? pipelineLeads.filter((lead) => interestIds.has(lead.id)) : options.campaignId === "__geoeffnet" ? pipelineLeads.filter((lead) => openedIds.has(lead.id)) : options.campaignId === "__geklickt" ? pipelineLeads.filter((lead) => clickedIds.has(lead.id)) : options.campaignId ? pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === options.campaignId) : pipelineLeads;
   const byOwner = options.ownerUserId === "ohne" ? byCampaign.filter((lead) => !lead.ownerUserId) : options.ownerUserId ? byCampaign.filter((lead) => lead.ownerUserId === options.ownerUserId) : byCampaign;
   // Liste (Upload) als Auswahl: alle Listen im aktuellen Ausschnitt mit Anzahl – die gewählte bleibt sichtbar
   const listCounts = new Map<string, number>(); for (const lead of byOwner) if (lead.listName) listCounts.set(lead.listName, (listCounts.get(lead.listName) ?? 0) + 1);

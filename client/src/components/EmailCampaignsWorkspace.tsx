@@ -26,6 +26,7 @@ import ListPreview from "@/components/ListPreview";
 import UploadHistory from "@/components/UploadHistory";
 import CampaignContactDrawer from "@/components/CampaignContactDrawer";
 import CampaignReviewPanel from "@/components/CampaignReviewPanel";
+import { RestoreStatePanel } from "@/components/RestoreStateDialog";
 import { CampaignFolderBar, folderIdOf, inFolder, MoveToFolderMenu, readFolderPick, saveFolderPick, useCampaignFolders, type CampaignFolder, type FolderPick } from "@/components/CampaignFolders";
 import FollowUpLine, { clock, dayWord, type FollowUpView } from "@/components/FollowUpLine";
 import { categoriesForSparte, DEFAULT_SPARTE, detectSparte, foreignSparteIn, numberWord, OLD_ENERGY_PHRASE, qualifyBy, questionCount, SPARTE_PHRASE, sparteFromCategories, sparteOf, withSparte, type Sparte } from "../../../shared/lead-sparte";
@@ -68,7 +69,7 @@ const EMAIL_TABS = [
   { key: "kampagnen" as const, label: "Kampagnen", icon: Send, hint: "Serien als Ablauf: E-Mail, warten, wenn geöffnet … – darunter die Vorlagen zum Wiederverwenden." },
   { key: "kontakte" as const, label: "Kontakte", icon: Users, hint: "Wer steckt in den Serien – mit Herkunft, Kampagne und der letzten Reaktion." },
   { key: "sperrliste" as const, label: "Sperrliste", icon: Ban, hint: "Adressen, die keine E-Mails mehr bekommen: Bounces, Abmeldungen, Beschwerden." },
-  { key: "verlauf" as const, label: "Upload-Verlauf", icon: History, hint: "Was wurde wann hochgeladen – und wann wurde etwas aus den Listen gelöscht, von wem und warum." },
+  { key: "verlauf" as const, label: "Verlauf", icon: History, hint: "Uploads: was wurde wann hochgeladen oder gelöscht – und „Früheren Stand wiederherstellen“: Kontakte auf einen Zeitpunkt zurücksetzen." },
 ];
 
 /** Kurz fürs Schild: „Mo–Fr · 09:30–16:00“ (+ „*“ wenn einzelne Tage abweichen); die volle Angabe steht im Hinweis. */
@@ -154,7 +155,7 @@ export default function EmailCampaignsWorkspace() {
     {view === "posteingang" && <InboxPanel onOpenLead={(publicId) => setLeadWindow(publicId)} />}
     {view === "sperrliste" && <SuppressionPanel />}
     {view === "kontakte" && <EmailLeadsPanel onOpenLead={(publicId) => setLeadWindow(publicId)} />}
-    {view === "verlauf" && <UploadHistory />}
+    {view === "verlauf" && <HistoryTab />}
     {view === "kampagnen" && <>
     {allCampaigns.length > 0 && <CampaignFolderBar tools={folderTools} rows={viewCampaigns} allRows={allCampaigns} pick={folderPick} onPick={chooseFolder} dragged={dragged} onDropped={() => setDragged(null)} />}
     <CampaignKpiBar rows={folderCampaigns} archive={showArchive} scopeLabel={folderPick === "ohne" ? " ohne Ordner" : activeFolder ? ` in „${activeFolder.name}“` : ""} onOpen={(campaignId, recipientFilter) => { setOpenedFilter(recipientFilter ?? null); setOpened(campaignId); }} />
@@ -531,6 +532,18 @@ function MergeDialog({ target, onClose }: { target: { id: number; name: string; 
       <div className="flex flex-wrap items-center justify-end gap-2"><span className="mr-auto text-xs text-slate-400">{picked.length ? `${picked.length} Kampagne${picked.length === 1 ? "" : "n"} · ${contacts} Kontakte` : "Kampagnen anklicken"}</span><Button variant="outline" onClick={onClose}>Abbrechen</Button><Button className="flux-button" disabled={!picked.length || merge.isPending} onClick={async () => { if (await confirmAction(`${contacts} Kontakte aus ${picked.length === 1 ? `„${chosen[0]?.name}“` : `${picked.length} Kampagnen`} in „${target.name}“ übernehmen? ${picked.length === 1 ? "Die alte Kampagne wandert" : "Die alten Kampagnen wandern"} danach ins Archiv.`, { confirmLabel: "Ja, zusammenführen" })) merge.mutate({ targetId: target.id, sourceIds: picked }); }}><Merge /> {merge.isPending ? "Wird zusammengeführt …" : "Zusammenführen"}</Button></div>
     </DialogContent>
   </Dialog>;
+}
+/** Reiter „Verlauf“: Upload-Verlauf und „Früheren Stand wiederherstellen“ nebeneinander wählbar. */
+function HistoryTab() {
+  const [part, setPart] = useState<"upload" | "stand">(() => { try { return new URLSearchParams(window.location.search).get("verlauf") === "stand" ? "stand" : "upload"; } catch { return "upload"; } });
+  const utils = trpc.useUtils();
+  return <div className="history-tab">
+    <div className="cd-filters history-parts" role="tablist" aria-label="Verlauf">
+      <button type="button" role="tab" aria-selected={part === "upload"} className={part === "upload" ? "is-active" : ""} onClick={() => setPart("upload")}><Upload className="h-3.5 w-3.5" aria-hidden="true" /> Upload</button>
+      <button type="button" role="tab" aria-selected={part === "stand"} className={part === "stand" ? "is-active" : ""} onClick={() => setPart("stand")}><History className="h-3.5 w-3.5" aria-hidden="true" /> Früheren Stand wiederherstellen</button>
+    </div>
+    {part === "upload" ? <UploadHistory /> : <section className="surface-panel operations-panel restore-inline"><div className="restore-inline-head"><History className="h-4 w-4" aria-hidden="true" /><h2>Früheren Stand wiederherstellen</h2></div><RestoreStatePanel active inline onDone={() => { utils.leadops.emailLeads.invalidate(); utils.leadops.listEmailCampaigns.invalidate(); }} /></section>}
+  </div>;
 }
 function AddListsDialog({ campaign, onClose }: { campaign: { id: number; name: string; status: string; audience: Audience } | null; onClose: () => void }) {
   const utils = trpc.useUtils();

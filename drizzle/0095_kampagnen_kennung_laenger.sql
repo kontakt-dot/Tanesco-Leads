@@ -1,0 +1,1 @@
+ALTER TABLE `leads` MODIFY COLUMN `adCampaignId` varchar(120);

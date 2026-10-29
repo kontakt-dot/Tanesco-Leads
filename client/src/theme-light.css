@@ -1796,9 +1796,10 @@ html:not(.dark) .thread-head small { color: #8a94a6 !important; }
 html:not(.dark) .thread-mail { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
 html:not(.dark) .thread-mail-head:hover { background: #f8fafb !important; }
 html:not(.dark) .inbox-avatar.av-us { background: linear-gradient(135deg, #2a2e3a, #111318) !important; }
-html:not(.dark) .thread-mail-who strong { color: #0f172a !important; }
-html:not(.dark) .thread-mail-who strong small { color: #8a94a6 !important; }
-html:not(.dark) .thread-mail-who>small { color: #4b5568 !important; }
+html:not(.dark) .thread-line em { color: #8a94a6 !important; }
+html:not(.dark) .thread-line strong { color: #0f172a !important; }
+html:not(.dark) .thread-line>span { color: #0f172a !important; }
+html:not(.dark) .thread-line small { color: #8a94a6 !important; }
 html:not(.dark) .thread-mail-head time { color: #8a94a6 !important; }
 html:not(.dark) .thread-chevron { color: #8a94a6 !important; }
 html:not(.dark) .thread-subject { color: #0f172a !important; }
@@ -1809,6 +1810,7 @@ html:not(.dark) .thread-note.is-src-hand { color: #3c7f64 !important; }
 html:not(.dark) .thread-loading { color: #8a94a6 !important; }
 html:not(.dark) .thread-loading.is-error { color: #8b5a60 !important; }
 html:not(.dark) .thread-collapsed { color: #8a94a6 !important; }
+html:not(.dark) .thread-collapsed strong { color: #111318 !important; }
 html:not(.dark) .rv-editor-kind small { color: #4b5568 !important; }
 html:not(.dark) .cd-chip.is-ki { border-color: #d9dfe7 !important; color: #4b5568 !important; }
 html:not(.dark) .cat-pick { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
@@ -1960,6 +1962,13 @@ html:not(.dark) .cj-mail-toggle:hover { background: #f3f6f8 !important; }
 html:not(.dark) .rv-portal { color: #5b8572 !important; }
 html:not(.dark) .rv-portal.is-bad { color: #0f172a !important; background: #ffffff !important; }
 html:not(.dark) .cd-kpi-note { color: #111318 !important; background: #f8fafb !important; border: 1px solid #e8ecf1 !important; }
+html:not(.dark) .cat-pick-head { color: #8a94a6 !important; }
+html:not(.dark) .cat-pick-empty { color: #8a94a6 !important; }
+html:not(.dark) .cat-pick-item.is-current { color: #4b5568 !important; }
+html:not(.dark) .cat-pick-item .cat-pick-check { color: #4b5568 !important; }
+html:not(.dark) .restore-inline-head h2 { color: #0f172a !important; }
+html:not(.dark) .restore-intro { color: #4b5568 !important; }
+html:not(.dark) .restore-inline .restore-foot { border-top: 1px solid #e8ecf1 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -3927,7 +3936,7 @@ html:not(.dark) .thread-head { color: #9f1239 !important; } html:not(.dark) .thr
 html:not(.dark) .thread-mail { border-color: #e4e7ec !important; background: #ffffff !important; }
 html:not(.dark) .thread-mail.is-reply { background: none !important; }
 html:not(.dark) .thread-mail-head:hover { background: #f9fafb !important; }
-html:not(.dark) .thread-mail-who strong { color: #101828 !important; } html:not(.dark) .thread-mail-who strong small, html:not(.dark) .thread-mail-who > small, html:not(.dark) .thread-mail-head time, html:not(.dark) .thread-chevron, html:not(.dark) .thread-collapsed, html:not(.dark) .thread-loading { color: #667085 !important; }
+html:not(.dark) .thread-line strong { color: #101828 !important; } html:not(.dark) .thread-line > span { color: #344054 !important; } html:not(.dark) .thread-line em, html:not(.dark) .thread-line small, html:not(.dark) .thread-mail-head time, html:not(.dark) .thread-chevron, html:not(.dark) .thread-collapsed, html:not(.dark) .thread-loading { color: #667085 !important; } html:not(.dark) .thread-collapsed strong { color: #344054 !important; }
 html:not(.dark) .thread-subject { color: #101828 !important; } html:not(.dark) .thread-note { color: #475467 !important; }
 html:not(.dark) .thread-note.is-src-ki { color: #6d28d9 !important; } html:not(.dark) .thread-note.is-src-vorlage, html:not(.dark) .thread-note.is-src-entwurf-vorlage { color: #b45309 !important; } html:not(.dark) .thread-note.is-src-hand { color: #067647 !important; }
 html:not(.dark) .thread-frame { border: 1px solid #e4e7ec !important; }
@@ -3960,3 +3969,6 @@ html:not(.dark) .fact-icon.is-emoji { background: #ffffff !important; box-shadow
 html:not(.dark) .merge-rules { color: #475467 !important; }
 html:not(.dark) .merge-quick .cl-folder-act { border-color: #e4e7ec !important; }
 html:not(.dark) .xl-archived { color: #667085 !important; }
+html:not(.dark) .cat-pick-head, html:not(.dark) .cat-pick-empty { color: #667085 !important; }
+html:not(.dark) .cat-pick-item.is-current, html:not(.dark) .cat-pick-item .cat-pick-check { color: #bc001d !important; }
+html:not(.dark) .restore-inline-head h2 { color: #101828 !important; } html:not(.dark) .restore-intro { color: #475467 !important; } html:not(.dark) .restore-inline .restore-foot { border-top-color: #eef0f3 !important; }

@@ -3474,6 +3474,10 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(board.categories.find((item) => item.id === S.wp!.id)).toMatchObject({ name: S.wp!.name }); expect(board.categories.find((item) => item.id === S.pv!.id)).toMatchObject({ name: S.pv!.name }); expect(board.categories.reduce((sum, item) => sum + item.count, 0)).toBeLessThanOrEqual(board.totals.leads);
     const onlyWp = await owner.leadops.pipelineOverview({ source: "email", categoryId: S.wp!.id }) as typeof board; expect(onlyWp.totals.leads).toBe(board.categories.find((item) => item.id === S.wp!.id)!.count); expect(onlyWp.stages.flatMap((stage) => stage.leads).every((lead) => lead.categoryId === S.wp!.id)).toBe(true); expect(onlyWp.categories.map((item) => item.id)).toContain(S.pv!.id); // die Auswahl bleibt vollständig
     const tiny = await owner.leadops.pipelineOverview({ source: "email", categoryId: S.wp!.id, limitPerStage: 1 }) as typeof board; expect(tiny.categories.find((item) => item.id === S.wp!.id)?.count).toBe(onlyWp.totals.leads); // Zähler unabhängig von der Kartenzahl je Spalte
+    // „Webseite geklickt“: nur Kontakte mit Klick in einer Kampagnen-E-Mail
+    await db.update(emailCampaignRecipients).set({ clickedAt: new Date() }).where(eq(emailCampaignRecipients.id, nils.id));
+    const clicked = await owner.leadops.pipelineOverview({ source: "email", campaignId: "__geklickt" }) as typeof board & { smartLists: { geklickt: number } };
+    expect(clicked.smartLists.geklickt).toBeGreaterThanOrEqual(1); expect(clicked.totals.leads).toBe(clicked.smartLists.geklickt); expect(clicked.stages.flatMap((stage) => stage.leads).some((lead) => (lead as { email?: string | null }).email === "nils@versprechen-e2e.example")).toBe(true);
     // Einmal nach dem Start: Kontakte in der Pipeline, die (durch den alten Fehler) noch die erste Kategorie tragen, obwohl ihre Kampagne eine andere hat → Kategorie der Kampagne; bewusst anders gesetzte bleiben
     const { fixCampaignLeadCategories } = await import("./inbox");
     const allCategories = (await owner.leadops.listCategories()).filter((row) => row.status === "aktiv").sort((x, y) => x.id - y.id); const firstCategory = allCategories[0]; const thirdCategory = allCategories.find((row) => row.id !== firstCategory.id && row.id !== S.wp!.id)!; expect(firstCategory.id).not.toBe(S.wp!.id);
@@ -3569,6 +3573,35 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const doraAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, dora)))[0]; expect(doraAfter).toMatchObject({ campaignId: target.id, sentCount: 2, status: "fertig" });
     expect((await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, dora), eq(emailCampaignEvents.kind, "gesendet")))).map((event) => event.nodeId)).toEqual(["m1", "m2"]);
   }, 60000);
+
+  it("63q. Lange Listennamen: Hochladen klappt, die Kennung der Liste in der Pipeline wird gekürzt statt abzubrechen", async () => {
+    const listName = "WP_Heizungsbauer_Aroundhome_Bewertungen_groesste_ab_20_Bewertungen_Region_Berlin_Brandenburg_Sachsen_2026"; expect(listName.length).toBeGreaterThan(100);
+    const imported = await owner.leadops.importColdList({ listName, toPipeline: true, rows: [{ firstName: "", lastName: "Thermondo", company: "Thermondo GmbH", email: "kontakt@thermondo-e2e.example", phone: "+49 800 4 200 300" }] });
+    expect(imported.created).toBe(1);
+    const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, "kontakt@thermondo-e2e.example"))))[0];
+    expect(lead.listName).toBe(listName); expect(lead.adCampaignId!.length).toBeLessThanOrEqual(120); expect(lead.adCampaignId).toMatch(/^liste-wp-heizungsbauer-aroundhome/); expect(lead.adCampaignName).toBe(`Liste: ${listName}`);
+    expect((await owner.leadops.pipelineOverview({ source: "kaltakquise" })).campaigns.some((campaign) => campaign.campaignId === lead.adCampaignId)).toBe(true);
+  }, 20000);
+
+  it("63r. Fehlende Lead-Kategorie zur Leadsparte wird angelegt (z. B. „Pool-Bau Nord“) und den Kontakten der Kampagne gegeben; Kategorie auf der Karte wechseln", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const starter = await owner.leadops.emailCampaignStarter();
+    expect((await owner.leadops.listCategories()).some((row) => /pool-bau nord/i.test(row.name))).toBe(false);
+    await owner.leadops.importColdList({ listName: "Notruf-Kategorie", toPipeline: false, rows: [{ firstName: "Nora", lastName: "Notruf", company: "Notruf Nord GmbH", email: "nora@notruf-kat-e2e.example" }] });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Pool-Bauer Nord", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Notruf-Kategorie" }, tree: { start: "n1", nodes: [{ id: "n1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, leadSparte: "Pool-Bau Nord", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const created = (await owner.leadops.listCategories()).find((row) => row.name === "Pool-Bau Nord"); expect(created).toBeTruthy(); expect(created!.shortcode).toBe("POOLBAUN"); expect(created!.emoji).toBeTruthy(); // automatisch angelegt
+    const nora = (await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, "nora@notruf-kat-e2e.example"))))[0];
+    expect(nora).toMatchObject({ categoryId: created!.id, adCampaignId: `email-${campaign.id}`, adPlatform: "email" }); // mit der ersten E-Mail nach „Versendet“ – mit der neuen Kategorie
+    expect((await owner.leadops.activityFeed({ days: 1 })).days.some((day) => day.groups.some((group) => group.entries.some((entry) => entry.title === "Lead-Kategorie „Pool-Bau Nord“ angelegt")))).toBe(true);
+    // Kategorie auf der Karte wechseln – mit Vermerk; unbekannte Kategorie wird abgelehnt
+    const switched = await owner.leadops.setPipelineCategory({ publicId: nora.publicId, categoryId: S.wp!.id }); expect(switched).toMatchObject({ categoryId: S.wp!.id, categoryName: S.wp!.name });
+    expect((await db.select().from(leads).where(eq(leads.id, nora.id)))[0].categoryId).toBe(S.wp!.id);
+    expect((await owner.leadops.pipelineHistory({ publicId: nora.publicId })).some((event) => event.note === `Kategorie geändert: „${S.wp!.name}“ (vorher „Pool-Bau Nord“)`)).toBe(true);
+    await expect(owner.leadops.setPipelineCategory({ publicId: nora.publicId, categoryId: 999999 })).rejects.toThrow("Kategorie nicht gefunden");
+    // die Korrektur beim Start fasst eine von Hand gewechselte Kategorie nicht mehr an (Vermerk „Kategorie an die Kampagne“ fehlt zwar, aber die Karte hat ihre Kategorie bewusst) – hier: sie würde einmal angepasst, danach nie wieder
+    const { fixCampaignLeadCategories } = await import("./inbox"); await fixCampaignLeadCategories(db);
+    await owner.leadops.setPipelineCategory({ publicId: nora.publicId, categoryId: S.wp!.id }); expect(await fixCampaignLeadCategories(db)).toBe(0); expect((await db.select().from(leads).where(eq(leads.id, nora.id)))[0].categoryId).toBe(S.wp!.id);
+  }, 40000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
     const leadOptions = await owner.leadops.contractLeadOptions({ query: "" }); expect(leadOptions.length).toBeGreaterThan(0);

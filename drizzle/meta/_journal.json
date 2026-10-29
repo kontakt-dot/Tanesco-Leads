@@ -666,6 +666,13 @@
       "when": 1794000000000,
       "tag": "0094_kampagnen_kategorien",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "5",
+      "when": 1794100000000,
+      "tag": "0095_kampagnen_kennung_laenger",
+      "breakpoints": true
     }
   ]
 }
