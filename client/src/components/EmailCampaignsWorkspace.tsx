@@ -236,10 +236,10 @@ function factsOf(data: FactSource, inline: boolean): Fact[] {
 function CampaignFacts({ data, inline = false }: { data: FactSource; inline?: boolean }) {
   const facts = factsOf(data, inline);
   if (inline) { // zwei feste Zeilen: was (Leadsparte, KI, Bei Antwort) und wann (Versand, Drip …) – so steht jede Angabe immer an derselben Stelle
-    const spec = (fact: Fact) => <div key={fact.key} className={`cl-spec ${fact.warn ? "is-warn" : ""}`} title={fact.title}><dt>{fact.label}</dt><dd>{fact.value}{fact.sub ? <small>{fact.sub}</small> : null}</dd></div>;
+    const spec = (fact: Fact) => <div key={fact.key} className={`cl-spec is-${fact.key} ${fact.warn ? "is-warn" : ""}`} title={fact.title}><dt>{fact.label}</dt><dd>{fact.value}{fact.sub ? <small>{fact.sub}</small> : null}</dd></div>;
     const what = ["sparte", "ki", "antwort"]; return <div className="cl-specs"><dl>{facts.filter((fact) => what.includes(fact.key)).map(spec)}</dl><dl>{facts.filter((fact) => !what.includes(fact.key)).map(spec)}</dl></div>;
   }
-  return <dl className="ch-facts">{facts.map((fact) => <div key={fact.key} className={`ch-fact ${fact.kind ? `is-${fact.kind}` : ""}`} title={fact.title}><dt>{fact.label}</dt><dd><span className={`ch-value ${fact.warn ? "is-warn" : ""}`}>{fact.value}</span>{fact.sub ? <span className="ch-sub">{fact.sub}</span> : null}</dd></div>)}</dl>;
+  return <dl className="ch-facts">{facts.map((fact) => <div key={fact.key} className={`ch-fact is-${fact.key} ${fact.kind ? `is-${fact.kind}` : ""}`} title={fact.title}><dt>{fact.label}</dt><dd><span className={`ch-value ${fact.warn ? "is-warn" : ""}`}>{fact.value}</span>{fact.sub ? <span className="ch-sub">{fact.sub}</span> : null}</dd></div>)}</dl>;
 }
 /**
  * Alles, was auf deine Freigabe wartet, in EINEM Hinweis: „Zur Freigabe · 77 Erst-E-Mails warten · 2 Follow-ups ab Mo 02.11., 09:03 Uhr“.

@@ -759,7 +759,7 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     const treeOf = async (id: number) => JSON.stringify((await call("leadops.getEmailCampaign", { id })).tree);
     expect(await treeOf(pv.id)).toContain("zehn Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Eigentumsverhältnisse, der Zustand von Dach und Heizung, der aktuelle Stromverbrauch usw.");
     expect(await treeOf(saved.id)).toContain("sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.");
-    expect(await treeOf(named.id)).toContain("acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Fläche, die abgesichert werden soll, die Objektart, um die es sich handelt, die gewünschte Art der Alarmanlage usw.");
+    expect(await treeOf(named.id)).toContain("acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Art und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation usw.");
     expect(await treeOf(saved.id)).toContain("Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf."); // Logik-Kette, Partner passend zur Sparte
     expect(await treeOf(named.id)).toContain("Der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
     for (const id of [pv.id, saved.id, named.id]) expect(await treeOf(id)).not.toMatch(/\(z\. ?B\./); // nie mehr Klammern
@@ -767,6 +767,22 @@ describe("Pipeline-Erweiterungen (Chat-Build): Wiedervorlagen, Termine, Angebots
     expect(String(row.draftText)).toContain("Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
     const pvTree = (await call("leadops.getEmailCampaign", { id: pv.id })).tree;
     expect((await call("leadops.saveEmailCampaign", { ...base, id: pv.id, name: "PV & WP • Erstkontakt", tree: pvTree })).fixedQuestions).toBe(false); // schon angepasst
+  });
+  it("Lead-Kategorien wählen: die Leadsparte kommt aus den Kategorien, Kopie behält sie, ungültige fallen weg, ohne Kategorien gilt die eingetragene Sparte", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    const categories = (await call("leadops.listCategories")) as Array<{ id: number; name: string }>; const id = (name: string) => categories.find((row) => row.name === name)!.id;
+    const base = { fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "auswahl" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, kiModus: "freigabe", kiAnsatz: "frei" };
+    const saved = await call("leadops.saveEmailCampaign", { ...base, id: null, name: "Neue Kampagne", leadCategoryIds: [id("Photovoltaik"), id("Wärmepumpe")], leadSparte: "wird ersetzt" });
+    const first = await call("leadops.getEmailCampaign", { id: saved.id });
+    expect(first.leadCategoryIds).toEqual([id("Photovoltaik"), id("Wärmepumpe")]); expect(first.sparte).toMatchObject({ label: "Photovoltaik & Wärmepumpe", source: "eingetragen" });
+    await call("leadops.saveEmailCampaign", { ...base, id: saved.id, name: "Neue Kampagne", leadCategoryIds: [id("Alarmanlagen"), 99999] }); // unbekannte ID fällt weg
+    const alarm = await call("leadops.getEmailCampaign", { id: saved.id });
+    expect(alarm.leadCategoryIds).toEqual([id("Alarmanlagen")]); expect(alarm.sparte.label).toBe("Alarmanlage"); expect(JSON.stringify(alarm.tree)).toContain("anhand von acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Art und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation usw.");
+    const copy = await call("leadops.duplicateEmailCampaign", { id: saved.id }); expect((await call("leadops.getEmailCampaign", { id: copy.id })).leadCategoryIds).toEqual([id("Alarmanlagen")]); // Kopie behält die Kategorien
+    expect(((await call("leadops.listEmailCampaigns")) as any[]).find((row) => row.id === saved.id).leadCategoryIds).toEqual([id("Alarmanlagen")]);
+    await call("leadops.saveEmailCampaign", { ...base, id: saved.id, name: "Neue Kampagne", leadCategoryIds: [], leadSparte: "Hausnotruf" }); // keine Kategorie → frei eingetragene Sparte
+    const free = await call("leadops.getEmailCampaign", { id: saved.id }); expect(free.leadCategoryIds).toEqual([]); expect(free.sparte).toMatchObject({ label: "Hausnotruf", source: "eingetragen" });
+    await call("leadops.saveEmailCampaign", { ...base, id: saved.id, name: "Neue Kampagne", leadSparte: "Hausnotruf" }); expect((await call("leadops.getEmailCampaign", { id: saved.id })).leadCategoryIds).toEqual([]); // ohne Angabe bleibt es, wie es ist
   });
   it("Zustellung (Demo): gesendete E-Mails zeigen „zugestellt“ – je Kampagne und in „Gesendet“; der Versand gilt als eingerichtet", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");

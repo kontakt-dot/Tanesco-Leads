@@ -23,6 +23,8 @@ export type Sparte = {
   questions?: number | null;
   /** worum es bei den Fragen geht – drei Beispiele, in E-Mails ohne Klammern: „Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.“ Eigene Sparten: keine festen Punkte – die KI nennt drei passende. */
   topics?: string[] | null;
+  /** Angaben, die wir in den gewählten Lead-Kategorien erfassen (z. B. „Poolgröße“) – Hinweis für die KI bei Sparten ohne feste Punkte */
+  hints?: string[] | null;
 };
 
 const PV_RE = /photovoltaik|solar|\bpv\b|pv[-\s]|pv-?anlage/i;
@@ -37,7 +39,7 @@ export const SPARTEN: Sparte[] = [
   { key: "rollator", label: "Rollator", topic: "Rollatoren", leads: "Rollator-Leads", recipients: "Fachhändler und Sanitätshäuser für Rollatoren", partner: "Fachhändler", match: /rollator/i, topics: ["die Krankenkasse", "der Pflegegrad", "der Einsatz im Alltag"] },
   { key: "treppenlift", label: "Treppenlift", topic: "Treppenlifte", leads: "Treppenlift-Leads", recipients: "Anbieter und Fachbetriebe für Treppenlifte", partner: "Fachbetrieb", match: /treppenlift|sitzlift|plattformlift/i, topics: ["die Treppenform", "die Anzahl der Etagen", "der Pflegegrad"] },
   { key: "bad", label: "Barrierefreies Bad", topic: "barrierefreie Bäder", leads: "Leads für barrierefreie Bäder", recipients: "Fachbetriebe für barrierefreie Badumbauten", partner: "Fachbetrieb", match: /barrierefrei|badumbau|bäder|baeder|badsanierung/i, topics: ["der gewünschte Umbau", "die Größe des Bads", "der Pflegegrad"] },
-  { key: "alarmanlage", label: "Alarmanlage", topic: "Alarmanlagen", leads: "Alarmanlagen-Leads", recipients: "Errichter und Fachbetriebe für Alarmanlagen und Sicherheitstechnik", partner: "Fachbetrieb", match: /alarm|einbruchschutz|einbruchmelde|sicherheitstechnik/i, questions: 8, topics: ["die Fläche, die abgesichert werden soll", "die Objektart, um die es sich handelt", "die gewünschte Art der Alarmanlage"] },
+  { key: "alarmanlage", label: "Alarmanlage", topic: "Alarmanlagen", leads: "Alarmanlagen-Leads", recipients: "Errichter und Fachbetriebe für Alarmanlagen und Sicherheitstechnik", partner: "Fachbetrieb", match: /alarm|einbruchschutz|einbruchmelde|sicherheitstechnik/i, questions: 8, topics: ["die Art und Größe des Objekts", "die Eigentumsverhältnisse", "der gewünschte Zeitpunkt der Installation"] },
   { key: "fenster", label: "Fenster", topic: "Fenster", leads: "Fenster-Leads", recipients: "Fensterbauer und Fachbetriebe für Fenster", partner: "Fachbetrieb", match: /fenster/i, topics: ["die Anzahl der Fenster", "das gewünschte Material", "der geplante Zeitrahmen"] },
   { key: "wintergarten", label: "Wintergarten", topic: "Wintergärten", leads: "Wintergarten-Leads", recipients: "Fachbetriebe für Wintergärten", partner: "Fachbetrieb", match: /wintergarten|wintergärten/i, topics: ["die gewünschte Größe", "die geplante Nutzung", "der geplante Zeitrahmen"] },
 ];
@@ -62,6 +64,39 @@ export function resolveSparte(value: string | null | undefined): Sparte | null {
   const exact = SPARTEN.find((item) => norm(item.label) === norm(text) || item.key === norm(text)); if (exact) return exact;
   const detected = detectSparte(text); if (detected && norm(detected.label).length >= norm(text).length - 6) return detected; // „Hausnotrufe“, „Alarmanlagen“ → bekannte Sparte
   return { key: "eigene", label: text, topic: text, leads: `Leads für ${text}`, recipients: `Anbieter und Fachbetriebe im Bereich ${text}`, partner: "Anbieter", match: new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") };
+}
+const ENERGY_KEYS = new Set(["pv-wp", "photovoltaik", "waermepumpe"]);
+/** Sparte einer Lead-Kategorie: am Stichwort erkannt („Hausnotruf Premium“ → Hausnotruf, „Photovoltaik Gewerbe“ → Photovoltaik), sonst eigene Sparte mit dem Namen. */
+export const sparteOfCategory = (name: string): Sparte => detectSparte(name) ?? resolveSparte(name)!;
+/**
+ * Leadsparte aus den gewählten Lead-Kategorien: Photovoltaik + Wärmepumpe → „Photovoltaik & Wärmepumpe“, eine Kategorie → ihre Sparte
+ * („Treppenlifte“ → „Treppenlift“, unbekannte wie „Hörgeräte“ mit genau diesem Namen), mehrere → „A & B“ (dann ohne feste Zahl von Fragen).
+ */
+export function sparteFromCategories(names: Array<string | null | undefined>): string | null {
+  const clean = Array.from(new Set(names.map((name) => (name ?? "").trim()).filter(Boolean)));
+  if (!clean.length) return null;
+  const resolved = clean.map(sparteOfCategory);
+  const keys = new Set(resolved.map((sparte) => sparte.key));
+  if (Array.from(keys).every((key) => ENERGY_KEYS.has(key))) {
+    const pv = keys.has("photovoltaik") || keys.has("pv-wp"); const wp = keys.has("waermepumpe") || keys.has("pv-wp");
+    return (pv && wp ? SPARTEN[0] : pv ? SPARTEN[1] : SPARTEN[2]).label;
+  }
+  const labels = Array.from(new Set(resolved.map((sparte, index) => (sparte.key === "eigene" ? clean[index] : sparte.label)))); // zwei Hausnotruf-Kategorien → „Hausnotruf“
+  return labels.join(" & ").slice(0, 120);
+}
+/** Welche Lead-Kategorien gehören zu einer Sparte? (zum Vorauswählen bei Kampagnen ohne gewählte Kategorien) – PV & WP umfasst Photovoltaik und Wärmepumpe, „A & B“ beide. */
+export function categoriesForSparte<T extends { id: number; name: string }>(categories: T[], sparte: Pick<Sparte, "key" | "label">): T[] {
+  const matches = (part: Pick<Sparte, "key" | "label">) => {
+    if (part.key === "eigene") return categories.filter((category) => norm(category.name) === norm(part.label)); // eigene Sparte: nur genau dieser Name
+    const wanted = part.key === "pv-wp" ? ENERGY_KEYS : new Set([part.key]);
+    const exact = categories.filter((category) => norm(category.name) === norm(part.label) || wanted.has(resolveSparte(category.name)!.key)); // „Photovoltaik“, „Treppenlifte“
+    return exact.length ? exact : categories.filter((category) => { const own = sparteOfCategory(category.name); return own.key !== "eigene" && wanted.has(own.key); }); // sonst am Stichwort: „Photovoltaik Gewerbe“
+  };
+  if (sparte.key !== "eigene") return matches(sparte);
+  const parts = sparte.label.split(/\s+&\s+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return matches(sparte);
+  const found = parts.map((part) => { const known = resolveSparte(part)!; return matches(known.key === "eigene" ? { key: "eigene", label: part } : known); });
+  return found.every((list) => list.length) ? Array.from(new Set(found.flat())) : [];
 }
 /** Sparte einer Kampagne: eingetragen → erkannt aus Name und Listen → Photovoltaik & Wärmepumpe. `source` sagt, woher sie kommt. */
 export function sparteOf(campaign: { leadSparte?: string | null; name?: string | null }, lists: string[] = []): Sparte & { source: "eingetragen" | "erkannt" | "standard" } {
@@ -137,8 +172,8 @@ export function questionCount(sparte?: { key?: string; questions?: number | null
 }
 type QuestionSparte = { key?: string; questions?: number | null; topics?: string[] | null; partner?: string | null } | null | undefined;
 /**
- * Worum es bei den Fragen geht (drei Beispiele je Sparte): Hausnotruf die Krankenkasse, der Pflegegrad, die Wohnsituation; Alarmanlage die Fläche,
- * die abgesichert werden soll, die Objektart, um die es sich handelt, die gewünschte Art der Alarmanlage … Eigene Sparten haben keine festen
+ * Worum es bei den Fragen geht (drei Beispiele je Sparte): Hausnotruf die Krankenkasse, der Pflegegrad, die Wohnsituation; Alarmanlage die Art
+ * und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation … Eigene Sparten haben keine festen
  * Punkte → null (die KI nennt dann drei passende). Ohne Sparte: PV & WP.
  */
 export function questionTopics(sparte?: QuestionSparte): string[] | null {
@@ -161,10 +196,15 @@ export const offerChain = (sparte?: { partner?: string | null } | null) => `Der 
 export const offerChainBullet = (sparte?: { partner?: string | null } | null) => `Der Interessent weiß, dass sich ein ${sparte?.partner || "Fachbetrieb"} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf`;
 const normTopics = (text: string) => text.toLowerCase().replace(/\b(?:der|die|das|des|den|dem)\b/g, " ").replace(/\s*(?:,|\bund\b|\bsowie\b|\busw\.?|\betc\.?)\s*/g, "|").replace(/\s+/g, " ").split("|").map((part) => part.trim()).filter(Boolean).join("|");
 /** Frühere Punkte (vor „beispielsweise … usw.“) – so werden alte Klammern und Beispiele aus kopierten Vorlagen erkannt. */
-const OLD_TOPICS: string[][] = [["Eigentum", "Dach und Heizung", "Stromverbrauch"], ["Eigentum", "Dachfläche", "Stromverbrauch"], ["Eigentum", "Wohnfläche", "aktuelle Heizung"], ["Krankenkasse", "Pflegegrad", "Wohnsituation"], ["Pflegegrad", "Pflegekasse", "Pflege zu Hause"], ["Krankenkasse", "Pflegegrad", "Nutzung drinnen oder draußen"], ["Krankenkasse", "Pflegegrad", "Einsatz im Alltag"], ["Treppenform", "Anzahl der Etagen", "Pflegegrad"], ["gewünschter Umbau", "Größe des Bads", "Pflegegrad"], ["Objekt und Fläche", "Anzahl der Fenster", "Art der Alarmanlage"], ["Anzahl der Fenster", "Material", "Zeitrahmen"], ["Größe", "Art der Nutzung", "Zeitrahmen"]];
+const OLD_TOPICS: string[][] = [["Eigentum", "Dach und Heizung", "Stromverbrauch"], ["Eigentum", "Dachfläche", "Stromverbrauch"], ["Eigentum", "Wohnfläche", "aktuelle Heizung"], ["Krankenkasse", "Pflegegrad", "Wohnsituation"], ["Pflegegrad", "Pflegekasse", "Pflege zu Hause"], ["Krankenkasse", "Pflegegrad", "Nutzung drinnen oder draußen"], ["Krankenkasse", "Pflegegrad", "Einsatz im Alltag"], ["Treppenform", "Anzahl der Etagen", "Pflegegrad"], ["gewünschter Umbau", "Größe des Bads", "Pflegegrad"], ["Objekt und Fläche", "Anzahl der Fenster", "Art der Alarmanlage"], ["die Fläche, die abgesichert werden soll", "die Objektart, um die es sich handelt", "die gewünschte Art der Alarmanlage"], ["Anzahl der Fenster", "Material", "Zeitrahmen"], ["Größe", "Art der Nutzung", "Zeitrahmen"]];
 /** Alle Punkte, die wir je geschrieben haben (alt und neu, jede Sparte) – nur die werden ersetzt; eigene Punkte bleiben. */
 const KNOWN_TOPIC_LISTS = new Set([...OLD_TOPICS, ...SPARTEN.map((item) => item.topics ?? []).filter((topics) => topics.length)].map((topics) => normTopics(topics.join(", "))));
 const isKnownTopicList = (text: string) => KNOWN_TOPIC_LISTS.has(normTopics(text));
+/** Kennwort eines Punkts: das längste Wort (mind. 5 Buchstaben) – „die Wohnfläche, die beheizt werden soll“ → „wohnfläche“ */
+const topicKeyword = (topic: string) => topic.toLowerCase().split(/[^a-zäöüß]+/).filter((word) => word.length >= 5).sort((a, b) => b.length - a.length)[0] ?? null;
+const KNOWN_TOPIC_KEYS = [...OLD_TOPICS, ...SPARTEN.map((item) => item.topics ?? []).filter((topics) => topics.length)].map((topics) => ({ keys: topics.map(topicKeyword).filter((key): key is string => Boolean(key)), length: topics.join(", ").length }));
+/** Fast dieselben Punkte wie eine frühere Fassung (die KI schreibt sie leicht anders: „und“ statt Komma, ohne Nebensatz) – alle Kennwörter da, kaum mehr Text. */
+const looksLikeKnownTopicList = (text: string) => { const lower = text.toLowerCase(); return KNOWN_TOPIC_KEYS.some((known) => known.keys.length >= 2 && known.keys.every((key) => lower.includes(key)) && text.length <= known.length + 30); };
 /** „Krankenkasse, Pflegegrad und Wohnsituation“ → [Krankenkasse, Pflegegrad, Wohnsituation] */
 const splitTopicList = (text: string) => text.replace(/\s*(?:usw\.?|etc\.?)\s*$/i, "").split(/\s*,\s*|\s+(?:und|sowie)\s+/).map((part) => part.trim()).filter(Boolean);
 /** alte Klammer hinter der Zahl der Fragen: „(z. B. …)“, „(u. a. …)“ – fällt weg, die Beispiele stehen jetzt ohne Klammern */
@@ -270,7 +310,7 @@ export function withQuestionTopics(text: string, sparte?: QuestionSparte, state:
   const own = questionTopics(sparte); const examples = own ?? custom;
   // Beispiele, die wir schon geschrieben hatten, auf die Sparte bringen: andere Sparte (kopierte Vorlage) → eigene Punkte; Sparte ohne feste Punkte → weg
   out = out.replace(/([ \t]?)(Abgefragt werden beispielsweise |– beispielsweise )([^\n]*?) usw\./g, (all: string, space: string, lead: string, list: string) => {
-    if (!isKnownTopicList(list)) return all; // eigene Punkte bleiben
+    if (!isKnownTopicList(list) && !(own && looksLikeKnownTopicList(list))) return all; // eigene Punkte bleiben (bei bekannter Sparte auch leicht abgewandelte frühere Punkte ersetzen)
     if (own) return normTopics(list) === normTopics(own.join(", ")) ? all : `${space}${lead}${own.join(", ")} usw.`;
     return custom ? `${space}${lead}${custom.join(", ")} usw.` : "";
   });
@@ -286,8 +326,7 @@ export function withQuestionTopics(text: string, sparte?: QuestionSparte, state:
   // 4) Beispiele – nur, wenn nicht schon welche dastehen (eigene „beispielsweise …“ der KI bleiben; Punkte einer anderen Sparte werden ersetzt)
   let insertAt = end;
   const following = out.slice(end).match(/^[ \t]*(?:Abgefragt werden|Dabei (?:fragen|klären) wir)\b[^\n]*?beispielsweise\b/); if (following) insertAt = sentenceEnd(out, end + following[0].length); // Beispiele stehen schon direkt dahinter → Kette danach
-  const keyWord = (topic: string) => topic.toLowerCase().split(/[^a-zäöüß]+/).filter((word) => word.length >= 5).sort((a, b) => b.length - a.length)[0] ?? null;
-  const rest = out.slice(found.index + found[0].length, end).toLowerCase(); const named = Boolean(own?.some((topic) => { const word = keyWord(topic); return word && rest.includes(word); })); // „… sechs Fragen zu Krankenkasse und Pflegegrad“ – Punkte stehen schon im Satz
+  const rest = out.slice(found.index + found[0].length, end).toLowerCase(); const named = Boolean(own?.some((topic) => { const word = topicKeyword(topic); return word && rest.includes(word); })); // „… sechs Fragen zu Krankenkasse und Pflegegrad“ – Punkte stehen schon im Satz
   const hasExamples = named || /\bbeispielsweise\b|\bzum beispiel\b/i.test(out.slice(found.index, Math.min(out.length, end + 320)));
   if (!hasExamples && examples?.length && !state.done) {
     if (bullet) { const lineEnd = options.bullet ? -1 : out.indexOf("\n", found.index); const at = lineEnd === -1 ? out.length : lineEnd; const line = out.slice(0, at).replace(/[ \t.]+$/, ""); out = `${line} – ${topicsExamples(sparte, examples)}${out.slice(at)}`; insertAt = line.length + 3 + topicsExamples(sparte, examples).length; }

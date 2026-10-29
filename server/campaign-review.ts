@@ -6,7 +6,7 @@
  * Dazu das Tageslimit für alle Kampagnen zusammen (Standard 80 E-Mails am Tag).
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
-import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
+import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
 import { audienceLists, kiModusOf } from "../shared/email-campaigns";
 import { applyPayFit, DEFAULT_SPARTE, fitsSparte, fixQuestionCount, isEnergySparte, mentionsQuestions, numberWord, offerChain, offersForeignLeads, paysOnlyFitting, qualifyPhrase, questionCount, questionTopics, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
 import { extractProfile } from "../shared/lead-finder";
@@ -89,7 +89,9 @@ function systemFor(sparte: Sparte): string {
   const countRule = count ? `Bei ${sparte.label} qualifizieren wir mit ${numberWord(count)} Fragen – nenne nie eine andere Zahl, auch wenn Vorlage oder Beispiel eine andere nennen${count !== 10 ? " (z. B. zehn)" : ""}.` : `Für ${sparte.label} nennst du keine Zahl von Fragen – schreibe „anhand gezielter Fragen“.`;
   // Beispiele OHNE Klammern, worum es bei den Fragen geht (feste Punkte je Sparte – neue Sparten: die KI nennt drei passende), danach die Logik-Kette
   const examples = topicsExamples(sparte); const chain = offerChain(sparte);
-  const topicRule = questionTopics(sparte) ? `Direkt nach diesem Satz folgt ein eigener Satz mit Beispielen, was wir abfragen – genau so, ohne Klammern: „${topicsSentence(sparte)}“` : `Direkt nach diesem Satz folgt ein eigener Satz mit drei typischen Punkten, die bei Anfragen zu ${sparte.topic} am Telefon abgefragt werden – ohne Klammern, kurz, konkret und passend zu ${sparte.topic}: „Abgefragt werden beispielsweise …, …, … usw.“`;
+  const hints = (sparte.hints ?? []).filter(Boolean).slice(0, 12); // Angaben, die wir in den gewählten Lead-Kategorien erfassen
+  const hintRule = hints.length ? ` Nimm die drei Punkte aus den Angaben, die wir bei diesen Anfragen erfassen: ${hints.join(", ")} – als ganze, verständliche Wendungen (z. B. „die gewünschte …“, „der geplante …“), nicht als Stichwort.` : "";
+  const topicRule = questionTopics(sparte) ? `Direkt nach diesem Satz folgt ein eigener Satz mit Beispielen, was wir abfragen – genau so, ohne Klammern: „${topicsSentence(sparte)}“` : `Direkt nach diesem Satz folgt ein eigener Satz mit drei typischen Punkten, die bei Anfragen zu ${sparte.topic} am Telefon abgefragt werden – ohne Klammern, kurz, konkret und passend zu ${sparte.topic}: „Abgefragt werden beispielsweise …, …, … usw.“${hintRule}`;
   const chainRule = `Danach kommt die Logik-Kette, wörtlich oder sehr nah daran: „${chain}“ – der Interessent wartet auf den Anruf des Betriebs, damit er das Angebot bekommt. Nie Klammern für die Beispiele, nie „(z. B. …)“.`;
   return `Du schreibst für Tanesco Digital (einer der größten Leadlieferanten Deutschlands) Akquise-E-Mails an ${sparte.recipients} – jede einzeln, wie von Hand geschrieben, nie wie ein Serienbrief. Je nach Auftrag schreibst du die Erst-E-Mail oder eine Nachfass-Mail, als die verlangten Vorschläge (Ansätze), alle persönlich auf genau diesen Empfänger zugeschnitten.
 
@@ -247,6 +249,20 @@ export function retryNoteFor(approach: DraftApproach, issues: AiOption["issues"]
   return parts.join(" ");
 }
 
+/** Kontaktdaten und Formales gehören nicht zu den Punkten, die wir am Telefon abfragen (Name, Telefon, Adresse, Einwilligung …). */
+const CONTACT_FIELD_RE = /^(?:anrede|titel|vor-?name|nach-?name|name|firma|unternehmen|telefon\w*|handy\w*|mobil\w*|e-?mail\w*|plz|postleitzahl|ort|stadt|wohnort|stra(?:ß|ss)e\w*|hausnummer|adresse|anschrift|land|bundesland|geburts\w*|alter|kommentar\w*|notiz\w*|bemerkung\w*|anmerkung\w*|nachricht|einwilligung\w*|datenschutz\w*|agb|erreichbar\w*|r(?:ü|ue)ckruf\w*|uhrzeit|datum)\b/i;
+/**
+ * Sparte ohne feste Punkte (z. B. „Hörgeräte“) und Lead-Kategorien gewählt: die Angaben, die wir in diesen Kategorien erfassen, gehen als
+ * Hinweis an die KI – daraus nennt sie die drei Beispiele, was am Telefon abgefragt wird. Bekannte Sparten haben feste Punkte.
+ */
+export async function withCategoryHints<T extends Sparte>(db: Db, tenantId: number, campaign: { leadCategoryIds?: unknown }, sparte: T): Promise<T> {
+  if (questionTopics(sparte)) return sparte;
+  const ids = Array.isArray(campaign.leadCategoryIds) ? (campaign.leadCategoryIds as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0).slice(0, 20) : [];
+  if (!ids.length) return sparte;
+  const rows = await db.select({ label: categoryFields.label, sortOrder: categoryFields.sortOrder, id: categoryFields.id }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenantId), inArray(categoryFields.categoryId, ids), eq(categoryFields.visible, true))).orderBy(asc(categoryFields.sortOrder), asc(categoryFields.id)).catch(() => []);
+  const hints = Array.from(new Set(rows.map((row) => row.label.trim()).filter((label) => label && label.length <= 60 && !CONTACT_FIELD_RE.test(label)))).slice(0, 12);
+  return hints.length ? { ...sparte, hints } : sparte;
+}
 /** Gilt der gespeicherte Entwurf für diesen Schritt? (Alte Entwürfe ohne Schritt-Angabe zählen für die Erst-E-Mail.) */
 export function draftFitsNode(recipient: Pick<Recipient, "draftNodeId" | "sentCount">, nodeId: string): boolean {
   return recipient.draftNodeId ? recipient.draftNodeId === nodeId : recipient.sentCount === 0;
@@ -260,7 +276,7 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.id, recipientId), eq(emailCampaignRecipients.tenantId, tenantId))).limit(1))[0];
   if (!recipient) throw new Error("Empfänger nicht gefunden.");
   const context = await loadContext(db, tenantId, recipient, options.nodeId); const { campaign, lead, node, phone } = context;
-  const sparte = sparteOfCampaign(campaign, lead?.listName); const values = withSparte(context.values, sparte); // Leadsparte: Hausnotruf-Firmen bekommen Hausnotruf-Texte
+  const sparte = await withCategoryHints(db, tenantId, campaign, sparteOfCampaign(campaign, lead?.listName)); const values = withSparte(context.values, sparte); // Leadsparte: Hausnotruf-Firmen bekommen Hausnotruf-Texte
   const sentEvents = await db.select({ nodeId: emailCampaignEvents.nodeId, subject: emailCampaignEvents.subject }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, recipient.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
   if (sentEvents.some((event) => event.nodeId === node.id)) throw new Error(`Die E-Mail „${node.label?.trim() || node.subject}“ ist an diesen Kontakt schon raus.`);
   const base = templateDraft(node, values);

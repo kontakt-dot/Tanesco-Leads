@@ -16,7 +16,7 @@ import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
-import { undoLog, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
+import { undoLog, tenants, leadCategories, categoryFields, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
@@ -3297,7 +3297,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const options = anna.draftOptions as Array<{ key: string; text: string; source?: string }>;
     expect(options.find((item) => item.key === "drittanbieter")?.text).toContain("anhand von in der Regel acht Fragen");
     expect(options.every((item) => item.source === "vorlage")).toBe(true); expect(anna.draftSource).toBe("vorlage"); // ohne KI-Schlüssel: klar als Ersatz aus der Vorlage gekennzeichnet
-    expect(stored).toContain("acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Fläche, die abgesichert werden soll, die Objektart, um die es sich handelt, die gewünschte Art der Alarmanlage usw."); expect(anna.draftText).toContain("Abgefragt werden beispielsweise die Fläche, die abgesichert werden soll, die Objektart, um die es sich handelt, die gewünschte Art der Alarmanlage usw."); // Beispiele ohne Klammern, worum es geht
+    expect(stored).toContain("acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Art und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation usw."); expect(anna.draftText).toContain("Abgefragt werden beispielsweise die Art und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation usw."); // Beispiele ohne Klammern, worum es geht
     expect(stored).toContain("Der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf."); expect(anna.draftText).toContain("Der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf."); expect(`${stored} ${anna.draftText}`).not.toMatch(/\(z\. ?B\./); // Logik-Kette, nie Klammern
     // PV & WP: bleibt bei zehn – nur die Beispiele kommen dazu; beim nächsten Speichern ändert sich nichts mehr
     const pv = await owner.leadops.saveEmailCampaign({ ...base, name: "PV & WP • Fragen" } as never);
@@ -3314,7 +3314,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const repaired = (await db.select({ tree: emailCampaigns.tree, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, old.id)))[0];
     expect(JSON.stringify(repaired.tree)).toContain("anhand von sechs Fragen"); expect(JSON.stringify(repaired.tree)).not.toContain("zehn Fragen"); expect(repaired.updatedAt.getTime()).toBe(stamp.getTime());
     const annaAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, anna.id)))[0];
-    expect(annaAfter.draftText).toContain("anhand von acht Fragen"); expect((annaAfter.draftOptions as Array<{ text: string }>)[0].text).toBe("Jeder Lead wird über acht Fragen qualifiziert. Abgefragt werden beispielsweise die Fläche, die abgesichert werden soll, die Objektart, um die es sich handelt, die gewünschte Art der Alarmanlage usw.\n\nDer Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf."); expect(annaAfter.draftText).toContain("in der Regel anhand von acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Fläche, die abgesichert werden soll, die Objektart, um die es sich handelt, die gewünschte Art der Alarmanlage usw.\n\nDer Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.\n\nVielen Dank");
+    expect(annaAfter.draftText).toContain("anhand von acht Fragen"); expect((annaAfter.draftOptions as Array<{ text: string }>)[0].text).toBe("Jeder Lead wird über acht Fragen qualifiziert. Abgefragt werden beispielsweise die Art und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation usw.\n\nDer Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf."); expect(annaAfter.draftText).toContain("in der Regel anhand von acht Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Art und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation usw.\n\nDer Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.\n\nVielen Dank");
     expect(JSON.stringify((await owner.leadops.getEmailCampaign({ id: pv.id })).tree)).toContain("zehn Fragen"); // PV bleibt
     expect(await fixQuestionCounts(db)).toEqual({ campaigns: 0, drafts: 0 }); // mehrfach ohne Nebenwirkung
   }, 40000);
@@ -3358,6 +3358,36 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const removed = await owner.leadops.deleteEmailCampaignFolder({ id: notruf.id }); expect(removed.released).toBeGreaterThanOrEqual(2);
     expect((await find(inside.id)).folderId).toBeNull(); expect((await find(copy.id)).folderId).toBeNull();
     expect((await owner.leadops.listEmailCampaignFolders()).some((folder) => folder.id === notruf.id)).toBe(false);
+  }, 40000);
+  it("63m. Lead-Kategorien in der Kampagne: Sparte aus den gewählten Kategorien, Kopie behält sie, fremde fallen weg, Hinweise für die KI bei neuen Sparten", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { withCategoryHints } = await import("./campaign-review"); const { resolveSparte } = await import("../shared/lead-sparte");
+    const starter = await owner.leadops.emailCampaignStarter();
+    const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "auswahl" as const }, tree: { start: "k1", nodes: [{ id: "k1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown> };
+    // PV + WP gewählt → „Photovoltaik & Wärmepumpe“ (auch wenn ein anderer Text mitkommt)
+    const saved = await owner.leadops.saveEmailCampaign({ ...base, name: "Kategorien-Test", leadCategoryIds: [S.pv!.id, S.wp!.id], leadSparte: "wird ersetzt" } as never);
+    const first = await owner.leadops.getEmailCampaign({ id: saved.id }) as { leadCategoryIds: number[]; sparte: { label: string; source: string } };
+    expect(first.leadCategoryIds).toEqual([S.pv!.id, S.wp!.id]); expect(first.sparte).toMatchObject({ label: "Photovoltaik & Wärmepumpe", source: "eingetragen" });
+    // neue Sparte als Kategorie mit Feldern → Sparte „Pool-Bau“; Kontaktfelder gehen nicht als Hinweis an die KI
+    const pool = await owner.leadops.createCategory({ shortcode: "POOL-E2E", name: "Pool-Bau", defaultLeadPrice: "30.00" });
+    await db.insert(categoryFields).values([{ tenantId: S.tenantId, categoryId: pool.id!, label: "Telefon", fieldKey: "telefon", sortOrder: 0 }, { tenantId: S.tenantId, categoryId: pool.id!, label: "Gewünschte Poolgröße", fieldKey: "poolgroesse", sortOrder: 1 }, { tenantId: S.tenantId, categoryId: pool.id!, label: "Standort im Garten", fieldKey: "standort", sortOrder: 2 }]);
+    await owner.leadops.saveEmailCampaign({ ...base, id: saved.id, name: "Kategorien-Test", leadCategoryIds: [pool.id!, 999999] } as never); // unbekannte ID fällt weg
+    const poolCampaign = await owner.leadops.getEmailCampaign({ id: saved.id }) as { leadCategoryIds: number[]; sparte: { label: string } };
+    expect(poolCampaign.leadCategoryIds).toEqual([pool.id]); expect(poolCampaign.sparte.label).toBe("Pool-Bau");
+    const hinted = await withCategoryHints(db, S.tenantId, { leadCategoryIds: poolCampaign.leadCategoryIds }, resolveSparte("Pool-Bau")!);
+    expect(hinted.hints).toEqual(["Gewünschte Poolgröße", "Standort im Garten"]); // daraus nennt die KI die Beispiele
+    expect((await withCategoryHints(db, S.tenantId, { leadCategoryIds: [pool.id] }, resolveSparte("Hausnotruf")!)).hints).toBeUndefined(); // bekannte Sparte: feste Punkte
+    // Kopie behält die Kategorien; Liste liefert sie mit; ohne Kategorien gilt die eingetragene Sparte
+    const copy = await owner.leadops.duplicateEmailCampaign({ id: saved.id });
+    expect(((await owner.leadops.getEmailCampaign({ id: copy.id })) as { leadCategoryIds: number[] }).leadCategoryIds).toEqual([pool.id]);
+    expect(((await owner.leadops.listEmailCampaigns()) as Array<{ id: number; leadCategoryIds: number[] }>).find((row) => row.id === saved.id)?.leadCategoryIds).toEqual([pool.id]);
+    await owner.leadops.saveEmailCampaign({ ...base, id: saved.id, name: "Kategorien-Test", leadCategoryIds: [], leadSparte: "Hausnotruf" } as never);
+    const free = await owner.leadops.getEmailCampaign({ id: saved.id }) as { leadCategoryIds: number[]; sparte: { label: string } };
+    expect(free.leadCategoryIds).toEqual([]); expect(free.sparte.label).toBe("Hausnotruf");
+    // Kategorien eines anderen Bereichs zählen nicht
+    const [otherTenant] = await db.insert(tenants).values({ name: "Fremder Bereich Kategorien", slug: `fremd-kat-${Date.now()}` }); const foreignId = Number((await db.insert(leadCategories).values({ tenantId: Number(otherTenant.insertId), shortcode: "FREMD", name: "Treppenlifte" }))[0].insertId);
+    await owner.leadops.saveEmailCampaign({ ...base, id: saved.id, name: "Kategorien-Test", leadCategoryIds: [foreignId], leadSparte: "Hausnotruf" } as never);
+    const safe = await owner.leadops.getEmailCampaign({ id: saved.id }) as { leadCategoryIds: number[]; sparte: { label: string } };
+    expect(safe.leadCategoryIds).toEqual([]); expect(safe.sparte.label).toBe("Hausnotruf");
   }, 40000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {
