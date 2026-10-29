@@ -41,23 +41,24 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(fixGreeting("Text ohne Anrede.", "Sehr geehrter Herr Muster")).toBe("Sehr geehrter Herr Muster,\n\nText ohne Anrede.");
     const thin = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Webseite steht etwas Konkretes.\n\nHätten Sie diese Woche 15 Minuten für ein Gespräch?";
     const done = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false, sparte: DEFAULT_SPARTE });
-    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
+    expect(done).toContain("10 Test-Leads kostenlos"); expect(done).not.toMatch(/\b20\b/); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
     expect(done).toContain("in der Regel anhand von zehn Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Eigentumsverhältnisse, der Zustand von Dach und Heizung, der aktuelle Stromverbrauch usw.\n\n"); // Beispiele ohne Klammern, im selben Absatz
     expect(done).toContain("\n\nDer Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.\n\n"); expect(done).not.toMatch(/\(z\. ?B\./); // Logik-Kette als eigener Absatz
     expect(done).toMatch(/0611 123456/); expect(done.trim().endsWith("Vielen Dank")).toBe(true); expect(done).not.toMatch(/Grüßen/);
-    expect(done.indexOf("20 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
+    expect(done.indexOf("10 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
     // Schon vollständig → bleibt bis auf den Schluss unverändert; keine doppelte Nummer, kein doppeltes „Vielen Dank“
     const full = "Sehr geehrte Frau Kurz,\n\nText mit 20 Test-Leads kostenlos, telefonisch qualifiziert über 10 Fragen. Auf Wunsch nennen wir dabei Ihren Firmennamen, sodass der Interessent weiß, dass Sie sich melden.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter 0611 123456.\n\nVielen Dank\n\nMit freundlichen Grüßen\nMax";
     const kept = finishDraft(full, { greeting, phone: "0611 123456", followUp: false });
     expect(kept.match(/0611 123456/g)).toHaveLength(1); expect(kept.match(/Vielen Dank/g)).toHaveLength(1); expect(kept).not.toContain("Max"); expect(kept.trim().endsWith("Vielen Dank")).toBe(true);
+    expect(kept).toContain("Text mit 10 Test-Leads kostenlos"); expect(kept.match(/Test-Leads/g)).toHaveLength(1); // alte 20 aus dem KI-Text → 10, kein zweites Angebot dazu
     expect(kept).not.toMatch(/Firmenname/); expect(kept).toContain("anhand von zehn Fragen telefonisch vorqualifiziert."); // Firmennamen-Satz entfernt, Rest bleibt sauber
     // Ohne Telefon: nur „antworten Sie einfach auf diese E-Mail“; Nachfass-Mail braucht nur das Test-Angebot
     const noPhone = finishDraft("Hallo,\n\nkurzer Nachfass ohne Angebot.", { greeting, phone: "", followUp: true });
-    expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("20 Test-Leads"); expect(noPhone).not.toContain("zehn Fragen");
+    expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("10 Test-Leads"); expect(noPhone).not.toContain("zehn Fragen");
     // Die KI schreibt „Vielen Dank“ schon selbst: das ergänzte Test-Angebot kommt VOR den Schluss, „Vielen Dank“ steht genau einmal ganz unten
     const ki = "Sehr geehrte Damen und Herren,\n\nSie planen Alarmanlagen nach DIN EN 50131. Wir qualifizieren jeden Kontakt in der Regel anhand von acht Fragen telefonisch vor.\n\nWenn Sie das testen möchten, antworten Sie einfach auf diese E-Mail oder rufen Sie mich an unter 0611 123456.\n\nVielen Dank";
     const ordered = finishDraft(ki, { greeting, phone: "0611 123456", followUp: false });
-    expect(ordered.indexOf("20 Test-Leads")).toBeLessThan(ordered.indexOf("Wenn Sie das testen möchten")); expect(ordered.match(/Vielen Dank/g)).toHaveLength(1); expect(ordered.trim().endsWith("Vielen Dank")).toBe(true);
+    expect(ordered.indexOf("10 Test-Leads")).toBeLessThan(ordered.indexOf("Wenn Sie das testen möchten")); expect(ordered.match(/Vielen Dank/g)).toHaveLength(1); expect(ordered.trim().endsWith("Vielen Dank")).toBe(true);
   });
   it("Tagesbeginn in Berlin (Sommer- und Winterzeit)", () => {
     expect(dayStartIn(new Date("2026-07-15T10:30:00Z")).toISOString()).toBe("2026-07-14T22:00:00.000Z");

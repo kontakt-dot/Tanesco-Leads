@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanDraftText, dropAdPlatforms, modernizeTree, shortParagraphs, splitSentences, starterTree, thirdPartyTemplate, type EmailTree } from "../shared/email-campaigns";
+import { cleanDraftText, dropAdPlatforms, fixTreeQuestions, modernizeTree, shortParagraphs, splitSentences, starterTree, TEST_LEADS, thirdPartyTemplate, withTestOffer, type EmailTree } from "../shared/email-campaigns";
 import { starterBlocks } from "../shared/email-design";
 import { polishBlocks, sanitizeDraft, heuristicEmailDraft } from "../shared/email-ai";
 import { resolveSparte } from "../shared/lead-sparte";
@@ -54,6 +54,25 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
     const send = fresh.nodes.find((node) => node.type === "send") as Extract<EmailTree["nodes"][number], { type: "send" }>;
     const text = send.blocks.find((block) => block.type === "text") as { text: string }; expect(text.text.split("\n\n").length).toBeGreaterThan(2);
     expect(modernizeTree(fresh)).toBeNull(); // nichts mehr zu ändern
+  });
+  it("Test-Angebot: 10 statt 20 Test-Leads – in festen Vorlagen, gespeicherten Abläufen (auch Betreff), Entwürfen; andere Zahlen bleiben", () => {
+    expect(TEST_LEADS).toBe(10);
+    expect(JSON.stringify(starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") }))).not.toMatch(/\b20\b/); // feste Vorlagen nennen nur noch 10
+    expect(thirdPartyTemplate({ firma: "Muster GmbH" }, resolveSparte("Hausnotruf")!).text).toContain("10 Test-Leads kostenlos");
+    for (const [input, output] of [
+      ["Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb.", "Zum Kennenlernen: 10 Test-Leads kostenlos, individuell für Ihren Betrieb."],
+      ["Wir bieten Ihnen 20 kostenlose Test-Leads an.", "Wir bieten Ihnen 10 kostenlose Test-Leads an."],
+      ["Die ersten 20 Leads sind kostenlos.", "Die ersten 10 Leads sind kostenlos."],
+      ["Zwanzig Test-Leads gratis – ohne Risiko.", "Zehn Test-Leads gratis – ohne Risiko."],
+      ["Sie zahlen 20 € je Lead, 20 Test-Leads kostenlos.", "Sie zahlen 20 € je Lead, 10 Test-Leads kostenlos."], // nur das Angebot
+      ["Wir liefern monatlich 20 Leads in Ihre Region.", "Wir liefern monatlich 20 Leads in Ihre Region."], // andere Zahl bleibt
+    ]) { expect(withTestOffer(input)).toBe(output); expect(withTestOffer(output)).toBe(output); }
+    // gespeicherter Ablauf von früher: Text, Aufzählung, Nachfass-Mail und Betreff
+    const old = starterTree({ first: [{ id: "t", type: "text", text: "{{begruessung}},\n\nZum Kennenlernen: 20 Test-Leads kostenlos." }, { id: "b", type: "bullets", items: ["20 Test-Leads kostenlos – individuell für Ihren Betrieb"] }], followUp: [{ id: "f", type: "text", text: "Das Angebot steht weiterhin: 20 Test-Leads kostenlos." }] }) as EmailTree;
+    const first = old.nodes[0]; if (first.type === "send") first.subject = "20 Test-Leads kostenlos für {{firma}}";
+    const fresh = JSON.stringify(modernizeTree(old)); expect(fresh).not.toMatch(/\b20\b/); expect(fresh.match(/10 Test-Leads/g)).toHaveLength(5); // Betreff, Text, Aufzählung und die Nachfass-Mail in beiden Zweigen
+    expect(JSON.stringify(fixTreeQuestions(old, resolveSparte("Hausnotruf")!))).not.toMatch(/20 Test-Leads/); // auch beim Speichern/Start über die Sparten-Anpassung
+    expect(cleanDraftText("Zum Kennenlernen bekommen Sie 20 Test-Leads kostenlos.")).toBe("Zum Kennenlernen bekommen Sie 10 Test-Leads kostenlos."); // offene Entwürfe
   });
   it("KI-Vorlagen-Builder: Texte in kurzen Absätzen, nie Meta", () => {
     const fallback = heuristicEmailDraft({ brief: "Hausnotruf-Anbieter ansprechen", goal: "frei", tone: "freundlich", length: "mittel" } as never);

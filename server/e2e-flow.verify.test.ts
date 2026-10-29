@@ -2714,7 +2714,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.saveEmailCampaign({ ...settings, kiAnsatz: "drittanbieter" } as never); kim = await row(); expect(kim.draftApproach).toBe("drittanbieter");
     await db.update(emailCampaignRecipients).set({ draftApproach: "drittanbieter", draftSource: "vorlage" }).where(eq(emailCampaignRecipients.id, kim.id)); kim = await row();
     // Entwurf-Regeln (auch ohne KI): förmliche Anrede, Pflichtinhalte, Schluss mit Kontaktweg und „Vielen Dank“, kein Gruß
-    expect(kim.draftText).toMatch(/^Sehr geehrte/); expect(kim.draftText).not.toMatch(/^(Hallo|Guten Tag)/); expect(kim.draftText).toContain("20 Test-Leads"); expect(kim.draftText).toContain("zehn Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
+    expect(kim.draftText).toMatch(/^Sehr geehrte/); expect(kim.draftText).not.toMatch(/^(Hallo|Guten Tag)/); expect(kim.draftText).toContain("10 Test-Leads"); expect(kim.draftText).not.toContain("20 Test-Leads"); expect(kim.draftText).toContain("zehn Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
     // „Alle neu schreiben“: verwirft die Entwürfe, die KI/Vorlage schreibt sie beim nächsten Lauf neu
     expect((await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id })).reset).toBeGreaterThanOrEqual(1);
     expect((await row()).draftState).toBeNull(); expect((await row()).draftText).toBeNull();
@@ -2785,7 +2785,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // KI-Antwortvorschlag: ohne KI-Schlüssel kommt die Vorlage – mit Anrede und Telefonat-Frage
     const message = await owner.leadops.storeInboxMessage({ fromEmail: "chef@antwort-vorschlag.example", fromName: "Carla Chef", subject: "Re: Hallo", bodyText: "Klingt interessant, was kostet das?" });
     const suggestion = await owner.leadops.suggestInboxReply({ messageId: message.id });
-    expect(suggestion.source).toBe("vorlage"); expect(suggestion.text).toMatch(/^Guten Tag,/); expect(suggestion.text).not.toContain("Carla Chef,"); /* kein „Guten Tag Vorname Nachname“ */ expect(suggestion.text).toContain("Telefonat"); expect(suggestion.text).toContain("20 Test-Leads"); expect(suggestion.text).not.toMatch(/Grüßen\s*$/);
+    expect(suggestion.source).toBe("vorlage"); expect(suggestion.text).toMatch(/^Guten Tag,/); expect(suggestion.text).not.toContain("Carla Chef,"); /* kein „Guten Tag Vorname Nachname“ */ expect(suggestion.text).toContain("Telefonat"); expect(suggestion.text).toContain("10 Test-Leads"); expect(suggestion.text).not.toMatch(/Grüßen\s*$/);
     // Listen-Anreicherung: Webseite aus der Firmen-Domain beim Upload, Ansprechpartner aus der E-Mail-Adresse
     await owner.leadops.importColdList({ listName: "Anreicherung", toPipeline: false, rows: [{ company: "Koppen Solar", email: "stefan.koppen@koppen-solar.example" }, { company: "Ohne Namen GmbH", email: "info@ohne-namen.example" }] });
     const enriched = await owner.leadops.enrichListContacts({ listName: "Anreicherung" });

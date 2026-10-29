@@ -225,13 +225,15 @@ export function modernizeTree(tree: EmailTree): EmailTree | null {
   const nodes = tree.nodes.map((node) => {
     if (node.type !== "send") return node;
     const blocks = node.blocks.filter((block) => { const dead = isDeadButton(block); if (dead) changed = true; return !dead; }).map((block) => {
-      if (block.type === "bullets") { const items = block.items.map(dropAdPlatforms); if (items.some((item, index) => item !== block.items[index])) { changed = true; return { ...block, items }; } return block; }
+      if (block.type === "bullets") { const items = block.items.map((item) => withTestOffer(dropAdPlatforms(item))); if (items.some((item, index) => item !== block.items[index])) { changed = true; return { ...block, items }; } return block; }
       if (block.type !== "text" && block.type !== "heading") return block;
       const text = block.text.replace(/^(guten tag|hallo|liebe[r]?)\s*(\{\{\s*anrede\s*\}\}\s*\{\{\s*nachname\s*\}\}|\{\{\s*vorname\s*\}\}|\{\{\s*name\s*\}\})?\s*,/i, "{{begruessung}},").replace(/^(Kurz nachgefragt|Passt es gerade nicht|Noch Fragen zu unserem Angebot),\s*\{\{\s*vorname\s*\}\}(\??)$/i, (_m, head: string, q: string) => `${head}${q}`);
-      const plain = dropAdPlatforms(smoothQualifyPhrase(text)); const smooth = block.type === "text" ? shortParagraphs(plain) : plain; // nie Meta & Co. – und kurze Absätze, damit die E-Mail leicht lesbar ist
+      const plain = withTestOffer(dropAdPlatforms(smoothQualifyPhrase(text))); /* dazu: Test-Angebot mit der aktuellen Zahl (10 statt früher 20) */ const smooth = block.type === "text" ? shortParagraphs(plain) : plain; // nie Meta & Co. – und kurze Absätze, damit die E-Mail leicht lesbar ist
       if (smooth !== block.text) changed = true; return smooth === block.text ? block : { ...block, text: smooth };
     });
-    return blocks === node.blocks ? node : { ...node, blocks };
+    const subject = withTestOffer(node.subject ?? ""); const subjectB = node.subjectB ? withTestOffer(node.subjectB) : node.subjectB; // Test-Angebot im Betreff („20 Test-Leads …“ → 10)
+    const subjectChanged = subject !== (node.subject ?? "") || subjectB !== node.subjectB; if (subjectChanged) changed = true;
+    return blocks === node.blocks && !subjectChanged ? node : { ...node, blocks, ...(subjectChanged ? { subject, ...(node.subjectB !== undefined ? { subjectB } : {}) } : {}) };
   });
   return changed ? { ...tree, nodes } : null;
 }
@@ -242,7 +244,7 @@ export function modernizeTree(tree: EmailTree): EmailTree | null {
  */
 export function fixTreeQuestions(tree: EmailTree, sparte: { key?: string; questions?: number | null; topics?: string[] | null; partner?: string | null }, options: { counts?: boolean } = {}): EmailTree | null {
   let changed = false; let state: { done: boolean; chain?: boolean; chainAfter?: boolean } = { done: false };
-  const counted = (text: string) => options.counts === false ? text : fixQuestionCount(text, sparte);
+  const counted = (text: string) => withTestOffer(options.counts === false ? text : fixQuestionCount(text, sparte)); // dazu immer: Test-Angebot mit der aktuellen Zahl (10 statt 20)
   const fix = (text: string, insert = true, bullet = false) => { const next = withQuestionTopics(counted(text), sparte, state, { insert, bullet }); if (next !== text) changed = true; return next; };
   const nodes = (tree.nodes ?? []).map((node) => {
     if (node.type !== "send") return node;
@@ -253,7 +255,11 @@ export function fixTreeQuestions(tree: EmailTree, sparte: { key?: string; questi
       if (block.type === "bullets") { const items = block.items.flatMap((item) => { const next = fix(item, true, true); if (!state.chainAfter) return [next]; state.chainAfter = false; state.chain = true; changed = true; return [next, offerChainBullet(sparte)]; }); /* Kette als eigener Punkt direkt hinter der Qualifizierung */ return items.length === block.items.length && items.every((item, index) => item === block.items[index]) ? block : { ...block, items }; }
       return block;
     });
-    return blocks.every((block, index) => block === node.blocks[index]) ? node : { ...node, blocks };
+    // Betreffzeilen: nur das Test-Angebot (z. B. „20 Test-Leads kostenlos für {{firma}}“ → 10)
+    const subject = withTestOffer(node.subject ?? ""); const subjectB = node.subjectB ? withTestOffer(node.subjectB) : node.subjectB;
+    const subjectChanged = subject !== (node.subject ?? "") || subjectB !== node.subjectB; if (subjectChanged) changed = true;
+    const same = blocks.every((block, index) => block === node.blocks[index]);
+    return same && !subjectChanged ? node : { ...node, ...(same ? {} : { blocks }), ...(subjectChanged ? { subject, ...(node.subjectB !== undefined ? { subjectB } : {}) } : {}) };
   });
   return changed ? { ...tree, nodes } : null;
 }
@@ -469,6 +475,21 @@ export function sentSourceOf(input: { bodySource?: string | null; subject?: stri
   if ((input.templateSubjects ?? []).some((template) => subjectFromTemplate(template, subject))) return { source: "vorlage", known: false };
   return { source: "ki", known: false };
 }
+/** Test-Angebot in allen Kampagnen: so viele Test-Leads gibt es kostenlos zum Kennenlernen (früher 20). */
+export const TEST_LEADS = 10;
+const TEST_COUNT_SRC = "(?:20|zwanzig)";
+const testCount = (match: string) => (/^Z/.test(match) ? "Zehn" : /^z/.test(match) ? "zehn" : String(TEST_LEADS));
+/**
+ * Alte Zahl im Test-Angebot auf die aktuelle bringen: „20 Test-Leads kostenlos“, „20 kostenlose Test-Leads“, „die ersten 20 Leads kostenlos“
+ * → 10 – in gespeicherten Vorlagen, offenen Entwürfen und KI-Texten. Nur am Test-Angebot; andere Zahlen bleiben. Mehrfach ohne Nebenwirkung.
+ */
+export function withTestOffer(text: string): string {
+  if (!text || !/20|zwanzig/i.test(text)) return text;
+  return text
+    .replace(new RegExp(`\\b${TEST_COUNT_SRC}(?=\\s+(?:kostenlose[nr]?\\s+|gratis\\s+)?Test-?Leads?\\b)`, "gi"), testCount)
+    .replace(new RegExp(`\\b${TEST_COUNT_SRC}(?=\\s+(?:kostenlose[nr]?|gratis)\\s+Leads?\\b)`, "gi"), testCount)
+    .replace(new RegExp(`\\b${TEST_COUNT_SRC}(?=\\s+Leads?\\s+(?:sind\\s+|gibt\\s+es\\s+|bekommen\\s+Sie\\s+|erhalten\\s+Sie\\s+)?(?:kostenlos|gratis)\\b)`, "gi"), testCount);
+}
 /**
  * Holprige Formulierung „telefonisch qualifiziert über (in der Regel) 10 Fragen“ → „in der Regel anhand von zehn Fragen telefonisch
  * vorqualifiziert“ – für gespeicherte Vorlagen, KI-Entwürfe und den Versand. Die Zahl bleibt, wie sie im Text steht (die passende
@@ -553,7 +574,7 @@ export function shortParagraphs(text: string, max = 260): string {
   }).join("");
 }
 /** Für gespeicherte Entwürfe und den Versand: Aroundhome raus, Formulierung zur Vorqualifizierung glätten, nie Meta & Co., kurze Absätze. */
-export const cleanDraftText = (text: string) => shortParagraphs(dropAdPlatforms(smoothQualifyPhrase(dropPortalMentions(text))));
+export const cleanDraftText = (text: string) => shortParagraphs(withTestOffer(dropAdPlatforms(smoothQualifyPhrase(dropPortalMentions(text)))));
 export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[] {
   const keep = original.filter((block) => block.type === "signature"); // nur die Signatur bleibt – keine Knöpfe (es gibt keine Terminbuchung)
   return [{ id: "draft-text", type: "text", text: cleanDraftText(text.trim()) }, ...keep];
@@ -649,5 +670,5 @@ export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { r
 export function thirdPartyTemplate(values: Record<string, string | null | undefined>, sparte: { topic: string; partner: string; key?: string; questions?: number | null } = { topic: "Photovoltaik und Wärmepumpen", partner: "Fachbetrieb" }): { subject: string; text: string } {
   const payFit = !sparte.key || ["pv-wp", "photovoltaik", "waermepumpe"].includes(sparte.key); // nur PV & WP: es werden nur passende Leads bezahlt
   const firma = (values.firma ?? "").trim() || "Ihr Unternehmen"; const anrede = `${(values.begruessung ?? "").trim() || greetingFor({ firstName: values.vorname, lastName: values.nachname, salutation: values.anrede === "Frau" ? "frau" : values.anrede === "Herr" ? "herr" : null })},`;
-  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}. Seit über vier Jahren sind wir erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler.\n\nDieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, und jeder Zwischenschritt schlägt auf den Preis auf. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Online-Leadgenerierung – die Interessenten gewinnen wir selbst\n• Telefonische Vorqualifizierung jedes Interessenten ${qualifyBy(sparte)}\n• ${offerChainBullet(sparte)}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
+  return { subject: `Direkte Zusammenarbeit statt Umweg über Zwischenhändler – ${firma}`.slice(0, 120), text: `${anrede}\n\nwir sind Tanesco Digital, einer der größten Leadlieferanten Deutschlands im Bereich ${sparte.topic}. Seit über vier Jahren sind wir erfolgreich im Leadmarkt tätig.\n\nÜber unsere Quellen haben wir mitbekommen, dass sehr wahrscheinlich Leads aus unserer Generierung über Drittpartner bei ${firma} ankommen – weitergereicht über Zwischenhändler.\n\nDieser Umweg geht zu Lasten von Qualität und Preis: Die Anfragen werden mehrfach weiterverkauft, und jeder Zwischenschritt schlägt auf den Preis auf. Genau deshalb möchten wir die direkte Zusammenarbeit mit Ihnen anstreben.\n\nWas uns als direkten Partner auszeichnet:\n\n• Eigene Online-Leadgenerierung – die Interessenten gewinnen wir selbst\n• Telefonische Vorqualifizierung jedes Interessenten ${qualifyBy(sparte)}\n• ${offerChainBullet(sparte)}\n• Interne Qualitätskontrolle für hohe Datenqualität\n• Hohe Skalierbarkeit – auch größere Volumina zuverlässig\n• Keine Vorkasse – Abrechnung erst nach vereinbarter Lieferung${payFit ? "\n• Sie zahlen nur für Leads, die zu Ihnen passen" : ""}\n• Keine langfristige Vertragsbindung\n• Echtzeitübermittlung per API oder gewünschter Schnittstelle\n• Zum Kennenlernen: 10 Test-Leads kostenlos, individuell für Ihren Betrieb und telefonisch qualifiziert\n\nEine direkte Partnerschaft verkürzt die Lieferkette: besserer Preis ohne Zwischenstufen, mehr Transparenz und eine unmittelbare Qualitätskontrolle.\n\nWenn das für Sie interessant ist, ${contactWay(values.telefon)}.\n\nVielen Dank` };
 }
