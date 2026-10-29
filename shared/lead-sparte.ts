@@ -21,10 +21,12 @@ export type Sparte = {
   match: RegExp;
   /** mit wie vielen Fragen wir telefonisch vorqualifizieren (PV & WP 10, Hausnotruf 6, Elektrorollstuhl 6, Alarmanlage 8) – ohne Angabe nennen wir keine Zahl */
   questions?: number | null;
-  /** worum es bei den Fragen geht – drei Beispiele, in E-Mails ohne Klammern: „Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.“ Eigene Sparten: keine festen Punkte – die KI nennt drei passende. */
+  /** worum es bei den Fragen geht – drei Beispiele, in E-Mails ohne Klammern: „Abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.“ Eigene Sparten: keine festen Punkte – die KI nennt drei passende. */
   topics?: string[] | null;
   /** Angaben, die wir in den gewählten Lead-Kategorien erfassen (z. B. „Poolgröße“) – Hinweis für die KI bei Sparten ohne feste Punkte */
   hints?: string[] | null;
+  /** Namen der gewählten Lead-Kategorien, wenn sie genauer sind als die Sparte (z. B. „Photovoltaik Gewerbe“) – Kontext für die KI */
+  categories?: string[] | null;
 };
 
 const PV_RE = /photovoltaik|solar|\bpv\b|pv[-\s]|pv-?anlage/i;
@@ -33,10 +35,10 @@ export const SPARTEN: Sparte[] = [
   { key: "pv-wp", label: "Photovoltaik & Wärmepumpe", topic: "Photovoltaik und Wärmepumpen", leads: "PV- und Wärmepumpen-Leads", recipients: "PV- und Wärmepumpen-Fachbetriebe und Energieversorger", partner: "Fachbetrieb", match: /(?!)/, questions: 10, topics: ["die Eigentumsverhältnisse", "der Zustand von Dach und Heizung", "der aktuelle Stromverbrauch"] },
   { key: "photovoltaik", label: "Photovoltaik", topic: "Photovoltaik", leads: "Photovoltaik-Leads", recipients: "Photovoltaik-Fachbetriebe und Solarteure", partner: "Fachbetrieb", match: PV_RE, questions: 10, topics: ["die Eigentumsverhältnisse", "die verfügbare Dachfläche", "der aktuelle Stromverbrauch"] },
   { key: "waermepumpe", label: "Wärmepumpe", topic: "Wärmepumpen", leads: "Wärmepumpen-Leads", recipients: "Wärmepumpen-Fachbetriebe und Heizungsbauer", partner: "Fachbetrieb", match: WP_RE, questions: 10, topics: ["die Eigentumsverhältnisse", "die Wohnfläche, die beheizt werden soll", "die aktuelle Heizung"] },
-  { key: "hausnotruf", label: "Hausnotruf", topic: "Hausnotruf", leads: "Hausnotruf-Leads", recipients: "Anbieter von Hausnotruf-Systemen", partner: "Anbieter", match: /hausnotruf|notrufsystem|notruf|haus-notruf/i, questions: 6, topics: ["die Krankenkasse", "der Pflegegrad", "die Wohnsituation des Interessenten"] },
-  { key: "pflegebox", label: "Pflegebox", topic: "Pflegeboxen", leads: "Pflegebox-Leads", recipients: "Anbieter von Pflegeboxen und Pflegehilfsmitteln", partner: "Anbieter", match: /pflegebox|pflegehilfsmittel|pflege-box/i, topics: ["der Pflegegrad", "die Pflegekasse", "die Pflegesituation zu Hause"] },
-  { key: "elektrorollstuhl", label: "Elektrorollstuhl", topic: "Elektrorollstühle", leads: "Elektrorollstuhl-Leads", recipients: "Fachhändler und Sanitätshäuser für Elektrorollstühle", partner: "Fachhändler", match: /elektro-?\s?rollst|e-?rollst|rollstuhl|rollstühle/i, questions: 6, topics: ["die Krankenkasse", "der Pflegegrad", "die geplante Nutzung drinnen oder draußen"] },
-  { key: "rollator", label: "Rollator", topic: "Rollatoren", leads: "Rollator-Leads", recipients: "Fachhändler und Sanitätshäuser für Rollatoren", partner: "Fachhändler", match: /rollator/i, topics: ["die Krankenkasse", "der Pflegegrad", "der Einsatz im Alltag"] },
+  { key: "hausnotruf", label: "Hausnotruf", topic: "Hausnotruf", leads: "Hausnotruf-Leads", recipients: "Anbieter von Hausnotruf-Systemen", partner: "Anbieter", match: /hausnotruf|notrufsystem|notruf|haus-notruf/i, questions: 6, topics: ["die Krankenkasse, bei der der Interessent versichert ist", "der Pflegegrad", "die Wohnsituation"] },
+  { key: "pflegebox", label: "Pflegebox", topic: "Pflegeboxen", leads: "Pflegebox-Leads", recipients: "Anbieter von Pflegeboxen und Pflegehilfsmitteln", partner: "Anbieter", match: /pflegebox|pflegehilfsmittel|pflege-box/i, topics: ["der Pflegegrad", "die Pflegekasse, bei der der Interessent versichert ist", "die Pflegesituation zu Hause"] },
+  { key: "elektrorollstuhl", label: "Elektrorollstuhl", topic: "Elektrorollstühle", leads: "Elektrorollstuhl-Leads", recipients: "Fachhändler und Sanitätshäuser für Elektrorollstühle", partner: "Fachhändler", match: /elektro-?\s?rollst|e-?rollst|rollstuhl|rollstühle/i, questions: 6, topics: ["die Krankenkasse, bei der der Interessent versichert ist", "der Pflegegrad", "ob bereits ein Rezept vom Arzt vorliegt"] },
+  { key: "rollator", label: "Rollator", topic: "Rollatoren", leads: "Rollator-Leads", recipients: "Fachhändler und Sanitätshäuser für Rollatoren", partner: "Fachhändler", match: /rollator/i, topics: ["die Krankenkasse, bei der der Interessent versichert ist", "der Pflegegrad", "der Einsatz im Alltag"] },
   { key: "treppenlift", label: "Treppenlift", topic: "Treppenlifte", leads: "Treppenlift-Leads", recipients: "Anbieter und Fachbetriebe für Treppenlifte", partner: "Fachbetrieb", match: /treppenlift|sitzlift|plattformlift/i, topics: ["die Treppenform", "die Anzahl der Etagen", "der Pflegegrad"] },
   { key: "bad", label: "Barrierefreies Bad", topic: "barrierefreie Bäder", leads: "Leads für barrierefreie Bäder", recipients: "Fachbetriebe für barrierefreie Badumbauten", partner: "Fachbetrieb", match: /barrierefrei|badumbau|bäder|baeder|badsanierung/i, topics: ["der gewünschte Umbau", "die Größe des Bads", "der Pflegegrad"] },
   { key: "alarmanlage", label: "Alarmanlage", topic: "Alarmanlagen", leads: "Alarmanlagen-Leads", recipients: "Errichter und Fachbetriebe für Alarmanlagen und Sicherheitstechnik", partner: "Fachbetrieb", match: /alarm|einbruchschutz|einbruchmelde|sicherheitstechnik/i, questions: 8, topics: ["die Art und Größe des Objekts", "die Eigentumsverhältnisse", "der gewünschte Zeitpunkt der Installation"] },
@@ -172,7 +174,7 @@ export function questionCount(sparte?: { key?: string; questions?: number | null
 }
 type QuestionSparte = { key?: string; questions?: number | null; topics?: string[] | null; partner?: string | null } | null | undefined;
 /**
- * Worum es bei den Fragen geht (drei Beispiele je Sparte): Hausnotruf die Krankenkasse, der Pflegegrad, die Wohnsituation; Alarmanlage die Art
+ * Worum es bei den Fragen geht (drei Beispiele je Sparte): Hausnotruf die Krankenkasse (bei der der Interessent versichert ist), der Pflegegrad, die Wohnsituation; Alarmanlage die Art
  * und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation … Eigene Sparten haben keine festen
  * Punkte → null (die KI nennt dann drei passende). Ohne Sparte: PV & WP.
  */
@@ -182,7 +184,7 @@ export function questionTopics(sparte?: QuestionSparte): string[] | null {
   if (!sparte.key) return DEFAULT_SPARTE.topics ?? null;
   return SPARTEN.find((item) => item.key === sparte.key)?.topics ?? null;
 }
-/** „beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.“ – ohne Klammern; leer ohne Punkte. */
+/** „beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.“ – ohne Klammern; leer ohne Punkte. */
 export function topicsExamples(sparte?: QuestionSparte, topics: string[] | null = questionTopics(sparte)): string { return topics?.length ? `beispielsweise ${topics.join(", ")} usw.` : ""; }
 /** Eigener Satz direkt hinter der Qualifizierung: „Abgefragt werden beispielsweise … usw.“ */
 export function topicsSentence(sparte?: QuestionSparte, topics: string[] | null = questionTopics(sparte)): string { const examples = topicsExamples(sparte, topics); return examples ? `Abgefragt werden ${examples}` : ""; }
@@ -196,7 +198,7 @@ export const offerChain = (sparte?: { partner?: string | null } | null) => `Der 
 export const offerChainBullet = (sparte?: { partner?: string | null } | null) => `Der Interessent weiß, dass sich ein ${sparte?.partner || "Fachbetrieb"} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf`;
 const normTopics = (text: string) => text.toLowerCase().replace(/\b(?:der|die|das|des|den|dem)\b/g, " ").replace(/\s*(?:,|\bund\b|\bsowie\b|\busw\.?|\betc\.?)\s*/g, "|").replace(/\s+/g, " ").split("|").map((part) => part.trim()).filter(Boolean).join("|");
 /** Frühere Punkte (vor „beispielsweise … usw.“) – so werden alte Klammern und Beispiele aus kopierten Vorlagen erkannt. */
-const OLD_TOPICS: string[][] = [["Eigentum", "Dach und Heizung", "Stromverbrauch"], ["Eigentum", "Dachfläche", "Stromverbrauch"], ["Eigentum", "Wohnfläche", "aktuelle Heizung"], ["Krankenkasse", "Pflegegrad", "Wohnsituation"], ["Pflegegrad", "Pflegekasse", "Pflege zu Hause"], ["Krankenkasse", "Pflegegrad", "Nutzung drinnen oder draußen"], ["Krankenkasse", "Pflegegrad", "Einsatz im Alltag"], ["Treppenform", "Anzahl der Etagen", "Pflegegrad"], ["gewünschter Umbau", "Größe des Bads", "Pflegegrad"], ["Objekt und Fläche", "Anzahl der Fenster", "Art der Alarmanlage"], ["die Fläche, die abgesichert werden soll", "die Objektart, um die es sich handelt", "die gewünschte Art der Alarmanlage"], ["Anzahl der Fenster", "Material", "Zeitrahmen"], ["Größe", "Art der Nutzung", "Zeitrahmen"]];
+const OLD_TOPICS: string[][] = [["Eigentum", "Dach und Heizung", "Stromverbrauch"], ["Eigentum", "Dachfläche", "Stromverbrauch"], ["Eigentum", "Wohnfläche", "aktuelle Heizung"], ["Krankenkasse", "Pflegegrad", "Wohnsituation"], ["Pflegegrad", "Pflegekasse", "Pflege zu Hause"], ["Krankenkasse", "Pflegegrad", "Nutzung drinnen oder draußen"], ["Krankenkasse", "Pflegegrad", "Einsatz im Alltag"], ["Treppenform", "Anzahl der Etagen", "Pflegegrad"], ["gewünschter Umbau", "Größe des Bads", "Pflegegrad"], ["Objekt und Fläche", "Anzahl der Fenster", "Art der Alarmanlage"], ["die Fläche, die abgesichert werden soll", "die Objektart, um die es sich handelt", "die gewünschte Art der Alarmanlage"], ["die Krankenkasse", "der Pflegegrad", "die Wohnsituation des Interessenten"], ["der Pflegegrad", "die Pflegekasse", "die Pflegesituation zu Hause"], ["die Krankenkasse", "der Pflegegrad", "die geplante Nutzung drinnen oder draußen"], ["die Krankenkasse", "der Pflegegrad", "der Einsatz im Alltag"], ["Anzahl der Fenster", "Material", "Zeitrahmen"], ["Größe", "Art der Nutzung", "Zeitrahmen"]];
 /** Alle Punkte, die wir je geschrieben haben (alt und neu, jede Sparte) – nur die werden ersetzt; eigene Punkte bleiben. */
 const KNOWN_TOPIC_LISTS = new Set([...OLD_TOPICS, ...SPARTEN.map((item) => item.topics ?? []).filter((topics) => topics.length)].map((topics) => normTopics(topics.join(", "))));
 const isKnownTopicList = (text: string) => KNOWN_TOPIC_LISTS.has(normTopics(text));

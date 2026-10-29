@@ -30,7 +30,7 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
     expect(shortParagraphs(out)).toBe(out); // mehrfach ohne Nebenwirkung
     expect(shortParagraphs("Kurzer Absatz.\n\nNoch einer.")).toBe("Kurzer Absatz.\n\nNoch einer.");
     // Qualifizierung und Beispiele bleiben zusammen, die Logik-Kette bekommt einen eigenen Absatz
-    const qualify = "Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.";
+    const qualify = "Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.";
     const chain = "Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.";
     expect(shortParagraphs(`Wir sind Tanesco Digital. ${qualify} ${chain}`)).toBe(`Wir sind Tanesco Digital. ${qualify}\n\n${chain}`);
     expect(shortParagraphs(`${qualify}\n\n${chain}`)).toBe(`${qualify}\n\n${chain}`);
@@ -38,7 +38,7 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
   it("feste Vorlagen: online, kurze Absätze, Fragen mit Beispielen (ohne Klammern) und Logik-Kette", () => {
     const third = thirdPartyTemplate({ firma: "Notruf Nord GmbH" }, resolveSparte("Hausnotruf")!).text;
     expect(third).not.toMatch(/Meta|Facebook|Instagram/); expect(third).toContain("Eigene Online-Leadgenerierung"); expect(third).not.toMatch(/\(z\. ?B\./);
-    expect(third).toContain("• Telefonische Vorqualifizierung jedes Interessenten anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.\n• Der Interessent weiß, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf\n");
+    expect(third).toContain("• Telefonische Vorqualifizierung jedes Interessenten anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.\n• Der Interessent weiß, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf\n");
     expect(third.split("\n\n").every((part) => part.length <= 260 || /\n/.test(part))).toBe(true);
     for (const kind of ["kaltakquise", "nachfassen", "angebot", "aufwecken"] as const) {
       const texts = starterBlocks(kind).flatMap((block) => block.type === "text" ? [block.text] : []);

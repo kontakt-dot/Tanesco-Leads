@@ -335,7 +335,7 @@ export async function suggestReply(db: Db, tenantId: number, messageId: number):
   // Leadsparte der Kampagne, auf die geantwortet wurde: Hausnotruf-Firmen bekommen eine Antwort zu Hausnotruf-Leads (mit sechs Fragen), nie zu Wärmepumpen
   const campaign = recipient ? (await db.select({ leadSparte: emailCampaigns.leadSparte, name: emailCampaigns.name, audience: emailCampaigns.audience }).from(emailCampaigns).where(eq(emailCampaigns.id, recipient.campaignId)).limit(1))[0] ?? null : null;
   const sparte = campaign ? sparteOf(campaign, [...audienceLists((campaign.audience ?? null) as never), lead?.listName ?? ""].filter(Boolean)) : DEFAULT_SPARTE;
-  const questions = questionCount(sparte); const qualifiedBy = qualifyBy(sparte); // „anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.“
+  const questions = questionCount(sparte); const qualifiedBy = qualifyBy(sparte); // „anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.“
   const salutation = String((lead?.metadata as { salutation?: string } | null)?.salutation ?? "").toLowerCase(); const lastName = (lead?.lastName ?? "").trim();
   const anrede = lastName && (salutation === "herr" || salutation === "frau") ? `Sehr geehrte${salutation === "frau" ? "" : "r"} ${salutation === "frau" ? "Frau" : "Herr"} ${lastName},` : "Guten Tag,"; // nie „Guten Tag Vorname Nachname“ – ohne sichere Anrede neutral; `name` nur fürs Protokoll
   void name;

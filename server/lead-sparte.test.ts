@@ -101,12 +101,12 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     expect(qualifyPhrase(pflegebox)).toBe("anhand gezielter Fragen telefonisch vorqualifiziert"); // ohne feste Zahl: keine Zahl behaupten
     // Beispiele als eigener Satz, ohne Klammern – Alarmanlage so, wie es der Kunde versteht
     expect(topicsSentence(alarm)).toBe("Abgefragt werden beispielsweise die Art und Größe des Objekts, die Eigentumsverhältnisse, der gewünschte Zeitpunkt der Installation usw.");
-    expect(topicsSentence(hausnotruf)).toBe("Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.");
+    expect(topicsSentence(hausnotruf)).toBe("Abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.");
     expect(topicsSentence(pv)).toBe("Abgefragt werden beispielsweise die Eigentumsverhältnisse, der Zustand von Dach und Heizung, der aktuelle Stromverbrauch usw.");
     expect(topicsSentence(resolveSparte("Pool-Bau"))).toBe(""); // neue Sparte: keine festen Punkte – die KI nennt drei passende
-    expect(qualifyBy(rollstuhl)).toBe("anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, der Pflegegrad, die geplante Nutzung drinnen oder draußen usw.");
-    expect(qualifyBy(pflegebox)).toBe("anhand gezielter Fragen – beispielsweise der Pflegegrad, die Pflegekasse, die Pflegesituation zu Hause usw.");
-    expect(questionTopics(hausnotruf)).toEqual(["die Krankenkasse", "der Pflegegrad", "die Wohnsituation des Interessenten"]); expect(questionTopics(resolveSparte("Pool-Bau"))).toBeNull(); expect(questionTopics(null)).toEqual(questionTopics(pv));
+    expect(qualifyBy(rollstuhl)).toBe("anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, ob bereits ein Rezept vom Arzt vorliegt usw.");
+    expect(qualifyBy(pflegebox)).toBe("anhand gezielter Fragen – beispielsweise der Pflegegrad, die Pflegekasse, bei der der Interessent versichert ist, die Pflegesituation zu Hause usw.");
+    expect(questionTopics(hausnotruf)).toEqual(["die Krankenkasse, bei der der Interessent versichert ist", "der Pflegegrad", "die Wohnsituation"]); expect(questionTopics(rollstuhl)).toEqual(["die Krankenkasse, bei der der Interessent versichert ist", "der Pflegegrad", "ob bereits ein Rezept vom Arzt vorliegt"]); expect(questionTopics(resolveSparte("Pool-Bau"))).toBeNull(); expect(questionTopics(null)).toEqual(questionTopics(pv));
     expect(SPARTEN.every((item) => item.topics?.length === 3)).toBe(true); // jede bekannte Sparte hat drei Punkte
     // Logik-Kette: wer sich meldet, warum – und dass der Interessent auf den Anruf wartet
     expect(offerChain(alarm)).toBe("Der Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
@@ -139,14 +139,14 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     // die KI übernimmt „zehn“ und die alte Klammer aus der Vorlage → im fertigen Entwurf steht die Zahl der Sparte, die Beispiele ohne Klammern und die Kette
     const ai = "Sehr geehrter Herr Wiebe,\n\nIhre Notrufzentrale ist rund um die Uhr besetzt. Unsere Hausnotruf-Leads sind in der Regel anhand von zehn Fragen (z. B. Eigentum, Dach und Heizung sowie Stromverbrauch) telefonisch vorqualifiziert, sodass der Interessent weiß, dass sich der Betrieb bei ihm meldet. Zum Kennenlernen: 20 Test-Leads kostenlos.";
     const done = finishDraft(ai, { greeting: "Sehr geehrter Herr Wiebe", phone: "", followUp: false, partner: "Anbieter", sparte: hausnotruf, approach: "frei" });
-    expect(done).toContain("in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.");
+    expect(done).toContain("in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.");
     expect(done).toContain("Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
     expect(done).not.toMatch(/zehn Fragen|\(z\. B\.|Stromverbrauch|sodass der Interessent/); expect(done.match(/Der Interessent weiß/g)).toHaveLength(1);
   });
   it("Beispiele ohne Klammern: nur bei der Qualifizierung, einmal je E-Mail, alte Klammern und fremde Beispiele werden ersetzt", () => {
     const text = "Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert.";
     const once = withQuestionTopics(text, hausnotruf);
-    expect(once).toBe("Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw. Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
+    expect(once).toBe("Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw. Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
     expect(withQuestionTopics(once, hausnotruf)).toBe(once); // schon da – mehrfach ohne Nebenwirkung
     expect(withQuestionTopics("Jeder Lead wird anhand von sechs Fragen zu Krankenkasse und Pflegegrad geprüft.", hausnotruf)).toBe(`Jeder Lead wird anhand von sechs Fragen zu Krankenkasse und Pflegegrad geprüft. ${offerChain(hausnotruf)}`); // Punkte stehen schon im Satz – nur die Kette kommt dazu
     expect(withQuestionTopics("Ich hätte fünf kurze Fragen zu Ihrem Betrieb.", hausnotruf)).toBe("Ich hätte fünf kurze Fragen zu Ihrem Betrieb."); // keine Qualifizierung
@@ -178,6 +178,13 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     // ohne gewählte Sparte (counts: false): Zahl bleibt, Beispiele und Kette kommen dazu
     expect(JSON.stringify(fixTreeQuestions(starterTree({ first: [{ id: "t", type: "text", text: "Unsere Anfragen werden anhand von acht Fragen telefonisch vorqualifiziert." }], followUp: [] }), pv, { counts: false }))).toContain(`anhand von acht Fragen telefonisch vorqualifiziert. ${topicsSentence(pv)}`);
   });
+  it("Beispiele von gestern (nur „die Krankenkasse“, E-Rollstuhl „drinnen oder draußen“) werden umgestellt – auch leicht abgewandelt", () => {
+    const yesterday = "Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die geplante Nutzung drinnen oder draußen usw.";
+    expect(withQuestionTopics(yesterday, rollstuhl, { done: false, chain: true })).toBe(`Unsere Anfragen werden in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. ${topicsSentence(rollstuhl)}`);
+    expect(topicsSentence(rollstuhl)).toBe("Abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, ob bereits ein Rezept vom Arzt vorliegt usw.");
+    const hausnotrufYesterday = "Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad und die Wohnsituation des Interessenten usw."; // von der KI leicht abgewandelt
+    expect(withQuestionTopics(`Jede Anfrage wird in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. ${hausnotrufYesterday}`, hausnotruf, { done: false, chain: true })).toBe(`Jede Anfrage wird in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. ${topicsSentence(hausnotruf)}`);
+  });
   it("Bestand von vorher: alte Startvorlage („…, sodass der Interessent weiß, dass sich der Betrieb bei ihm meldet“) und ältere Ketten in Entwürfen werden beim ersten Mal sauber umgestellt", () => {
     // so steht die Startvorlage in gespeicherten Kampagnen (Teaser in Klammern, Kette als Nebensatz, „Danach gehen sie …“)
     const stored = starterTree({ first: [{ id: "t", type: "text", text: "{{begruessung}},\n\nwir von Tanesco Digital gehören zu den größten Lead-Lieferanten in Deutschland für {{sparte}}. Die Interessenten gewinnen wir selbst online.\n\nUnsere Anfragen werden in der Regel anhand von sechs Fragen (z. B. Krankenkasse, Pflegegrad und Wohnsituation) telefonisch vorqualifiziert, sodass der Interessent weiß, dass sich der Betrieb bei ihm meldet. Danach gehen sie exklusiv und in Echtzeit an Sie." }], followUp: [{ id: "f", type: "text", text: "Kurz nachgefragt." }] });
@@ -188,6 +195,6 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     const draft = (text: string) => withQuestionTopics(text, hausnotruf);
     expect(draft("Jede Anfrage wird in der Regel anhand von sechs Fragen telefonisch vorqualifiziert; der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet.")).toBe(`Jede Anfrage wird in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. ${topicsSentence(hausnotruf)} ${offerChain(hausnotruf)}`);
     expect(draft("Unsere Leads sind in der Regel anhand von sechs Fragen telefonisch vorqualifiziert – und der Interessent weiß also, dass sich ein Anbieter melden wird. Die Übergabe läuft in Echtzeit.")).toBe(`Unsere Leads sind in der Regel anhand von sechs Fragen telefonisch vorqualifiziert. ${topicsSentence(hausnotruf)} ${offerChain(hausnotruf)} Die Übergabe läuft in Echtzeit.`);
-    expect(draft("• Vorqualifizierung anhand von in der Regel sechs Fragen, der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet\n• Keine Vorkasse")).toBe(`• Vorqualifizierung anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.\n• Der Interessent weiß, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf\n• Keine Vorkasse`);
+    expect(draft("• Vorqualifizierung anhand von in der Regel sechs Fragen, der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet\n• Keine Vorkasse")).toBe(`• Vorqualifizierung anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.\n• Der Interessent weiß, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf\n• Keine Vorkasse`);
   });
 });

@@ -1520,6 +1520,14 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .list-picker-tools button:hover{border-color:rgba(129,120,255,.5);color:#e2e8f0}
 .list-picker-tools button.is-danger:hover{border-color:rgba(248,113,113,.6);color:#fca5a5}
 .list-picker-preview{flex-basis:100%}
+/* weitere Listen ein-/ausklappen – die Listen der Kampagne stehen immer da */
+.list-picker-more{display:flex;align-items:center;gap:8px;width:100%;margin-top:8px;padding:9px 12px;border-radius:10px;border:1px dashed rgba(255,255,255,.16);background:transparent;color:#d7d5ee;font-size:12.5px;font-weight:650;text-align:left;cursor:pointer;transition:background-color .15s,border-color .15s}
+.list-picker-more:hover{border-color:rgba(251,44,54,.45);background:rgba(251,44,54,.06)}
+.list-picker-more:focus-visible{outline:2px solid rgba(251,44,54,.7);outline-offset:2px}
+.list-picker-more svg{width:16px;height:16px;flex:0 0 auto;color:#fb7185;transition:transform .2s}
+.list-picker-more svg.is-open{transform:rotate(180deg)}
+.list-picker-more small{margin-left:auto;font-size:11px;font-weight:500;color:#8a87a8;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.list-picker-more svg{transition:none}}
 
 /* Die Kontakttabelle darf ihre Spalte nicht sprengen – sie scrollt in sich. */
 .list-preview{max-width:100%;min-width:0;overflow:hidden}
@@ -2897,14 +2905,22 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .ch-alerts:empty{display:none}
 .ch-alerts .cl-next{margin-top:0;font-size:12.5px}
 /* Karte: Einstellungen als eine ruhige Zeile mit Angaben (Bezeichnung grau, Wert hell) – jede Angabe bleibt zusammen; Freigabe in EINEM Hinweis */
-.cl-specs{display:flex;flex-direction:column;gap:4px;font-size:12.5px;line-height:1.4}
-.cl-specs dl{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 22px;margin:0}
-.cl-spec{display:inline-flex;align-items:baseline;gap:7px;white-space:nowrap;min-width:0}
-.cl-spec dt{font-size:11px;font-weight:600;color:#8a87a8}
-.cl-spec dd{margin:0;font-weight:650;color:#ebe9ff}
+/* Angaben der Kampagne: jede als eigenes Feld mit Zeichen – klar voneinander getrennt, in fester Reihenfolge (was, dann wann) */
+.cl-specs{display:flex;flex-direction:column;gap:6px;font-size:12.5px;line-height:1.35}
+.cl-specs dl{display:flex;flex-wrap:wrap;gap:6px;margin:0}
+.cl-spec{display:inline-flex;align-items:center;gap:7px;min-height:30px;max-width:100%;min-width:0;padding:3px 11px 3px 4px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03)}
+.cl-spec dt{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:600;color:#8a87a8;white-space:nowrap}
+.cl-spec dd{margin:0;min-width:0;font-weight:650;color:#ebe9ff;white-space:nowrap}
 .cl-spec dd small{margin-left:6px;font-size:11.5px;font-weight:500;color:#a5a3c4}
 .cl-spec dd small::before{content:"· ";color:#6f6c8f}
 .cl-spec.is-warn dd{color:#fda4af}
+.fact-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border-radius:7px;background:rgba(251,44,54,.14);color:#fb7185;font-size:13px;line-height:1}
+.fact-icon svg{width:13px;height:13px}
+.fact-icon.is-emoji{background:rgba(255,255,255,.07)}
+.fact-icon.is-pair{width:auto;padding:0 4px;letter-spacing:1px}
+.ch-fact dt{display:flex;align-items:center;gap:6px}
+.ch-fact .fact-icon{width:18px;height:18px;border-radius:6px;font-size:11px}.ch-fact .fact-icon svg{width:11px;height:11px}
+@container (max-width:720px){.cl-spec,.cl-spec dd{white-space:normal}.cl-spec{padding-top:4px;padding-bottom:4px}.cl-spec dt{white-space:nowrap}.cl-alerts .audience-status span{white-space:normal}}
 .cl-alerts:empty{display:none}
 .cl-approval{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-height:26px;padding:3px 12px 3px 10px;border-radius:999px;border:1px solid rgba(251,44,54,.45);background:rgba(251,44,54,.12);color:#fecdd3;font-size:12px;font-weight:600;line-height:1.3;text-align:left;cursor:pointer;transition:background-color .15s}
 .cl-approval svg{width:13px;height:13px;flex:0 0 auto;color:#fb7185}
@@ -3323,11 +3339,24 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cd-chip.is-ki{border-color:rgba(129,120,255,.45);color:#c7c2ff}
 /* Leadsparte: Feld im Builder, Hinweis bei fremder Sparte in der Vorlage, Kennzeichen in Liste und Kopf */
 .sparte-field{display:grid;gap:5px}
+/* Lead-Kategorien der Kampagne – Auswahl als Schilder; gewählt in Rot */
+.cat-picks{display:flex;flex-wrap:wrap;gap:6px}
+.cat-pick{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 12px 4px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);color:#d7d5ee;font-size:12.5px;font-weight:600;line-height:1.2;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s}
+.cat-pick:hover{border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.06)}
+.cat-pick:focus-visible{outline:2px solid rgba(251,44,54,.7);outline-offset:2px}
+.cat-pick.is-on{border-color:rgba(251,44,54,.6);background:rgba(251,44,54,.14);color:#fff1f2}
+.cat-pick-emoji{font-size:14px;line-height:1}
+.cat-pick-dot{width:8px;height:8px;border-radius:50%;background:var(--cat,#94a3b8);flex:0 0 auto}
+.cat-pick-check{width:14px;height:14px;color:#fb7185;flex:0 0 auto}
+.cat-pick.is-other{border-style:dashed;color:#a8a6c4;font-weight:500}
+.cat-pick.is-other svg{width:13px;height:13px}
+.cat-free{display:grid;gap:4px}
+.cat-free-close{justify-self:start;padding:0;border:0;background:none;color:#fda4af;font-size:11.5px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .sparte-field>span{font-size:12px;font-weight:600;color:#c9c6ee}
 .sparte-field small{font-size:11.5px;line-height:1.4;color:#8f93af}
 .sparte-field small strong{color:#e7e5ff;font-weight:700}
-.sparte-field small.sparte-warn{color:#fcd9a0;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:8px;padding:6px 8px}
-.sparte-fix{display:inline-flex;margin-left:6px;padding:2px 8px;border-radius:999px;border:1px solid rgba(251,191,36,.45);background:rgba(251,191,36,.14);color:#fde7c2;font-size:11px;font-weight:700;cursor:pointer}.sparte-fix:hover{background:rgba(251,191,36,.24)}
+.sparte-field small.sparte-warn{color:#fecdd3;background:rgba(251,44,54,.08);border:1px solid rgba(251,44,54,.3);border-radius:8px;padding:6px 8px}
+.sparte-fix{display:inline-flex;margin-left:6px;padding:2px 8px;border-radius:999px;border:1px solid rgba(251,44,54,.5);background:rgba(251,44,54,.16);color:#ffe4e6;font-size:11px;font-weight:700;cursor:pointer}.sparte-fix:hover{background:rgba(251,44,54,.26)}
 .dash-pill.is-sparte{color:#d9d4ff;border-color:rgba(129,120,255,.45);background:rgba(129,120,255,.12)}
 .rv-refs{display:flex;gap:6px;align-items:flex-start;margin:0 0 10px;font-size:12px;line-height:1.5;color:#a9b4c8}.rv-refs svg{flex:none;margin-top:2px;color:#7dd3fc}.rv-refs strong{color:#d6deea;font-weight:600}
 .cl-mail-missing{margin:12px 16px 0;padding:10px 14px;border-radius:12px;border:1px solid rgba(248,113,113,.45);background:rgba(248,113,113,.1);color:#fecaca;font-size:13px;line-height:1.5}.cl-mail-missing strong{color:#fee2e2}

@@ -6,9 +6,9 @@
  * Dazu das Tageslimit für alle Kampagnen zusammen (Standard 80 E-Mails am Tag).
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
-import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leads, mailSettings } from "../drizzle/schema";
+import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leads, mailSettings } from "../drizzle/schema";
 import { audienceLists, kiModusOf } from "../shared/email-campaigns";
-import { applyPayFit, DEFAULT_SPARTE, fitsSparte, fixQuestionCount, isEnergySparte, mentionsQuestions, numberWord, offerChain, offersForeignLeads, paysOnlyFitting, qualifyPhrase, questionCount, questionTopics, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
+import { applyPayFit, DEFAULT_SPARTE, fitsSparte, fixQuestionCount, isEnergySparte, mentionsQuestions, numberWord, offerChain, offersForeignLeads, paysOnlyFitting, qualifyPhrase, questionCount, questionTopics, resolveSparte, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
 import { extractProfile } from "../shared/lead-finder";
 import { cleanDraftText, dropAdPlatforms, shortParagraphs, PORTAL_RE, smoothQualifyPhrase, approachLabel, approachOf, LEGACY_APPROACH, DRAFT_APPROACHES, copiesTemplate, dropThirdPartyClaim, fixTreeQuestions, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
@@ -95,7 +95,7 @@ function systemFor(sparte: Sparte): string {
   const chainRule = `Danach kommt die Logik-Kette, wörtlich oder sehr nah daran: „${chain}“ – der Interessent wartet auf den Anruf des Betriebs, damit er das Angebot bekommt. Nie Klammern für die Beispiele, nie „(z. B. …)“.`;
   return `Du schreibst für Tanesco Digital (einer der größten Leadlieferanten Deutschlands) Akquise-E-Mails an ${sparte.recipients} – jede einzeln, wie von Hand geschrieben, nie wie ein Serienbrief. Je nach Auftrag schreibst du die Erst-E-Mail oder eine Nachfass-Mail, als die verlangten Vorschläge (Ansätze), alle persönlich auf genau diesen Empfänger zugeschnitten.
 
-LEADSPARTE dieser Kampagne: ${sparte.label}. Jede E-Mail handelt ausschließlich von ${sparte.leads} – Interessenten für ${sparte.topic}, die Tanesco gewinnt und an den Empfänger übergibt. Keine andere Sparte erwähnen${energy ? "" : " – kein Wort zu Photovoltaik, Solar, PV oder Wärmepumpen"}. Vorlage und Beispiel unten können aus einer anderen Sparte stammen: übernimm daraus nur Aufbau und Ton, nie das Thema.
+LEADSPARTE dieser Kampagne: ${sparte.label}.${sparte.categories?.length ? ` Gewählte Lead-Kategorien: ${sparte.categories.join(", ")} – richte die E-Mails genau auf diese Leads aus.` : ""} Jede E-Mail handelt ausschließlich von ${sparte.leads} – Interessenten für ${sparte.topic}, die Tanesco gewinnt und an den Empfänger übergibt. Keine andere Sparte erwähnen${energy ? "" : " – kein Wort zu Photovoltaik, Solar, PV oder Wärmepumpen"}. Vorlage und Beispiel unten können aus einer anderen Sparte stammen: übernimm daraus nur Aufbau und Ton, nie das Thema.
 
 Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selbst online generieren (eigene Online-Leadgenerierung), ${qualify}${examples ? ` – abgefragt werden ${examples}` : ""}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf den Anruf des Betriebs. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt.${paysOnlyFitting(sparte) ? " Abrechnung: Der Betrieb zahlt nur für Leads, die zu ihm passen." : " Behaupte NICHT, dass der Betrieb nur für passende Leads zahlt – das gilt in dieser Sparte nicht."} Test-Angebot: 20 Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – baue dieses Angebot in beide Ansätze ein, Drittanbieter und freien Vorschlag (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
 
@@ -252,16 +252,23 @@ export function retryNoteFor(approach: DraftApproach, issues: AiOption["issues"]
 /** Kontaktdaten und Formales gehören nicht zu den Punkten, die wir am Telefon abfragen (Name, Telefon, Adresse, Einwilligung …). */
 const CONTACT_FIELD_RE = /^(?:anrede|titel|vor-?name|nach-?name|name|firma|unternehmen|telefon\w*|handy\w*|mobil\w*|e-?mail\w*|plz|postleitzahl|ort|stadt|wohnort|stra(?:ß|ss)e\w*|hausnummer|adresse|anschrift|land|bundesland|geburts\w*|alter|kommentar\w*|notiz\w*|bemerkung\w*|anmerkung\w*|nachricht|einwilligung\w*|datenschutz\w*|agb|erreichbar\w*|r(?:ü|ue)ckruf\w*|uhrzeit|datum)\b/i;
 /**
- * Sparte ohne feste Punkte (z. B. „Hörgeräte“) und Lead-Kategorien gewählt: die Angaben, die wir in diesen Kategorien erfassen, gehen als
- * Hinweis an die KI – daraus nennt sie die drei Beispiele, was am Telefon abgefragt wird. Bekannte Sparten haben feste Punkte.
+ * Gewählte Lead-Kategorien als Kontext für die KI: ihre Namen (z. B. „Photovoltaik Gewerbe“ – genauer als die Sparte „Photovoltaik“) und bei
+ * Sparten ohne feste Punkte (z. B. „Hörgeräte“) die Angaben, die wir in diesen Kategorien erfassen – daraus nennt die KI die drei Beispiele,
+ * was am Telefon abgefragt wird. Bekannte Sparten behalten ihre festen Punkte.
  */
 export async function withCategoryHints<T extends Sparte>(db: Db, tenantId: number, campaign: { leadCategoryIds?: unknown }, sparte: T): Promise<T> {
-  if (questionTopics(sparte)) return sparte;
   const ids = Array.isArray(campaign.leadCategoryIds) ? (campaign.leadCategoryIds as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0).slice(0, 20) : [];
   if (!ids.length) return sparte;
-  const rows = await db.select({ label: categoryFields.label, sortOrder: categoryFields.sortOrder, id: categoryFields.id }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenantId), inArray(categoryFields.categoryId, ids), eq(categoryFields.visible, true))).orderBy(asc(categoryFields.sortOrder), asc(categoryFields.id)).catch(() => []);
-  const hints = Array.from(new Set(rows.map((row) => row.label.trim()).filter((label) => label && label.length <= 60 && !CONTACT_FIELD_RE.test(label)))).slice(0, 12);
-  return hints.length ? { ...sparte, hints } : sparte;
+  const names = (await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), inArray(leadCategories.id, ids))).catch(() => [])).map((row) => row.name.trim()).filter(Boolean);
+  const plain = (text: string) => text.toLowerCase().replace(/[^a-zäöüß]+/g, "");
+  const saysMore = (name: string) => resolveSparte(name)?.key === "eigene" && !plain(sparte.label).includes(plain(name)); // „Photovoltaik Gewerbe“ ja, „Alarmanlagen“ nein
+  const categories = names.some(saysMore) ? names : []; // nur, wenn die Namen mehr sagen als die Sparte
+  let hints: string[] = [];
+  if (!questionTopics(sparte)) {
+    const rows = await db.select({ label: categoryFields.label, sortOrder: categoryFields.sortOrder, id: categoryFields.id }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenantId), inArray(categoryFields.categoryId, ids), eq(categoryFields.visible, true))).orderBy(asc(categoryFields.sortOrder), asc(categoryFields.id)).catch(() => []);
+    hints = Array.from(new Set(rows.map((row) => row.label.trim()).filter((label) => label && label.length <= 60 && !CONTACT_FIELD_RE.test(label)))).slice(0, 12);
+  }
+  return hints.length || categories.length ? { ...sparte, ...(hints.length ? { hints } : {}), ...(categories.length ? { categories } : {}) } : sparte;
 }
 /** Gilt der gespeicherte Entwurf für diesen Schritt? (Alte Entwürfe ohne Schritt-Angabe zählen für die Erst-E-Mail.) */
 export function draftFitsNode(recipient: Pick<Recipient, "draftNodeId" | "sentCount">, nodeId: string): boolean {
@@ -481,7 +488,7 @@ export async function addPayFitToDrafts(db: Db): Promise<number> {
 }
 /**
  * Einmal nach dem Serverstart: Zahl der Fragen passend zur Leadsparte, dahinter ohne Klammern „Abgefragt werden beispielsweise … usw.“
- * (Hausnotruf: die Krankenkasse, der Pflegegrad, die Wohnsituation …) und die Logik-Kette „Der Interessent weiß danach, dass sich ein Fachbetrieb
+ * (Hausnotruf: die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation …) und die Logik-Kette „Der Interessent weiß danach, dass sich ein Fachbetrieb
  * bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.“ – in den Vorlagen aller Kampagnen (die Zahl der Fragen
  * nur bei eingetragener oder erkannter Sparte) und in allen offenen, noch nicht gesendeten Entwürfen (auch freigegebenen). Dabei auch: nie Meta & Co. („online“), kurze Absätze. Hausnotruf und Elektrorollstuhl
  * sechs Fragen, Alarmanlage acht, PV & WP zehn, andere Sparten ohne feste Zahl („anhand gezielter Fragen“). Mehrfach ausführbar.

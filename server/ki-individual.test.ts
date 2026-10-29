@@ -21,8 +21,8 @@ describe("Freier Vorschlag: wirklich auf die Firma geschrieben – schwache Text
     // was die KI zu hören bekommt: Sparte, sechs Fragen, keine Sätze aus der Vorlage, Bezüge nennen
     const call = invoke.mock.calls[0][0] as { messages: Array<{ role: string; content: string }>; outputSchema: { schema: { properties: Record<string, { required: string[] }> } } };
     const system = call.messages[0].content; const user = call.messages[1].content;
-    expect(system).toContain("in der Regel anhand von sechs Fragen telefonisch vorqualifiziert – abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw."); expect(system).not.toContain("zehn Fragen");
-    expect(system).toContain("ohne Klammern: „Abgefragt werden beispielsweise die Krankenkasse, der Pflegegrad, die Wohnsituation des Interessenten usw.“"); expect(system).toContain("Nie Klammern für die Beispiele"); // Beispiele als eigener Satz
+    expect(system).toContain("in der Regel anhand von sechs Fragen telefonisch vorqualifiziert – abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw."); expect(system).not.toContain("zehn Fragen");
+    expect(system).toContain("ohne Klammern: „Abgefragt werden beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.“"); expect(system).toContain("Nie Klammern für die Beispiele"); // Beispiele als eigener Satz
     expect(system).toContain("„Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.“"); // Logik-Kette
     expect(system).not.toMatch(/Meta-Kampagnen|\(Facebook/); expect(system).toContain("selbst online generieren"); expect(system).toContain("nenne NIE Meta, Facebook, Instagram"); // online statt Meta
     expect(system).toContain("je Absatz ein bis drei Sätze"); // kurze Absätze

@@ -1463,6 +1463,10 @@ html:not(.dark) .inbox-bulk-lead { border-top-color: #eceef3 !important; }
 html:not(.dark) .list-picker-check { background: #ffffff !important; border-color: #d0d5dd !important; color: #ffffff !important; }
 html:not(.dark) .list-picker-check.is-on { background: #bc001d !important; border-color: #bc001d !important; }
 html:not(.dark) .list-picker-row.is-active { border-color: #f1c2ca !important; background: #fff7f8 !important; }
+html:not(.dark) .list-picker-more { border-color: #d0d5dd !important; background: #ffffff !important; color: #344054 !important; }
+html:not(.dark) .list-picker-more:hover { border-color: #f1c2ca !important; background: #fff7f8 !important; }
+html:not(.dark) .list-picker-more svg { color: #bc001d !important; }
+html:not(.dark) .list-picker-more small { color: #667085 !important; }
 
 /* KI-Versand-Box hell */
 html:not(.dark) .ki-box { background: #fdf7f8 !important; border-color: #f1dade !important; }
@@ -1476,8 +1480,15 @@ html:not(.dark) .cd-chip.is-ki { border-color: #e0d7fb !important; color: #6941c
 html:not(.dark) .sparte-field > span { color: #344054 !important; }
 html:not(.dark) .sparte-field small { color: #667085 !important; }
 html:not(.dark) .sparte-field small strong { color: #101828 !important; }
-html:not(.dark) .sparte-field small.sparte-warn { color: #92400e !important; background: #fffbeb !important; border-color: #fcd34d !important; }
-html:not(.dark) .sparte-fix { color: #78350f !important; background: #fef3c7 !important; border-color: #f59e0b !important; }
+html:not(.dark) .sparte-field small.sparte-warn { color: #9f1239 !important; background: #fff1f2 !important; border-color: #fecdd3 !important; }
+html:not(.dark) .sparte-fix { color: #ffffff !important; background: #bc001d !important; border-color: #bc001d !important; }
+html:not(.dark) .sparte-fix:hover { background: #9f1239 !important; }
+html:not(.dark) .cat-pick { border-color: #e4e7ec !important; background: #ffffff !important; color: #344054 !important; }
+html:not(.dark) .cat-pick:hover { border-color: #cbd5e1 !important; background: #f8fafc !important; }
+html:not(.dark) .cat-pick.is-on { border-color: #bc001d !important; background: #fff1f2 !important; color: #9f1239 !important; }
+html:not(.dark) .cat-pick-check { color: #bc001d !important; }
+html:not(.dark) .cat-pick.is-other { border-color: #d0d5dd !important; color: #667085 !important; }
+html:not(.dark) .cat-free-close { color: #bc001d !important; }
 html:not(.dark) .dash-pill.is-sparte { color: #5b21b6 !important; border-color: #ddd6fe !important; background: #f5f3ff !important; }
 html:not(.dark) .rv-refs { color: #475467 !important; }
 html:not(.dark) .rv-refs strong { color: #101828 !important; }
@@ -1707,3 +1718,6 @@ html:not(.dark) .cl-spec dd { color: #101828 !important; }
 html:not(.dark) .cl-spec dd small { color: #475467 !important; }
 html:not(.dark) .cl-spec dd small::before { color: #98a2b3 !important; }
 html:not(.dark) .cl-spec.is-warn dd { color: #be123c !important; }
+html:not(.dark) .cl-spec { border-color: #eaecf0 !important; background: #f9fafb !important; }
+html:not(.dark) .fact-icon { background: #fff1f2 !important; color: #bc001d !important; }
+html:not(.dark) .fact-icon.is-emoji { background: #ffffff !important; box-shadow: inset 0 0 0 1px #fecdd3 !important; }
