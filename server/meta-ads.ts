@@ -148,7 +148,7 @@ export async function syncInsights(db: Db, tenantId: number, options: { days?: n
 }
 
 /* ---------- Pipeline ---------- */
-export type PipelineOverviewOptions = { from?: Date; until?: Date; campaignId?: string | null; source?: PipelineSource | "alle"; ownerUserId?: number | "ohne" | null; tagId?: number | null; listName?: string | null; limitPerStage?: number };
+export type PipelineOverviewOptions = { from?: Date; until?: Date; campaignId?: string | null; source?: PipelineSource | "alle"; ownerUserId?: number | "ohne" | null; tagId?: number | null; listName?: string | null; categoryId?: number | null; limitPerStage?: number };
 export async function pipelineOverview(db: Db, tenantId: number, options: PipelineOverviewOptions = {}) {
   // Pipeline „E-Mail-Kampagne“: Spalte „Versendet“ einmal anlegen, falls es sie noch nicht gibt (neue Kontakte kommen beim Versand automatisch dorthin)
   if (options.source === "email") { const { ensureSentStageOnce, backfillSentCardsOnce } = await import("./sent-card"); await ensureSentStageOnce(db, tenantId); void backfillSentCardsOnce(db, tenantId); }
@@ -182,7 +182,13 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const tagCounts = new Map<number, { id: number; name: string; color: string | null; count: number }>();
   for (const lead of scopedByOwner) for (const tag of tagsByLead.get(lead.id) ?? []) { const entry = tagCounts.get(tag.id) ?? { ...tag, count: 0 }; entry.count += 1; tagCounts.set(tag.id, entry); }
   const tagList = Array.from(tagCounts.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "de"));
-  const scoped = options.tagId ? scopedByOwner.filter((lead) => (tagsByLead.get(lead.id) ?? []).some((tag) => tag.id === options.tagId)) : scopedByOwner;
+  const scopedByTag = options.tagId ? scopedByOwner.filter((lead) => (tagsByLead.get(lead.id) ?? []).some((tag) => tag.id === options.tagId)) : scopedByOwner;
+  // Lead-Kategorien im aktuellen Ausschnitt (alle Karten, nicht nur die ersten je Spalte) – als Auswahl zum Filtern; die gewählte bleibt sichtbar, auch wenn gerade keine Karte dazu da ist
+  const categoryCounts = new Map<number, { id: number; name: string; emoji: string | null; color: string | null; count: number }>();
+  for (const lead of scopedByTag) { if (lead.categoryId == null) continue; const entry = categoryCounts.get(lead.categoryId) ?? { id: lead.categoryId, name: lead.categoryName ?? "Ohne Namen", emoji: lead.categoryEmoji ?? null, color: lead.categoryColor ?? null, count: 0 }; entry.count += 1; categoryCounts.set(lead.categoryId, entry); }
+  if (options.categoryId && !categoryCounts.has(options.categoryId)) { const row = (await db.select({ id: leadCategories.id, name: leadCategories.name, emoji: leadCategories.emoji, color: leadCategories.color }).from(leadCategories).where(and(eq(leadCategories.id, options.categoryId), eq(leadCategories.tenantId, tenantId))).limit(1))[0]; if (row) categoryCounts.set(row.id, { ...row, count: 0 }); }
+  const categories = Array.from(categoryCounts.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "de"));
+  const scoped = options.categoryId ? scopedByTag.filter((lead) => lead.categoryId === options.categoryId) : scopedByTag;
   const insightConditions = [eq(adInsights.tenantId, tenantId)]; if (options.from) insightConditions.push(gte(adInsights.day, options.from.toISOString().slice(0, 10))); if (options.until) insightConditions.push(lte(adInsights.day, options.until.toISOString().slice(0, 10)));
   const insights = await db.select().from(adInsights).where(and(...insightConditions));
   const stagesDef = await pipelineStages(db, tenantId, source === "alle" ? "alle" : source); // Stufen der gewählten Pipeline
@@ -197,7 +203,7 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const totals = { leads: scoped.length, customers: scoped.filter((lead) => lead.pipelineStage === wonStage(stagesDef)).length, spend: (options.campaignId ? campaigns.filter((c) => c.campaignId === options.campaignId) : campaigns).reduce((sum, c) => sum + c.spend, 0) };
   const value = pipelineValueSummary(scoped.map((lead) => ({ pipelineStage: isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef), dealValue: lead.dealValue, ownerUserId: lead.ownerUserId, ownerName: lead.ownerName })), stagesDef);
   const staleCount = Array.from(extras.values()).filter((extra) => extra.stale).length; const hotCount = scoped.filter((lead) => { const extra = extras.get(lead.id); return extra?.temperature === "heiss" && lead.pipelineStage !== wonStage(stagesDef); }).length; const dueToday = scoped.filter((lead) => lead.followUpAt && lead.followUpAt < new Date(new Date().setHours(24, 0, 0, 0))).length;
-  return { campaigns, smartLists, lists, stages, stageDefs: stagesDef, tags: tagList, funnel: funnel(scoped, stagesDef), totals: { ...totals, costPerLead: totals.leads ? totals.spend / totals.leads : null, costPerCustomer: totals.customers ? totals.spend / totals.customers : null }, value, staleCount, hotCount, staleDays: settings.staleDays, dueToday };
+  return { campaigns, smartLists, lists, categories, stages, stageDefs: stagesDef, tags: tagList, funnel: funnel(scoped, stagesDef), totals: { ...totals, costPerLead: totals.leads ? totals.spend / totals.leads : null, costPerCustomer: totals.customers ? totals.spend / totals.customers : null }, value, staleCount, hotCount, staleDays: settings.staleDays, dueToday };
 }
 export async function moveStage(db: Db, tenantId: number, input: { publicId: string; stage: PipelineStage; note?: string | null; actorUserId: number | null }) {
   const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, input.publicId))).limit(1))[0]; if (!lead) throw new Error("Lead nicht gefunden.");

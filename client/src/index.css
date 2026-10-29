@@ -2812,9 +2812,6 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .sparte-badge{display:inline-flex;align-items:center;gap:6px;min-height:24px;max-width:100%;padding:2px 10px 2px 7px;border-radius:999px;border:1px solid rgba(129,120,255,.4);background:rgba(129,120,255,.14);color:#d4d0ff;font-size:12px;font-weight:700;line-height:1.2;white-space:nowrap}
 .sparte-badge-emoji{font-size:13px;letter-spacing:1px}
 /* Zeichen der Leadsparte ganz vorn, links vom Namen */
-.sparte-emoji{display:inline-grid;place-items:center;flex:0 0 auto;width:30px;height:30px;border-radius:9px;background:rgba(255,255,255,.07);font-size:16px;line-height:1}
-.sparte-emoji.is-pair{width:auto;padding:0 7px;letter-spacing:1px;font-size:14px}
-.ch-title .sparte-emoji{width:40px;height:40px;border-radius:12px;font-size:21px}.ch-title .sparte-emoji.is-pair{width:auto;padding:0 10px;font-size:18px}
 .sparte-badge small{font-size:11px;font-weight:500;color:#a5a3c4}
 .sparte-badge small::before{content:"· "}
 .sparte-badge.is-standard{border-color:rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#c9c6ee}
@@ -2898,6 +2895,12 @@ button.cl-folder{font-family:inherit} /* Größe und Gewicht wie die Ordner (13p
 .cl-folders.is-dragging .cl-folder *{pointer-events:none} /* sonst flackert die Ablage über Symbol und Zahl */
 .cl-folder.is-over{border-style:solid!important;border-color:#a79cff!important;background:rgba(130,120,255,.32)!important;color:#fff}
 .cl-folder-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+/* Kampagnen zusammenführen */
+.merge-rules{margin:0;padding:0 0 0 18px;list-style:disc;font-size:12.5px;line-height:1.5;color:#b3b0d0}
+.merge-rules li+li{margin-top:2px}
+.merge-quick{display:flex;flex-wrap:wrap;gap:4px}
+.merge-quick .cl-folder-act{height:30px;padding:0 10px;font-size:12.5px;border-color:rgba(255,255,255,.1)}
+.merge-rows{max-height:min(44vh,360px);overflow:auto}
 .cl-folder-act{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:10px;border:1px solid transparent;background:transparent;color:#a5a1d7;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;transition:background-color .15s,color .15s,border-color .15s}
 .cl-folder-act svg{width:15px;height:15px}
 .cl-folder-act:hover{background:rgba(255,255,255,.06);color:#f1f0ff}
@@ -3380,18 +3383,33 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cd-filters.is-kind button{display:inline-flex;align-items:center;gap:5px}.cd-filters.is-kind button svg{width:12px;height:12px}
 .inbox-sent-sparte{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:0 7px;border-radius:999px;background:rgba(129,120,255,.16);color:#c4bfff;font-size:10.5px;font-weight:700;line-height:1.7;white-space:nowrap}
 /* Posteingang: was wir dem Kontakt davor geschickt haben – über der Antwort */
-.inbox-prior{margin:0 0 12px;padding:10px 12px;border-radius:12px;border:1px solid rgba(129,120,255,.22);background:rgba(129,120,255,.06)}
-.inbox-prior-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px;font-size:12px;color:#c4bfff}
-.inbox-prior-head strong{font-weight:700;color:#e5e1fd}
-.inbox-prior-head small{color:#8a87a8}.inbox-prior-head small button{padding:0;border:0;background:none;color:#c4bfff;font-size:11.5px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
-.inbox-prior-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
-.inbox-prior-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
-.inbox-prior-row strong{font-size:13px;color:#f1efff;overflow-wrap:anywhere}
-.inbox-prior-row small{font-size:11.5px;color:#8a87a8}
-.inbox-prior-open{margin-left:auto;padding:2px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#cbd5e1;font-size:11px;cursor:pointer}
-.inbox-prior-open:hover{border-color:rgba(129,120,255,.5);color:#e2e8f0}
-.inbox-prior-excerpt{margin:4px 0 0;font-size:12.5px;line-height:1.45;color:#a5a3c4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.inbox-prior .sent-preview{margin-top:8px}
+/* Schriftwechsel im Posteingang: unsere E-Mails komplett (wie verschickt), danach die Antwort */
+.thread{max-width:760px;margin:0 auto 4px;padding:0 24px}
+.thread-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:10px 0 8px;font-size:12px;color:#c4bfff}
+.thread-head strong{font-weight:700;color:#e5e1fd}.thread-head small{color:#8a87a8}
+.thread-mail{border:1px solid rgba(255,255,255,.09);border-radius:14px;background:rgba(255,255,255,.025);overflow:hidden}
+.thread-mail+.thread-mail{margin-top:8px}
+.thread-mail.is-reply{max-width:760px;margin:10px auto 0;padding:0 24px;border:0;border-radius:0;background:none;overflow:visible}
+.thread-mail.is-reply .thread-mail-head{padding:8px 0 0;cursor:default}
+.thread-mail-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.thread-mail-head:hover{background:rgba(255,255,255,.03)}
+.thread-avatar{width:34px;height:34px;font-size:12px}
+.inbox-avatar.av-us{background:linear-gradient(135deg,#8278ff,#5a4fd6)}
+.thread-mail-who{display:flex;flex-direction:column;min-width:0;flex:1}
+.thread-mail-who strong{font-size:13.5px;font-weight:700;color:#f1efff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-mail-who strong small{margin-left:4px;font-size:12px;font-weight:500;color:#8a87a8}
+.thread-mail-who>small{font-size:12px;color:#a5a3c4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-mail-head time{font-size:12px;color:#8a87a8;white-space:nowrap}
+.thread-chevron{width:16px;height:16px;color:#8a87a8;transition:transform .15s}
+.thread-mail.is-closed .thread-chevron{transform:rotate(-90deg)}
+.thread-mail-body{padding:0 14px 14px}
+.thread-subject{margin:0 0 8px;font-size:14px;font-weight:650;color:#e5e1fd}
+.thread-note{display:block;margin:0 0 8px;font-size:11.5px;color:#a5a3c4}
+.thread-note.is-src-ki{color:#c4bfff}.thread-note.is-src-vorlage,.thread-note.is-src-entwurf-vorlage{color:#fcd34d}.thread-note.is-src-hand{color:#6ee7b7}
+.thread-frame{display:block;width:100%;border:0;border-radius:10px;background:#fff}
+.thread-loading{margin:0;padding:12px 0;font-size:13px;color:#8a87a8}.thread-loading.is-error{color:#fda4af}
+.thread-collapsed{margin:0;padding:0 14px 12px 58px;font-size:12.5px;color:#8a87a8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:640px){.thread{padding:0 12px}.thread-mail-head{flex-wrap:wrap;padding:10px 12px}.thread-mail-who{flex:1 1 60%}.thread-collapsed{padding-left:12px}.thread-mail.is-reply{padding:0 12px}}
 .rv-editor-kind{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:2px 0}
 .rv-editor-kind .rv-kind{font-size:11px}
 .rv-editor-kind small{font-size:11.5px;color:#a5a3c4}

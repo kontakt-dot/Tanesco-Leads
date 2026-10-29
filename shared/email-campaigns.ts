@@ -422,6 +422,30 @@ export function canEnroll(previous: Array<{ status: string; repliedAt?: Date | s
 }
 
 /** Listen einer Zielgruppe „Liste“: neue Form `listNames` (mehrere), ältere Kampagnen haben nur `listName`. */
+/* ── Kampagnen zusammenführen: Schritte zweier Abläufe einander zuordnen ── */
+/** Schritte in der Reihenfolge des Ablaufs (vom Start aus, Verzweigungen erst „ja“ dann „nein“); nicht erreichbare Schritte hinten dran. */
+export function flowOrder(tree: EmailTree): EmailNode[] {
+  const seen = new Set<string>(); const out: EmailNode[] = [];
+  const visit = (id: string | null | undefined) => { if (!id || seen.has(id)) return; const node = tree.nodes.find((item) => item.id === id); if (!node) return; seen.add(id); out.push(node); if (node.type === "send" || node.type === "wait") visit(node.next); else if (node.type === "condition") { visit(node.yes); visit(node.no); } };
+  visit(tree.start); for (const node of tree.nodes) if (!seen.has(node.id)) { seen.add(node.id); out.push(node); }
+  return out;
+}
+/**
+ * Ordnet einen Schritt der Quell-Kampagne dem passenden Schritt der Ziel-Kampagne zu: gleiche ID und gleiche Art → direkt
+ * (Kopien und Kampagnen aus derselben Vorlage haben dieselben IDs); sonst der n-te Schritt gleicher Art in der Reihenfolge
+ * des Ablaufs („2. E-Mail“ bleibt „2. E-Mail“). null = im Ziel gibt es diesen Schritt nicht.
+ */
+export function nodeMapper(source: EmailTree, target: EmailTree): (id: string | null | undefined) => string | null {
+  const from = flowOrder(source); const to = flowOrder(target);
+  return (id) => {
+    if (!id) return null;
+    const src = source.nodes.find((item) => item.id === id); const direct = target.nodes.find((item) => item.id === id);
+    if (direct && (!src || direct.type === src.type)) return direct.id;
+    if (!src) return null;
+    const index = from.filter((item) => item.type === src.type).findIndex((item) => item.id === id); const same = to.filter((item) => item.type === src.type);
+    return same[index]?.id ?? null;
+  };
+}
 export function audienceLists(audience: { source?: string; listName?: string | null; listNames?: string[] | null } | null | undefined): string[] {
   if (!audience || audience.source !== "liste") return [];
   const names = [...(Array.isArray(audience.listNames) ? audience.listNames : []), ...(audience.listName ? [audience.listName] : [])].map((name) => String(name ?? "").trim()).filter(Boolean);

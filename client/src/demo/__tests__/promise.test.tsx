@@ -105,18 +105,23 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
 
-  it("Posteingang: Kasten „Davor von uns“ mit Follow-up/Erst-E-Mail, Auszug und versprochenen Test-Leads", async () => {
+  it("Posteingang: Schriftwechsel wie im Postfach – unsere E-Mails komplett (älteste zuerst), dann die Antwort; jede E-Mail zuklappbar", async () => {
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=posteingang");
     const view = mount(); await settle(300); await settle(300);
     const hansen = Array.from(view.container.querySelectorAll<HTMLButtonElement>("button.inbox-item")).find((node) => node.textContent?.includes("Hansen"))!; expect(hansen).toBeTruthy();
-    await act(async () => { fireEvent.click(hansen); }); await settle(300);
-    const prior = view.container.querySelector(".inbox-prior"); expect(prior).toBeTruthy();
-    const kinds = () => Array.from(prior!.querySelectorAll(".rv-kind")).map((node) => node.textContent?.trim()); expect(kinds()).toEqual(["Follow-up 2"]); // zuerst nur die letzte E-Mail
-    expect(prior!.textContent).toContain("2 E-Mails"); expect(prior!.textContent).toContain("20 Test-Leads versprochen"); expect(prior!.textContent).toContain("Kurze Frage zu Ihrem Bedarf, Peter"); expect(prior!.textContent).toContain("Sehr geehrter Herr Hansen");
-    await act(async () => { fireEvent.click(Array.from(prior!.querySelectorAll("button")).find((node) => /alle zeigen/.test(node.textContent ?? ""))!); }); await settle(50);
-    expect(kinds()).toEqual(["Follow-up 2", "Erst-E-Mail"]); expect(prior!.textContent).toContain("Mehr Anfragen für Hansen Bedachungen"); // neueste zuerst
-    expect(Array.from(prior!.querySelectorAll("button")).filter((node) => /Ansehen/.test(node.textContent ?? "")).length).toBe(2);
-    expect(prior!.compareDocumentPosition(view.container.querySelector(".inbox-body")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // der Kasten steht über der Antwort
+    await act(async () => { fireEvent.click(hansen); }); await settle(400); await settle(300);
+    const thread = view.container.querySelector(".thread"); expect(thread).toBeTruthy(); expect(thread!.textContent).toContain("2 E-Mails an info@hansen-bedachungen.de");
+    const mails = Array.from(thread!.querySelectorAll<HTMLElement>(".thread-mail")); expect(mails.length).toBe(2);
+    expect(mails.map((mail) => mail.querySelector(".rv-kind")?.textContent?.trim())).toEqual(["Erst-E-Mail", "Follow-up 2"]); // älteste zuerst, wie ein Postfach
+    expect(mails[0].querySelector(".thread-mail-who strong")?.textContent).toContain("Tanesco Digital"); expect(mails[0].querySelector(".thread-mail-who > small")?.textContent).toContain("an info@hansen-bedachungen.de"); expect(mails[0].querySelector(".thread-mail-who > small")?.textContent).toContain("20 Test-Leads versprochen");
+    expect(mails[0].querySelector(".thread-subject")?.textContent).toBe("Mehr Anfragen für Hansen Bedachungen – ohne Risiko"); expect(mails[1].querySelector(".thread-subject")?.textContent).toBe("Kurze Frage zu Ihrem Bedarf, Peter");
+    const frame = mails[0].querySelector<HTMLIFrameElement>("iframe.thread-frame"); expect(frame).toBeTruthy(); expect(frame!.getAttribute("srcdoc")).toContain("Hansen"); expect(frame!.getAttribute("srcdoc")).toContain("20 Test-Leads"); // die ganze E-Mail, wie sie rausging
+    // danach die Antwort – mit Kopf wie im Postfach
+    const reply = view.container.querySelector(".thread-mail.is-reply"); expect(reply).toBeTruthy(); expect(reply!.textContent).toContain("Peter Hansen"); expect(reply!.textContent).toContain("Antwort an uns");
+    expect(thread!.compareDocumentPosition(view.container.querySelector(".inbox-body")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // zuklappen: nur noch eine Zeile
+    await act(async () => { fireEvent.click(mails[0].querySelector<HTMLButtonElement>(".thread-mail-head")!); }); await settle(50);
+    expect(mails[0].classList.contains("is-closed")).toBe(true); expect(mails[0].querySelector("iframe")).toBeNull(); expect(mails[0].querySelector(".thread-collapsed")?.textContent).toContain("Mehr Anfragen für Hansen Bedachungen");
   });
 
   it("Gesendet: Auswahl nach Lead-Kategorie mit Zähler, jede Zeile zeigt ihre Kategorie, Auswahl filtert", async () => {
@@ -132,13 +137,13 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
     expect(tags().length).toBeGreaterThan(0); expect(tags().every((text) => text === "♨️ Wärmepumpe")).toBe(true);
   });
 
-  it("Kampagnen-Karte: Emoji ganz links; eine Liste direkt lesbar, ab zwei Listen ein Klapp-Menü mit allen Namen und Zahlen", async () => {
+  it("Kampagnen-Karte: Kategorie-Schild ganz links; eine Liste direkt lesbar, ab zwei Listen ein Klapp-Menü mit allen Namen und Zahlen", async () => {
     const campaign = getStore().tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!;
     campaign.audience = { source: "liste", listNames: ["Dachdecker Hessen", "PV_WP_Aroundhome_Vielkaeufer_ab_100_Leads_Monat", "Elektriker NRW"] } as never;
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const view = mount(); await settle(300); await settle(300);
     const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Dachdecker Hessen – Erstkontakt"))!;
-    expect(card.querySelector(".cl-title > :first-child")?.classList.contains("sparte-emoji")).toBe(true); expect(card.querySelector(".cl-title .sparte-emoji")?.textContent).toBe("☀️");
+    expect(card.querySelector(".cl-title > :first-child")?.classList.contains("sparte-badge")).toBe(true); expect(card.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); // ganze Kategorie links vom Namen
     const lists = card.querySelector(".cl-lists"); expect(lists).toBeTruthy(); expect(lists!.getAttribute("aria-label")).toBe("3 Listen in dieser Kampagne");
     expect(lists!.querySelectorAll(".cl-list-chip").length).toBe(1); // nur der Knopf – keine abgeschnittenen Namen auf der Karte
     const trigger = lists!.querySelector<HTMLButtonElement>(".cl-list-chip.is-menu")!; expect(trigger.textContent).toContain("📋"); expect(trigger.textContent).toContain("3 Listen"); expect(trigger.querySelector("small")?.textContent).toMatch(/^\d+$/); // Summe mit E-Mail
@@ -176,5 +181,78 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
     await act(async () => { fireEvent.click(view.container.querySelector<HTMLButtonElement>(".rv-list .rv-item")!); }); await settle(300);
     const head = view.container.querySelector(".rv-editor-kind"); expect(head).toBeTruthy(); expect(head!.textContent).toContain("Follow-up"); expect(head!.textContent).toContain("davor von uns"); expect(head!.textContent).toContain("Persönlich für Versprechen Wärme"); expect(head!.textContent).toContain("20 Test-Leads");
     expect(view.container.querySelector<HTMLTextAreaElement>(".rv-editor textarea")?.value).toContain("20 Test-Leads"); // der Entwurf selbst nennt wieder 20
+  });
+});
+
+describe("Kampagnen zusammenführen (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  const sendWindow = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" };
+  async function setup() {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    await call("leadops.importColdList", { listName: "Ziel-Liste", rows: [{ firstName: "Zoe", lastName: "Ziel", company: "Ziel GmbH", email: "zoe@merge-demo.example" }] });
+    await call("leadops.importColdList", { listName: "Quell-Liste", rows: [{ firstName: "Bert", lastName: "Bereit", company: "Bereit GmbH", email: "bert@merge-demo.example" }, { firstName: "Nils", lastName: "Neu", company: "Neu GmbH", email: "nils@merge-demo.example" }] });
+    const base = { id: null, fromName: "Thomas Kurzbach", fromEmail: "kontakt@tanescodigital.de", replyTo: null, design: {}, sendWindow, abSplit: 50, tree, kiModus: "freigabe" };
+    const target = await call("leadops.saveEmailCampaign", { ...base, name: "Oberste – Drittanbieter KI", audience: { source: "liste", listName: "Ziel-Liste" }, kiAnsatz: "drittanbieter" });
+    const source = await call("leadops.saveEmailCampaign", { ...base, name: "Quelle – frei", audience: { source: "liste", listName: "Quell-Liste" }, kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: target.id }); await call("leadops.startEmailCampaign", { id: source.id }); await call("leadops.runEmailCampaigns");
+    const rows = (campaignId: number) => getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === campaignId).sort((a, b) => a.id - b.id);
+    const { insert } = await import("../store"); insert(getStore(), "emailCampaignRecipients", { tenantId: rows(target.id)[0].tenantId, campaignId: source.id, leadId: null, email: "zoe@merge-demo.example", name: "Zoe Ziel", company: "Ziel GmbH", token: `t${Date.now()}`, nodeId: "m1", nextActionAt: new Date(), status: "wartet", sentCount: 0, lastSentAt: null, openedAt: null, clickedAt: null, repliedAt: null, variant: null, clickedUrls: [], bouncedAt: null, lastError: null, createdAt: new Date() }); // Zoe steckt in beiden
+    const bert = rows(source.id).find((row) => row.email === "bert@merge-demo.example")!;
+    await call("leadops.saveCampaignDraft", { recipientId: bert.id, subject: "Erste an Bereit GmbH", text: "Sehr geehrter Herr Bereit,\n\nzum Kennenlernen: 20 Test-Leads kostenlos.\n\nVielen Dank", approve: true }); await call("leadops.runEmailCampaigns");
+    expect(bert.sentCount).toBe(1); expect(bert.nodeId).toBe("w1");
+    return { target, source, rows, bert };
+  }
+
+  it("Kontakte kommen mit Stand und Verlauf ins Ziel, Doppelte nur einmal, Quelle ins Archiv – Wartende laufen im Ziel weiter (mit der versprochenen Zahl)", async () => {
+    const { target, source, rows, bert } = await setup();
+    await expect(call("leadops.mergeEmailCampaigns", { targetId: target.id, sourceIds: [target.id] })).rejects.toThrow(/mindestens eine andere/);
+    const result = await call("leadops.mergeEmailCampaigns", { targetId: target.id, sourceIds: [source.id] });
+    expect(result).toMatchObject({ targetId: target.id, moved: 2, duplicates: 1, replaced: 0, finished: 0, sources: [{ id: source.id, name: "Quelle – frei", moved: 2, duplicates: 1 }] }); // Zoe war schon im Ziel (beide ohne Versand → der Eintrag im Ziel bleibt)
+    expect(rows(target.id).map((row) => row.email).sort()).toEqual(["bert@merge-demo.example", "nils@merge-demo.example", "zoe@merge-demo.example"]); expect(rows(source.id)).toEqual([]);
+    expect(getStore().tables.emailCampaignRecipients.find((row) => row.id === bert.id)).toMatchObject({ campaignId: target.id, nodeId: "w1", sentCount: 1 });
+    expect(getStore().tables.emailCampaignEvents.filter((event) => event.recipientId === bert.id).every((event) => event.campaignId === target.id)).toBe(true);
+    const archived = getStore().tables.emailCampaigns.find((row) => row.id === source.id)!; expect(archived.status).toBe("beendet"); expect(archived.archivedAt).toBeTruthy();
+    const { audienceLists } = await import("../../../../shared/email-campaigns"); expect(audienceLists(getStore().tables.emailCampaigns.find((row) => row.id === target.id)!.audience as never)).toEqual(["Ziel-Liste", "Quell-Liste"]);
+    expect(getStore().tables.activityLog.some((row) => row.title === "Kampagne „Quelle – frei“ in „Oberste – Drittanbieter KI“ zusammengeführt")).toBe(true);
+    const detail = await call("leadops.getEmailCampaign", { id: target.id }); expect(detail.stats).toMatchObject({ total: 3, sent: 1 });
+    // Bert wartet im Ziel weiter: Wartezeit um → Follow-up-Entwurf im Ansatz des Ziels, wieder mit 20 Test-Leads
+    getStore().tables.emailCampaignRecipients.find((row) => row.id === bert.id)!.nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns");
+    const after = getStore().tables.emailCampaignRecipients.find((row) => row.id === bert.id)!; expect(after).toMatchObject({ campaignId: target.id, nodeId: "m2", draftNodeId: "m2", draftState: "entwurf", draftApproach: "drittanbieter" }); expect(String(after.draftText)).toContain("20 Test-Leads");
+    const queue = await call("leadops.campaignReviewQueue", { campaignId: target.id }); expect(queue.items.find((item: any) => item.id === bert.id)).toMatchObject({ step: 2, followUp: true, testLeads: 20 });
+  });
+
+  it("Oberfläche: „Kampagnen zusammenführen …“ im Karten-Menü öffnet die Auswahl, Bestätigung führt zusammen, die Quelle verschwindet aus der Übersicht", async () => {
+    const { target, source } = await setup();
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.querySelector(".cl-name")?.textContent?.includes("Oberste – Drittanbieter KI"))!; expect(card).toBeTruthy();
+    const more = card.querySelector<HTMLButtonElement>('button[aria-label="Weitere Aktionen"]')!; await act(async () => { fireEvent.keyDown(more, { key: "ArrowDown" }); }); await settle(150);
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((node) => /Kampagnen zusammenführen/.test(node.textContent ?? ""))!; expect(item).toBeTruthy();
+    await act(async () => { fireEvent.click(item); }); await settle(300);
+    const dialog = document.querySelector('[role="dialog"]'); expect(dialog).toBeTruthy(); expect(dialog!.textContent).toContain("Kampagnen in „Oberste – Drittanbieter KI“ zusammenführen"); expect(dialog!.textContent).toContain("Jeder macht am gleichen Schritt weiter");
+    const rowsIn = Array.from(dialog!.querySelectorAll<HTMLElement>(".merge-rows .list-picker-row")); expect(rowsIn.some((row) => row.textContent?.includes("Quelle – frei"))).toBe(true); expect(rowsIn.some((row) => row.textContent?.includes("Oberste – Drittanbieter KI"))).toBe(false); // das Ziel selbst steht nicht zur Wahl
+    const sourceRow = rowsIn.find((row) => row.textContent?.includes("Quelle – frei"))!; expect(sourceRow.textContent).toContain("3 Kontakte · 1 angeschrieben");
+    await act(async () => { fireEvent.click(sourceRow.querySelector<HTMLButtonElement>(".list-picker-main")!); }); await settle(50);
+    expect(dialog!.textContent).toContain("1 Kampagne · 3 Kontakte");
+    await act(async () => { fireEvent.click(Array.from(dialog!.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.trim() === "Zusammenführen")!); }); await settle(100);
+    expect(document.querySelector(".app-confirm-text")?.textContent).toContain("3 Kontakte aus „Quelle – frei“ in „Oberste – Drittanbieter KI“ übernehmen?");
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400); await settle(300);
+    expect(getStore().tables.emailCampaigns.find((row) => row.id === source.id)?.archivedAt).toBeTruthy(); expect(getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === target.id).length).toBe(3);
+    expect(Array.from(view.container.querySelectorAll(".cl-card .cl-name")).some((node) => node.textContent?.includes("Quelle – frei"))).toBe(false); // im Archiv, nicht mehr in der Übersicht
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+describe("Vertriebspipeline: Lead-Kategorien (Chat-Build)", () => {
+  beforeAll(() => resetStore());
+  it("liefert alle Kategorien im Ausschnitt mit Anzahl und filtert auf dem Server – unabhängig von der Kartenzahl je Spalte", async () => {
+    const board = await call("leadops.pipelineOverview", { source: "alle" });
+    expect(board.categories.length).toBeGreaterThanOrEqual(2); const pv = board.categories.find((item: any) => item.name === "Photovoltaik"); expect(pv).toBeTruthy(); expect(pv.count).toBeGreaterThan(0);
+    const other = board.categories.find((item: any) => item.name !== "Photovoltaik"); expect(other.count).toBeGreaterThan(0);
+    const only = await call("leadops.pipelineOverview", { source: "alle", categoryId: other.id, limitPerStage: 1 });
+    expect(only.totals.leads).toBe(other.count); expect(only.stages.flatMap((stage: any) => stage.leads).every((lead: any) => lead.categoryId === other.id)).toBe(true);
+    expect(only.categories.find((item: any) => item.id === other.id).count).toBe(other.count); expect(only.categories.some((item: any) => item.id === pv.id)).toBe(true); // Auswahl bleibt vollständig
   });
 });

@@ -12,7 +12,7 @@
 import express from "express";
 import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
@@ -3467,6 +3467,104 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, paul.id)); await owner.leadops.runEmailCampaigns();
     paul = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, paul.id)))[0]; expect(paul.sentCount).toBe(2);
     const paulSecond = (await sentOf(paul.id))[1]; expect(paulSecond.bodySource).toBe("vorlage"); expect(paulSecond.body).toContain("20 Test-Leads"); expect(paulSecond.body).not.toMatch(/\b10 Test-Leads/); expect(paulSecond.subject).not.toMatch(/\b10 Test-Leads/);
+    // Vertriebspipeline: alle Kategorien im Ausschnitt mit Anzahl (nicht nur die der ersten Karten), Auswahl filtert auf dem Server
+    const board = await owner.leadops.pipelineOverview({ source: "email" }) as { categories: Array<{ id: number; name: string; count: number }>; stages: Array<{ leads: Array<{ categoryId: number | null }> }>; totals: { leads: number } };
+    expect(board.categories.find((item) => item.id === S.wp!.id)).toMatchObject({ name: S.wp!.name }); expect(board.categories.find((item) => item.id === S.pv!.id)).toMatchObject({ name: S.pv!.name }); expect(board.categories.reduce((sum, item) => sum + item.count, 0)).toBeLessThanOrEqual(board.totals.leads);
+    const onlyWp = await owner.leadops.pipelineOverview({ source: "email", categoryId: S.wp!.id }) as typeof board; expect(onlyWp.totals.leads).toBe(board.categories.find((item) => item.id === S.wp!.id)!.count); expect(onlyWp.stages.flatMap((stage) => stage.leads).every((lead) => lead.categoryId === S.wp!.id)).toBe(true); expect(onlyWp.categories.map((item) => item.id)).toContain(S.pv!.id); // die Auswahl bleibt vollständig
+    const tiny = await owner.leadops.pipelineOverview({ source: "email", categoryId: S.wp!.id, limitPerStage: 1 }) as typeof board; expect(tiny.categories.find((item) => item.id === S.wp!.id)?.count).toBe(onlyWp.totals.leads); // Zähler unabhängig von der Kartenzahl je Spalte
+    // Einmal nach dem Start: Interessenten aus dem Posteingang, die durch den alten Fehler die erste Kategorie bekamen → Kategorie ihrer Kampagne; neue und bewusst umgestellte bleiben
+    const { fixInboxLeadCategories, INBOX_CATEGORY_FIX_AT } = await import("./inbox");
+    const firstCategory = (await owner.leadops.listCategories()).filter((row) => row.status === "aktiv").sort((x, y) => x.id - y.id)[0]; expect(firstCategory.id).not.toBe(S.wp!.id);
+    await db.update(leads).set({ categoryId: firstCategory.id }).where(eq(leads.id, veraLead.id)); await db.update(pipelineEvents).set({ createdAt: new Date(INBOX_CATEGORY_FIX_AT.getTime() - 86_400_000) }).where(and(eq(pipelineEvents.leadId, veraLead.id), like(pipelineEvents.note, "Aus Posteingang%"))); // so sah Vera vor der Korrektur aus (bestehender Kontakt, aus dem Posteingang übernommen)
+    const fresh = (await db.select().from(leads).where(eq(leads.publicId, otherLead.publicId)))[0]; await db.update(leads).set({ categoryId: firstCategory.id }).where(eq(leads.id, fresh.id)); // nach der Korrektur übernommen → bleibt
+    expect(await fixInboxLeadCategories(db)).toBeGreaterThanOrEqual(1);
+    expect((await db.select().from(leads).where(eq(leads.id, veraLead.id)))[0].categoryId).toBe(S.wp!.id); expect((await db.select().from(leads).where(eq(leads.id, fresh.id)))[0].categoryId).toBe(firstCategory.id);
+    expect((await owner.leadops.pipelineHistory({ publicId: veraLead.publicId })).some((event) => /Kategorie an die Kampagne/.test(event.note ?? ""))).toBe(true);
+    expect(await fixInboxLeadCategories(db)).toBe(0); // zweites Mal: nichts zu tun
+  }, 60000);
+
+  it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
+    const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+    const sameTree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const otherTree = { start: "x1", nodes: [{ id: "x1", type: "send" as const, label: "Start", subject: "Start für {{firma}}", blocks: starterBlocks("kaltakquise"), next: "xw" }, { id: "xw", type: "wait" as const, hours: 1, next: "x2" }, { id: "x2", type: "send" as const, label: "Nachfass", subject: "Nachfass {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    for (const [name, rows] of [["Merge-Ziel", [["Zoe", "Ziel", "zoe@merge-e2e.example"], ["Dup", "Doppelt", "dup@merge-e2e.example"]]], ["Merge-A", [["Anna", "Alt", "anna@merge-e2e.example"], ["Bert", "Bereit", "bert@merge-e2e.example"], ["Carl", "Entwurf", "carl@merge-e2e.example"], ["Dup", "Doppelt", "dup@merge-e2e.example"]]], ["Merge-B", [["Dora", "Wartet", "dora@merge-e2e.example"], ["Erik", "Fertig", "erik@merge-e2e.example"], ["Anna", "Alt", "anna@merge-e2e.example"]]]] as const) await owner.leadops.importColdList({ listName: name, toPipeline: false, rows: rows.map(([firstName, lastName, email]) => ({ firstName, lastName, company: `${lastName} GmbH`, email })) });
+    const mk = (name: string, listName: string, tree: typeof sameTree, kiAnsatz: "frei" | "drittanbieter") => owner.leadops.saveEmailCampaign({ name, fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName }, tree, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz, sendWindow: window } as never);
+    const target = await mk("Oberste – Drittanbieter KI", "Merge-Ziel", sameTree, "drittanbieter"); const a = await mk("Quelle A", "Merge-A", sameTree, "frei"); const b = await mk("Quelle B", "Merge-B", otherTree, "frei");
+    await db.update(emailCampaigns).set({ status: "aktiv", startedAt: new Date() }).where(inArray(emailCampaigns.id, [target.id, a.id, b.id]));
+    const past = new Date(Date.now() - 3 * 86_400_000); const future = new Date(Date.now() + 3_600_000);
+    const addRecipient = async (campaignId: number, email: string, name: string, state: Partial<typeof emailCampaignRecipients.$inferInsert>) => Number((await db.insert(emailCampaignRecipients).values({ tenantId: S.tenantId, campaignId, leadId: null, email, name, company: `${name.split(" ")[1]} GmbH`, token: `mg${Math.random().toString(36).slice(2, 14)}${Date.now().toString(36)}`.slice(0, 40), nodeId: null, nextActionAt: null, status: "wartet", sentCount: 0, ...state }))[0].insertId);
+    const sentEvent = (campaignId: number, recipientId: number, nodeId: string, subject: string, body: string, at: Date) => db.insert(emailCampaignEvents).values({ tenantId: S.tenantId, campaignId, recipientId, nodeId, kind: "gesendet", subject, note: `E-Mail „${subject}“ gesendet`, body, bodySource: "vorlage", createdAt: at });
+    const waitEvent = (campaignId: number, recipientId: number, nodeId: string, at: Date) => db.insert(emailCampaignEvents).values({ tenantId: S.tenantId, campaignId, recipientId, nodeId, kind: "gewartet", subject: null, note: "Wartet 1 Stunden", createdAt: at });
+    // Ziel: Zoe frisch (Entwurf für m1), Dup frisch ohne Versand
+    const zoe = await addRecipient(target.id, "zoe@merge-e2e.example", "Zoe Ziel", { nodeId: "m1", nextActionAt: past, draftNodeId: "m1", draftState: "entwurf", draftSubject: "Erste an Ziel GmbH", draftText: "Sehr geehrte Frau Ziel,\n\nein Entwurf im Ziel.\n\nVielen Dank", draftApproach: "drittanbieter", draftSource: "hand" });
+    const dupTarget = await addRecipient(target.id, "dup@merge-e2e.example", "Dup Doppelt", { nodeId: "m1", nextActionAt: past });
+    // Quelle A: Anna fertig (2 Mails), Bert wartet an w1 (erste Mail mit 20 Test-Leads), Carl an m2 mit Entwurf im freien Ansatz, Dup mit einer gesendeten Mail (weiter als im Ziel)
+    const anna = await addRecipient(a.id, "anna@merge-e2e.example", "Anna Alt", { nodeId: null, status: "fertig", sentCount: 2, lastSentAt: past, openedAt: past, clickedAt: past });
+    await sentEvent(a.id, anna, "m1", "Erste an Alt GmbH", "Sehr geehrte Frau Alt,\n\nerste Mail mit 20 Test-Leads kostenlos.\n\nVielen Dank", new Date(past.getTime() - 86_400_000)); await waitEvent(a.id, anna, "w1", new Date(past.getTime() - 86_400_000 + 1000)); await sentEvent(a.id, anna, "m2", "Nachfrage Alt GmbH", "Sehr geehrte Frau Alt,\n\nkurz nachgefragt: 20 Test-Leads kostenlos.\n\nVielen Dank", past);
+    const bert = await addRecipient(a.id, "bert@merge-e2e.example", "Bert Bereit", { nodeId: "w1", nextActionAt: future, sentCount: 1, lastSentAt: past, openedAt: past });
+    await sentEvent(a.id, bert, "m1", "Erste an Bereit GmbH", "Sehr geehrter Herr Bereit,\n\nzum Kennenlernen: 20 Test-Leads kostenlos.\n\nVielen Dank", past); await waitEvent(a.id, bert, "w1", new Date(past.getTime() + 1000));
+    const carl = await addRecipient(a.id, "carl@merge-e2e.example", "Carl Entwurf", { nodeId: "m2", nextActionAt: past, sentCount: 1, lastSentAt: past, draftNodeId: "m2", draftState: "entwurf", draftSubject: "Nachfrage Entwurf GmbH", draftText: "Sehr geehrter Herr Entwurf,\n\nfreier Entwurf.\n\nVielen Dank", draftApproach: "frei", draftSource: "vorlage", draftOptions: [{ key: "frei", label: "Freier Vorschlag", subject: "Nachfrage Entwurf GmbH", text: "Sehr geehrter Herr Entwurf,\n\nfreier Entwurf.\n\nVielen Dank", source: "vorlage" }] });
+    await sentEvent(a.id, carl, "m1", "Erste an Entwurf GmbH", "Sehr geehrter Herr Entwurf,\n\nerste Mail mit 10 Test-Leads kostenlos.\n\nVielen Dank", past); await waitEvent(a.id, carl, "w1", new Date(past.getTime() + 1000));
+    const dupA = await addRecipient(a.id, "dup@merge-e2e.example", "Dup Doppelt", { nodeId: "w1", nextActionAt: future, sentCount: 1, lastSentAt: past });
+    await sentEvent(a.id, dupA, "m1", "Erste an Doppelt GmbH", "Sehr geehrte Damen und Herren,\n\nerste Mail mit 20 Test-Leads kostenlos.\n\nVielen Dank", past); await waitEvent(a.id, dupA, "w1", new Date(past.getTime() + 1000));
+    // Quelle B (anderer Ablauf, andere Schritt-IDs): Dora wartet an „xw“, Erik fertig, Anna weniger weit als die Anna aus A
+    const dora = await addRecipient(b.id, "dora@merge-e2e.example", "Dora Wartet", { nodeId: "xw", nextActionAt: future, sentCount: 1, lastSentAt: past });
+    await sentEvent(b.id, dora, "x1", "Start für Wartet GmbH", "Sehr geehrte Frau Wartet,\n\nStart mit 20 Test-Leads kostenlos.\n\nVielen Dank", past); await waitEvent(b.id, dora, "xw", new Date(past.getTime() + 1000));
+    const erik = await addRecipient(b.id, "erik@merge-e2e.example", "Erik Fertig", { nodeId: null, status: "fertig", sentCount: 2, lastSentAt: past, repliedAt: past });
+    await sentEvent(b.id, erik, "x1", "Start für Fertig GmbH", "Sehr geehrter Herr Fertig,\n\nStart.\n\nVielen Dank", new Date(past.getTime() - 1000)); await sentEvent(b.id, erik, "x2", "Nachfass Fertig GmbH", "Sehr geehrter Herr Fertig,\n\nNachfass.\n\nVielen Dank", past);
+    const annaB = await addRecipient(b.id, "anna@merge-e2e.example", "Anna Alt", { nodeId: "xw", nextActionAt: future, sentCount: 1, lastSentAt: past });
+    await sentEvent(b.id, annaB, "x1", "Start für Alt GmbH", "Sehr geehrte Frau Alt,\n\nStart aus B.\n\nVielen Dank", past);
+    // Pipeline-Karte und Posteingang hängen an Quelle A
+    const bertLead = (await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, "bert@merge-e2e.example"))))[0]; expect(bertLead).toBeTruthy();
+    await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${a.id}`, adCampaignName: "Quelle A", pipelineStage: "kontaktiert", inPipeline: true }).where(eq(leads.id, bertLead.id)); await db.update(emailCampaignRecipients).set({ leadId: bertLead.id }).where(eq(emailCampaignRecipients.id, bert));
+    const reply = await owner.leadops.storeInboxMessage({ fromEmail: "bert@merge-e2e.example", fromName: "Bert Bereit", subject: "Re: Erste an Bereit GmbH", bodyText: "Klingt gut.", receivedAt: new Date() });
+    expect((await owner.leadops.listInbox({ filter: "alle" })).items.find((item) => item.id === reply.id)?.campaignName).toBe("Quelle A");
+    await db.update(emailCampaignRecipients).set({ status: "wartet", nodeId: "w1", nextActionAt: future, repliedAt: null }).where(eq(emailCampaignRecipients.id, bert)); await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, bert), eq(emailCampaignEvents.kind, "beendet"))); // die Antwort hat Bert gestoppt – für den Test wartet er weiter
+    // Fehler: Vorlage als Ziel, keine andere Kampagne
+    await expect(owner.leadops.mergeEmailCampaigns({ targetId: target.id, sourceIds: [target.id] })).rejects.toThrow("mindestens eine andere");
+    const template = await owner.leadops.duplicateEmailCampaign({ id: target.id, asTemplate: true, name: "Vorlage Merge" }); await expect(owner.leadops.mergeEmailCampaigns({ targetId: template.id, sourceIds: [a.id] })).rejects.toThrow("Vorlage");
+    // Zusammenführen
+    const result = await owner.leadops.mergeEmailCampaigns({ targetId: target.id, sourceIds: [a.id, b.id] });
+    expect(result).toMatchObject({ targetId: target.id, moved: 5, replaced: 1, duplicates: 1, finished: 0 }); // Anna, Bert, Carl, Dora, Erik neu · Dup ersetzt · Anna aus B war schon da
+    expect(result.sources.map((item) => [item.name, item.moved, item.replaced, item.duplicates])).toEqual([["Quelle A", 3, 1, 0], ["Quelle B", 2, 0, 1]]);
+    const inTarget = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, target.id)); expect(inTarget.map((row) => row.email).sort()).toEqual(["anna@merge-e2e.example", "bert@merge-e2e.example", "carl@merge-e2e.example", "dora@merge-e2e.example", "dup@merge-e2e.example", "erik@merge-e2e.example", "zoe@merge-e2e.example"]);
+    expect((await db.select().from(emailCampaignRecipients).where(inArray(emailCampaignRecipients.campaignId, [a.id, b.id]))).length).toBe(0);
+    const byMail = (email: string) => inTarget.find((row) => row.email === email)!;
+    expect(byMail("anna@merge-e2e.example")).toMatchObject({ id: anna, status: "fertig", sentCount: 2 }); // die weitere Anna (aus A) bleibt
+    expect(byMail("dup@merge-e2e.example")).toMatchObject({ id: dupA, nodeId: "w1", sentCount: 1 }); // der weitere Dup (aus A) ersetzt den frischen im Ziel
+    expect(byMail("bert@merge-e2e.example")).toMatchObject({ nodeId: "w1", status: "wartet", sentCount: 1, leadId: bertLead.id });
+    expect(byMail("dora@merge-e2e.example")).toMatchObject({ nodeId: "w1", status: "wartet", sentCount: 1 }); // „xw“ → der Warten-Schritt des Ziels
+    expect(byMail("erik@merge-e2e.example")).toMatchObject({ status: "fertig", sentCount: 2, nodeId: null });
+    expect(byMail("carl@merge-e2e.example")).toMatchObject({ nodeId: "m2", draftState: null, draftText: null }); // freier Entwurf passt nicht zum Drittanbieter-Ziel → wird neu geschrieben
+    expect(byMail("zoe@merge-e2e.example")).toMatchObject({ id: zoe, draftState: "entwurf", draftText: "Sehr geehrte Frau Ziel,\n\nein Entwurf im Ziel.\n\nVielen Dank" }); // das Ziel selbst bleibt unberührt
+    // Verlauf: alles hängt am Ziel, Schritte übersetzt (x1 → m1, xw → w1, x2 → m2); Annas Verlauf aus B hängt an der behaltenen Anna
+    const events = await db.select().from(emailCampaignEvents).where(inArray(emailCampaignEvents.recipientId, inTarget.map((row) => row.id)));
+    expect(events.every((event) => event.campaignId === target.id)).toBe(true); expect((await db.select().from(emailCampaignEvents).where(inArray(emailCampaignEvents.campaignId, [a.id, b.id]))).length).toBe(0);
+    expect(events.filter((event) => event.recipientId === dora).map((event) => [event.kind, event.nodeId])).toEqual([["gesendet", "m1"], ["gewartet", "w1"]]); expect(events.filter((event) => event.recipientId === erik).map((event) => event.nodeId).sort()).toEqual(["m1", "m2"]);
+    expect(events.filter((event) => event.recipientId === anna && event.kind === "gesendet").length).toBe(3); expect(events.filter((event) => event.recipientId === dupA).length).toBe(2);
+    // Quellen: im Archiv, beendet; Listen der Quellen gehören jetzt zur Zielgruppe; Glocke
+    const sources = await db.select().from(emailCampaigns).where(inArray(emailCampaigns.id, [a.id, b.id])); expect(sources.every((row) => row.status === "beendet" && row.archivedAt)).toBe(true);
+    expect((await owner.leadops.listEmailCampaigns()).some((row) => row.id === a.id)).toBe(true); expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === a.id)?.archivedAt).toBeTruthy();
+    expect(audienceLists((await owner.leadops.getEmailCampaign({ id: target.id })).audience)).toEqual(["Merge-Ziel", "Merge-A", "Merge-B"]);
+    const logs = await db.select().from(activityLog).where(and(eq(activityLog.tenantId, S.tenantId), eq(activityLog.refType, "emailCampaign"), inArray(activityLog.refId, [a.id, b.id, target.id]))); expect(logs.some((row) => row.title === "Kampagne „Quelle A“ in „Oberste – Drittanbieter KI“ zusammengeführt")).toBe(true); expect(logs.some((row) => row.refId === target.id && /7 Kontakte aus 2 Kampagnen|6 Kontakte aus 2 Kampagnen/.test(row.title))).toBe(true);
+    // Pipeline, Posteingang, Gesendet zeigen aufs Ziel
+    expect((await db.select().from(leads).where(eq(leads.id, bertLead.id)))[0]).toMatchObject({ adCampaignId: `email-${target.id}`, adCampaignName: "Oberste – Drittanbieter KI" });
+    expect((await owner.leadops.listInbox({ filter: "alle" })).items.find((item) => item.id === reply.id)).toMatchObject({ campaignId: target.id, campaignName: "Oberste – Drittanbieter KI" });
+    const sentList = await owner.leadops.listSent({ campaignId: target.id }); expect(sentList.items.length).toBeGreaterThanOrEqual(8); expect(sentList.items.every((item) => item.campaignName === "Oberste – Drittanbieter KI")).toBe(true);
+    const doraMail = events.find((event) => event.recipientId === dora && event.kind === "gesendet")!; expect((await owner.leadops.sentMailPreview({ id: `k${doraMail.id}` })).html).toContain("20 Test-Leads");
+    const detail = await owner.leadops.getEmailCampaign({ id: target.id }); expect(detail.stats).toMatchObject({ total: 7, sent: 6, opened: 3, clicked: 1, replied: 1 }); // Zahlen aus beiden Kampagnen zusammen (Bert geöffnet, Anna geöffnet+geklickt, Erik geantwortet)
+    // Wartende machen im Ziel weiter: Wartezeit um → Follow-up-Entwürfe im Ansatz des Ziels, mit der Zahl Test-Leads aus der alten E-Mail
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(inArray(emailCampaignRecipients.id, [bert, dora, carl]));
+    await owner.leadops.runEmailCampaigns();
+    const after = await db.select().from(emailCampaignRecipients).where(inArray(emailCampaignRecipients.id, [bert, dora, carl]));
+    for (const row of after) { expect(row).toMatchObject({ campaignId: target.id, nodeId: "m2", draftNodeId: "m2", draftState: "entwurf", draftApproach: "drittanbieter", sentCount: 1 }); }
+    expect(after.find((row) => row.id === bert)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === dora)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === carl)!.draftText).toContain("10 Test-Leads");
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: target.id }); expect(queue.counts).toMatchObject({ followUps: 3 }); expect(queue.items.find((item) => item.id === dora)).toMatchObject({ step: 2, followUp: true, testLeads: 20 }); expect(queue.items.find((item) => item.id === dora)?.sentBefore).toMatchObject({ subject: "Start für Wartet GmbH", count: 1 });
+    // Freigeben → geht aus dem Ziel raus, als 2. E-Mail
+    await owner.leadops.saveCampaignDraft({ recipientId: dora, subject: "Nachfrage Wartet GmbH", text: after.find((row) => row.id === dora)!.draftText!, approve: true }); await owner.leadops.runEmailCampaigns();
+    const doraAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, dora)))[0]; expect(doraAfter).toMatchObject({ campaignId: target.id, sentCount: 2, status: "fertig" });
+    expect((await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, dora), eq(emailCampaignEvents.kind, "gesendet")))).map((event) => event.nodeId)).toEqual(["m1", "m2"]);
   }, 60000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {

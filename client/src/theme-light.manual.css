@@ -1713,14 +1713,17 @@ html:not(.dark) .cl-approval span::before { color: #fb7185 !important; }
 html:not(.dark) .cl-approval:hover { background: #ffe4e6 !important; }
 html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #9f1239 !important; }
 html:not(.dark) .sparte-badge { border-color: #fecdd3 !important; background: #fff1f2 !important; color: #9f1239 !important; }
-html:not(.dark) .sparte-emoji { background: #fff1f2 !important; box-shadow: inset 0 0 0 1px #fecdd3 !important; }
 html:not(.dark) .rv-kind.is-first { background: #eff6ff !important; color: #1d4ed8 !important; }
 html:not(.dark) .inbox-sent-sparte { background: #fff1f2 !important; color: #9f1239 !important; }
-html:not(.dark) .inbox-prior { border-color: #fecdd3 !important; background: #fff7f8 !important; }
-html:not(.dark) .inbox-prior-head { color: #9f1239 !important; } html:not(.dark) .inbox-prior-head strong { color: #881337 !important; }
-html:not(.dark) .inbox-prior-head small, html:not(.dark) .inbox-prior-row small { color: #667085 !important; } html:not(.dark) .inbox-prior-head small button { color: #bc001d !important; }
-html:not(.dark) .inbox-prior-row strong { color: #101828 !important; } html:not(.dark) .inbox-prior-excerpt { color: #475467 !important; }
-html:not(.dark) .inbox-prior-open { border-color: #d0d5dd !important; background: #ffffff !important; color: #344054 !important; }
+html:not(.dark) .thread-head { color: #9f1239 !important; } html:not(.dark) .thread-head strong { color: #881337 !important; } html:not(.dark) .thread-head small { color: #667085 !important; }
+html:not(.dark) .thread-mail { border-color: #e4e7ec !important; background: #ffffff !important; }
+html:not(.dark) .thread-mail.is-reply { background: none !important; }
+html:not(.dark) .thread-mail-head:hover { background: #f9fafb !important; }
+html:not(.dark) .thread-mail-who strong { color: #101828 !important; } html:not(.dark) .thread-mail-who strong small, html:not(.dark) .thread-mail-who > small, html:not(.dark) .thread-mail-head time, html:not(.dark) .thread-chevron, html:not(.dark) .thread-collapsed, html:not(.dark) .thread-loading { color: #667085 !important; }
+html:not(.dark) .thread-subject { color: #101828 !important; } html:not(.dark) .thread-note { color: #475467 !important; }
+html:not(.dark) .thread-note.is-src-ki { color: #6d28d9 !important; } html:not(.dark) .thread-note.is-src-vorlage, html:not(.dark) .thread-note.is-src-entwurf-vorlage { color: #b45309 !important; } html:not(.dark) .thread-note.is-src-hand { color: #067647 !important; }
+html:not(.dark) .thread-frame { border: 1px solid #e4e7ec !important; }
+html:not(.dark) .inbox-avatar.av-us { background: linear-gradient(135deg, #e11d48, #9f1239) !important; }
 html:not(.dark) .rv-kind.is-followup { background: #fff1f2 !important; color: #be123c !important; }
 html:not(.dark) .rv-step-label, html:not(.dark) .rv-editor-kind small { color: #667085 !important; }
 html:not(.dark) .cl-list-chip { border-color: #e4e7ec !important; background: #ffffff !important; color: #344054 !important; }
@@ -1744,3 +1747,7 @@ html:not(.dark) .cl-spec.is-warn dd { color: #be123c !important; }
 html:not(.dark) .cl-spec { border-color: #eaecf0 !important; background: #f9fafb !important; }
 html:not(.dark) .fact-icon { background: #fff1f2 !important; color: #bc001d !important; }
 html:not(.dark) .fact-icon.is-emoji { background: #ffffff !important; box-shadow: inset 0 0 0 1px #fecdd3 !important; }
+
+/* Kampagnen zusammenführen */
+html:not(.dark) .merge-rules { color: #475467 !important; }
+html:not(.dark) .merge-quick .cl-folder-act { border-color: #e4e7ec !important; }

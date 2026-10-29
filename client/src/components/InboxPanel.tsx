@@ -4,7 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { PIPELINE_STAGES, stageLabel } from "../../../shared/sales-pipeline";
 import { DELIVERY_GROUP_LABEL, REACTION_LABEL, type DeliveryGroup, type SentReaction } from "../../../shared/sent-tracking";
 import { suggestCategoryEmoji } from "../../../shared/category-emoji";
-import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, Check, MailOpen, ChevronLeft, Inbox, Mail, Megaphone, Paperclip, RefreshCw, Reply, Search, Send, ShieldCheck, Sparkles, Trash2, UserPlus, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, Check, MailOpen, ChevronDown, ChevronLeft, Inbox, Mail, Megaphone, Paperclip, RefreshCw, Reply, Search, Send, ShieldCheck, Sparkles, Trash2, UserPlus, X } from "lucide-react";
 import { ATTACHMENT_LIMITS, checkAttachments, formatBytes } from "../../../shared/email-signature";
 import { INBOX_AI_FILTERS, inboxAiFilterLabel, periodRange, REPLY_KIND_LABEL, type InboxAiFilter, type InboxPeriod, type ReplyAction, type ReplyKind } from "../../../shared/reply-ai";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -218,7 +218,8 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
             </div>
             <div className="inbox-lead-form-actions"><Button className="flux-button" disabled={createLead.isPending} onClick={() => createLead.mutate({ messageId: selected.id, pipeline: leadForm.pipeline, stage: leadForm.stage, ownerUserId: leadForm.ownerUserId ? Number(leadForm.ownerUserId) : null, categoryId: leadForm.categoryId ? Number(leadForm.categoryId) : null, firstName: leadForm.firstName || null, lastName: leadForm.lastName || null, company: leadForm.company || null, phone: leadForm.phone || null })}>{selected.lead ? "Übernehmen" : "Lead anlegen"}</Button><Button variant="ghost" onClick={() => setLeadForm(null)}>Abbrechen</Button></div>
           </div>}
-          <PriorMails items={(selected as { sentBefore?: PriorMail[] }).sentBefore ?? []} />
+          <SentThread items={(selected as { sentBefore?: PriorMail[] }).sentBefore ?? []} to={selected.fromEmail} />
+          {((selected as { sentBefore?: PriorMail[] }).sentBefore ?? []).length > 0 && <div className="thread-mail is-reply"><div className="thread-mail-head"><span className={`inbox-avatar av-${hueOf(selected.fromEmail)} thread-avatar`} aria-hidden="true">{initialsOf(selected.fromName, selected.fromEmail)}</span><div className="thread-mail-who"><strong>{selected.fromName || selected.fromEmail}</strong><small>{selected.fromEmail} · Antwort an uns</small></div><time dateTime={new Date(selected.receivedAt).toISOString()}>{stamp(selected.receivedAt)}</time></div></div>}
           <pre className="inbox-body">{selected.bodyText || "(kein Text)"}</pre>
           </div>
           <footer className="inbox-compose">
@@ -374,18 +375,39 @@ type PriorMail = { id: string; step: number; subject: string; at: string | Date;
  * ältere eingeklappt; „Ansehen“ zeigt die E-Mail so, wie sie rausging. So weiß man beim Antworten, worauf sich der Kontakt bezieht
  * (z. B. wie viele Test-Leads versprochen wurden).
  */
-function PriorMails({ items }: { items: PriorMail[] }) {
-  const [open, setOpen] = useState<string | null>(null); const [all, setAll] = useState(false);
+/**
+ * Der Schriftwechsel wie in einem normalen Posteingang: erst unsere E-Mails an den Kontakt (jede komplett, genau so, wie sie
+ * rausging – älteste zuerst), danach seine Antwort. Jede unserer E-Mails lässt sich zuklappen.
+ */
+function SentThread({ items, to }: { items: PriorMail[]; to: string }) {
   if (!items.length) return null;
-  const shown = all ? items : items.slice(0, 1);
-  return <section className="inbox-prior" aria-label="Davor von uns gesendet">
-    <div className="inbox-prior-head"><Send className="h-3.5 w-3.5" aria-hidden="true" /><strong>Davor von uns gesendet</strong><small>{items.length === 1 ? "1 E-Mail" : `${items.length} E-Mails`}{items.length > 1 && <> · <button type="button" onClick={() => setAll((value) => !value)}>{all ? "nur die letzte" : "alle zeigen"}</button></>}</small></div>
-    <ol className="inbox-prior-list">{shown.map((mail) => <li key={mail.id} className="inbox-prior-item">
-      <div className="inbox-prior-row"><span className={`rv-kind ${mail.step > 1 ? "is-followup" : "is-first"}`}>{mail.step > 1 ? `Follow-up ${mail.step}` : "Erst-E-Mail"}</span><strong>{mail.subject || "(ohne Betreff)"}</strong><small>{whenShort(mail.at)}{mail.testLeads ? ` · ${mail.testLeads} Test-Leads versprochen` : ""}</small><button type="button" className="inbox-prior-open" onClick={() => setOpen(open === mail.id ? null : mail.id)}>{open === mail.id ? "Schließen" : "Ansehen"}</button></div>
-      {mail.excerpt && open !== mail.id && <p className="inbox-prior-excerpt">{mail.excerpt}</p>}
-      {open === mail.id && <SentMailPreview id={mail.id} onClose={() => setOpen(null)} />}
-    </li>)}</ol>
+  const ordered = [...items].sort((a, b) => a.step - b.step);
+  return <section className="thread" aria-label="Davor von uns gesendet">
+    <div className="thread-head"><Send className="h-3.5 w-3.5" aria-hidden="true" /><strong>Davor von uns gesendet</strong><small>{items.length === 1 ? "1 E-Mail" : `${items.length} E-Mails`} an {to}</small></div>
+    {ordered.map((mail) => <ThreadMail key={mail.id} mail={mail} to={to} />)}
   </section>;
+}
+function ThreadMail({ mail, to }: { mail: PriorMail; to: string }) {
+  const [open, setOpen] = useState(true); const [height, setHeight] = useState(360);
+  const preview = trpc.leadops.sentMailPreview.useQuery({ id: mail.id }, { retry: false, enabled: open, staleTime: 5 * 60_000 });
+  const from = (preview.data as { from?: { name: string | null; email: string | null } | null } | undefined)?.from ?? null;
+  const senderName = from?.name || "Wir"; const senderEmail = from?.email || "";
+  return <article className={`thread-mail ${open ? "is-open" : "is-closed"}`}>
+    <button type="button" className="thread-mail-head" aria-expanded={open} onClick={() => setOpen((value) => !value)} title={open ? "E-Mail zuklappen" : "E-Mail aufklappen"}>
+      <span className="inbox-avatar av-us thread-avatar" aria-hidden="true">{initialsOf(senderName, senderEmail)}</span>
+      <div className="thread-mail-who"><strong>{senderName}{senderEmail ? <small> {senderEmail}</small> : null}</strong><small>an {to}{mail.testLeads ? ` · ${mail.testLeads} Test-Leads versprochen` : ""}</small></div>
+      <span className={`rv-kind ${mail.step > 1 ? "is-followup" : "is-first"}`}>{mail.step > 1 ? `Follow-up ${mail.step}` : "Erst-E-Mail"}</span>
+      <time dateTime={new Date(mail.at).toISOString()}>{stamp(mail.at)}</time>
+      <ChevronDown className="thread-chevron" aria-hidden="true" />
+    </button>
+    {open ? <div className="thread-mail-body">
+      <p className="thread-subject">{mail.subject || "(ohne Betreff)"}</p>
+      {preview.isLoading ? <p className="thread-loading">E-Mail wird geladen …</p> : preview.error || !preview.data ? <p className="thread-loading is-error">{preview.error?.message ?? "E-Mail nicht verfügbar."}</p> : <>
+        {preview.data.note && <small className={`thread-note ${"source" in preview.data && preview.data.source ? `is-src-${preview.data.source}` : ""}`}>{"source" in preview.data && preview.data.source ? <b>{SENT_SOURCE_LABEL[preview.data.source as SentSource]}: </b> : null}{preview.data.note}</small>}
+        <iframe title={`Gesendete E-Mail: ${mail.subject}`} className="thread-frame" style={{ height }} srcDoc={preview.data.html} sandbox="allow-same-origin" onLoad={(event) => { try { const doc = event.currentTarget.contentDocument; const next = Math.max(doc?.body?.scrollHeight ?? 0, doc?.documentElement?.scrollHeight ?? 0); if (next > 40) setHeight(next + 24); } catch { /* fremde Seite – Höhe bleibt */ } }} />
+      </>}
+    </div> : <p className="thread-collapsed">{mail.subject || "(ohne Betreff)"}{mail.excerpt ? ` – ${mail.excerpt.slice(0, 140)}…` : ""}</p>}
+  </article>;
 }
 
 /** Vorschau einer gesendeten E-Mail: Kampagnen-Mails werden aus dem Schritt und den Empfängerdaten nachgebaut, Einzel-Mails aus dem gespeicherten Text. */
