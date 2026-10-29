@@ -66,7 +66,7 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
   it("Posteingang: zu jeder Antwort unsere E-Mails davor (Schritt, Auszug, versprochene Test-Leads), Kategorie der Kampagne; Antwort-Vorschlag nennt dieselbe Zahl", async () => {
     const inbox = await call("leadops.listInbox", { filter: "alle" });
     const hansen = inbox.items.find((item: any) => item.fromEmail === "info@hansen-bedachungen.de");
-    expect(hansen).toMatchObject({ campaignName: "Dachdecker Hessen – Erstkontakt", campaignCategoryName: "Photovoltaik" });
+    expect(hansen).toMatchObject({ campaignName: "Dachdecker Hessen – Erstkontakt", campaignCategoryName: "Photovoltaik & Wärmepumpe" }); // Photovoltaik → in der Vertriebspipeline die gemeinsame Kategorie
     expect(hansen.sentBefore.map((mail: any) => mail.step)).toEqual([2, 1]); // neueste zuerst
     expect(hansen.sentBefore[1]).toMatchObject({ subject: "Mehr Anfragen für Hansen Bedachungen – ohne Risiko", source: "vorlage", testLeads: 20 }); expect(hansen.sentBefore[1].excerpt).toContain("Sehr geehrter Herr Hansen"); expect(hansen.sentBefore[1].excerpt).toContain("20 Test-Leads");
     expect(hansen.sentBefore[0]).toMatchObject({ subject: "Kurze Frage zu Ihrem Bedarf, Peter", testLeads: 20 });
@@ -76,15 +76,15 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
   });
 
   it("Interessent aus dem Posteingang: eigene Stufe „Hat Interesse“ der E-Mail-Pipeline wird genommen, Kategorie = die der Kampagne (nicht die erste)", async () => {
-    const wp = getStore().tables.leadCategories.find((row) => row.name === "Wärmepumpe")!; const pvCat = getStore().tables.leadCategories.find((row) => row.name === "Photovoltaik")!;
-    getStore().tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!.leadCategoryIds = [wp.id]; // Kampagne mit Wärmepumpe – Photovoltaik wäre die erste Kategorie
+    const trl = getStore().tables.leadCategories.find((row) => row.name === "Treppenlifte")!; const pvCat = getStore().tables.leadCategories.find((row) => row.name === "Photovoltaik")!;
+    getStore().tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!.leadCategoryIds = [trl.id]; // Kampagne mit Treppenliften – Photovoltaik wäre die erste Kategorie
     const stages = await call("leadops.pipelineStages", { source: "email" });
     await call("leadops.savePipelineStages", { source: "email", stages: [stages[0], { key: "hat_interesse", label: "Hat Interesse", hint: "" }, ...stages.slice(1)] });
-    const koch = (await call("leadops.listInbox", { filter: "alle" })).items.find((item: any) => item.fromEmail === "kontakt@koch-dach.de"); expect(koch.campaignCategoryName).toBe("Wärmepumpe");
+    const koch = (await call("leadops.listInbox", { filter: "alle" })).items.find((item: any) => item.fromEmail === "kontakt@koch-dach.de"); expect(koch.campaignCategoryName).toBe("Treppenlifte");
     const made = await call("leadops.createLeadFromInbox", { messageId: koch.id, pipeline: "email", stage: "hat_interesse" });
-    expect(getStore().tables.leads.find((row) => row.publicId === made.publicId)).toMatchObject({ pipelineStage: "hat_interesse", categoryId: wp.id });
+    expect(getStore().tables.leads.find((row) => row.publicId === made.publicId)).toMatchObject({ pipelineStage: "hat_interesse", categoryId: trl.id });
     expect((await call("leadops.pipelineOverview", { source: "email" })).stages.find((stage: any) => stage.key === "hat_interesse").leads.some((lead: any) => lead.publicId === made.publicId)).toBe(true);
-    // unbekannte Stufe → die Interesse-Stufe; gewählte Kategorie hat Vorrang
+    // unbekannte Stufe → die Interesse-Stufe; eine ausdrücklich gewählte Kategorie hat Vorrang und bleibt (auch „Photovoltaik“ allein)
     const hansen = (await call("leadops.listInbox", { filter: "alle" })).items.find((item: any) => item.fromEmail === "info@hansen-bedachungen.de");
     const other = await call("leadops.createLeadFromInbox", { messageId: hansen.id, pipeline: "email", stage: "gibt_es_nicht", categoryId: pvCat.id });
     expect(getStore().tables.leads.find((row) => row.publicId === other.publicId)).toMatchObject({ pipelineStage: "hat_interesse", categoryId: pvCat.id });
@@ -95,8 +95,8 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
     const sent = await call("leadops.listSent", {});
     const dach = sent.items.filter((item: any) => item.campaignName === "Dachdecker Hessen – Erstkontakt"); const strom = sent.items.filter((item: any) => item.campaignName === "Elektriker NRW – Frühjahr");
     expect(dach.length).toBeGreaterThan(0); expect(strom.length).toBeGreaterThan(0);
-    expect(dach.every((item: any) => item.sparte?.categoryName === "Photovoltaik" && item.sparte?.sparte === "Photovoltaik")).toBe(true);
-    expect(strom.every((item: any) => item.sparte?.categoryName === "Wärmepumpe")).toBe(true);
+    expect(dach.every((item: any) => item.sparte?.categoryName === "Photovoltaik & Wärmepumpe" && item.sparte?.sparte === "Photovoltaik")).toBe(true); // Kategorie zusammengeführt, die Sparte bleibt genau
+    expect(strom.every((item: any) => item.sparte?.categoryName === "Photovoltaik & Wärmepumpe" && item.sparte?.sparte === "Wärmepumpe")).toBe(true);
     expect(sent.items.filter((item: any) => item.kind !== "kampagne").every((item: any) => item.sparte === null)).toBe(true);
   });
 });
@@ -131,16 +131,17 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
   });
 
   it("Gesendet: Auswahl nach Lead-Kategorie mit Zähler, jede Zeile zeigt ihre Kategorie, Auswahl filtert", async () => {
+    const ala = getStore().tables.leadCategories.find((row) => row.name === "Alarmanlagen")!; getStore().tables.emailCampaigns.find((row) => row.name === "Elektriker NRW – Frühjahr")!.leadCategoryIds = [ala.id]; // zweite Kategorie neben „Photovoltaik & Wärmepumpe“
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=posteingang");
     const view = mount(); await settle(300); await settle(300);
     const sentFolder = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".inbox-folders button")).find((node) => node.textContent?.trim().startsWith("Gesendet"))!;
     await act(async () => { fireEvent.click(sentFolder); }); await settle(300); await settle(200);
     const select = view.container.querySelector<HTMLSelectElement>('select[aria-label="Lead-Kategorie"]'); expect(select).toBeTruthy();
-    const options = Array.from(select!.options).map((option) => option.textContent ?? ""); expect(options[0]).toBe("Alle Kategorien"); expect(options.some((text) => /^☀️ Photovoltaik \(\d+\)$/.test(text))).toBe(true); expect(options.some((text) => /^♨️ Wärmepumpe \(\d+\)$/.test(text))).toBe(true);
+    const options = Array.from(select!.options).map((option) => option.textContent ?? ""); expect(options[0]).toBe("Alle Kategorien"); expect(options.some((text) => /^☀️♨️ Photovoltaik & Wärmepumpe \(\d+\)$/.test(text))).toBe(true); expect(options.some((text) => /^🚨 Alarmanlagen \(\d+\)$/.test(text))).toBe(true);
     const tags = () => Array.from(view.container.querySelectorAll(".inbox-sent-sparte")).map((node) => node.textContent?.trim());
-    expect(tags()).toContain("☀️ Photovoltaik"); expect(tags()).toContain("♨️ Wärmepumpe");
-    await act(async () => { fireEvent.change(select!, { target: { value: "Wärmepumpe" } }); }); await settle(100);
-    expect(tags().length).toBeGreaterThan(0); expect(tags().every((text) => text === "♨️ Wärmepumpe")).toBe(true);
+    expect(tags()).toContain("☀️♨️ Photovoltaik & Wärmepumpe"); expect(tags()).toContain("🚨 Alarmanlagen");
+    await act(async () => { fireEvent.change(select!, { target: { value: "Alarmanlagen" } }); }); await settle(100);
+    expect(tags().length).toBeGreaterThan(0); expect(tags().every((text) => text === "🚨 Alarmanlagen")).toBe(true);
   });
 
   it("Kampagnen-Karte: Kategorie-Schild ganz links; eine Liste direkt lesbar, ab zwei Listen ein Klapp-Menü mit allen Namen und Zahlen", async () => {
@@ -187,6 +188,74 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
     await act(async () => { fireEvent.click(view.container.querySelector<HTMLButtonElement>(".rv-list .rv-item")!); }); await settle(300);
     const head = view.container.querySelector(".rv-editor-kind"); expect(head).toBeTruthy(); expect(head!.textContent).toContain("Follow-up"); expect(head!.textContent).toContain("davor von uns"); expect(head!.textContent).toContain("Persönlich für Versprechen Wärme"); expect(head!.textContent).toContain("20 Test-Leads");
     expect(view.container.querySelector<HTMLTextAreaElement>(".rv-editor textarea")?.value).toContain("20 Test-Leads"); // der Entwurf selbst nennt wieder 20
+  });
+});
+
+describe("Freigabe getrennt nach Erst-E-Mails und Follow-ups (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  async function setup() {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Freigabe-Art", rows: [{ firstName: "Vera", lastName: "Versprechen", company: "Versprechen Wärme", email: "vera@freigabe-art.example" }, { firstName: "Nils", lastName: "Neu", company: "Neu Solar", email: "nils@freigabe-art.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Freigabe-Art", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listName: "Freigabe-Art" }, tree, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    const rows = () => getStore().tables.emailCampaignRecipients.filter((item) => item.campaignId === saved.id).sort((a, b) => a.id - b.id);
+    await call("leadops.saveCampaignDraft", { recipientId: rows()[0].id, subject: "Persönlich für Versprechen Wärme", text: "Sehr geehrte Frau Versprechen,\n\nzum Kennenlernen stellen wir Ihnen 20 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
+    await call("leadops.runEmailCampaigns"); rows()[0].nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns");
+    expect(rows()[0]).toMatchObject({ sentCount: 1, draftNodeId: "m2", draftState: "entwurf" }); expect(rows()[1]).toMatchObject({ sentCount: 0, draftNodeId: "m1", draftState: "entwurf" }); // Vera: Follow-up zur Prüfung, Nils: Erst-E-Mail zur Prüfung
+    return { saved, rows };
+  }
+  it("Sammel-Freigabe, Zurücknehmen und Neu-schreiben gelten nur für die gewählte Art", async () => {
+    const { saved, rows } = await setup();
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true, kind: "followup" })).toMatchObject({ approved: 1 });
+    expect(rows()[0].draftState).toBe("freigegeben"); expect(rows()[1].draftState).toBe("entwurf"); // nur das Follow-up
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true, kind: "erste" })).toMatchObject({ approved: 1 }); expect(rows()[1].draftState).toBe("freigegeben");
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: false, kind: "erste" })).toMatchObject({ reverted: 1 }); expect(rows()[1].draftState).toBe("entwurf"); expect(rows()[0].draftState).toBe("freigegeben"); // nur die Erst-E-Mail zurück
+    expect(await call("leadops.resetCampaignDrafts", { campaignId: saved.id, kind: "followup" })).toEqual({ reset: 1 }); expect(rows()[0].draftState).toBeNull(); expect(rows()[1].draftState).toBe("entwurf"); // nur das Follow-up verworfen
+    expect((await call("leadops.generateCampaignDrafts", { campaignId: saved.id, limit: 5, kind: "erste" })).drafts).toHaveLength(0); // Erst-E-Mails haben schon Entwürfe
+    expect((await call("leadops.generateCampaignDrafts", { campaignId: saved.id, limit: 5, kind: "followup" })).drafts).toHaveLength(1); expect(rows()[0]).toMatchObject({ draftNodeId: "m2", draftState: "entwurf" });
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true })).toMatchObject({ approved: 2 }); // ohne Art: beides
+  });
+  it("Übersicht: „Erst-E-Mails“ auf der Karte öffnet die Freigabe direkt nur für Erst-E-Mails – der Freigeben-Knopf nennt und nimmt nur diese", async () => {
+    const { rows } = await setup();
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.querySelector(".cl-name")?.textContent?.includes("Freigabe-Art"))!; expect(card).toBeTruthy();
+    const pill = card.querySelector(".cl-approval")!; expect(pill).toBeTruthy(); expect(pill.querySelector(".cl-approval-main")?.textContent).toBe("Zur Freigabe");
+    const part = Array.from(pill.querySelectorAll<HTMLButtonElement>(".cl-approval-part")).find((node) => /Erst-E-Mail/.test(node.textContent ?? ""))!; expect(part.textContent).toBe("1 Erst-E-Mail wartet");
+    await act(async () => { fireEvent.click(part); }); await settle(400); await settle(300);
+    const dialog = document.querySelector(".review-dialog"); expect(dialog).toBeTruthy(); expect(view.container.querySelector(".ch-title")).toBeNull(); // Fenster über der Übersicht, nicht die geöffnete Kampagne
+    const kindBar = dialog!.querySelector(".cd-filters.is-kind")!; expect(Array.from(kindBar.querySelectorAll("button")).find((node) => node.getAttribute("aria-selected") === "true")?.textContent).toMatch(/^Erst-E-Mails/);
+    expect(Array.from(dialog!.querySelectorAll(".rv-list .rv-step .rv-kind")).map((node) => node.textContent?.trim())).toEqual(["Erst-E-Mail"]);
+    const approveButton = Array.from(dialog!.querySelectorAll<HTMLButtonElement>(".rv-head-actions button")).find((node) => /freigeben$/.test(node.textContent?.trim() ?? ""))!; expect(approveButton.textContent?.trim()).toBe("Alle 1 Erst-E-Mail freigeben");
+    await act(async () => { fireEvent.click(approveButton); }); await settle(200);
+    expect(document.querySelector(".app-confirm-text")?.textContent).toContain("Erst-E-Mail"); expect(document.querySelector(".app-confirm-text")?.textContent).toContain("Follow-ups bleiben unberührt");
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400); await settle(300);
+    expect(rows()[1].draftState).toBe("freigegeben"); expect(rows()[0].draftState).toBe("entwurf"); // nur die Erst-E-Mail freigegeben, das Follow-up wartet weiter
+    await act(async () => { fireEvent.click(Array.from(dialog!.querySelectorAll<HTMLButtonElement>(".rv-head-actions button")).find((node) => /Schließen/.test(node.textContent ?? ""))!); }); await settle(300);
+    expect(document.querySelector(".review-dialog")).toBeNull();
+  });
+});
+
+describe("Pipeline „E-Mail-Kampagne“ ohne Spalte „Neu“ (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  it("„Versendet“ ist die erste Spalte (Eingang); Kontakt von Hand landet dort; eine alte Aufteilung „Neu“ + „Versendet“ wird beim nächsten Blick aufs Board zusammengelegt – mit Vermerk", async () => {
+    const board = await call("leadops.pipelineOverview", { source: "email" });
+    expect(board.stages[0]).toMatchObject({ key: "versendet", label: "Versendet" }); expect(board.stages.some((stage: any) => stage.key === "neu")).toBe(false);
+    const stages = await call("leadops.pipelineStages", { source: "email" }); expect(stages[0]).toMatchObject({ key: "versendet", fixed: "entry" });
+    const manual = await call("leadops.createPipelineContact", { source: "email", firstName: "Eva", lastName: "Eingang", phone: "+49 69 5550777" });
+    const leadOf = () => getStore().tables.leads.find((row) => row.publicId === manual.publicId)!; expect(leadOf().pipelineStage).toBe("versendet");
+    // so sah es bisher aus: „Neu“ als Eingang, „Versendet“ dahinter – und eine Karte in „Neu“
+    const config = getStore().tables.pipelineStageConfigs.find((row) => row.source === "email")!; config.stages = [{ key: "neu", label: "Neu", hint: "Gerade eingegangen", fixed: "entry" }, { ...stages[0], fixed: undefined }, ...stages.slice(1)];
+    leadOf().pipelineStage = "neu";
+    expect((await call("leadops.pipelineStages", { source: "email" })).map((stage: any) => stage.key).slice(0, 2)).toEqual(["neu", "versendet"]);
+    const again = await call("leadops.pipelineOverview", { source: "email" }); expect(again.stages[0].key).toBe("versendet"); expect(again.stages.some((stage: any) => stage.key === "neu")).toBe(false);
+    expect(leadOf().pipelineStage).toBe("versendet"); expect(again.stages[0].leads.some((lead: any) => lead.publicId === manual.publicId)).toBe(true);
+    expect((await call("leadops.pipelineHistory", { publicId: manual.publicId })).some((event: any) => /Stufe „Neu“ gibt es nicht mehr – auf „Versendet“ gesetzt/.test(event.note ?? ""))).toBe(true);
+    expect((await call("leadops.activityFeed", { days: 1 })).days.some((day: any) => day.groups.some((group: any) => group.entries.some((entry: any) => entry.title.includes("„Versendet“ ist jetzt die erste Spalte"))))).toBe(true);
+    // „Versendet“ lässt sich als Eingang nicht löschen
+    await expect(call("leadops.savePipelineStages", { source: "email", stages: again.stages.filter((stage: any) => stage.key !== "versendet") })).rejects.toThrow(/Eingangsstufe/);
   });
 });
 
@@ -255,8 +324,9 @@ describe("Vertriebspipeline: Lead-Kategorien (Chat-Build)", () => {
   beforeAll(() => resetStore());
   it("liefert alle Kategorien im Ausschnitt mit Anzahl und filtert auf dem Server – unabhängig von der Kartenzahl je Spalte", async () => {
     const board = await call("leadops.pipelineOverview", { source: "alle" });
-    expect(board.categories.length).toBeGreaterThanOrEqual(2); const pv = board.categories.find((item: any) => item.name === "Photovoltaik"); expect(pv).toBeTruthy(); expect(pv.count).toBeGreaterThan(0);
-    const other = board.categories.find((item: any) => item.name !== "Photovoltaik"); expect(other.count).toBeGreaterThan(0);
+    expect(board.categories.length).toBeGreaterThanOrEqual(2); const pv = board.categories.find((item: any) => item.name === "Photovoltaik & Wärmepumpe"); expect(pv).toBeTruthy(); expect(pv.count).toBeGreaterThan(0); // PV und WP zusammen
+    expect(board.categories.some((item: any) => item.name === "Photovoltaik" || item.name === "Wärmepumpe")).toBe(false); // in der Vertriebspipeline gibt es die beiden einzeln nicht mehr
+    const other = board.categories.find((item: any) => item.name !== "Photovoltaik & Wärmepumpe"); expect(other.count).toBeGreaterThan(0);
     const only = await call("leadops.pipelineOverview", { source: "alle", categoryId: other.id, limitPerStage: 1 });
     expect(only.totals.leads).toBe(other.count); expect(only.stages.flatMap((stage: any) => stage.leads).every((lead: any) => lead.categoryId === other.id)).toBe(true);
     expect(only.categories.find((item: any) => item.id === other.id).count).toBe(other.count); expect(only.categories.some((item: any) => item.id === pv.id)).toBe(true); // Auswahl bleibt vollständig
@@ -283,7 +353,7 @@ describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
     const target = items.find((item) => item.textContent?.includes("Alarmanlagen"))!; expect(target).toBeTruthy();
     await act(async () => { fireEvent.click(target); }); await settle(400); await settle(300);
     const publicId = (await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.categoryName === "Alarmanlagen")?.publicId; expect(publicId).toBeTruthy();
-    const history = await call("leadops.pipelineHistory", { publicId }); expect(history.some((event: any) => /Kategorie geändert: „Alarmanlagen“ \(vorher „Photovoltaik“\)/.test(event.note ?? ""))).toBe(true);
+    const history = await call("leadops.pipelineHistory", { publicId }); expect(history.some((event: any) => /Kategorie geändert: „Alarmanlagen“ \(vorher „Photovoltaik & Wärmepumpe“\)/.test(event.note ?? ""))).toBe(true);
     expect(Array.from(view.container.querySelectorAll(".cat-pick-trigger")).some((node) => node.textContent?.includes("Alarmanlagen"))).toBe(true); // Karte zeigt die neue Kategorie
   });
 });

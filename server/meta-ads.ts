@@ -9,13 +9,14 @@ import { extraFieldsOf } from "../shared/cold-list";
 import { and, desc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import crypto from "node:crypto";
 import { adInsights, emailCampaignRecipients, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
-import { buildStageSets, stagesOf, entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, pipelineSourceOf, stagesForLead, summarizeCampaigns, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
+import { buildStageSets, stagesOf, entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, pipelineSourceOf, stageLabel, stagesForLead, summarizeCampaigns, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
 import { autoAssign, cardExtras, onStageChanged } from "./pipeline-extras";
 import { pipelineValueSummary } from "../shared/pipeline-extras";
 import { ownerSequence, type OwnerShare, type ShareMode } from "../shared/pipeline-extras";
 import { logActivity } from "./activity";
+import { requireVertriebCategoryId, vertriebCategoryId } from "./vertrieb-category";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 export const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_manage_metadata", "pages_manage_ads", "leads_retrieval", "ads_read", "business_management"];
@@ -114,7 +115,7 @@ export async function importLeadgen(db: Db, change: LeadgenChange, options: { ra
   const mapped = mapMetaFieldData(lead.field_data ?? []);
   const mappings = (Array.isArray(connection.formMappings) ? connection.formMappings : []) as FormMapping[];
   const mapping = mappings.find((item) => item.formId === (lead.form_id ?? change.form_id));
-  const categoryId = mapping?.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id;
+  const categoryId = await vertriebCategoryId(db, tenantId, mapping?.categoryId); // ohne Zuordnung: „Photovoltaik & Wärmepumpe“ (Vertriebspipeline), sonst die erste aktive Kategorie
   if (!categoryId) return { ok: false as const, reason: "Keine Lead-Kategorie vorhanden" };
   let formName: string | null = mapping?.formName ?? null; if (!formName && (lead.form_id ?? change.form_id)) formName = (await graph<{ name?: string }>(lead.form_id ?? change.form_id!, connection.pageAccessToken, { fields: "name" }).catch(() => ({ name: null }))).name ?? null;
   const publicId = `META-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
@@ -224,7 +225,7 @@ export async function pipelineHistory(db: Db, tenantId: number, publicId: string
 }
 /** Testlead ohne Facebook (Demo/Abnahme): verhält sich wie ein Webhook-Lead. */
 export async function createTestLead(db: Db, tenantId: number, input: { campaignName: string; adsetName?: string | null; adName?: string | null; formName?: string | null; categoryId?: number | null; firstName: string; lastName: string; email?: string | null; phone?: string | null; postcode?: string | null; city?: string | null }) {
-  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id; if (!categoryId) throw new Error("Keine Lead-Kategorie vorhanden.");
+  const categoryId = await requireVertriebCategoryId(db, tenantId, input.categoryId);
   const publicId = `META-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`; const campaignId = `test-${input.campaignName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, kind: "vertrieb", firstName: input.firstName, lastName: input.lastName, email: input.email ?? undefined, phone: input.phone ?? undefined, postcode: input.postcode ?? undefined, city: input.city ?? undefined, country: "DE", supplierName: "Meta Ads", metadata: { meta: { test: true, campaignId } }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), adCampaignId: campaignId, adCampaignName: input.campaignName, adsetName: input.adsetName ?? null, adName: input.adName ?? null, adFormName: input.formName ?? null, adPlatform: "facebook", leadgenId: `test-${crypto.randomUUID().slice(0, 12)}` });
   const leadId = Number(inserted[0]?.insertId) || 0;
@@ -302,21 +303,34 @@ export async function pipelineStageSetup(db: Db, tenantId: number, source: Pipel
   const sets = buildStageSets(await db.select({ source: pipelineStageConfigs.source, stages: pipelineStageConfigs.stages }).from(pipelineStageConfigs).where(eq(pipelineStageConfigs.tenantId, tenantId)));
   return { source, stages: stagesOf(sets, source), own: source === "alle" ? rows.some((row) => row.source === "alle") : rows.some((row) => row.source === source), defaultStages: sets.alle, customized: rows.map((row) => row.source) };
 }
+/** Karten in Stufen, die es nicht mehr gibt, auf den Eingang ihrer Pipeline setzen – mit Vermerk im Verlauf (damit „Früheren Stand wiederherstellen“ es sieht). */
+async function moveOrphanedLeads(db: Db, tenantId: number, before: StageSets, after: StageSets, only?: PipelineSource) {
+  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), isNotNull(leads.pipelineStage)));
+  let moved = 0;
+  for (const lead of rows) {
+    if (only && pipelineSourceOf(lead.adPlatform) !== only) continue;
+    const own = stagesForLead(after, lead); if (!lead.stage || own.some((stage) => stage.key === lead.stage)) continue;
+    const entry = entryStage(own); const was = stageLabel(lead.stage, stagesForLead(before, lead));
+    await db.update(leads).set({ pipelineStage: entry, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
+    await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: lead.stage, toStage: entry, actorUserId: null, note: `Stufe „${was}“ gibt es nicht mehr – auf „${stageLabel(entry, own)}“ gesetzt` });
+    moved += 1;
+  }
+  return moved;
+}
 export async function savePipelineStages(db: Db, tenantId: number, input: Array<Partial<StageDef>>, source: PipelineSource | "alle" = "alle") {
   const { stages, issues } = normalizeStages(input); if (issues.length) throw new Error(issues.join(" "));
+  const before = await pipelineStageSets(db, tenantId);
   const existing = (await db.select({ id: pipelineStageConfigs.id }).from(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, source))).limit(1))[0];
   if (existing) await db.update(pipelineStageConfigs).set({ stages }).where(eq(pipelineStageConfigs.id, existing.id)); else await db.insert(pipelineStageConfigs).values({ tenantId, source, stages });
-  // Leads gelöschter Stufen zurück auf den Eingang – nur in den Pipelines, für die dieser Satz gilt
-  const sets = await pipelineStageSets(db, tenantId);
-  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
-  for (const lead of rows) { const own = stagesForLead(sets, lead); if (lead.stage && !own.some((stage) => stage.key === lead.stage)) await db.update(leads).set({ pipelineStage: entryStage(own) }).where(eq(leads.id, lead.id)); }
+  // Leads gelöschter Stufen zurück auf den Eingang – nur in den Pipelines, für die dieser Satz gilt (mit Vermerk im Verlauf)
+  await moveOrphanedLeads(db, tenantId, before, await pipelineStageSets(db, tenantId));
   return { stages, source };
 }
 /** Eigene Stufen einer Pipeline verwerfen – sie nutzt danach wieder den Standard. */
 export async function resetPipelineStages(db: Db, tenantId: number, source: PipelineSource) {
+  const before = await pipelineStageSets(db, tenantId);
   await db.delete(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, source)));
   const sets = await pipelineStageSets(db, tenantId);
-  const rows = await db.select({ id: leads.id, stage: leads.pipelineStage, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
-  for (const lead of rows) { if (pipelineSourceOf(lead.adPlatform) !== source) continue; const own = stagesOf(sets, source); if (lead.stage && !own.some((stage) => stage.key === lead.stage)) await db.update(leads).set({ pipelineStage: entryStage(own) }).where(eq(leads.id, lead.id)); }
+  await moveOrphanedLeads(db, tenantId, before, sets, source);
   return { stages: stagesOf(sets, source), source };
 }

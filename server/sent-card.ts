@@ -7,16 +7,22 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailSuppressions, leads, pipelineEvents } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
-import { sentCardMove, sentStage, stagesOf, withSentStage } from "../shared/sales-pipeline";
+import { sentCardMove, sentIsEntry, sentStage, stagesOf, withSentStage } from "../shared/sales-pipeline";
 
+/**
+ * „Versendet“ ist in der Pipeline „E-Mail-Kampagne“ die erste Spalte (Eingangsstufe) – eine Spalte „Neu“ gibt es dort nicht.
+ * Fehlt „Versendet“, wird sie einmal als Eingang eingesetzt; eine alte Aufteilung „Neu“ + „Versendet“ wird einmal zusammengelegt
+ * (Karten aus „Neu“ stehen danach in „Versendet“). Hat jemand „Versendet“ früher bewusst gelöscht, bleibt es dabei.
+ */
 export async function ensureSentStage(db: Db, tenantId: number): Promise<string | null> {
   const { pipelineStageSets, savePipelineStages } = await import("./meta-ads");
   const stages = stagesOf(await pipelineStageSets(db, tenantId), "email");
-  const found = sentStage(stages); if (found) return found;
+  const found = sentStage(stages); if (found && sentIsEntry(stages)) return found;
   const { loadSettings, saveSettings } = await import("./pipeline-extras"); const settings = await loadSettings(db, tenantId);
-  if (settings.sentStageAdded || stages.length >= 12) return null; // schon einmal angelegt und wieder gelöscht – oder kein Platz mehr
+  if (!found && (settings.sentStageAdded || stages.length >= 12)) return null; // schon einmal angelegt und wieder gelöscht – oder kein Platz mehr
   await savePipelineStages(db, tenantId, withSentStage(stages), "email");
-  await saveSettings(db, tenantId, { ...settings, sentStageAdded: true });
+  if (found) { const { logActivity } = await import("./activity"); await logActivity(db, tenantId, { kind: "sonstiges", title: "Pipeline „E-Mail-Kampagne“: „Versendet“ ist jetzt die erste Spalte", detail: "Die Spalte „Neu“ ist weg – Karten daraus stehen in „Versendet“. Neue Kontakte kommen mit der ersten Kampagnen-E-Mail dorthin, Interessenten aus dem Posteingang in ihre Stufe.", actorUserId: null }); }
+  else await saveSettings(db, tenantId, { ...settings, sentStageAdded: true });
   return sentStage(stagesOf(await pipelineStageSets(db, tenantId), "email"));
 }
 

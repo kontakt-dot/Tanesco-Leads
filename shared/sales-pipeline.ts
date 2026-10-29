@@ -62,13 +62,14 @@ export const stagesForLead = (sets: StageSets, lead: { adPlatform?: string | nul
 /** Alle Stufen aller Pipelines zusammen (für Einstellungen, die pipeline-übergreifend gelten) – gleiche Schlüssel nur einmal. */
 export const unionStages = (sets: StageSets): StageDef[] => { const seen = new Map<string, StageDef>(); for (const list of Object.values(sets)) for (const stage of list) if (!seen.has(stage.key)) seen.set(stage.key, stage); return Array.from(seen.values()); };
 export const isStage = (value: unknown, stages: StageDef[] = PIPELINE_STAGES): value is PipelineStage => typeof value === "string" && stages.some((stage) => stage.key === value);
-export const stageLabel = (key: string | null | undefined, stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.key === key)?.label ?? stages[0]?.label ?? "Neu";
+/** Name einer Stufe – unbekannte Standard-Schlüssel (z. B. „neu“ in der E-Mail-Pipeline ohne Spalte „Neu“) behalten ihren Standardnamen, sonst gilt die erste Stufe. */
+export const stageLabel = (key: string | null | undefined, stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.key === key)?.label ?? PIPELINE_STAGES.find((stage) => stage.key === key)?.label ?? stages[0]?.label ?? "Neu";
 export const slugStage = (label: string) => `stufe_${label.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30) || "neu"}`;
 /** Prüft eine Stufenliste: Eintritt, Gewonnen und Verloren müssen vorhanden sein; Schlüssel eindeutig; Labels gesetzt. Gibt die bereinigte Liste zurück. */
 export function normalizeStages(input: Array<Partial<StageDef>>): { stages: StageDef[]; issues: string[] } {
   const issues: string[] = []; const seen = new Set<string>(); const stages: StageDef[] = [];
   for (const item of input) { const label = String(item.label ?? "").trim(); if (!label) { issues.push("Eine Stufe hat keinen Namen."); continue; } let key = String(item.key ?? "").trim() || slugStage(label); if (seen.has(key)) { issues.push(`Die Stufe „${label}“ ist doppelt.`); continue; } seen.add(key); stages.push({ key, label: label.slice(0, 40), hint: String(item.hint ?? "").trim().slice(0, 120), ...(item.fixed ? { fixed: item.fixed } : {}), ...(isStageColor(item.color) ? { color: item.color.toLowerCase() } : {}) }); }
-  if (!stages.some((stage) => stage.fixed === "entry")) issues.push("Die Eingangsstufe („Neu“) darf nicht fehlen."); if (!stages.some((stage) => stage.fixed === "won")) issues.push("Die Gewonnen-Stufe („Kunde“) darf nicht fehlen."); if (!stages.some((stage) => stage.fixed === "lost")) issues.push("Die Verloren-Stufe darf nicht fehlen.");
+  if (!stages.some((stage) => stage.fixed === "entry")) issues.push("Die Eingangsstufe darf nicht fehlen."); if (!stages.some((stage) => stage.fixed === "won")) issues.push("Die Gewonnen-Stufe („Kunde“) darf nicht fehlen."); if (!stages.some((stage) => stage.fixed === "lost")) issues.push("Die Verloren-Stufe darf nicht fehlen.");
   if (stages.length > 12) issues.push("Höchstens 12 Stufen.");
   const entry = stages.find((stage) => stage.fixed === "entry"); const lost = stages.find((stage) => stage.fixed === "lost");
   const ordered = [...(entry ? [entry] : []), ...stages.filter((stage) => stage !== entry && stage !== lost), ...(lost ? [lost] : [])];
@@ -84,20 +85,32 @@ export const contactedStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.
 /** Stufe „Versendet“ der Pipeline „E-Mail-Kampagne“: Kampagnen-E-Mail ist raus. Per Schlüssel oder – bei eigenen Stufen – am Namen erkannt. */
 export const SENT_STAGE: StageDef = { key: "versendet", label: "Versendet", hint: "E-Mail aus einer Kampagne ist raus – neue Kontakte kommen automatisch hierher" };
 export const sentStage = (stages: StageDef[]) => (stages.find((stage) => stage.key === SENT_STAGE.key) ?? stages.find((stage) => !stage.fixed && /^(e-?mails? )?(versendet|gesendet|angeschrieben)$/i.test(stage.label.trim())))?.key ?? null;
-/** Stufen mit „Versendet“ direkt nach der Eingangsstufe – falls es sie noch nicht gibt. */
-export const withSentStage = (stages: StageDef[]): StageDef[] => { if (sentStage(stages)) return stages; const at = Math.max(0, stages.findIndex((stage) => stage.fixed === "entry")) + 1; return [...stages.slice(0, at), SENT_STAGE, ...stages.slice(at)]; };
+/** Ist in der E-Mail-Pipeline „Versendet“ schon die Eingangsstufe (erste Spalte, keine Spalte „Neu“ mehr)? */
+export const sentIsEntry = (stages: StageDef[]) => { const sent = sentStage(stages); return Boolean(sent && entryStage(stages) === sent); };
+/**
+ * Stufen der Pipeline „E-Mail-Kampagne“: „Versendet“ ist die Eingangsstufe und damit die erste Spalte – eine Spalte „Neu“ gibt es dort
+ * nicht. Neue Kontakte kommen mit der ersten Kampagnen-E-Mail nach „Versendet“, Interessenten aus dem Posteingang in ihre Stufe
+ * („Hat Interesse“). Fehlt „Versendet“, wird sie als Eingang eingesetzt; eine alte Aufteilung „Neu“ + „Versendet“ wird zusammengelegt.
+ */
+export function withSentStage(stages: StageDef[]): StageDef[] {
+  if (sentIsEntry(stages)) return stages;
+  const sent = sentStage(stages); const own = stages.find((stage) => stage.key === sent);
+  const rest = stages.filter((stage) => stage.fixed !== "entry" && stage.key !== sent);
+  return [{ ...(own ?? SENT_STAGE), fixed: "entry" }, ...rest];
+}
 /**
  * Kampagnen-E-Mail ist raus – was passiert mit der Karte? Nur NEUE kommen nach „Versendet“:
  *  - nur in der E-Mail-Akquise (noch in keiner Pipeline) → Pipeline „E-Mail-Kampagne“, Stufe „Versendet“
- *  - in der Pipeline „E-Mail-Kampagne“ noch in der Eingangsstufe („Neu“) → „Versendet“
+ *  - in der Pipeline „E-Mail-Kampagne“ noch in der Eingangsstufe (oder in einer Stufe, die es nicht mehr gibt, z. B. „Neu“) → „Versendet“
  *  - alles andere (schon weitergeschoben, andere Pipeline) bleibt, wo es ist
  */
 export function sentCardMove(lead: { inPipeline: boolean | null; adPlatform: string | null; pipelineStage: string | null }, emailStages: StageDef[]): { intake: boolean; from: string | null; to: string } | null {
   const to = sentStage(emailStages); if (!to) return null;
   if (lead.inPipeline === false) return { intake: true, from: null, to };
   if (pipelineSourceOf(lead.adPlatform) !== "email") return null;
-  const current = isStage(lead.pipelineStage, emailStages) ? lead.pipelineStage : entryStage(emailStages);
-  return current === entryStage(emailStages) && current !== to ? { intake: false, from: current, to } : null;
+  const known = isStage(lead.pipelineStage, emailStages); const entry = entryStage(emailStages);
+  if (known && (lead.pipelineStage !== entry || lead.pipelineStage === to)) return null; // schon weitergeschoben – oder steht schon in „Versendet“
+  return { intake: false, from: known ? entry : lead.pipelineStage ?? null, to }; // aus einer Stufe, die es nicht mehr gibt (z. B. „Neu“): mit ihrem Namen im Verlauf
 }
 export const nextStageKey = (current: string, stages: StageDef[] = PIPELINE_STAGES) => { const index = stages.findIndex((stage) => stage.key === current); if (index < 0) return null; const next = stages[index + 1]; return next && next.fixed !== "lost" ? next.key : null; };
 const stageOf = (value: string | null | undefined, stages: StageDef[]) => (isStage(value, stages) ? value : entryStage(stages));

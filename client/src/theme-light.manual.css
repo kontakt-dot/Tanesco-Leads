@@ -1376,13 +1376,17 @@ html:not(.dark) .node-leads-stop:hover { background: #ffe4e6 !important; color: 
 html:not(.dark) .cd-list-filter::after { color: #475467 !important; }
 html:not(.dark) .cd-list-filter select { background: #ffffff !important; border-color: #e2e8f0 !important; color: #0f172a !important; }
 html:not(.dark) .cl-filter-count, html:not(.dark) .cl-meta .cl-started { color: #667085 !important; }
-html:not(.dark) .cl-next { color: #4c1d95 !important; }
-html:not(.dark) .cl-next svg { color: #7c3aed !important; }
-html:not(.dark) .cl-next b { color: #2e1065 !important; }
-html:not(.dark) .cl-next.is-paused, html:not(.dark) .cl-next.is-done, html:not(.dark) .cl-next.is-paused svg, html:not(.dark) .cl-next.is-done svg { color: #667085 !important; }
-html:not(.dark) .cl-next.is-approval { color: #9f1239 !important; }
-html:not(.dark) .cl-next.is-approval svg { color: #bc001d !important; }
-html:not(.dark) .cl-next.is-approval b { color: #881337 !important; }
+html:not(.dark) .cl-next { color: #4c1d95 !important; border-color: #fecdd3 !important; background: #fff7f8 !important; }
+html:not(.dark) .cl-next .fact-icon { background: #fff1f2 !important; color: #bc001d !important; }
+html:not(.dark) .cl-next-label { color: #667085 !important; }
+html:not(.dark) .cl-next-value { color: #101828 !important; }
+html:not(.dark) .cl-next-main small { color: #475467 !important; }
+html:not(.dark) .cl-next-main small::before { color: #98a2b3 !important; }
+html:not(.dark) .cl-next b { color: #881337 !important; }
+html:not(.dark) .cl-next.is-paused, html:not(.dark) .cl-next.is-done { border-color: #eaecf0 !important; background: #f9fafb !important; }
+html:not(.dark) .cl-next.is-paused .fact-icon, html:not(.dark) .cl-next.is-done .fact-icon { background: #f2f4f7 !important; color: #667085 !important; }
+html:not(.dark) .cl-next.is-paused .cl-next-value, html:not(.dark) .cl-next.is-done .cl-next-value { color: #475467 !important; }
+html:not(.dark) .cl-next.is-approval { border-color: #fda4af !important; background: #fff1f2 !important; }
 html:not(.dark) .cl-next-more { color: #667085 !important; }
 html:not(.dark) .drip-box { border-color: #e2e8f0 !important; background: #f8fafc !important; }
 html:not(.dark) .drip-box.is-on { border-color: #a7f3d0 !important; background: #ecfdf5 !important; }
@@ -1709,8 +1713,9 @@ html:not(.dark) .ch-value { color: #101828 !important; }
 html:not(.dark) .ch-value.is-warn { color: #be123c !important; }
 html:not(.dark) .cl-approval { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #9f1239 !important; }
 html:not(.dark) .cl-approval svg, html:not(.dark) .cl-approval strong { color: #bc001d !important; }
-html:not(.dark) .cl-approval span::before { color: #fb7185 !important; }
-html:not(.dark) .cl-approval:hover { background: #ffe4e6 !important; }
+html:not(.dark) .cl-approval-part::before { color: #fb7185 !important; }
+html:not(.dark) .cl-approval-part { text-decoration-color: #fda4af !important; }
+html:not(.dark) .cl-approval-main:hover, html:not(.dark) .cl-approval-part:hover { background: #ffe4e6 !important; color: #881337 !important; }
 html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #9f1239 !important; }
 html:not(.dark) .sparte-badge { border-color: #fecdd3 !important; background: #fff1f2 !important; color: #9f1239 !important; }
 html:not(.dark) .rv-kind.is-first { background: #eff6ff !important; color: #1d4ed8 !important; }
@@ -1737,7 +1742,7 @@ html:not(.dark) .cl-lists-menu-head, html:not(.dark) .cl-lists-menu-item small {
 html:not(.dark) .sparte-badge small { color: #be123c !important; }
 html:not(.dark) .sparte-badge.is-standard { border-color: #e4e7ec !important; background: #f9fafb !important; color: #475467 !important; }
 html:not(.dark) .sparte-badge.is-standard small { color: #667085 !important; }
-html:not(.dark) .cl-approval:focus-visible, html:not(.dark) .cat-pick:focus-visible, html:not(.dark) .list-picker-more:focus-visible { outline-color: #bc001d !important; }
+html:not(.dark) .cl-approval-main:focus-visible, html:not(.dark) .cl-approval-part:focus-visible, html:not(.dark) .cat-pick:focus-visible, html:not(.dark) .list-picker-more:focus-visible { outline-color: #bc001d !important; }
 html:not(.dark) .audience-status .is-warn { background: #ffe4e6 !important; color: #9f1239 !important; box-shadow: inset 0 0 0 1px #fecdd3 !important; }
 html:not(.dark) .cl-spec dt { color: #667085 !important; }
 html:not(.dark) .cl-spec dd { color: #101828 !important; }

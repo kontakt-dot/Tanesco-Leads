@@ -16,7 +16,7 @@ import { and, asc, desc, eq, inArray, like, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
-import { undoLog, tenants, leadCategories, categoryFields, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
+import { undoLog, tenants, leadCategories, categoryFields, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineStageConfigs, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
@@ -3047,7 +3047,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     expect((await db.select({ id: emailCampaignEvents.id }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")))).length).toBe(4);
     const emailStages = await owner.leadops.pipelineStages({ source: "email" });
-    expect(emailStages.map((stage) => stage.key).slice(0, 2)).toEqual(["neu", "versendet"]);
+    expect(emailStages.map((stage) => stage.key).slice(0, 2)).toEqual(["versendet", "in_bearbeitung"]); expect(emailStages[0].fixed).toBe("entry"); expect(emailStages.some((stage) => stage.key === "neu")).toBe(false); // „Versendet“ ist die erste Spalte – keine Spalte „Neu“
     expect(await row(ids.vera)).toEqual({ inPipeline: true, adPlatform: "email", stage: "versendet" });
     expect(await row(ids.nora)).toEqual({ inPipeline: true, adPlatform: "email", stage: "versendet" });
     expect(await row(ids.karl)).toEqual({ inPipeline: true, adPlatform: "email", stage: "kontaktiert" });
@@ -3068,10 +3068,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const preview = (await owner.leadops.pipelineStateAt({ at: beforeRun })).items;
     expect(preview.find((item) => item.leadId === ids.vera)?.then.pipeline).toBe("Nur E-Mail-Akquise"); expect(preview.find((item) => item.leadId === ids.nora)?.then.stage).toBe("Neu");
     expect(preview.some((item) => item.leadId === ids.karl || item.leadId === ids.kim)).toBe(false);
-    // Spalte gelöscht → kommt nicht wieder, und niemand wird mehr einsortiert
-    await owner.leadops.savePipelineStages({ source: "email", stages: emailStages.filter((stage) => stage.key !== "versendet") });
-    const { ensureSentStage } = await import("./sent-card"); expect(await ensureSentStage(db, S.tenantId)).toBeNull();
-    expect((await owner.leadops.pipelineStages({ source: "email" })).some((stage) => stage.key === "versendet")).toBe(false);
+    // „Versendet“ ist der Eingang der Pipeline und lässt sich nicht löschen
+    await expect(owner.leadops.savePipelineStages({ source: "email", stages: emailStages.filter((stage) => stage.key !== "versendet") })).rejects.toThrow("Eingangsstufe");
+    const { ensureSentStage } = await import("./sent-card"); expect(await ensureSentStage(db, S.tenantId)).toBe("versendet");
+    // alte Aufteilung „Neu“ + „Versendet“ (so sah es bisher aus): wird einmal zusammengelegt – Karten aus „Neu“ stehen in „Versendet“, der Rest bleibt
+    const oldLayout = [{ key: "neu", label: "Neu", hint: "Gerade eingegangen", fixed: "entry" as const }, { ...emailStages[0], fixed: undefined }, ...emailStages.slice(1)];
+    await db.update(pipelineStageConfigs).set({ stages: oldLayout }).where(and(eq(pipelineStageConfigs.tenantId, S.tenantId), eq(pipelineStageConfigs.source, "email")));
+    expect((await owner.leadops.pipelineStages({ source: "email" })).map((stage) => stage.key).slice(0, 2)).toEqual(["neu", "versendet"]);
+    await db.update(leads).set({ pipelineStage: "neu" }).where(eq(leads.id, ids.nora));
+    expect(await ensureSentStage(db, S.tenantId)).toBe("versendet");
+    const mergedStages = await owner.leadops.pipelineStages({ source: "email" }); expect(mergedStages.map((stage) => stage.key).slice(0, 2)).toEqual(["versendet", "in_bearbeitung"]); expect(mergedStages[0].fixed).toBe("entry");
+    expect(await row(ids.nora)).toEqual({ inPipeline: true, adPlatform: "email", stage: "versendet" }); expect(await row(ids.karl)).toMatchObject({ stage: "kontaktiert" });
+    expect((await owner.leadops.activityFeed({ days: 1 })).days.some((day) => day.groups.some((group) => group.entries.some((entry) => entry.title.includes("„Versendet“ ist jetzt die erste Spalte"))))).toBe(true);
+    // Kontakt von Hand in der E-Mail-Pipeline ohne Stufe → „Versendet“ (Eingang); Interessent aus dem Posteingang kommt in seine Stufe (63n)
+    const manual = await owner.leadops.createPipelineContact({ source: "email", firstName: "Eva", lastName: "Eingang", phone: "+49 69 5550777" }); expect((await db.select({ stage: leads.pipelineStage }).from(leads).where(eq(leads.publicId, manual.publicId)))[0].stage).toBe("versendet");
   }, 40000);
 
   it("63g. Nachtrag: Kontakte mit schon versendeter E-Mail kommen einmal nach „Versendet“ – Unzustellbare, Gesperrte und weitergeschobene Karten bleiben; Rückgängig", async () => {
@@ -3601,6 +3611,66 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // die Korrektur beim Start fasst eine von Hand gewechselte Kategorie nicht mehr an (Vermerk „Kategorie an die Kampagne“ fehlt zwar, aber die Karte hat ihre Kategorie bewusst) – hier: sie würde einmal angepasst, danach nie wieder
     const { fixCampaignLeadCategories } = await import("./inbox"); await fixCampaignLeadCategories(db);
     await owner.leadops.setPipelineCategory({ publicId: nora.publicId, categoryId: S.wp!.id }); expect(await fixCampaignLeadCategories(db)).toBe(0); expect((await db.select().from(leads).where(eq(leads.id, nora.id)))[0].categoryId).toBe(S.wp!.id);
+  }, 40000);
+
+  it("63s. Vertriebspipeline: Photovoltaik und Wärmepumpe laufen als eine Kategorie „Photovoltaik & Wärmepumpe“ – Vorgabe beim Upload, Kategorie der Kampagne, einmalige Zusammenführung beim Start; Verkaufs-Leads und bewusst gewählte Kategorien bleiben", async () => {
+    const { mergeEnergyCategories, ENERGY_MERGE_NOTE } = await import("./vertrieb-category"); const { COMBINED_ENERGY_CATEGORY } = await import("../shared/lead-sparte"); const { starterBlocks } = await import("../shared/email-design"); const starter = await owner.leadops.emailCampaignStarter();
+    expect(S.pv!.name).toBe("Photovoltaik"); const byEmail = (email: string) => db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, email))).then((rows) => rows[0]);
+    // 1) Upload ohne Kategorie → „Photovoltaik & Wärmepumpe“ (wird angelegt: Kürzel PVWP, Emoji ☀️♨️)
+    await owner.leadops.importColdList({ listName: "PVWP-Vorgabe", toPipeline: true, rows: [{ firstName: "Vera", lastName: "Vorgabe", company: "Vorgabe Dach", email: "vera@pvwp-e2e.example" }] });
+    const combined = (await owner.leadops.listCategories()).find((row) => row.name === COMBINED_ENERGY_CATEGORY.name); expect(combined).toBeTruthy(); expect(combined!.shortcode).toBe("PVWP"); expect(combined!.emoji).toBe("☀️♨️");
+    expect((await byEmail("vera@pvwp-e2e.example")).categoryId).toBe(combined!.id);
+    // 2) ausdrücklich „Photovoltaik“ gewählt → bleibt Photovoltaik (Upload wie Karte)
+    await owner.leadops.importColdList({ listName: "PVWP-Gewaehlt", toPipeline: true, categoryId: S.pv!.id, rows: [{ firstName: "Gustav", lastName: "Gewählt", company: "Gewählt Solar", email: "gustav@pvwp-e2e.example" }, { firstName: "Hanna", lastName: "Hand", company: "Hand Solar", email: "hanna@pvwp-e2e.example" }] });
+    expect((await byEmail("gustav@pvwp-e2e.example")).categoryId).toBe(S.pv!.id);
+    // 3) Kampagne mit gewählter Kategorie „Photovoltaik“: beim Aufnehmen bekommt der Kontakt die gemeinsame Kategorie (wie die Leadsparte der Kampagne)
+    await owner.leadops.importColdList({ listName: "PVWP-Kampagne", toPipeline: false, categoryId: S.pv!.id, rows: [{ firstName: "Ida", lastName: "Intake", company: "Intake Solar", email: "ida@pvwp-e2e.example" }] });
+    expect((await byEmail("ida@pvwp-e2e.example")).categoryId).toBe(S.pv!.id);
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "PV-Kampagne gemeinsam", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "PVWP-Kampagne" }, leadCategoryIds: [S.pv!.id], tree: { start: "p1", nodes: [{ id: "p1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id });
+    expect(await byEmail("ida@pvwp-e2e.example")).toMatchObject({ categoryId: combined!.id, adCampaignId: `email-${campaign.id}` });
+    expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)?.sparte?.label).toBe("Photovoltaik"); // die Sparte der Kampagne bleibt genau (für die KI-Texte)
+    // 4) Verkaufs-Lead mit Photovoltaik bleibt; Zusammenführung beim Start: Vertriebskarten mit „Photovoltaik“ → gemeinsame Kategorie mit Vermerk, danach nie wieder
+    await db.insert(leads).values({ tenantId: S.tenantId, publicId: "VK-PVWP-E2E", categoryId: S.pv!.id, kind: "verkauf", firstName: "Verkauf", lastName: "Bleibt", email: "verkauf@pvwp-e2e.example", country: "DE", status: "neu", cost: "0.00" });
+    expect(await mergeEnergyCategories(db)).toBeGreaterThanOrEqual(2); // Gustav und Hanna
+    expect((await byEmail("gustav@pvwp-e2e.example")).categoryId).toBe(combined!.id); expect((await byEmail("hanna@pvwp-e2e.example")).categoryId).toBe(combined!.id); expect((await byEmail("verkauf@pvwp-e2e.example")).categoryId).toBe(S.pv!.id);
+    const gustav = await byEmail("gustav@pvwp-e2e.example"); expect((await owner.leadops.pipelineHistory({ publicId: gustav.publicId })).some((event) => (event.note ?? "").startsWith(`${ENERGY_MERGE_NOTE}: „${COMBINED_ENERGY_CATEGORY.name}“ (vorher „Photovoltaik“)`))).toBe(true);
+    expect(await mergeEnergyCategories(db)).toBe(0);
+    await owner.leadops.setPipelineCategory({ publicId: gustav.publicId, categoryId: S.pv!.id }); expect(await mergeEnergyCategories(db)).toBe(0); expect((await byEmail("gustav@pvwp-e2e.example")).categoryId).toBe(S.pv!.id); // bewusst zurück auf Photovoltaik → bleibt
+    // Pipeline: die gemeinsame Kategorie steht in der Auswahl mit Zähler; Kontakt von Hand anlegen ohne Kategorie → gemeinsame Kategorie
+    const board = await owner.leadops.pipelineOverview({ source: "kaltakquise" }) as { categories: Array<{ id: number; name: string; count: number }> }; expect(board.categories.find((item) => item.id === combined!.id)?.count).toBeGreaterThanOrEqual(2);
+    const manual = await owner.leadops.createPipelineContact({ source: "kaltakquise", firstName: "Manu", lastName: "Manuell", phone: "+49 69 5550999" }); expect((await db.select().from(leads).where(eq(leads.publicId, manual.publicId)))[0].categoryId).toBe(combined!.id);
+  }, 40000);
+
+  it("63t. Freigabe getrennt: „Alle freigeben“, „wieder prüfen“, „neu schreiben“ und „Entwürfe schreiben“ gelten nur für Erst-E-Mails bzw. nur für Follow-ups", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const starter = await owner.leadops.emailCampaignStarter();
+    await owner.leadops.importColdList({ listName: "Freigabe-Art", toPipeline: false, rows: [{ firstName: "Vera", lastName: "Art", company: "Art Wärme", email: "vera@freigabe-art-e2e.example" }, { firstName: "Nils", lastName: "Art", company: "Art Solar", email: "nils@freigabe-art-e2e.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Freigabe-Art", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Freigabe-Art" }, tree, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+    let [vera, nils] = await rows();
+    // Vera: Erst-E-Mail von Hand freigegeben und raus → nach der Wartezeit wartet ihr Follow-up zur Prüfung; Nils: Erst-E-Mail wartet zur Prüfung
+    await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: "Persönlich für Art Wärme", text: "Sehr geehrte Frau Art,\n\nzum Kennenlernen stellen wir Ihnen 10 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
+    await owner.leadops.runEmailCampaigns(); [vera, nils] = await rows(); expect(vera.sentCount).toBe(1); expect(nils.sentCount).toBe(0);
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, vera.id)); await owner.leadops.runEmailCampaigns(); [vera, nils] = await rows();
+    expect(vera).toMatchObject({ sentCount: 1, nodeId: "m2", draftNodeId: "m2" });
+    await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: "Kurze Nachfrage", text: "Sehr geehrte Frau Art,\n\nhatten Sie schon Gelegenheit, über unser Angebot nachzudenken?\n\nVielen Dank", approve: false }); // geprüfter Text (kein Ersatz aus der Vorlage)
+    await owner.leadops.saveCampaignDraft({ recipientId: nils.id, subject: "Erste an Art Solar", text: "Sehr geehrter Herr Art,\n\nwir liefern Photovoltaik-Interessenten aus Ihrer Region.\n\nVielen Dank", approve: false });
+    [vera, nils] = await rows(); expect(vera.draftState).toBe("entwurf"); expect(nils.draftState).toBe("entwurf");
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ erste: 1, followUps: 1, entwurf: 2 });
+    // nur Follow-ups freigeben → Nils' Erst-E-Mail bleibt zur Prüfung
+    expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true, kind: "followup" })).toMatchObject({ approved: 1 });
+    [vera, nils] = await rows(); expect(vera.draftState).toBe("freigegeben"); expect(nils.draftState).toBe("entwurf");
+    expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true, kind: "erste" })).toMatchObject({ approved: 1 }); [vera, nils] = await rows(); expect(nils.draftState).toBe("freigegeben");
+    // nur die Erst-E-Mails wieder prüfen → das Follow-up bleibt freigegeben
+    expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: false, kind: "erste" })).toMatchObject({ reverted: 1 }); [vera, nils] = await rows(); expect(nils.draftState).toBe("entwurf"); expect(vera.draftState).toBe("freigegeben");
+    // nur Follow-ups neu schreiben → Nils' Entwurf bleibt; „Entwürfe schreiben“ nur für Follow-ups findet Vera wieder
+    expect(await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id, kind: "followup" })).toEqual({ reset: 1 }); [vera, nils] = await rows(); expect(vera.draftState).toBeNull(); expect(nils.draftState).toBe("entwurf");
+    expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5, kind: "erste" })).drafts).toHaveLength(0);
+    expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5, kind: "followup" })).drafts).toHaveLength(1); [vera] = await rows(); expect(vera).toMatchObject({ draftNodeId: "m2", draftState: "entwurf" });
+    // ohne Art: alles (geprüfte Texte) – Veras neuer Entwurf ist nur Ersatz aus der Vorlage und bleibt bewusst zur Prüfung
+    const all = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true }); expect(all.approved + (all.templateOnly ?? 0)).toBe(2); expect(all.approved).toBeGreaterThanOrEqual(1);
   }, 40000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {

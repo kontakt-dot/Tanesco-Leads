@@ -1031,7 +1031,7 @@ describe("Trennung Verkaufs-Leads/Vertriebskontakte, Sperrliste mit Unterlisten,
 
   it("Lead-Seite: Stammdaten bearbeiten (mit Verlauf), Kategorie wechseln, Kontakt löschen – nur Vertriebskontakte", async () => {
     const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const card = overview.stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.name.includes("Vogt"));
-    expect(card.categoryShortcode).toBe("PV");
+    expect(card.categoryShortcode).toBe("PVWP"); // Vertriebspipeline: Photovoltaik und Wärmepumpe als eine Kategorie
     await expect(call("leadops.updatePipelineLead", { publicId: card.publicId, phone: "abc" })).rejects.toThrow(/gültige Telefonnummer/);
     await expect(call("leadops.updatePipelineLead", { publicId: card.publicId, firstName: "", lastName: "" })).rejects.toThrow(/Vor- oder Nachname/);
     const categories = await call("leadops.listCategories"); const wp = categories.find((row: any) => row.shortcode === "WP");
@@ -1055,7 +1055,7 @@ describe("Trennung Verkaufs-Leads/Vertriebskontakte, Sperrliste mit Unterlisten,
   it("öffnet das ausführliche Lead-Fenster mit allen Bereichen, neuen Kürzeln und der Einschätzung (heiße Phasen)", async () => {
     const overview = await call("leadops.pipelineOverview", { source: "kaltakquise" }); const card = overview.stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.name.includes("Yilmaz"));
     const detail = await call("leadops.pipelineLeadDetail", { publicId: card.publicId });
-    expect(detail).toMatchObject({ publicId: card.publicId, adPlatform: "kaltakquise", categoryName: "Photovoltaik", categoryEmoji: "☀️", categoryColor: "#eab308" });
+    expect(detail).toMatchObject({ publicId: card.publicId, adPlatform: "kaltakquise", categoryName: "Photovoltaik & Wärmepumpe", categoryEmoji: "☀️♨️", categoryColor: "#f59e0b" });
     expect(Array.isArray(detail.history) && detail.history.length).toBeTruthy(); expect(Array.isArray(detail.tasks)).toBe(true); expect(Array.isArray(detail.calls)).toBe(true); expect(Array.isArray(detail.campaigns)).toBe(true); expect(Array.isArray(detail.inbox)).toBe(true); expect(typeof detail.score).toBe("number"); expect(["heiss", "warm", "kalt"]).toContain(detail.temperature); expect(detail.scoreReasons.length).toBeGreaterThan(0); // heiße Phasen: Einschätzung mit Begründung
     await expect(call("leadops.pipelineLeadDetail", { publicId: getStore().tables.leads.find((row) => row.kind !== "vertrieb")!.publicId })).rejects.toThrow(/Lead zum Verkauf/);
     const categories = await call("leadops.listCategories"); const byCode = Object.fromEntries(categories.map((row: any) => [row.shortcode, row]));
@@ -1311,7 +1311,7 @@ describe("Kampagnen-Upload bleibt vorerst außerhalb der Pipeline (Chat-Build)",
     expect(kontakte.items[0].inPipeline).toBe(false);
     const emailBoardVorher = await call("leadops.pipelineOverview", { source: "email" });
     const uebernommen = await call("leadops.pushLeadsToPipeline", { leadIds: [kontakte.items[0].id] });
-    expect(uebernommen.moved).toBe(1); expect(uebernommen.stage).toBe("neu");
+    expect(uebernommen.moved).toBe(1); expect(uebernommen.stage).toBe("versendet"); // E-Mail-Pipeline: „Versendet“ ist die erste Spalte (keine Spalte „Neu“)
     const nachher = await call("leadops.pipelineOverview", { source: "kaltakquise" });
     expect(nachher.totals.leads).toBe(vorher.totals.leads); // Kaltakquise-Board unverändert …
     const emailBoard = await call("leadops.pipelineOverview", { source: "email" });

@@ -6,11 +6,12 @@ import { listCampaignId } from "../shared/sales-pipeline";
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
-import { companyProspects, leadCategories, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, tags } from "../drizzle/schema";
+import { companyProspects, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, tags } from "../drizzle/schema";
 import { extractProfile, sizeBucket, stripHtml, type CompanyProfile } from "../shared/lead-finder";
 import { invokeLLM } from "./_core/llm";
 import type { Db } from "./lead-pipeline";
 import { distributeOwners } from "./meta-ads";
+import { requireVertriebCategoryId } from "./vertrieb-category";
 
 export type Candidate = { name: string; website: string | null; phone: string | null; street: string | null; postcode: string | null; city: string | null; lat: number | null; lng: number | null; source: "google" | "osm"; externalId: string; rating: number | null; ratingCount: number | null };
 const UA = "TanescoLeads/1.0 (lead-finder; kontakt@tanesco.digital)";
@@ -103,7 +104,7 @@ export async function listProspects(db: Db, tenantId: number, options: { query?:
 export async function prospectsToPipeline(db: Db, tenantId: number, input: { ids: number[]; listName?: string | null; categoryId?: number | null; ownerUserIds?: number[] | null; actorUserId: number | null }) {
   const rows = await db.select().from(companyProspects).where(and(eq(companyProspects.tenantId, tenantId), inArray(companyProspects.id, input.ids))); if (!rows.length) throw new Error("Keine Firmen ausgewählt.");
   const listName = (input.listName?.trim() || `Lead-Finder: ${rows[0].query ?? "Suche"} ${rows[0].location ?? ""}`).trim().slice(0, 160);
-  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id; if (!categoryId) throw new Error("Keine Lead-Kategorie vorhanden.");
+  const categoryId = await requireVertriebCategoryId(db, tenantId, input.categoryId);
   let tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0]; if (!tag) { await db.insert(tags).values({ tenantId, name: `Liste: ${listName}`.slice(0, 80), color: "#0ea5e9" }); tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0]; }
   const leadIds: number[] = []; let skipped = 0;
   for (const row of rows) { if (row.status === "uebernommen" && row.leadId) { skipped += 1; continue; } const profile = (row.profile ?? {}) as Partial<CompanyProfile> & { size?: string | null }; const management = profile.management?.split(/\s+/) ?? []; const inserted = await db.insert(leads).values({ tenantId, kind: "vertrieb", publicId: `KALT-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`, categoryId, firstName: management.length > 1 ? management[0] : null, lastName: management.length > 1 ? management.slice(1).join(" ") : row.name, email: row.email ?? null, phone: row.phone ?? null, postcode: row.postcode ?? null, city: row.city ?? null, country: "DE", supplierName: "Lead-Finder", metadata: { leadfinder: { website: row.website, source: row.source, size: profile.size ?? null, revenue: profile.revenue ?? null, serviceArea: profile.serviceArea ?? null, services: profile.services ?? [], street: row.street } }, status: "neu", cost: "0.00", pipelineStage: "neu", pipelineUpdatedAt: new Date(), company: row.name, listName, adPlatform: "kaltakquise", adCampaignId: listCampaignId(listName), adCampaignName: `Liste: ${listName}` }); const leadId = Number(inserted[0]?.insertId) || 0; leadIds.push(leadId); await db.insert(leadTagAssignments).values({ leadId, tagId: tag.id }); await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: null, nextStatus: "neu", actorUserId: input.actorUserId, note: `Aus Lead-Finder übernommen (${row.source === "google" ? "Google" : "OpenStreetMap"})` }); await db.insert(pipelineEvents).values({ tenantId, leadId, fromStage: null, toStage: "neu", actorUserId: input.actorUserId, note: `Lead-Finder: ${row.query ?? ""} ${row.location ?? ""}`.trim() }); await db.update(companyProspects).set({ status: "uebernommen", leadId }).where(eq(companyProspects.id, row.id)); }

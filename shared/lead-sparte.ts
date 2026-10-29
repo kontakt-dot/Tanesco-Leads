@@ -92,7 +92,9 @@ export function categoriesForSparte<T extends { id: number; name: string }>(cate
     if (part.key === "eigene") return categories.filter((category) => norm(category.name) === norm(part.label)); // eigene Sparte: nur genau dieser Name
     const wanted = part.key === "pv-wp" ? ENERGY_KEYS : new Set([part.key]);
     const exact = categories.filter((category) => norm(category.name) === norm(part.label) || wanted.has(resolveSparte(category.name)!.key)); // „Photovoltaik“, „Treppenlifte“
-    return exact.length ? exact : categories.filter((category) => { const own = sparteOfCategory(category.name); return own.key !== "eigene" && wanted.has(own.key); }); // sonst am Stichwort: „Photovoltaik Gewerbe“
+    const byLabel = exact.filter((category) => norm(category.name) === norm(part.label)); // genau der Name der Sparte zuerst („Photovoltaik & Wärmepumpe“ vor „Photovoltaik“)
+    if (exact.length) return [...byLabel, ...exact.filter((category) => !byLabel.includes(category))];
+    return categories.filter((category) => { const own = sparteOfCategory(category.name); return own.key !== "eigene" && wanted.has(own.key); }); // sonst am Stichwort: „Photovoltaik Gewerbe“
   };
   if (sparte.key !== "eigene") return matches(sparte);
   const parts = sparte.label.split(/\s+&\s+/).map((part) => part.trim()).filter(Boolean);
@@ -109,6 +111,18 @@ export function sparteOf(campaign: { leadSparte?: string | null; name?: string |
 /** Photovoltaik und/oder Wärmepumpe? */
 export const isEnergySparte = (sparte: Pick<Sparte, "key">) => sparte.key === "pv-wp" || sparte.key === "photovoltaik" || sparte.key === "waermepumpe";
 const isEnergy = isEnergySparte;
+/* ---------------------------------------------------------------- Vertriebspipeline: Photovoltaik und Wärmepumpe als EINE Lead-Kategorie */
+/**
+ * In der Vertriebspipeline (Kaltakquise, E-Mail-Kampagne, Meta Ads) laufen Photovoltaik und Wärmepumpe als eine Lead-Kategorie
+ * „Photovoltaik & Wärmepumpe“ (☀️♨️) – so wie die Leadsparte der E-Mail-Kampagnen. Verkaufs-Leads bleiben bei Photovoltaik bzw. Wärmepumpe.
+ */
+export const COMBINED_ENERGY_CATEGORY = { name: DEFAULT_SPARTE.label, shortcode: "PVWP", emoji: "☀️♨️", color: "#f59e0b" };
+/** Heißt die Kategorie genau „Photovoltaik“ oder „Wärmepumpe“ (auch „PV“, „Solar“, „Wärmepumpen“)? Genauere wie „Photovoltaik Gewerbe“ oder „Wärmepumpe Endkunde“ bleiben eigenständig. */
+export function isSingleEnergyCategory(name: string | null | undefined): boolean { const key = resolveSparte(name)?.key; return key === "photovoltaik" || key === "waermepumpe"; }
+/** Die gemeinsame Kategorie „Photovoltaik & Wärmepumpe“ eines Mandanten – falls es sie schon gibt. */
+export function combinedEnergyCategory<T extends { name: string }>(categories: T[]): T | null { return categories.find((category) => resolveSparte(category.name)?.key === "pv-wp") ?? null; }
+/** Für Karten der Vertriebspipeline: Photovoltaik oder Wärmepumpe → die gemeinsame Kategorie (wenn es sie gibt), alles andere bleibt, wie es ist. */
+export function vertriebCategory<T extends { name: string }>(categories: T[], picked: T | null | undefined): T | null { if (!picked) return null; if (!isSingleEnergyCategory(picked.name)) return picked; return combinedEnergyCategory(categories) ?? picked; }
 /** Passt der Text zur Sparte? In jeder Sparte außer PV/WP darf nichts von Photovoltaik oder Wärmepumpen stehen. */
 export function fitsSparte(sparte: Pick<Sparte, "key"> & { label?: string }, text: string): boolean { const energyLabel = sparte.key === "eigene" && (PV_RE.test(sparte.label ?? "") || WP_RE.test(sparte.label ?? "")); /* eigene Sparte wie „Batteriespeicher für PV“ */ return isEnergy(sparte) || energyLabel || !(PV_RE.test(text) || WP_RE.test(text)); }
 const ENERGY_WORD = "(?:photovoltaik\\w*|solar\\w*|pv(?:-?anlagen?)?|wärmepumpe\\w*|waermepumpe\\w*)";

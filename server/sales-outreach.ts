@@ -9,7 +9,7 @@ import { DEFAULT_SPARTE, OLD_ENERGY_PHRASE, resolveSparte, SPARTE_PHRASE, sparte
 import { fixTreeQuestions, testLeadsOfSent } from "../shared/email-campaigns";
 import { cleanFolderName, folderKey, folderNameIssue, MAX_FOLDERS, planSparteFolders, sortFolders, sortSummary } from "../shared/campaign-folders";
 import crypto from "node:crypto";
-import { isColdLike, isCustomSource, listCampaignId, platformForSource, type PipelineSource } from "../shared/sales-pipeline";
+import { entryStage, isColdLike, isCustomSource, isStage, listCampaignId, platformForSource, stagesOf, type PipelineSource } from "../shared/sales-pipeline";
 import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignFolders, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, listImports, outboundMessages, pipelineEvents, pipelineNotes, pipelineTasks, tags, tenantSettings, users, type EmailCampaign } from "../drizzle/schema";
 import { blocksToPlainText, nodeWithTestOffer, promisedTestLeads, withTestOffer } from "../shared/email-campaigns";
 import { autoDraftFor, draftToBlocks, modernizeTree, smoothQualifyPhrase, cleanDraftText, sentSourceOf, type SentSource, PORTAL_RE, dripBudget, resolveDrip, SUPPRESSION_LABELS, type DripSettings, type SuppressionReason, abVariantFor, advanceRecipient, audienceLists, canEnroll, listAudience, DEFAULT_SEND_WINDOW, eventLabel, followUpTree, resolveSendWindow, hasAbTest, maxRunsLabel, maxRunsOf, OPEN_RECIPIENT_STATUSES, kiAnsatzOf, kiModusOf, recipientPath, recipientValues, renderNode, REPLY_STOP_NOTE, resolveWaiting, starterTree, stopsOnReply, summarizeCampaign, validateTree, waitingText, type EmailNode, type EmailTree, type RecipientState, type SendDay, type SendWindow, SEND_WINDOW_PRESET} from "../shared/email-campaigns";
@@ -30,6 +30,7 @@ import type { OwnerShare, ShareMode } from "../shared/pipeline-extras";
 /* ---------- Kaltakquise-Listen ---------- */
 import { extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
 import { lostStage, PIPELINE_SOURCE_LABEL, pipelineSourceOf, stagesForLead, wonStage } from "../shared/sales-pipeline";
+import { requireVertriebCategoryId } from "./vertrieb-category";
 export { parseColdList };
 /** Tag holen oder anlegen (Name wird auf 80 Zeichen gekürzt). */
 async function tagByName(db: Db, tenantId: number, name: string, color: string) {
@@ -45,7 +46,7 @@ export async function importColdList(db: Db, tenantId: number, input: { pipeline
   const listName = input.listName.trim(); if (!listName) throw new Error("Bitte einen Listennamen angeben.");
   const coldPlatform = input.pipeline && isColdLike(input.pipeline) ? platformForSource(input.pipeline) : "kaltakquise"; // eigene Pipeline: Kontakte landen dort if (!input.rows.length) throw new Error("Die Liste enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig).");
   // Kategorie ist freiwillig: ohne Angabe die erste aktive nehmen, sonst ohne Kategorie anlegen.
-  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id ?? null;
+  const categoryId = await requireVertriebCategoryId(db, tenantId, input.categoryId); // ohne Wahl: „Photovoltaik & Wärmepumpe“ (Vertriebspipeline), sonst die erste aktive Kategorie
   const tag = await tagByName(db, tenantId, `Liste: ${listName}`, "#f59e0b");
   const extraTags = [] as Array<{ id: number }>;
   for (const name of input.tagNames ?? []) { const clean = name.trim(); if (!clean) continue; const row = await tagByName(db, tenantId, clean, "#8178ff"); if (row && row.id !== tag.id) extraTags.push(row); }
@@ -137,8 +138,9 @@ export async function createPipelineContact(db: Db, tenantId: number, input: { s
   const existing = await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company, email: leads.email, phone: leads.phone }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
   const twin = existing.find((row) => (email && (row.email ?? "").toLowerCase() === email) || (phoneKey.length >= 6 && samePhone(row.phone) === phoneKey));
   if (twin) throw new Error(`Diesen Kontakt gibt es schon: ${[twin.firstName, twin.lastName].filter(Boolean).join(" ") || twin.company || twin.email} (${twin.publicId}) – gleiche ${email && (twin.email ?? "").toLowerCase() === email ? "E-Mail" : "Telefonnummer"}.`);
-  const categoryId = input.categoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id ?? null;
-  const stage = clean(input.stage, 40) ?? "neu";
+  const categoryId = await requireVertriebCategoryId(db, tenantId, input.categoryId); // ohne Wahl: „Photovoltaik & Wärmepumpe“ (Vertriebspipeline), sonst die erste aktive Kategorie
+  const { pipelineStageSets } = await import("./meta-ads"); const ownStages = stagesOf(await pipelineStageSets(db, tenantId), input.source); // Stufe der Ziel-Pipeline – ohne Angabe ihre Eingangsstufe (E-Mail-Kampagne: „Versendet“)
+  const wanted = clean(input.stage, 40); const stage = wanted && isStage(wanted, ownStages) ? wanted : entryStage(ownStages);
   const coldLike = isColdLike(input.source);
   const listName = coldLike ? (clean(input.listName) ?? "Eigene Kontakte") : null;
   const platform = platformForSource(input.source);

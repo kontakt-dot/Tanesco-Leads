@@ -60,11 +60,15 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
   beforeEach(() => { resetStore(); try { localStorage.removeItem("kampagnen-sortierung"); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
   const names = (root: HTMLElement) => Array.from(root.querySelectorAll(".cl-card .cl-name strong")).map((node) => node.textContent ?? "");
-  it("sortiert A–Z als Standard, wechselt auf „Zuletzt bearbeitet“, Archiv zeigt nur archivierte Kampagnen mit „Wiederherstellen“", async () => {
+  it("sortiert A–Z als Standard (erst Lead-Kategorie, dann Name), wechselt auf „Zuletzt bearbeitet“, Archiv zeigt nur archivierte Kampagnen mit „Wiederherstellen“", async () => {
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const { view } = mount(); await settle(300); await settle(300);
     const shown = names(view.container); expect(shown.length).toBeGreaterThan(2);
-    expect(shown).toEqual([...shown].sort((a, b) => a.localeCompare(b, "de", { sensitivity: "base", numeric: true }))); // A–Z
+    const cmp = (a: string, b: string) => a.localeCompare(b, "de", { sensitivity: "base", numeric: true });
+    const keyed = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).map((card) => ({ category: Array.from(card.querySelector(".sparte-badge")?.childNodes ?? []).filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? "").join("").trim(), name: card.querySelector(".cl-name strong")?.textContent ?? "" }));
+    expect(keyed.map((row) => row.name)).toEqual([...keyed].sort((a, b) => cmp(a.category, b.category) || cmp(a.name, b.name)).map((row) => row.name)); // A–Z: erst die Lead-Kategorie, dann der Name
+    expect(keyed.map((row) => row.category)).toEqual([...keyed.map((row) => row.category)].sort(cmp)); expect(new Set(keyed.map((row) => row.category)).size).toBeGreaterThan(1);
+    expect(view.container.querySelector<HTMLSelectElement>(".cl-sort select")?.selectedOptions[0]?.textContent).toBe("Lead-Kategorie A–Z");
     expect(shown).not.toContain("Elektriker NRW – Frühjahr"); // archivierte Kampagne nicht in der Übersicht
     const sort = view.container.querySelector<HTMLSelectElement>(".cl-sort select"); expect(sort).not.toBeNull();
     await act(async () => { fireEvent.change(sort!, { target: { value: "bearbeitet" } }); }); await settle(100);

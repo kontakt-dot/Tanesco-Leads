@@ -18,7 +18,8 @@ import { checkAttachments, type MailAttachmentInput } from "../shared/email-sign
 import { logActivity } from "./activity";
 import { messageIdsIn, normalizeMessageId } from "../shared/message-id";
 import { audienceLists, kiModusOf, promisedTestLeads, sentSourceOf, testLeadsOfSent, TEST_LEADS, withTestOffer, type SentSource } from "../shared/email-campaigns";
-import { applyPayFit, categoriesForSparte, DEFAULT_SPARTE, fixQuestionCount, isEnergySparte, paysOnlyFitting, qualifyBy, questionCount, sparteOf, withQuestionTopics } from "../shared/lead-sparte";
+import { applyPayFit, categoriesForSparte, combinedEnergyCategory, DEFAULT_SPARTE, fixQuestionCount, isEnergySparte, isSingleEnergyCategory, paysOnlyFitting, qualifyBy, questionCount, sparteOf, vertriebCategory, withQuestionTopics } from "../shared/lead-sparte";
+import { createCategoryForSparte, ensureCombinedEnergyCategory, loadCategories, toVertriebCategory, vertriebCategoryId } from "./vertrieb-category";
 
 const stripHtml = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 /** Antworttext ohne zitierte Vornachricht („Am … schrieb …“, „>“-Zeilen). */
@@ -284,38 +285,35 @@ export async function bulkAction(db: Db, tenantId: number, input: { ids: number[
 export async function markRead(db: Db, tenantId: number, id: number, isRead: boolean) { await db.update(inboxMessages).set({ isRead }).where(and(eq(inboxMessages.id, id), eq(inboxMessages.tenantId, tenantId))); return { success: true as const }; }
 export async function archive(db: Db, tenantId: number, id: number, archived: boolean) { await db.update(inboxMessages).set({ archived, isRead: true }).where(and(eq(inboxMessages.id, id), eq(inboxMessages.tenantId, tenantId))); return { success: true as const }; }
 /** Absender als Lead in die Pipeline übernehmen (oder bestehenden Lead in die gewählte Pipeline/Stufe setzen). */
-/** Lead-Kategorie einer E-Mail-Kampagne: die erste gewählte Lead-Kategorie – sonst die aktive Kategorie, die zur Leadsparte passt (z. B. „Alarmanlagen“ zu Alarmanlage). */
+/**
+ * Lead-Kategorie einer E-Mail-Kampagne: die erste gewählte Lead-Kategorie – sonst die aktive Kategorie, die zur Leadsparte passt
+ * (z. B. „Alarmanlagen“ zu Alarmanlage). Photovoltaik oder Wärmepumpe wird in der Vertriebspipeline zur gemeinsamen Kategorie
+ * „Photovoltaik & Wärmepumpe“ (wenn es sie gibt); ohne gewählte Sparte (Standard: PV & WP) gilt ebenfalls die gemeinsame Kategorie.
+ */
 type CategoryRow = { id: number; name: string; status?: string | null };
 type CampaignLike = { leadCategoryIds?: unknown; leadSparte?: string | null; name?: string | null; audience?: unknown };
 export function campaignCategoryFrom(rows: CategoryRow[], campaign: CampaignLike): CategoryRow | null {
+  const active = rows.filter((row) => row.status !== "inaktiv");
   const ids = Array.isArray(campaign.leadCategoryIds) ? (campaign.leadCategoryIds as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0) : [];
-  const chosen = ids.map((id) => rows.find((row) => row.id === id)).find(Boolean); if (chosen) return chosen;
-  const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") return null;
-  return categoriesForSparte(rows.filter((row) => row.status !== "inaktiv"), sparte)[0] ?? null;
+  const chosen = ids.map((id) => rows.find((row) => row.id === id)).find(Boolean); if (chosen) return vertriebCategory(active, chosen);
+  const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") return combinedEnergyCategory(active);
+  return vertriebCategory(active, categoriesForSparte(active, sparte)[0] ?? null);
 }
 /**
  * Lead-Kategorie der Kampagne. Mit `create`: Gibt es zur Leadsparte der Kampagne noch keine Kategorie (z. B. „Alarmanlage“,
- * „Hausnotruf“), wird sie angelegt – Kontakte aus der Kampagne sollen in der Pipeline immer ihre Kategorie tragen.
+ * „Hausnotruf“), wird sie angelegt – Kontakte aus der Kampagne sollen in der Pipeline immer ihre Kategorie tragen. Für
+ * Photovoltaik, Wärmepumpe und die Standard-Sparte ist das die gemeinsame Kategorie „Photovoltaik & Wärmepumpe“.
  */
 export async function campaignCategoryFor(db: Db, tenantId: number, campaign: CampaignLike, options: { create?: boolean } = {}): Promise<number | null> {
-  const rows = await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false)));
-  const found = campaignCategoryFrom(rows, campaign)?.id ?? null; if (found || !options.create) return found;
-  const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") return null;
+  const rows = await loadCategories(db, tenantId);
+  const found = campaignCategoryFrom(rows, campaign); if (!options.create) return found?.id ?? null;
+  const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []);
+  if (found) return (isSingleEnergyCategory(found.name) ? (await toVertriebCategory(db, tenantId, rows, found))?.id : found.id) ?? null;
+  if (sparte.source === "standard") return (await ensureCombinedEnergyCategory(db, tenantId, rows))?.id ?? null; // Standard-Sparte: nur, wenn der Mandant mit PV/WP arbeitet
+  if (isEnergySparte(sparte)) return (await ensureCombinedEnergyCategory(db, tenantId, rows, { force: true }))?.id ?? null;
   return (await createCategoryForSparte(db, tenantId, sparte.label)).id;
 }
-/** Lead-Kategorie zu einer Leadsparte anlegen (Name = Sparte, Kürzel aus dem Namen, Emoji passend) – einmalig je Mandant. */
-export async function createCategoryForSparte(db: Db, tenantId: number, label: string): Promise<{ id: number; name: string }> {
-  const name = label.trim().slice(0, 160);
-  const existing = (await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false))));
-  const same = existing.find((row) => row.name.trim().toLowerCase() === name.toLowerCase()); if (same) return { id: same.id, name: same.name };
-  const base = name.toUpperCase().replace(/Ä/g, "AE").replace(/Ö/g, "OE").replace(/Ü/g, "UE").replace(/ß/gi, "SS").replace(/[^A-Z0-9]/g, "").slice(0, 8) || "KAT";
-  const codes = new Set(existing.map((row) => row.shortcode.toUpperCase())); let code = base; for (let n = 2; codes.has(code); n += 1) code = `${base.slice(0, 6)}${n}`;
-  const { suggestCategoryEmoji } = await import("../shared/category-emoji");
-  await db.insert(leadCategories).values({ tenantId, shortcode: code, name, color: null, emoji: suggestCategoryEmoji(name), status: "aktiv", geocodingRequired: true, marketplaceEnabled: false });
-  const row = (await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.shortcode, code))).orderBy(desc(leadCategories.id)).limit(1))[0];
-  const { logActivity } = await import("./activity"); await logActivity(db, tenantId, { kind: "sonstiges", title: `Lead-Kategorie „${name}“ angelegt`, detail: "Automatisch zur Leadsparte einer E-Mail-Kampagne – damit Kontakte aus der Kampagne in der Pipeline ihre Kategorie tragen.", refType: "leadCategory", refId: row.id });
-  return row;
-}
+export { createCategoryForSparte };
 const CATEGORY_FIX_NOTE = "Kategorie an die Kampagne";
 /**
  * Einmal je Kontakt: Karten in der Pipeline „E-Mail-Kampagne“ bekommen die Lead-Kategorie ihrer Kampagne (gewählte Kategorie bzw.
@@ -336,8 +334,8 @@ export async function fixCampaignLeadCategories(db: Db): Promise<number> {
     const campaignOf = (lead: { id: number; adCampaignId: string | null }) => { const linked = Number(String(lead.adCampaignId ?? "").startsWith("email-") ? String(lead.adCampaignId).slice(6) : ""); return Number.isInteger(linked) && linked > 0 ? linked : latestCampaign.get(lead.id) ?? null; };
     const campaignIds = Array.from(new Set(own.map(campaignOf).filter((id): id is number => typeof id === "number")));
     const campaigns = campaignIds.length ? await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, campaignIds))) : [];
-    // Fehlt zur Leadsparte einer Kampagne noch die Kategorie (z. B. „Alarmanlage“), wird sie angelegt
-    for (const campaign of campaigns) { if (campaignCategoryFrom(categoryRows, campaign)) continue; const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") continue; const created = await createCategoryForSparte(db, tenantId, sparte.label); if (!categoryRows.some((row) => row.id === created.id)) categoryRows.push({ id: created.id, name: created.name, status: "aktiv" }); }
+    // Fehlt zur Leadsparte einer Kampagne noch die Kategorie (z. B. „Alarmanlage“), wird sie angelegt – für PV, WP und die Standard-Sparte die gemeinsame „Photovoltaik & Wärmepumpe“
+    for (const campaign of campaigns) { const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); const energy = sparte.source === "standard" || isEnergySparte(sparte) || isSingleEnergyCategory(campaignCategoryFrom(categoryRows, campaign)?.name); if (energy) { await ensureCombinedEnergyCategory(db, tenantId, categoryRows, { force: sparte.source !== "standard" }); continue; } if (campaignCategoryFrom(categoryRows, campaign)) continue; const created = await createCategoryForSparte(db, tenantId, sparte.label); if (!categoryRows.some((row) => row.id === created.id)) categoryRows.push({ id: created.id, name: created.name, status: "aktiv" }); }
     for (const lead of own) {
       const campaign = campaigns.find((row) => row.id === campaignOf(lead)); if (!campaign) continue;
       const wanted = campaignCategoryFrom(categoryRows, campaign); if (!wanted || wanted.id === lead.categoryId) continue;
@@ -372,7 +370,7 @@ export async function createLeadFromMessage(db: Db, tenantId: number, input: { m
     const linked = await linkThread(db, tenantId, existing.id, message.fromEmail);
     return { leadId: existing.id, publicId: existing.publicId, created: false, linked };
   }
-  const categoryId = input.categoryId ?? campaignCategoryId ?? (await db.select({ id: leadCategories.id }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.status, "aktiv"))).limit(1))[0]?.id; if (!categoryId) throw new Error("Keine Lead-Kategorie vorhanden.");
+  const categoryId = input.categoryId ?? campaignCategoryId ?? await vertriebCategoryId(db, tenantId, null); if (!categoryId) throw new Error("Keine Lead-Kategorie vorhanden.");
   const guessed = (message.fromName ?? message.fromEmail.split("@")[0]).replace(/[._]/g, " ").trim().split(/\s+/); const firstName = input.firstName?.trim() || (guessed.length > 1 ? guessed[0] : null); const lastName = input.lastName?.trim() || (guessed.length > 1 ? guessed.slice(1).join(" ") : guessed[0]);
   const publicId = `${input.pipeline === "kaltakquise" ? "KALT" : "MAIL"}-${crypto.randomUUID().replace(/-/g, "").slice(0, 7).toUpperCase()}`;
   const newCampaign = campaignOf;
