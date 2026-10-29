@@ -51,6 +51,11 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     const kept = finishDraft(full, { greeting, phone: "0611 123456", followUp: false });
     expect(kept.match(/0611 123456/g)).toHaveLength(1); expect(kept.match(/Vielen Dank/g)).toHaveLength(1); expect(kept).not.toContain("Max"); expect(kept.trim().endsWith("Vielen Dank")).toBe(true);
     expect(kept).toContain("Text mit 10 Test-Leads kostenlos"); expect(kept.match(/Test-Leads/g)).toHaveLength(1); // alte 20 aus dem KI-Text → 10, kein zweites Angebot dazu
+    // Follow-up an einen Kontakt, dem 20 versprochen wurden: der Entwurf nennt wieder 20 – auch wenn die KI 10 schreibt oder das Angebot fehlt
+    const promised = finishDraft("Sehr geehrte Frau Kurz,\n\nkurz nachgefragt: 10 Test-Leads kostenlos stehen weiter für Sie bereit.", { greeting, phone: "", followUp: true, sparte: DEFAULT_SPARTE, testLeads: 20 });
+    expect(promised).toContain("20 Test-Leads kostenlos"); expect(promised).not.toMatch(/\b10 Test-Leads/);
+    const added = finishDraft("Sehr geehrte Frau Kurz,\n\nkurz nachgefragt.", { greeting, phone: "", followUp: true, sparte: DEFAULT_SPARTE, testLeads: 20 });
+    expect(added).toContain("Zum Kennenlernen: 20 Test-Leads kostenlos");
     expect(kept).not.toMatch(/Firmenname/); expect(kept).toContain("anhand von zehn Fragen telefonisch vorqualifiziert."); // Firmennamen-Satz entfernt, Rest bleibt sauber
     // Ohne Telefon: nur „antworten Sie einfach auf diese E-Mail“; Nachfass-Mail braucht nur das Test-Angebot
     const noPhone = finishDraft("Hallo,\n\nkurzer Nachfass ohne Angebot.", { greeting, phone: "", followUp: true });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanDraftText, dropAdPlatforms, fixTreeQuestions, modernizeTree, shortParagraphs, splitSentences, starterTree, TEST_LEADS, thirdPartyTemplate, withTestOffer, type EmailTree } from "../shared/email-campaigns";
+import { cleanDraftText, dropAdPlatforms, fixTreeQuestions, modernizeTree, nodeWithTestOffer, promisedTestLeads, shortParagraphs, splitSentences, starterTree, TEST_LEADS, TEST_OFFER_CHANGED_AT, testLeadsIn, thirdPartyTemplate, withTestOffer, type EmailTree } from "../shared/email-campaigns";
 import { starterBlocks } from "../shared/email-design";
 import { polishBlocks, sanitizeDraft, heuristicEmailDraft } from "../shared/email-ai";
 import { resolveSparte } from "../shared/lead-sparte";
@@ -72,7 +72,22 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
     const first = old.nodes[0]; if (first.type === "send") first.subject = "20 Test-Leads kostenlos für {{firma}}";
     const fresh = JSON.stringify(modernizeTree(old)); expect(fresh).not.toMatch(/\b20\b/); expect(fresh.match(/10 Test-Leads/g)).toHaveLength(5); // Betreff, Text, Aufzählung und die Nachfass-Mail in beiden Zweigen
     expect(JSON.stringify(fixTreeQuestions(old, resolveSparte("Hausnotruf")!))).not.toMatch(/20 Test-Leads/); // auch beim Speichern/Start über die Sparten-Anpassung
-    expect(cleanDraftText("Zum Kennenlernen bekommen Sie 20 Test-Leads kostenlos.")).toBe("Zum Kennenlernen bekommen Sie 10 Test-Leads kostenlos."); // offene Entwürfe
+    expect(cleanDraftText("Zum Kennenlernen bekommen Sie 20 Test-Leads kostenlos.", TEST_LEADS)).toBe("Zum Kennenlernen bekommen Sie 10 Test-Leads kostenlos."); // offene Entwürfe – mit der Zahl, die dem Kontakt zusteht
+  });
+  it("Ein Versprechen bleibt: Follow-ups nennen die Zahl Test-Leads, die der Kontakt schon gelesen hat (20) – neue Erst-E-Mails 10", () => {
+    expect(testLeadsIn("Zum Kennenlernen: 20 Test-Leads kostenlos.")).toBe(20); expect(testLeadsIn("Wir bieten zehn kostenlose Test-Leads an.")).toBe(10); expect(testLeadsIn("Die ersten 20 Leads sind kostenlos.")).toBe(20);
+    expect(testLeadsIn("Wir liefern monatlich 20 Leads.")).toBeNull(); expect(testLeadsIn("")).toBeNull(); expect(testLeadsIn(null)).toBeNull();
+    expect(withTestOffer("Zum Kennenlernen: 10 Test-Leads kostenlos.", 20)).toBe("Zum Kennenlernen: 20 Test-Leads kostenlos."); // zurück auf 20, wenn das versprochen war
+    expect(withTestOffer("Zehn Test-Leads gratis.", 20)).toBe("Zwanzig Test-Leads gratis."); expect(withTestOffer("Zum Kennenlernen: 20 Test-Leads kostenlos.", 20)).toBe("Zum Kennenlernen: 20 Test-Leads kostenlos.");
+    const before = new Date(TEST_OFFER_CHANGED_AT.getTime() - 86_400_000); const after = new Date(TEST_OFFER_CHANGED_AT.getTime() + 3_600_000);
+    expect(promisedTestLeads([{ body: "Zum Kennenlernen: 20 Test-Leads kostenlos.", createdAt: before }])).toBe(20);
+    expect(promisedTestLeads([{ body: "Zum Kennenlernen: 10 Test-Leads kostenlos.", createdAt: after }])).toBe(10);
+    expect(promisedTestLeads([{ body: null, createdAt: before }])).toBe(20); expect(promisedTestLeads([{ body: null, createdAt: after }])).toBe(10); // Vorlagen-Versand ohne Text: die Zahl der Vorlage von damals
+    expect(promisedTestLeads([{ body: "Zum Kennenlernen: 20 Test-Leads kostenlos.", createdAt: before }, { body: "Kurz nachgefragt – ohne Angebot.", createdAt: after }])).toBe(20); // die letzte E-Mail ohne Angebot → die davor zählt
+    expect(promisedTestLeads([])).toBeNull();
+    const node = { id: "f", type: "send" as const, subject: "Noch einmal: 10 Test-Leads kostenlos", blocks: [{ id: "t", type: "text" as const, text: "Das Angebot steht weiterhin: 10 Test-Leads kostenlos." }, { id: "b", type: "bullets" as const, items: ["10 Test-Leads kostenlos – individuell"] }], next: null };
+    expect(JSON.stringify(nodeWithTestOffer(node, 20))).not.toMatch(/\b10\b/); expect(JSON.stringify(nodeWithTestOffer(node, 20)).match(/20 Test-Leads/g)).toHaveLength(3);
+    expect(cleanDraftText("Zum Kennenlernen bekommen Sie 20 Test-Leads kostenlos.")).toBe("Zum Kennenlernen bekommen Sie 20 Test-Leads kostenlos."); // ohne Angabe bleibt die Zahl, wie sie ist
   });
   it("KI-Vorlagen-Builder: Texte in kurzen Absätzen, nie Meta", () => {
     const fallback = heuristicEmailDraft({ brief: "Hausnotruf-Anbieter ansprechen", goal: "frei", tone: "freundlich", length: "mittel" } as never);

@@ -475,20 +475,62 @@ export function sentSourceOf(input: { bodySource?: string | null; subject?: stri
   if ((input.templateSubjects ?? []).some((template) => subjectFromTemplate(template, subject))) return { source: "vorlage", known: false };
   return { source: "ki", known: false };
 }
-/** Test-Angebot in allen Kampagnen: so viele Test-Leads gibt es kostenlos zum Kennenlernen (früher 20). */
+/** Absender, der bei neuen Kampagnen unter „Grunddaten“ steht (änderbar je Kampagne). */
+export const DEFAULT_SENDER = { fromName: "Thomas Kurzbach", fromEmail: "kontakt@tanescodigital.de" };
+/** Test-Angebot in allen Kampagnen: so viele Test-Leads gibt es kostenlos zum Kennenlernen (bis 29.10.2026: 20). */
 export const TEST_LEADS = 10;
-const TEST_COUNT_SRC = "(?:20|zwanzig)";
-const testCount = (match: string) => (/^Z/.test(match) ? "Zehn" : /^z/.test(match) ? "zehn" : String(TEST_LEADS));
+export const PREVIOUS_TEST_LEADS = 20;
+/** Seit wann die Vorlagen 10 statt 20 sagen – ältere E-Mails ohne gespeicherten Text versprachen noch 20. */
+export const TEST_OFFER_CHANGED_AT = new Date("2026-10-29T11:50:00Z");
+const COUNT_WORDS: Array<[string, number]> = [["fünfzehn", 15], ["fünfzig", 50], ["fünf", 5], ["zehn", 10], ["zwanzig", 20], ["dreißig", 30], ["vierzig", 40], ["hundert", 100]];
+const TEST_COUNT_SRC = "(?:\\d{1,3}|fünfzehn|fünfzig|fünf|zehn|zwanzig|dreißig|vierzig|hundert)";
+/** Wo im Text das Test-Angebot steht: „20 Test-Leads“, „20 kostenlose Test-Leads“, „die ersten 20 Leads kostenlos“ – die Zahl ist die Gruppe. */
+const TEST_OFFER_RES = [
+  `(^|[^\\wäöüß])(${TEST_COUNT_SRC})(?=\\s+(?:kostenlose[nr]?\\s+|gratis\\s+)?Test-?Leads?(?![\\wäöüß]))`,
+  `(^|[^\\wäöüß])(${TEST_COUNT_SRC})(?=\\s+(?:kostenlose[nr]?|gratis)\\s+Leads?(?![\\wäöüß]))`,
+  `(^|[^\\wäöüß])(${TEST_COUNT_SRC})(?=\\s+Leads?\\s+(?:sind\\s+|gibt\\s+es\\s+|bekommen\\s+Sie\\s+|erhalten\\s+Sie\\s+)?(?:kostenlos|gratis)(?![\\wäöüß]))`,
+];
+const countValueOf = (raw: string): number | null => { const lower = raw.toLowerCase(); if (/^\d+$/.test(lower)) return Number(lower); return COUNT_WORDS.find(([word]) => word === lower)?.[1] ?? null; };
+const countTextFor = (count: number, like: string) => { const word = COUNT_WORDS.find(([, value]) => value === count)?.[0]; if (/^\d+$/.test(like) || !word) return String(count); return /^[A-ZÄÖÜ]/.test(like) ? word.charAt(0).toUpperCase() + word.slice(1) : word; };
+/** Wie viele Test-Leads ein Text verspricht – null, wenn kein Test-Angebot drinsteht. */
+export function testLeadsIn(text: string | null | undefined): number | null {
+  if (!text || !/leads?/i.test(text)) return null;
+  for (const source of TEST_OFFER_RES) { const match = new RegExp(source, "i").exec(text); if (match) { const value = countValueOf(match[2]); if (value !== null) return value; } }
+  return null;
+}
 /**
- * Alte Zahl im Test-Angebot auf die aktuelle bringen: „20 Test-Leads kostenlos“, „20 kostenlose Test-Leads“, „die ersten 20 Leads kostenlos“
- * → 10 – in gespeicherten Vorlagen, offenen Entwürfen und KI-Texten. Nur am Test-Angebot; andere Zahlen bleiben. Mehrfach ohne Nebenwirkung.
+ * Zahl im Test-Angebot auf `count` bringen (Standard: die aktuelle, 10): „20 Test-Leads kostenlos“ → „10 Test-Leads kostenlos“ – in
+ * gespeicherten Vorlagen, offenen Entwürfen und KI-Texten. Nur am Test-Angebot; andere Zahlen bleiben. Mehrfach ohne Nebenwirkung.
+ * Für Follow-ups an Kontakte, denen schon 20 versprochen wurden, mit `count: 20` – dann heißt es wieder 20 (ein Versprechen bleibt).
  */
-export function withTestOffer(text: string): string {
-  if (!text || !/20|zwanzig/i.test(text)) return text;
-  return text
-    .replace(new RegExp(`\\b${TEST_COUNT_SRC}(?=\\s+(?:kostenlose[nr]?\\s+|gratis\\s+)?Test-?Leads?\\b)`, "gi"), testCount)
-    .replace(new RegExp(`\\b${TEST_COUNT_SRC}(?=\\s+(?:kostenlose[nr]?|gratis)\\s+Leads?\\b)`, "gi"), testCount)
-    .replace(new RegExp(`\\b${TEST_COUNT_SRC}(?=\\s+Leads?\\s+(?:sind\\s+|gibt\\s+es\\s+|bekommen\\s+Sie\\s+|erhalten\\s+Sie\\s+)?(?:kostenlos|gratis)\\b)`, "gi"), testCount);
+export function withTestOffer(text: string, count: number = TEST_LEADS): string {
+  if (!text || !/leads?/i.test(text)) return text;
+  let out = text;
+  for (const source of TEST_OFFER_RES) out = out.replace(new RegExp(source, "gi"), (all: string, lead: string, raw: string) => (countValueOf(raw) === count ? all : `${lead}${countTextFor(count, raw)}`));
+  return out;
+}
+/** Betreff und Texte einer E-Mail im Ablauf mit dem Test-Angebot für `count` – für Follow-ups aus der Vorlage an Kontakte mit altem Versprechen. */
+export function nodeWithTestOffer<T extends { subject: string; subjectB?: string | null; blocks: EmailBlock[] }>(node: T, count: number): T {
+  const blocks = node.blocks.map((block) => block.type === "text" || block.type === "heading" ? { ...block, text: withTestOffer(block.text, count) } : block.type === "bullets" ? { ...block, items: block.items.map((item) => withTestOffer(item, count)) } : block);
+  return { ...node, subject: withTestOffer(node.subject, count), ...(node.subjectB ? { subjectB: withTestOffer(node.subjectB, count) } : {}), blocks };
+}
+/**
+ * Was wurde diesem Kontakt schon versprochen? Die zuletzt gesendete E-Mail zählt: steht ihr Text da, die Zahl daraus; ohne gespeicherten
+ * Text (Vorlagen-Versand) gilt die Zahl, die die Vorlage damals hatte – vor der Umstellung 20, danach 10. null = noch nichts gesendet.
+ */
+/** Wie viele Test-Leads EINE gesendete E-Mail genannt hat: aus dem gespeicherten Text; ohne Text (Vorlagen-Versand von früher) die Zahl der Vorlage von damals – null, wenn die E-Mail kein Test-Angebot enthielt. */
+export function testLeadsOfSent(mail: { body?: string | null; createdAt?: Date | string | null }): number | null {
+  if (mail.body) return testLeadsIn(mail.body);
+  return mail.createdAt && new Date(mail.createdAt) < TEST_OFFER_CHANGED_AT ? PREVIOUS_TEST_LEADS : null;
+}
+export function promisedTestLeads(sent: Array<{ body?: string | null; createdAt?: Date | string | null }>): number | null {
+  const ordered = [...sent].sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+  for (const mail of ordered) {
+    const inBody = testLeadsIn(mail.body); if (inBody !== null) return inBody;
+    if (mail.body) continue; // eigener Text ohne Test-Angebot – die nächste ältere E-Mail entscheidet
+    return mail.createdAt && new Date(mail.createdAt) < TEST_OFFER_CHANGED_AT ? PREVIOUS_TEST_LEADS : TEST_LEADS;
+  }
+  return null;
 }
 /**
  * Holprige Formulierung „telefonisch qualifiziert über (in der Regel) 10 Fragen“ → „in der Regel anhand von zehn Fragen telefonisch
@@ -574,7 +616,7 @@ export function shortParagraphs(text: string, max = 260): string {
   }).join("");
 }
 /** Für gespeicherte Entwürfe und den Versand: Aroundhome raus, Formulierung zur Vorqualifizierung glätten, nie Meta & Co., kurze Absätze. */
-export const cleanDraftText = (text: string) => shortParagraphs(withTestOffer(dropAdPlatforms(smoothQualifyPhrase(dropPortalMentions(text)))));
+export const cleanDraftText = (text: string, testLeads: number | null = null) => { const clean = shortParagraphs(dropAdPlatforms(smoothQualifyPhrase(dropPortalMentions(text)))); return typeof testLeads === "number" ? withTestOffer(clean, testLeads) : clean; }; // `testLeads`: Test-Angebot auf diese Zahl bringen (z. B. das dem Kontakt versprochene) – ohne Angabe bleibt die Zahl im Text, wie sie ist
 export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[] {
   const keep = original.filter((block) => block.type === "signature"); // nur die Signatur bleibt – keine Knöpfe (es gibt keine Terminbuchung)
   return [{ id: "draft-text", type: "text", text: cleanDraftText(text.trim()) }, ...keep];

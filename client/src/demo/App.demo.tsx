@@ -6,9 +6,9 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import Home from "@/pages/Home";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { callProcedure, resetStore } from "./backend";
+import { callProcedure, getStore, resetStore } from "./backend";
 // Chat-Build: eingebettete Kundenseiten (z. B. Vertrag unterschreiben) erreichen den Demo-Speicher über dieses Fenster-Objekt
-window.__tanescoDemo = { reset: () => resetStore(), call: (path: string, input: unknown) => callProcedure(path, input) };
+window.__tanescoDemo = { reset: () => resetStore(), call: (path: string, input: unknown) => callProcedure(path, input), store: () => getStore() };
 
 function DemoBadge() {
   const queryClient = useQueryClient();

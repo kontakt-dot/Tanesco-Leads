@@ -1713,6 +1713,22 @@ html:not(.dark) .cl-approval span::before { color: #fb7185 !important; }
 html:not(.dark) .cl-approval:hover { background: #ffe4e6 !important; }
 html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #9f1239 !important; }
 html:not(.dark) .sparte-badge { border-color: #fecdd3 !important; background: #fff1f2 !important; color: #9f1239 !important; }
+html:not(.dark) .sparte-emoji { background: #fff1f2 !important; box-shadow: inset 0 0 0 1px #fecdd3 !important; }
+html:not(.dark) .rv-kind.is-first { background: #eff6ff !important; color: #1d4ed8 !important; }
+html:not(.dark) .inbox-sent-sparte { background: #fff1f2 !important; color: #9f1239 !important; }
+html:not(.dark) .inbox-prior { border-color: #fecdd3 !important; background: #fff7f8 !important; }
+html:not(.dark) .inbox-prior-head { color: #9f1239 !important; } html:not(.dark) .inbox-prior-head strong { color: #881337 !important; }
+html:not(.dark) .inbox-prior-head small, html:not(.dark) .inbox-prior-row small { color: #667085 !important; } html:not(.dark) .inbox-prior-head small button { color: #bc001d !important; }
+html:not(.dark) .inbox-prior-row strong { color: #101828 !important; } html:not(.dark) .inbox-prior-excerpt { color: #475467 !important; }
+html:not(.dark) .inbox-prior-open { border-color: #d0d5dd !important; background: #ffffff !important; color: #344054 !important; }
+html:not(.dark) .rv-kind.is-followup { background: #fff1f2 !important; color: #be123c !important; }
+html:not(.dark) .rv-step-label, html:not(.dark) .rv-editor-kind small { color: #667085 !important; }
+html:not(.dark) .cl-list-chip { border-color: #e4e7ec !important; background: #ffffff !important; color: #344054 !important; }
+html:not(.dark) .cl-list-chip small { background: #fff1f2 !important; color: #be123c !important; }
+html:not(.dark) .cl-list-chip.is-other { color: #667085 !important; }
+html:not(.dark) .cl-list-chip.is-more { color: #bc001d !important; border-color: #f1c2ca !important; }
+html:not(.dark) .cl-list-chip.is-more:hover { background: #fff7f8 !important; }
+html:not(.dark) .cl-lists-menu-head, html:not(.dark) .cl-lists-menu-item small { color: #667085 !important; }
 html:not(.dark) .sparte-badge small { color: #be123c !important; }
 html:not(.dark) .sparte-badge.is-standard { border-color: #e4e7ec !important; background: #f9fafb !important; color: #475467 !important; }
 html:not(.dark) .sparte-badge.is-standard small { color: #667085 !important; }

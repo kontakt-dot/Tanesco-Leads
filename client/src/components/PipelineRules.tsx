@@ -4,6 +4,7 @@ import { Play, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { DISPOSITIONS } from "../../../shared/dialer";
+import { DEFAULT_SENDER } from "../../../shared/email-campaigns";
 import type { PipelineSettings } from "../../../shared/pipeline-extras";
 import type { StageDef } from "../../../shared/sales-pipeline";
 
@@ -24,7 +25,7 @@ export default function PipelineRules({ stageDefs }: { stageDefs: StageDef[] }) 
   if (!draft) return <p className="mt-3 text-sm text-slate-400">Wird geladen …</p>;
   const options = (campaigns.data ?? []).filter((row) => !row.isTemplate && !row.archivedAt); // archivierte Kampagnen stehen der Automatik nicht mehr zur Wahl
   const campaignSelect = (value: number | null | undefined, onChange: (id: number | null) => void) => <select className="lead-action-select" value={value ?? ""} onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)}><option value="">– keine –</option>{options.map((row) => <option key={row.id} value={row.id}>{row.name}{row.status === "entwurf" ? " (Entwurf – wird beim ersten Kontakt aktiv)" : ""}</option>)}{(() => { const archived = value ? (campaigns.data ?? []).find((row) => row.id === value && row.archivedAt) : null; return archived ? <option value={archived.id}>{archived.name} (archiviert – nimmt niemanden mehr auf)</option> : null; })()}</select>;
-  const addSeries = async (kind: "angebot" | "aufwecken", apply: (id: number) => void) => { try { const template = await starter.query({ kind }); const saved = await createSeries.mutateAsync({ id: null, name: template.name, fromName: "Tanesco Digital", fromEmail: "vertrieb@tanesco.digital", replyTo: null, audience: { source: "alle" }, tree: template.tree, design: template.design as unknown as Record<string, unknown> }); apply(saved.id); utils.leadops.listEmailCampaigns.invalidate(); toast.success(`Serie „${template.name}“ angelegt – unter „E-Mail-Kampagnen“ anpassbar.`); } catch (error) { toast.error(error instanceof Error ? error.message : "Serie konnte nicht angelegt werden."); } };
+  const addSeries = async (kind: "angebot" | "aufwecken", apply: (id: number) => void) => { try { const template = await starter.query({ kind }); const saved = await createSeries.mutateAsync({ id: null, name: template.name, fromName: DEFAULT_SENDER.fromName, fromEmail: DEFAULT_SENDER.fromEmail, replyTo: null, audience: { source: "alle" }, tree: template.tree, design: template.design as unknown as Record<string, unknown> }); apply(saved.id); utils.leadops.listEmailCampaigns.invalidate(); toast.success(`Serie „${template.name}“ angelegt – unter „E-Mail-Kampagnen“ anpassbar.`); } catch (error) { toast.error(error instanceof Error ? error.message : "Serie konnte nicht angelegt werden."); } };
   const openStages = stageDefs.filter((stage) => stage.fixed !== "entry" && stage.fixed !== "lost");
   return <div className="mt-3 grid gap-4 xl:grid-cols-2">
     <section className="surface-panel operations-panel p-4"><span className="eyebrow">EINGESCHLAFENE KARTEN</span><p className="mt-1 text-xs text-slate-500">Karten ohne Bewegung (kein Stufenwechsel, keine Notiz, keine Nachricht, keine erledigte Aufgabe) bekommen einen Hinweis „💤 seit X Tagen“ – und optional automatisch eine Aufweck-Serie per E-Mail (einmal je Karte).</p>

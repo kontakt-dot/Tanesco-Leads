@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
-import { Check, ChevronRight, ExternalLink, Globe, MailX, PenLine, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, Globe, MailX, PenLine, RefreshCw, Repeat, RotateCcw, Send, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DRAFT_APPROACHES, draftToBlocks, type DraftApproach, type EmailNode } from "../../../shared/email-campaigns";
@@ -13,6 +13,16 @@ import { DRAFT_APPROACHES, draftToBlocks, type DraftApproach, type EmailNode } f
 type Item = { id: number; email: string; name: string | null; company: string | null; city: string | null; listName: string | null; publicId: string | null; website?: string | null; draftSubject: string | null; draftText: string | null; draftState: "entwurf" | "freigegeben" | null; draftSource: string | null; draftOptions?: Array<{ key: DraftApproach; label: string; subject: string; text: string; source?: "ki" | "vorlage"; refs?: string[] }>; draftApproach?: DraftApproach | null; draftAt: string | Date | null };
 type Filter = "alle" | "offen" | "entwurf" | "freigegeben";
 const FILTERS: Array<[Filter, string]> = [["alle", "Alle"], ["offen", "Ohne Entwurf"], ["entwurf", "Zu prüfen"], ["freigegeben", "Freigegeben"]];
+type Kind = "alle" | "erste" | "followup"; // Erst-E-Mails und Follow-ups getrennt prüfen
+const KINDS: Array<[Kind, string]> = [["alle", "Alle"], ["erste", "Erst-E-Mails"], ["followup", "Follow-ups"]];
+type StepInfo = { followUp?: boolean; step?: number; sentBefore?: { subject: string; at: string | Date; count: number } | null; testLeads?: number };
+const isFollowUp = (item: Item) => Boolean((item as StepInfo).followUp);
+/** „Erst-E-Mail“ oder „Follow-up (2. E-Mail)“ – damit man beim Freigeben sofort sieht, was man vor sich hat. */
+function StepBadge({ item, long = false }: { item: Item; long?: boolean }) {
+  const info = item as StepInfo; const step = info.step ?? (info.followUp ? 2 : 1);
+  return info.followUp ? <span className="rv-kind is-followup" title={`Follow-up – die ${step}. E-Mail an diesen Kontakt`}><Repeat className="h-3 w-3" aria-hidden="true" />{long ? `Follow-up · ${step}. E-Mail` : `Follow-up ${step}`}</span> : <span className="rv-kind is-first" title="Erst-E-Mail – die erste E-Mail an diesen Kontakt"><Send className="h-3 w-3" aria-hidden="true" />Erst-E-Mail</span>;
+}
+const whenLabel = (value: string | Date) => new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const initialsOf = (text: string) => text.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
 const stateOf = (item: Item): Filter => item.draftState === "freigegeben" ? "freigegeben" : item.draftState === "entwurf" ? "entwurf" : "offen";
 const STATE_LABEL: Record<Filter, string> = { alle: "", offen: "Kein Entwurf", entwurf: "Zu prüfen", freigegeben: "Freigegeben – geht raus" };
@@ -27,7 +37,7 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
   const approveAll = trpc.leadops.approveAllCampaignDrafts.useMutation({ onSuccess: (result, variables) => { const out = result as { approved?: number; reverted?: number; withoutDraft?: number; templateOnly?: number }; if (variables.approve && out.templateOnly) toast.warning(`${out.templateOnly} Entwurf${out.templateOnly === 1 ? " ist" : "e sind"} nur Ersatz aus der Vorlage – die KI hat dort nicht geschrieben. Nicht freigegeben: „Alle neu schreiben“ versucht es erneut, oder einzeln prüfen und freigeben.`, { duration: 10000 }); toast.success(variables.approve ? `${out.approved ?? 0} E-Mail${(out.approved ?? 0) === 1 ? "" : "s"} freigegeben – sie gehen mit dem nächsten Lauf raus.${out.withoutDraft ? ` ${out.withoutDraft} ohne fertigen Entwurf bleiben offen – erst „Nächste Entwürfe schreiben“.` : ""}` : `${out.reverted ?? 0} Freigabe${(out.reverted ?? 0) === 1 ? "" : "n"} zurückgenommen – die E-Mails warten wieder auf dich.`, { duration: 8000 }); refresh(); }, onError: (error) => toast.error(error.message) });
   const reset = trpc.leadops.resetCampaignDrafts.useMutation({ onSuccess: (result) => { toast.success(result.reset ? `${result.reset} Entwurf${result.reset === 1 ? "" : "e"} verworfen – die KI schreibt sie jetzt nach den aktuellen Regeln neu (beim Auswählen oder über „Nächste Entwürfe schreiben“).` : "Es gab keine Entwürfe zum Verwerfen."); loadedSig.current = null; edits.current = {}; refresh(); }, onError: (error) => toast.error(error.message) });
   const stop = trpc.leadops.stopRecipientInCampaign.useMutation({ onSuccess: () => { toast.success("Aus dem E-Mail-Funnel genommen."); refresh(); }, onError: (error) => toast.error(error.message) });
-  const [filter, setFilter] = useState<Filter>("alle");
+  const [filter, setFilter] = useState<Filter>("alle"); const [kind, setKind] = useState<Kind>("alle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [subject, setSubject] = useState(""); const [text, setText] = useState(""); const loadedSig = useRef<string | null>(null);
   const [approach, setApproach] = useState<DraftApproach | null>(null); const edits = useRef<Record<string, { subject: string; text: string }>>({}); // je Ansatz die eigenen Änderungen merken
@@ -37,9 +47,9 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
   const [deferred, setDeferred] = useState<{ subject: string; text: string }>({ subject: "", text: "" }); // Vorschau folgt dem Tippen mit kurzer Verzögerung
 
   const items = useMemo(() => (queue.data?.items ?? []) as Item[], [queue.data]);
-  const visible = items.filter((item) => filter === "alle" || stateOf(item) === filter);
+  const visible = items.filter((item) => (filter === "alle" || stateOf(item) === filter) && (kind === "alle" || (kind === "followup") === isFollowUp(item)));
   const selected = items.find((item) => item.id === selectedId) ?? null;
-  const counts = queue.data?.counts ?? { offen: 0, entwurf: 0, freigegeben: 0 };
+  const counts = queue.data?.counts ?? { offen: 0, entwurf: 0, freigegeben: 0 }; const kindCounts = { alle: items.length, erste: items.filter((item) => !isFollowUp(item)).length, followup: items.filter(isFollowUp).length };
   const portal = (queue.data as { portalCheck?: { checked: number; found: number; cleaned: number; reset: number } } | undefined)?.portalCheck ?? null;
   // Vorschau: der Entwurf in der echten E-Mail – Design und Footer/Signatur aus dem Builder
   useEffect(() => { const timer = setTimeout(() => setDeferred({ subject, text }), 600); return () => clearTimeout(timer); }, [subject, text]);
@@ -73,20 +83,23 @@ export default function CampaignReviewPanel({ campaignId, onClose, onOpenLead }:
     </header>
     {portal && portal.checked > 0 && <p className={`rv-portal ${portal.found ? "is-bad" : ""}`}>{portal.found ? `Achtung: ${portal.found} Entwurf${portal.found === 1 ? "" : "e"} erwähnt Aroundhome – bitte „Alle neu schreiben“.` : `Geprüft: keiner der ${portal.checked} Entwürfe erwähnt Aroundhome – weder Text, Betreff noch Alternativ-Vorschläge.`}{portal.cleaned || portal.reset ? ` Eben bereinigt: ${portal.cleaned ? `${portal.cleaned} Entwurf${portal.cleaned === 1 ? "" : "e"} gesäubert` : ""}${portal.cleaned && portal.reset ? ", " : ""}${portal.reset ? `${portal.reset} mit Aroundhome im Betreff verworfen (werden neu geschrieben)` : ""}.` : ""}</p>}
     {daily.data && daily.data.left === 0 && <p className="rv-limit">Das Tageslimit von {daily.data.limit} E-Mails ist für heute erreicht – freigegebene E-Mails gehen ab morgen raus. Das Limit änderst du unter Einstellungen → E-Mail-Versand.</p>}
-    <div className="cd-filters" role="tablist" aria-label="Nach Stand filtern">{FILTERS.map(([key, label]) => { const count = key === "alle" ? items.length : counts[key]; return <button key={key} type="button" role="tab" aria-selected={filter === key} className={filter === key ? "is-active" : ""} onClick={() => setFilter(key)}>{label}<i>{count}</i></button>; })}</div>
+    <div className="rv-filterbar">
+      <div className="cd-filters" role="tablist" aria-label="Nach Stand filtern">{FILTERS.map(([key, label]) => { const count = key === "alle" ? items.length : counts[key]; return <button key={key} type="button" role="tab" aria-selected={filter === key} className={filter === key ? "is-active" : ""} onClick={() => setFilter(key)}>{label}<i>{count}</i></button>; })}</div>
+      {kindCounts.followup > 0 && kindCounts.erste > 0 && <div className="cd-filters is-kind" role="tablist" aria-label="Erst-E-Mails oder Follow-ups">{KINDS.map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={kind === key} className={kind === key ? "is-active" : ""} onClick={() => setKind(key)}>{key === "erste" ? <Send className="h-3 w-3" aria-hidden="true" /> : key === "followup" ? <Repeat className="h-3 w-3" aria-hidden="true" /> : null}{label}<i>{kindCounts[key]}</i></button>)}</div>}
+    </div>
     <div className="rv-grid">
       <ol className="rv-list">
         {!visible.length && <li className="cd-empty">{queue.isLoading ? "Wird geladen …" : "Niemand in dieser Gruppe."}</li>}
         {visible.map((item) => { const name = item.name || item.email; const state = stateOf(item); return <li key={item.id}><button type="button" className={`rv-item ${item.id === selectedId ? "is-active" : ""} is-${state}`} onClick={() => setSelectedId(item.id)}>
           <span className="cd-avatar" aria-hidden="true">{initialsOf(name)}</span>
-          <span className="cd-who"><strong>{name}</strong><small>{[item.company, item.city].filter(Boolean).join(" · ") || item.email}</small>{(item as { nodeLabel?: string | null; followUp?: boolean }).nodeLabel && <small className="rv-step">{(item as { followUp?: boolean }).followUp ? "Nachfass: " : ""}„{(item as { nodeLabel?: string | null }).nodeLabel}“</small>}</span>
+          <span className="cd-who"><strong>{name}</strong><small>{[item.company, item.city].filter(Boolean).join(" · ") || item.email}</small><small className="rv-step"><StepBadge item={item} />{(item as { nodeLabel?: string | null }).nodeLabel ? <span className="rv-step-label">„{(item as { nodeLabel?: string | null }).nodeLabel}“</span> : null}</small></span>
           <span className="rv-state">{generatingIds.has(item.id) ? <em className="is-busy"><Sparkles className="h-3 w-3" /> KI schreibt …</em> : state === "freigegeben" ? <em className="is-ok"><Check className="h-3 w-3" /> Freigegeben</em> : state === "entwurf" ? <em className="is-draft">Zu prüfen</em> : <em className="is-none">Kein Entwurf</em>}{item.listName && <small>{item.listName}</small>}</span>
         </button></li>; })}
       </ol>
       <div className="rv-editor">
         {!selected ? <p className="cd-empty">Links einen Kontakt wählen.</p> : <>
           <div className="rv-editor-head">
-            <div className="rv-editor-who"><strong>{selected.name || selected.email}</strong><small>{selected.email}{selected.company ? ` · ${selected.company}` : ""}{selected.city ? ` · ${selected.city}` : ""}{selected.listName ? ` · Liste „${selected.listName}“` : ""}{selected.website ? ` · ${selected.website.replace(/^https?:\/\//i, "").replace(/\/$/, "")}` : ""}</small></div>
+            <div className="rv-editor-who"><strong>{selected.name || selected.email}</strong><span className="rv-editor-kind"><StepBadge item={selected} long />{(selected as StepInfo).sentBefore ? <small>davor von uns: „{(selected as StepInfo).sentBefore!.subject}“ am {whenLabel((selected as StepInfo).sentBefore!.at)}{((selected as StepInfo).sentBefore!.count ?? 1) > 1 ? ` (${(selected as StepInfo).sentBefore!.count} E-Mails)` : ""}{(selected as StepInfo).testLeads && (selected as StepInfo).testLeads !== 10 ? ` · dort ${(selected as StepInfo).testLeads} Test-Leads versprochen – dieser Entwurf nennt wieder ${(selected as StepInfo).testLeads}` : ""}</small> : null}</span><small>{selected.email}{selected.company ? ` · ${selected.company}` : ""}{selected.city ? ` · ${selected.city}` : ""}{selected.listName ? ` · Liste „${selected.listName}“` : ""}{selected.website ? ` · ${selected.website.replace(/^https?:\/\//i, "").replace(/\/$/, "")}` : ""}</small></div>
             <div className="rv-editor-tools">{selected.publicId && onOpenLead && <button type="button" className="cj-btn" title="Karte in der Pipeline öffnen" onClick={() => onOpenLead(selected.publicId!)}><ExternalLink className="h-3.5 w-3.5" /> Karte</button>}<button type="button" className="cj-btn" disabled={isGenerating || save.isPending} title="Die KI schreibt einen neuen Entwurf für diesen Kontakt" onClick={() => generateFor([selected.id])}><RefreshCw className={`h-3.5 w-3.5 ${isGenerating ? "animate-spin" : ""}`} /> {selected.draftState ? "KI neu schreiben" : "KI-Entwurf"}</button><button type="button" className="cj-btn is-danger" disabled={stop.isPending} title="Aus dem E-Mail-Funnel nehmen – keine E-Mail an diesen Kontakt" onClick={async () => { if (await confirmAction(`${selected.name || selected.email} aus dem E-Mail-Funnel nehmen? Es geht keine E-Mail raus.`, { confirmLabel: "Aus Funnel nehmen" })) stop.mutate({ recipientId: selected.id }); }}><MailX className="h-3.5 w-3.5" /></button></div>
           </div>
           {selected.draftState === "freigegeben" && <p className="rv-note is-ok"><Check className="h-3.5 w-3.5" /> Freigegeben – geht beim nächsten Versandlauf raus (Versandfenster, Drip und Tageslimit gelten). Änderungen hier nehmen die Freigabe zurück.</p>}

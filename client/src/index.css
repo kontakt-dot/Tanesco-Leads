@@ -2811,6 +2811,10 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .ch-title{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0}
 .sparte-badge{display:inline-flex;align-items:center;gap:6px;min-height:24px;max-width:100%;padding:2px 10px 2px 7px;border-radius:999px;border:1px solid rgba(129,120,255,.4);background:rgba(129,120,255,.14);color:#d4d0ff;font-size:12px;font-weight:700;line-height:1.2;white-space:nowrap}
 .sparte-badge-emoji{font-size:13px;letter-spacing:1px}
+/* Zeichen der Leadsparte ganz vorn, links vom Namen */
+.sparte-emoji{display:inline-grid;place-items:center;flex:0 0 auto;width:30px;height:30px;border-radius:9px;background:rgba(255,255,255,.07);font-size:16px;line-height:1}
+.sparte-emoji.is-pair{width:auto;padding:0 7px;letter-spacing:1px;font-size:14px}
+.ch-title .sparte-emoji{width:40px;height:40px;border-radius:12px;font-size:21px}.ch-title .sparte-emoji.is-pair{width:auto;padding:0 10px;font-size:18px}
 .sparte-badge small{font-size:11px;font-weight:500;color:#a5a3c4}
 .sparte-badge small::before{content:"· "}
 .sparte-badge.is-standard{border-color:rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#c9c6ee}
@@ -2823,6 +2827,21 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-audience{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0;font-size:12px;color:#a5a3c4}
 .cl-audience-name{max-width:440px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cl-card .cl-audience .audience-status{margin-top:0}
+/* Listen der Kampagne auf der Karte – Schilder mit Listen-Zeichen, ab drei Listen „+N weitere“ zum Aufklappen */
+.cl-lists{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.cl-list-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:26px;padding:2px 10px 2px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#d7d5ee;font-size:12px;font-weight:600;line-height:1.2}
+.cl-list-chip .cl-list-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+.cl-list-chip small{padding:0 6px;border-radius:999px;background:rgba(129,120,255,.18);color:#c4bfff;font-size:10.5px;font-weight:700;line-height:1.6}
+.cl-list-emoji{font-size:13px;line-height:1}
+.cl-list-chip.is-other{color:#b3b0d0;font-weight:500}
+.cl-list-chip.is-more{cursor:pointer;border-style:dashed;color:#c4bfff}
+.cl-list-chip.is-more:hover{background:rgba(129,120,255,.12);border-color:rgba(129,120,255,.5)}
+.cl-list-chip.is-more svg{width:13px;height:13px}
+.cl-lists-menu{min-width:260px;max-width:min(420px,calc(100vw - 32px));padding:6px}
+.cl-lists-menu-head{margin:4px 8px 6px;font-size:11px;font-weight:700;letter-spacing:.02em;color:#8a87a8}
+.cl-lists-menu-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;cursor:default}
+.cl-lists-menu-item strong{font-size:12.5px;font-weight:650;overflow-wrap:anywhere}
+.cl-lists-menu-item small{font-size:11px;color:#8a87a8}
 .cl-alerts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .cl-alerts .cl-next{margin-top:0}
 .cl-alerts .dash-pill{height:22px;font-size:11px}
@@ -3344,7 +3363,33 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .ki-box-row button:hover{border-color:rgba(129,120,255,.5)}
 .ki-box-row button.is-active{background:#7c6cff;border-color:#7c6cff;color:#fff;font-weight:600}
 .ki-box-row.is-ansatz button.is-active{background:rgba(129,120,255,.18);border-color:#8d85ff;color:#e3e0ff}
-.rv-step{display:block;color:#8d85ff;font-size:10.5px}
+.rv-step{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-top:3px;color:#8d85ff;font-size:10.5px}
+.rv-step-label{color:#8a87a8}
+/* Erst-E-Mail oder Follow-up – beim Freigeben auf einen Blick */
+.rv-kind{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;line-height:1.5;white-space:nowrap}
+.rv-kind.is-first{background:rgba(96,165,250,.16);color:#93c5fd}
+.rv-kind.is-followup{background:rgba(129,120,255,.18);color:#c4bfff}
+.rv-kind svg{width:11px;height:11px}
+.rv-filterbar{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 16px;margin-bottom:10px}
+.rv-filterbar .cd-filters{margin:0}
+.cd-filters.is-kind button{display:inline-flex;align-items:center;gap:5px}.cd-filters.is-kind button svg{width:12px;height:12px}
+.inbox-sent-sparte{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:0 7px;border-radius:999px;background:rgba(129,120,255,.16);color:#c4bfff;font-size:10.5px;font-weight:700;line-height:1.7;white-space:nowrap}
+/* Posteingang: was wir dem Kontakt davor geschickt haben – über der Antwort */
+.inbox-prior{margin:0 0 12px;padding:10px 12px;border-radius:12px;border:1px solid rgba(129,120,255,.22);background:rgba(129,120,255,.06)}
+.inbox-prior-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px;font-size:12px;color:#c4bfff}
+.inbox-prior-head strong{font-weight:700;color:#e5e1fd}
+.inbox-prior-head small{color:#8a87a8}.inbox-prior-head small button{padding:0;border:0;background:none;color:#c4bfff;font-size:11.5px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.inbox-prior-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.inbox-prior-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
+.inbox-prior-row strong{font-size:13px;color:#f1efff;overflow-wrap:anywhere}
+.inbox-prior-row small{font-size:11.5px;color:#8a87a8}
+.inbox-prior-open{margin-left:auto;padding:2px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#cbd5e1;font-size:11px;cursor:pointer}
+.inbox-prior-open:hover{border-color:rgba(129,120,255,.5);color:#e2e8f0}
+.inbox-prior-excerpt{margin:4px 0 0;font-size:12.5px;line-height:1.45;color:#a5a3c4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.inbox-prior .sent-preview{margin-top:8px}
+.rv-editor-kind{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:2px 0}
+.rv-editor-kind .rv-kind{font-size:11px}
+.rv-editor-kind small{font-size:11.5px;color:#a5a3c4}
 .rv-banner.is-auto{border-color:rgba(56,189,248,.35)}
 .cd-chip.is-ki{border-color:rgba(129,120,255,.45);color:#c7c2ff}
 /* Leadsparte: Feld im Builder, Hinweis bei fremder Sparte in der Vorlage, Kennzeichen in Liste und Kopf */

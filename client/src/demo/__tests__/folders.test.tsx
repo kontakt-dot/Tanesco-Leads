@@ -31,7 +31,7 @@ describe("Kampagnen-Ordner (z. B. je Leadsparte)", () => {
     await act(async () => { fireEvent.click(sortButton!); }); await settle(50);
     const question = document.querySelector(".app-confirm-text")?.textContent ?? ""; expect(question).toContain("Nach Leadsparte einsortieren? 8 Kampagnen ohne Ordner (davon 1 im Archiv) kommen in:"); expect(question).toContain("Hausnotruf (1)"); expect(question).toContain("Die Ordner werden neu angelegt.");
     await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(300); await settle(300);
-    expect(chips(view.container)).toEqual(["Alarmanlage 1", "Hausnotruf 1", "Photovoltaik 2", "Photovoltaik & Wärmepumpe 3"]); // Übersicht ohne Archiv
+    expect(chips(view.container)).toEqual(["Alarmanlage 1", "Hausnotruf 1", "Photovoltaik 3", "Photovoltaik & Wärmepumpe 2", "Wärmepumpe 0"]); // Übersicht ohne Archiv (Wärmepumpe: nur die archivierte Frühjahrs-Kampagne)
     expect(Array.from(view.container.querySelectorAll(".cl-folder-act")).map((node) => node.textContent?.trim())).toEqual(["Neuer Ordner"]); // alles einsortiert
     expect(view.container.querySelector(".cl-folder.is-none")).toBeNull(); // keine Kampagne ohne Ordner
     expect(view.container.querySelector(".cl-card .cl-meta-folder")?.textContent?.trim()).toBeTruthy(); // in „Alle“ steht der Ordner auf der Karte

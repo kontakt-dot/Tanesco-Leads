@@ -3,7 +3,8 @@ import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { PIPELINE_STAGES, stageLabel } from "../../../shared/sales-pipeline";
 import { DELIVERY_GROUP_LABEL, REACTION_LABEL, type DeliveryGroup, type SentReaction } from "../../../shared/sent-tracking";
-import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, Check, MailOpen, ChevronLeft, Inbox, Mail, Megaphone, Paperclip, RefreshCw, Reply, Search, ShieldCheck, Sparkles, Trash2, UserPlus, X } from "lucide-react";
+import { suggestCategoryEmoji } from "../../../shared/category-emoji";
+import { Archive, ArchiveRestore, ArrowDownUp, Ban, CalendarDays, Check, MailOpen, ChevronLeft, Inbox, Mail, Megaphone, Paperclip, RefreshCw, Reply, Search, Send, ShieldCheck, Sparkles, Trash2, UserPlus, X } from "lucide-react";
 import { ATTACHMENT_LIMITS, checkAttachments, formatBytes } from "../../../shared/email-signature";
 import { INBOX_AI_FILTERS, inboxAiFilterLabel, periodRange, REPLY_KIND_LABEL, type InboxAiFilter, type InboxPeriod, type ReplyAction, type ReplyKind } from "../../../shared/reply-ai";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -82,6 +83,8 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
   const [sort, setSortState] = useState<InboxSort>(loadSort); const setSort = (next: InboxSort) => { setSortState(next); try { window.localStorage.setItem(SORT_KEY, next); } catch { /* ignorieren */ } };
   const inbox = trpc.leadops.listInbox.useQuery({ filter: filter === "gesendet" ? "alle" : filter, campaignId, from: range.from, to: range.to, aiKind: aiFilter }, { retry: false, enabled: filter !== "gesendet" });
   const owners = trpc.leadops.pipelineOwners.useQuery(undefined, { retry: false }); const categories = trpc.leadops.listCategories.useQuery(undefined, { retry: false }); const selectedPlatform = (inbox.data?.items ?? []).find((item) => item.id === selectedId)?.lead?.platform ?? null; const stageDefs = trpc.leadops.pipelineStages.useQuery({ source: leadForm?.pipeline ?? (selectedPlatform === "kaltakquise" ? "kaltakquise" : selectedPlatform === "email" ? "email" : "ads") }, { retry: false }); const stagesList = stageDefs.data ?? PIPELINE_STAGES; // Stufen der Pipeline, in die der Lead kommt
+  // Vorgeschlagene Stufe: bei Interesse die Stufe „Hat Interesse“/„Qualifiziert“ der Pipeline, sonst „Kontaktiert“ – nie blind die zweite Stufe
+  const suggestedStage = (interested: boolean) => (interested ? stagesList.find((stage) => /interess|qualifiz/i.test(stage.label)) : null)?.key ?? stagesList.find((stage) => stage.key === "kontaktiert" || /kontakt/i.test(stage.label))?.key ?? stagesList[1]?.key ?? stagesList[0]?.key ?? "kontaktiert";
   const utils = trpc.useUtils(); const refresh = () => { utils.leadops.listInbox.invalidate(); utils.leadops.pipelineOverview.invalidate(); utils.leadops.listEmailCampaigns.invalidate(); utils.leadops.listEmailSuppressions.invalidate(); };
   const block = trpc.leadops.blockInboxSender.useMutation({ onSuccess: (result) => { toast.success(`${result.email} gesperrt – steht auf der Sperrliste${result.stopped ? `, ${result.stopped} laufende Serie${result.stopped === 1 ? "" : "n"} gestoppt` : ""}. ${result.messages} Nachricht${result.messages === 1 ? "" : "en"} liegen unter „Gesperrt“.`, { duration: 6000 }); setSelectedId(null); refresh(); }, onError: (error) => toast.error(error.message) });
   const unblock = trpc.leadops.unblockInboxSender.useMutation({ onSuccess: (result) => { toast.success(`${result.email} entsperrt – Sperre aufgehoben, Nachrichten wieder im Posteingang.`); setSelectedId(null); refresh(); }, onError: (error) => toast.error(error.message) });
@@ -119,7 +122,7 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
   const selected = useMemo(() => items.find((item) => item.id === selectedId) ?? null, [items, selectedId]); const selectedAi = selected?.ai ?? null;
   useEffect(() => { if (selected && !selected.isRead) markRead.mutate({ id: selected.id, isRead: true }); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selected?.id]);
   useEffect(() => { setLeadForm(null); setReplyText(""); }, [selectedId]);
-  const openLeadForm = () => { if (!selected) return; const guessed = (selected.fromName ?? selected.fromEmail.split("@")[0]).replace(/[._]/g, " ").trim().split(/\s+/); setLeadForm({ pipeline: selected.lead?.platform === "kaltakquise" ? "kaltakquise" : selected.lead?.platform === "email" || selected.campaignName ? "email" : "ads", stage: stagesList[1]?.key ?? stagesList[0]?.key ?? "kontaktiert", ownerUserId: "", categoryId: "", firstName: guessed.length > 1 ? guessed[0] : "", lastName: guessed.length > 1 ? guessed.slice(1).join(" ") : guessed[0] ?? "", company: selected.fromEmail.split("@")[1]?.split(".")[0] ?? "", phone: selected.phoneHint ?? "" }); };
+  const openLeadForm = () => { if (!selected) return; const guessed = (selected.fromName ?? selected.fromEmail.split("@")[0]).replace(/[._]/g, " ").trim().split(/\s+/); setLeadForm({ pipeline: selected.lead?.platform === "kaltakquise" ? "kaltakquise" : selected.lead?.platform === "email" || selected.campaignName ? "email" : "ads", stage: suggestedStage(selected.ai?.kind === "interessiert"), ownerUserId: "", categoryId: (selected as { campaignCategoryId?: number | null }).campaignCategoryId ? String((selected as { campaignCategoryId?: number | null }).campaignCategoryId) : "", firstName: guessed.length > 1 ? guessed[0] : "", lastName: guessed.length > 1 ? guessed.slice(1).join(" ") : guessed[0] ?? "", company: selected.fromEmail.split("@")[1]?.split(".")[0] ?? "", phone: selected.phoneHint ?? "" }); };
   const focusReply = () => { replyRef.current?.focus(); replyRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); };
   const sendReply = async () => { if (!selected || !replyText.trim() || reply.isPending) return; try { const attachments = await Promise.all(files.map(async (file) => ({ filename: file.name, contentType: file.type || "application/octet-stream", contentBase64: await readAsBase64(file), size: file.size }))); reply.mutate({ messageId: selected.id, text: replyText, attachments }); } catch (error) { toast.error(error instanceof Error ? error.message : "Anhang konnte nicht gelesen werden."); } };
   const activeCampaign = campaignId ? campaigns.find((campaign) => campaign.id === campaignId) : null;
@@ -150,7 +153,7 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
               {filter === "archiv" ? <button type="button" disabled={bulk.isPending} onClick={() => bulk.mutate({ ids: picked, action: "zurueck" })}><ArchiveRestore className="h-3.5 w-3.5" /> Zurückholen</button> : <button type="button" disabled={bulk.isPending} onClick={() => bulk.mutate({ ids: picked, action: "archivieren" })}><Archive className="h-3.5 w-3.5" /> Archivieren</button>}
               {filter !== "gesperrt" && <button type="button" className="is-warn" disabled={bulk.isPending} title="Absender auf die Sperrliste – keine E-Mails mehr an sie, ihre Mails landen unter „Gesperrt“" onClick={async () => { if (await confirmAction(`Absender von ${picked.length} ${picked.length === 1 ? "E-Mail" : "E-Mails"} sperren? Sie bekommen keine E-Mails mehr, laufende Serien stoppen.`, { confirmLabel: "Sperren" })) bulk.mutate({ ids: picked, action: "sperren" }); }}><Ban className="h-3.5 w-3.5" /> Sperren</button>}
               <button type="button" className="is-danger" disabled={bulk.isPending} onClick={async () => { if (await confirmAction(`${picked.length} ${picked.length === 1 ? "E-Mail" : "E-Mails"} löschen? Sie kommen auch beim nächsten Abholen nicht wieder.`, { danger: true, confirmLabel: "Löschen" })) bulk.mutate({ ids: picked, action: "loeschen" }); }}><Trash2 className="h-3.5 w-3.5" /> Löschen</button>
-              <button type="button" className="is-lead" title="Die ausgewählten Absender als Leads in die Vertriebspipeline übernehmen – vorhandene Kontakte werden in die Stufe gesetzt" onClick={() => setBulkLead((value) => value ? null : { pipeline: "email", stage: "kontaktiert" })}><UserPlus className="h-3.5 w-3.5" /> Als Leads in Pipeline</button>
+              <button type="button" className="is-lead" title="Die ausgewählten Absender als Leads in die Vertriebspipeline übernehmen – vorhandene Kontakte werden in die Stufe gesetzt" onClick={() => setBulkLead((value) => value ? null : { pipeline: "email", stage: suggestedStage(false) })}><UserPlus className="h-3.5 w-3.5" /> Als Leads in Pipeline</button>
               <button type="button" onClick={() => { setPicked([]); setBulkLead(null); }}><X className="h-3.5 w-3.5" /></button>
             </div>}
             {picked.length > 0 && bulkLead && <div className="inbox-bulk-lead"><span>{picked.length} {picked.length === 1 ? "Absender" : "Absender"} übernehmen nach</span>
@@ -209,12 +212,13 @@ export default function InboxPanel({ onOpenLead }: { onOpenLead?: (publicId: str
                 <label className="text-xs text-slate-400">Nachname<Input className="mt-1" placeholder="Nachname" value={leadForm.lastName} onChange={(event) => setLeadForm({ ...leadForm, lastName: event.target.value })} /></label>
                 <label className="text-xs text-slate-400">Firma<Input className="mt-1" placeholder="Firma" value={leadForm.company} onChange={(event) => setLeadForm({ ...leadForm, company: event.target.value })} /></label>
                 <label className="text-xs text-slate-400">Telefon{selected.phoneHint && leadForm.phone === selected.phoneHint ? <span className="text-emerald-300"> – aus der E-Mail erkannt</span> : null}<Input className="mt-1" placeholder="Telefon (für den Dialer)" value={leadForm.phone} onChange={(event) => setLeadForm({ ...leadForm, phone: event.target.value })} /></label>
-                <label className="text-xs text-slate-400 inbox-lead-wide">Kategorie<select className={selectClass} value={leadForm.categoryId} onChange={(event) => setLeadForm({ ...leadForm, categoryId: event.target.value })}><option value="">erste aktive</option>{(categories.data ?? []).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+                <label className="text-xs text-slate-400 inbox-lead-wide">Kategorie<select className={selectClass} value={leadForm.categoryId} onChange={(event) => setLeadForm({ ...leadForm, categoryId: event.target.value })}><option value="">{(selected as { campaignCategoryName?: string | null }).campaignCategoryName ? `wie die Kampagne (${(selected as { campaignCategoryName?: string | null }).campaignCategoryName})` : "erste aktive"}</option>{(categories.data ?? []).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
               </>}
               {selected.lead && !selected.lead.phone && <label className="text-xs text-slate-400 inbox-lead-wide">Telefon nachtragen – damit der Dialer in der Pipeline nutzbar ist{selected.phoneHint && leadForm.phone === selected.phoneHint ? <span className="text-emerald-300"> – aus der E-Mail erkannt</span> : null}<Input className="mt-1" placeholder="Telefon" value={leadForm.phone} onChange={(event) => setLeadForm({ ...leadForm, phone: event.target.value })} /></label>}
             </div>
             <div className="inbox-lead-form-actions"><Button className="flux-button" disabled={createLead.isPending} onClick={() => createLead.mutate({ messageId: selected.id, pipeline: leadForm.pipeline, stage: leadForm.stage, ownerUserId: leadForm.ownerUserId ? Number(leadForm.ownerUserId) : null, categoryId: leadForm.categoryId ? Number(leadForm.categoryId) : null, firstName: leadForm.firstName || null, lastName: leadForm.lastName || null, company: leadForm.company || null, phone: leadForm.phone || null })}>{selected.lead ? "Übernehmen" : "Lead anlegen"}</Button><Button variant="ghost" onClick={() => setLeadForm(null)}>Abbrechen</Button></div>
           </div>}
+          <PriorMails items={(selected as { sentBefore?: PriorMail[] }).sentBefore ?? []} />
           <pre className="inbox-body">{selected.bodyText || "(kein Text)"}</pre>
           </div>
           <footer className="inbox-compose">
@@ -251,12 +255,17 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
   const [timeFrom, setTimeFrom] = useState(""); const [timeTo, setTimeTo] = useState(""); // Uhrzeit an jedem Tag, z. B. 09:00–11:30
   const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<string | null>(null); // Vorschau einer gesendeten E-Mail
+  const [sparteFilter, setSparteFilter] = useState<string | null>(null); // nach Leadsparte/Lead-Kategorie der Kampagne trennen
   const range = useMemo(() => { const now = new Date(); const day = (offset: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset); const parse = (text: string, plusMinute = false) => { if (!text) return null; const value = new Date(text); return Number.isNaN(value.getTime()) ? null : new Date(value.getTime() + (plusMinute ? 60_000 : 0)); };
     return period === "heute" ? { from: day(0), to: null } : period === "gestern" ? { from: day(-1), to: day(0) } : period === "7tage" ? { from: day(-6), to: null } : period === "30tage" ? { from: day(-29), to: null } : period === "eigener" ? { from: parse(fromText), to: parse(toText, true) } : { from: null, to: null }; }, [period, fromText, toText]);
   const timeOk = (value: string) => /^\d{2}:\d{2}$/.test(value);
   const sent = trpc.leadops.listSent.useQuery({ kind: kind === "alle" ? null : kind, reaction, delivery, campaignId, search: search.trim() || null, from: range.from, to: range.to, timeFrom: timeOk(timeFrom) ? timeFrom : null, timeTo: timeOk(timeTo) ? timeTo : null }, { retry: false });
-  const items = sent.data?.items ?? [];
-  const filtered = period !== "alle" || timeOk(timeFrom) || timeOk(timeTo);
+  const allItems = sent.data?.items ?? [];
+  type SparteInfo = { sparte: string; categoryId: number | null; categoryName: string | null } | null;
+  const sparteKey = (item: { sparte?: SparteInfo }) => item.sparte?.categoryName ?? item.sparte?.sparte ?? null;
+  const sparten = useMemo(() => { const map = new Map<string, number>(); for (const item of allItems) { const key = sparteKey(item as { sparte?: SparteInfo }); if (key) map.set(key, (map.get(key) ?? 0) + 1); } return Array.from(map.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "de")); }, [allItems]); // eslint-disable-line react-hooks/exhaustive-deps
+  const items = sparteFilter ? allItems.filter((item) => sparteKey(item as { sparte?: SparteInfo }) === sparteFilter) : allItems;
+  const filtered = period !== "alle" || timeOk(timeFrom) || timeOk(timeTo) || Boolean(sparteFilter);
   const resetWhen = () => { setPeriod("alle"); setFromText(""); setToText(""); setTimeFrom(""); setTimeTo(""); };
   // Satz über dem Ergebnis, z. B. „37 E-Mails gingen raus – heute zwischen 09:00 und 11:30 Uhr.“
   const whenSentence = (() => {
@@ -290,6 +299,7 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
     <div className="inbox-sent-filters">
       {!fixed && <div className="dashboard-segments">{([["alle", `Alle${sent.data ? ` (${sent.data.counts.alle})` : ""}`], ["kampagne", `Kampagnen${sent.data ? ` (${sent.data.counts.kampagne})` : ""}`], ["antwort", `Antworten${sent.data ? ` (${sent.data.counts.antwort})` : ""}`], ["einzel", `Einzeln${sent.data ? ` (${sent.data.counts.einzel})` : ""}`]] as const).map(([key, text]) => <button key={key} type="button" className={kind === key ? "active" : ""} onClick={() => setKind(key)}>{text}</button>)}</div>}
       {!fixed && <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kampagnen</option>{(sent.data?.campaigns ?? []).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}</select>}
+      {!fixed && sparten.length > 0 && <select className="lead-action-select" aria-label="Lead-Kategorie" title="Nur E-Mails aus Kampagnen dieser Lead-Kategorie bzw. Leadsparte" value={sparteFilter ?? ""} onChange={(event) => setSparteFilter(event.target.value || null)}><option value="">Alle Kategorien</option>{sparten.map(([key, count]) => <option key={key} value={key}>{suggestCategoryEmoji(key)} {key} ({count})</option>)}</select>}
       <select className="lead-action-select" aria-label="Zeitraum" value={period} onChange={(event) => choosePeriod(event.target.value as typeof period)}><option value="alle">Gesamter Zeitraum</option><option value="heute">Heute</option><option value="gestern">Gestern</option><option value="7tage">Letzte 7 Tage</option><option value="30tage">Letzte 30 Tage</option><option value="eigener">Eigener Zeitraum (Datum + Uhrzeit) …</option></select>
       <input className="inbox-search" placeholder="Suchen: Adresse, Betreff, Kampagne" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
@@ -307,7 +317,7 @@ export function SentMessages({ onOpenLead, fixedCampaignId }: { onOpenLead?: (pu
       : <ul className="inbox-sent-list">{items.map((item) => <li key={item.id} className={`inbox-sent-row ${openId === item.id ? "is-open" : ""}`} role="button" tabIndex={0} title="Klick zeigt die E-Mail, wie sie rausging" onClick={() => setOpenId(openId === item.id ? null : item.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpenId(openId === item.id ? null : item.id); } }}>
           <div className="inbox-sent-main">
             <strong>{item.subject}</strong>
-            <small>an {item.lead ? <button type="button" className="inbox-sent-contact" title="Kontakt öffnen" onClick={(event) => { event.stopPropagation(); openLead(item.lead!.publicId); }}>{item.lead.name}</button> : item.name ? <span>{item.name}</span> : null}{item.lead || item.name ? " · " : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{item.sender ? ` · von ${item.sender}` : ""}</small>
+            <small>an {item.lead ? <button type="button" className="inbox-sent-contact" title="Kontakt öffnen" onClick={(event) => { event.stopPropagation(); openLead(item.lead!.publicId); }}>{item.lead.name}</button> : item.name ? <span>{item.name}</span> : null}{item.lead || item.name ? " · " : ""}{item.to}{item.campaignName ? ` · ${item.campaignName}` : ""}{item.sender ? ` · von ${item.sender}` : ""}{sparteKey(item as { sparte?: SparteInfo }) ? <span className="inbox-sent-sparte" title="Lead-Kategorie bzw. Leadsparte der Kampagne"><span aria-hidden="true">{suggestCategoryEmoji(sparteKey(item as { sparte?: SparteInfo })!)}</span> {sparteKey(item as { sparte?: SparteInfo })}</span> : null}</small>
             {item.kind !== "kampagne" && item.preview ? <p className="inbox-sent-preview">{item.preview}</p> : null}
             {(item as { attachments?: Array<{ filename: string; size: number }> }).attachments?.length ? <div className="inbox-sent-track">{(item as { attachments: Array<{ filename: string; size: number }> }).attachments.map((file) => <i key={file.filename} className="inbox-track-step is-done" title={formatBytes(file.size)}>📎 {file.filename}</i>)}</div> : null}
             {item.tracking && <div className="inbox-sent-track" aria-label="Was mit dieser E-Mail passiert ist">
@@ -356,6 +366,26 @@ export function ContactSentMails({ leadId, email }: { leadId: number; email: str
       {openId === item.id && <SentMailPreview id={item.id} onClose={() => setOpenId(null)} />}
     </li>; })}</ul>
   </div>;
+}
+
+type PriorMail = { id: string; step: number; subject: string; at: string | Date; excerpt: string | null; source: string | null; testLeads: number | null };
+/**
+ * Was wir diesem Kontakt davor geschickt haben – direkt über der Antwort: die letzte E-Mail mit Betreff, Datum und Textanfang,
+ * ältere eingeklappt; „Ansehen“ zeigt die E-Mail so, wie sie rausging. So weiß man beim Antworten, worauf sich der Kontakt bezieht
+ * (z. B. wie viele Test-Leads versprochen wurden).
+ */
+function PriorMails({ items }: { items: PriorMail[] }) {
+  const [open, setOpen] = useState<string | null>(null); const [all, setAll] = useState(false);
+  if (!items.length) return null;
+  const shown = all ? items : items.slice(0, 1);
+  return <section className="inbox-prior" aria-label="Davor von uns gesendet">
+    <div className="inbox-prior-head"><Send className="h-3.5 w-3.5" aria-hidden="true" /><strong>Davor von uns gesendet</strong><small>{items.length === 1 ? "1 E-Mail" : `${items.length} E-Mails`}{items.length > 1 && <> · <button type="button" onClick={() => setAll((value) => !value)}>{all ? "nur die letzte" : "alle zeigen"}</button></>}</small></div>
+    <ol className="inbox-prior-list">{shown.map((mail) => <li key={mail.id} className="inbox-prior-item">
+      <div className="inbox-prior-row"><span className={`rv-kind ${mail.step > 1 ? "is-followup" : "is-first"}`}>{mail.step > 1 ? `Follow-up ${mail.step}` : "Erst-E-Mail"}</span><strong>{mail.subject || "(ohne Betreff)"}</strong><small>{whenShort(mail.at)}{mail.testLeads ? ` · ${mail.testLeads} Test-Leads versprochen` : ""}</small><button type="button" className="inbox-prior-open" onClick={() => setOpen(open === mail.id ? null : mail.id)}>{open === mail.id ? "Schließen" : "Ansehen"}</button></div>
+      {mail.excerpt && open !== mail.id && <p className="inbox-prior-excerpt">{mail.excerpt}</p>}
+      {open === mail.id && <SentMailPreview id={mail.id} onClose={() => setOpen(null)} />}
+    </li>)}</ol>
+  </section>;
 }
 
 /** Vorschau einer gesendeten E-Mail: Kampagnen-Mails werden aus dem Schritt und den Empfängerdaten nachgebaut, Einzel-Mails aus dem gespeicherten Text. */
