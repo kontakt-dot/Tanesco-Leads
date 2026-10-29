@@ -6,7 +6,7 @@
 import { confirmAction, promptAction } from "@/lib/confirm";
 import { trpc } from "@/lib/trpc";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Check, Folder, FolderInput, FolderMinus, FolderOpen, FolderPlus, FolderTree, Layers, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { Check, Folder, FolderInput, FolderMinus, FolderOpen, FolderPlus, Layers, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { useMemo, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import { cleanFolderName, folderNameIssue, planSparteFolders, sortFolders, sortSummary } from "../../../shared/campaign-folders";
@@ -99,13 +99,11 @@ export function CampaignFolderBar({ tools, rows, allRows, pick, onPick, dragged,
   const [over, setOver] = useState<number | "ohne" | null>(null);
   const countOf = (id: number) => rows.filter((row) => folderIdOf(row) === id).length;
   const unfiled = rows.filter((row) => inFolder(row, "ohne", known)).length;
-  const plan = tools.planFor(allRows);
   const target = (folder: CampaignFolder | null) => !dragged ? {} : {
     onDragOver: (event: DragEvent) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setOver(folder?.id ?? "ohne"); },
     onDragLeave: () => setOver((value) => (value === (folder?.id ?? "ohne") ? null : value)),
     onDrop: (event: DragEvent) => { event.preventDefault(); setOver(null); const row = dragged; onDropped(); if (row) void tools.moveTo([row], folder); },
   };
-  const sortHint = plan.moves.length ? `Legt je Leadsparte einen Ordner an und sortiert ${campaignCount(plan.moves.length)} ohne Ordner ein: ${sortSummary(plan.moves).map((item) => `${item.name} (${item.count})`).join(", ")}. Schon einsortierte bleiben, wo sie sind.` : "";
   return <nav className={`cl-folders ${dragged ? "is-dragging" : ""}`} aria-label="Ordner der Kampagnen">
     <div className="cl-folder-rail">
       <button type="button" className={`cl-folder is-all ${pick === "alle" ? "is-active" : ""}`} aria-pressed={pick === "alle"} title="Alle Kampagnen, egal in welchem Ordner" onClick={() => onPick("alle")}><Layers aria-hidden="true" /><span>Alle</span><i>{rows.length}</i></button>
@@ -117,7 +115,7 @@ export function CampaignFolderBar({ tools, rows, allRows, pick, onPick, dragged,
     </div>
     <div className="cl-folder-actions">
       <button type="button" className="cl-folder-act" onClick={async () => { const folder = await tools.create(); if (folder) { toast.success(`Ordner „${folder.name}“ angelegt. Kampagnen kommen über „⋯“ → „In Ordner verschieben“ hinein – oder zieh sie mit der Maus auf den Ordner.`, { duration: 7000 }); onPick(folder.id); } }}><FolderPlus aria-hidden="true" /> Neuer Ordner</button>
-      {plan.moves.length > 0 && <button type="button" className="cl-folder-act is-sort" disabled={tools.sorting} title={sortHint} onClick={() => { void tools.sortBySparte(allRows); }}><FolderTree aria-hidden="true" /> Nach Leadsparte einsortieren</button>}
+
     </div>
   </nav>;
 }

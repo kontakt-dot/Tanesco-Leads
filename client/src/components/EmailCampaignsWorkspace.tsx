@@ -512,7 +512,7 @@ function MergeDialog({ target, onClose }: { target: { id: number; name: string; 
   const merge = trpc.leadops.mergeEmailCampaigns.useMutation({ onSuccess: (result) => {
     const taken = result.moved + result.replaced;
     toast.success(`${taken} Kontakt${taken === 1 ? "" : "e"} in „${result.targetName}“ übernommen${result.duplicates ? ` · ${result.duplicates} waren schon drin (nur einmal behalten)` : ""}${result.finished ? ` · ${result.finished} ohne passenden Schritt beendet` : ""}. ${result.sources.length === 1 ? "Die alte Kampagne liegt" : "Die alten Kampagnen liegen"} jetzt im Archiv.${result.targetStatus === "pausiert" ? " Die Ziel-Kampagne ist pausiert – weiter geht es, sobald du sie fortsetzt." : result.targetStatus === "entwurf" ? " Die Ziel-Kampagne ist noch nicht gestartet – weiter geht es nach dem Start." : ""}`, { duration: 10000 });
-    utils.leadops.listEmailCampaigns.invalidate(); utils.leadops.getEmailCampaign.invalidate(); utils.leadops.campaignReviewQueue.invalidate(); utils.leadops.listInbox.invalidate(); utils.leadops.listSent.invalidate(); utils.leadops.pipelineOverview.invalidate(); utils.leadops.activityFeed.invalidate(); onClose();
+    utils.leadops.listEmailCampaigns.invalidate(); utils.leadops.getEmailCampaign.invalidate(); utils.leadops.campaignReviewQueue.invalidate(); utils.leadops.listInbox.invalidate(); utils.leadops.listSent.invalidate(); utils.leadops.pipelineOverview.invalidate(); utils.leadops.activityFeed.invalidate(); utils.leadops.emailLeads.invalidate(); utils.leadops.listColdLists.invalidate(); onClose();
   }, onError: (error) => toast.error(error.message) });
   if (!target) return null;
   const rows = (campaigns.data ?? []).filter((row) => !row.isTemplate && !row.archivedAt && row.id !== target.id);

@@ -20,17 +20,16 @@ describe("Kampagnen-Ordner (z. B. je Leadsparte)", () => {
   beforeEach(() => { resetStore(); try { localStorage.removeItem("kampagnen-ordner"); localStorage.removeItem("kampagnen-kpi"); } catch { /* egal */ } });
   afterEach(() => { cleanup(); document.querySelectorAll(".app-confirm-backdrop").forEach((node) => node.remove()); });
 
-  it("„Nach Leadsparte einsortieren“ legt je Sparte einen Ordner an; ein Ordner filtert Liste und Kennzahlen und bleibt gemerkt", async () => {
+  it("Ordner je Leadsparte (über den Server-Spiegel, der Knopf dafür ist weg); ein Ordner filtert Liste und Kennzahlen und bleibt gemerkt", async () => {
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const first = mount(); await settle(300); await settle(300);
+    const bar0 = first.container.querySelector<HTMLElement>(".cl-folders"); expect(bar0).not.toBeNull();
+    expect(bar0!.querySelector(".cl-folder.is-all.is-active")?.textContent).toMatch(/^Alle\d+$/);
+    const all = names(first.container); expect(all).toContain("Hausnotruf-Anbieter – Erstkontakt"); expect(all).toContain("Alarmanlagen-Errichter NRW");
+    expect(Array.from(bar0!.querySelectorAll(".cl-folder-act")).map((node) => node.textContent?.trim())).toEqual(["Neuer Ordner"]); // kein „Nach Leadsparte einsortieren“ mehr
+    cleanup();
+    const sorted = await call("leadops.sortEmailCampaignsBySparte"); expect(sorted.created).toBeGreaterThanOrEqual(1);
     const view = mount(); await settle(300); await settle(300);
-    const bar = view.container.querySelector<HTMLElement>(".cl-folders"); expect(bar).not.toBeNull();
-    expect(bar!.querySelector(".cl-folder.is-all.is-active")?.textContent).toMatch(/^Alle\d+$/);
-    const all = names(view.container); expect(all).toContain("Hausnotruf-Anbieter – Erstkontakt"); expect(all).toContain("Alarmanlagen-Errichter NRW");
-    const sortButton = Array.from(bar!.querySelectorAll<HTMLButtonElement>(".cl-folder-act")).find((node) => node.textContent?.includes("Nach Leadsparte einsortieren"));
-    expect(sortButton).toBeTruthy(); expect(sortButton!.title).toContain("Hausnotruf (1)");
-    await act(async () => { fireEvent.click(sortButton!); }); await settle(50);
-    const question = document.querySelector(".app-confirm-text")?.textContent ?? ""; expect(question).toContain("Nach Leadsparte einsortieren? 8 Kampagnen ohne Ordner (davon 1 im Archiv) kommen in:"); expect(question).toContain("Hausnotruf (1)"); expect(question).toContain("Die Ordner werden neu angelegt.");
-    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(300); await settle(300);
     expect(chips(view.container)).toEqual(["Alarmanlage 1", "Hausnotruf 1", "Photovoltaik 3", "Photovoltaik & Wärmepumpe 2", "Wärmepumpe 0"]); // Übersicht ohne Archiv (Wärmepumpe: nur die archivierte Frühjahrs-Kampagne)
     expect(Array.from(view.container.querySelectorAll(".cl-folder-act")).map((node) => node.textContent?.trim())).toEqual(["Neuer Ordner"]); // alles einsortiert
     expect(view.container.querySelector(".cl-folder.is-none")).toBeNull(); // keine Kampagne ohne Ordner

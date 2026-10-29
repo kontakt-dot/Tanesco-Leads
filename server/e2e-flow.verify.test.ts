@@ -3407,6 +3407,8 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: "Persönlich für Versprechen Wärme", text: "Sehr geehrte Frau Versprechen,\n\nzum Kennenlernen stellen wir Ihnen 20 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
     await owner.leadops.saveCampaignDraft({ recipientId: nils.id, subject: nils.draftSubject!, text: nils.draftText!, approve: true });
     await owner.leadops.runEmailCampaigns(); [vera, nils, olga] = await rows(); expect(vera.sentCount).toBe(1); expect(nils.sentCount).toBe(1); expect(olga.sentCount).toBe(0);
+    // Mit der ersten E-Mail kommt der Kontakt nach „Versendet“ – verknüpft mit der Kampagne und mit deren Lead-Kategorie (Wärmepumpe), nicht der ersten vom Hochladen
+    expect((await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, "nils@versprechen-e2e.example"))))[0]).toMatchObject({ adPlatform: "email", adCampaignId: `email-${campaign.id}`, adCampaignName: "Versprechen-Test", categoryId: S.wp!.id });
     const sentOf = async (recipientId: number) => db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, recipientId), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
     expect((await sentOf(vera.id))[0].body).toContain("20 Test-Leads"); expect((await sentOf(nils.id))[0].body).toContain("10 Test-Leads");
     // Olga: eine alte E-Mail aus der Vorlage von vor der Umstellung – damals ohne gespeicherten Text → zählt als 20
@@ -3472,15 +3474,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(board.categories.find((item) => item.id === S.wp!.id)).toMatchObject({ name: S.wp!.name }); expect(board.categories.find((item) => item.id === S.pv!.id)).toMatchObject({ name: S.pv!.name }); expect(board.categories.reduce((sum, item) => sum + item.count, 0)).toBeLessThanOrEqual(board.totals.leads);
     const onlyWp = await owner.leadops.pipelineOverview({ source: "email", categoryId: S.wp!.id }) as typeof board; expect(onlyWp.totals.leads).toBe(board.categories.find((item) => item.id === S.wp!.id)!.count); expect(onlyWp.stages.flatMap((stage) => stage.leads).every((lead) => lead.categoryId === S.wp!.id)).toBe(true); expect(onlyWp.categories.map((item) => item.id)).toContain(S.pv!.id); // die Auswahl bleibt vollständig
     const tiny = await owner.leadops.pipelineOverview({ source: "email", categoryId: S.wp!.id, limitPerStage: 1 }) as typeof board; expect(tiny.categories.find((item) => item.id === S.wp!.id)?.count).toBe(onlyWp.totals.leads); // Zähler unabhängig von der Kartenzahl je Spalte
-    // Einmal nach dem Start: Interessenten aus dem Posteingang, die durch den alten Fehler die erste Kategorie bekamen → Kategorie ihrer Kampagne; neue und bewusst umgestellte bleiben
-    const { fixInboxLeadCategories, INBOX_CATEGORY_FIX_AT } = await import("./inbox");
-    const firstCategory = (await owner.leadops.listCategories()).filter((row) => row.status === "aktiv").sort((x, y) => x.id - y.id)[0]; expect(firstCategory.id).not.toBe(S.wp!.id);
-    await db.update(leads).set({ categoryId: firstCategory.id }).where(eq(leads.id, veraLead.id)); await db.update(pipelineEvents).set({ createdAt: new Date(INBOX_CATEGORY_FIX_AT.getTime() - 86_400_000) }).where(and(eq(pipelineEvents.leadId, veraLead.id), like(pipelineEvents.note, "Aus Posteingang%"))); // so sah Vera vor der Korrektur aus (bestehender Kontakt, aus dem Posteingang übernommen)
-    const fresh = (await db.select().from(leads).where(eq(leads.publicId, otherLead.publicId)))[0]; await db.update(leads).set({ categoryId: firstCategory.id }).where(eq(leads.id, fresh.id)); // nach der Korrektur übernommen → bleibt
-    expect(await fixInboxLeadCategories(db)).toBeGreaterThanOrEqual(1);
-    expect((await db.select().from(leads).where(eq(leads.id, veraLead.id)))[0].categoryId).toBe(S.wp!.id); expect((await db.select().from(leads).where(eq(leads.id, fresh.id)))[0].categoryId).toBe(firstCategory.id);
+    // Einmal nach dem Start: Kontakte in der Pipeline, die (durch den alten Fehler) noch die erste Kategorie tragen, obwohl ihre Kampagne eine andere hat → Kategorie der Kampagne; bewusst anders gesetzte bleiben
+    const { fixCampaignLeadCategories } = await import("./inbox");
+    const allCategories = (await owner.leadops.listCategories()).filter((row) => row.status === "aktiv").sort((x, y) => x.id - y.id); const firstCategory = allCategories[0]; const thirdCategory = allCategories.find((row) => row.id !== firstCategory.id && row.id !== S.wp!.id)!; expect(firstCategory.id).not.toBe(S.wp!.id);
+    await db.update(leads).set({ categoryId: firstCategory.id }).where(eq(leads.id, veraLead.id)); // so sah es vor der Korrektur aus
+    const fresh = (await db.select().from(leads).where(eq(leads.publicId, otherLead.publicId)))[0]; await db.update(leads).set({ categoryId: thirdCategory.id }).where(eq(leads.id, fresh.id));
+    expect(await fixCampaignLeadCategories(db)).toBeGreaterThanOrEqual(2); // einmal je Kontakt: beide bekommen die Kategorie der Kampagne
+    expect((await db.select().from(leads).where(eq(leads.id, veraLead.id)))[0].categoryId).toBe(S.wp!.id); expect((await db.select().from(leads).where(eq(leads.id, fresh.id)))[0].categoryId).toBe(S.wp!.id);
     expect((await owner.leadops.pipelineHistory({ publicId: veraLead.publicId })).some((event) => /Kategorie an die Kampagne/.test(event.note ?? ""))).toBe(true);
-    expect(await fixInboxLeadCategories(db)).toBe(0); // zweites Mal: nichts zu tun
+    await db.update(leads).set({ categoryId: thirdCategory.id }).where(eq(leads.id, fresh.id)); // danach von Hand geändert → bleibt
+    expect(await fixCampaignLeadCategories(db)).toBe(0); expect((await db.select().from(leads).where(eq(leads.id, fresh.id)))[0].categoryId).toBe(thirdCategory.id); // zweites Mal: nichts zu tun
   }, 60000);
 
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {

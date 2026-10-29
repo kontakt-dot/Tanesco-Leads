@@ -24,15 +24,18 @@ export async function ensureSentStage(db: Db, tenantId: number): Promise<string 
 const checked = new Set<number>();
 export async function ensureSentStageOnce(db: Db, tenantId: number) { if (checked.has(tenantId)) return; checked.add(tenantId); try { await ensureSentStage(db, tenantId); } catch (error) { checked.delete(tenantId); console.error("[versendet] Spalte nicht angelegt:", error instanceof Error ? error.message : error); } }
 
-export async function fileSentCard(db: Db, tenantId: number, input: { leadId: number; campaignName: string }) {
-  const lead = (await db.select({ id: leads.id, kind: leads.kind, inPipeline: leads.inPipeline, adPlatform: leads.adPlatform, pipelineStage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.id, input.leadId))).limit(1))[0];
+export async function fileSentCard(db: Db, tenantId: number, input: { leadId: number; campaignId?: number | null; campaignName: string }) {
+  const lead = (await db.select({ id: leads.id, kind: leads.kind, inPipeline: leads.inPipeline, adPlatform: leads.adPlatform, pipelineStage: leads.pipelineStage, categoryId: leads.categoryId }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.id, input.leadId))).limit(1))[0];
   if (!lead || lead.kind !== "vertrieb") return null;
   if (lead.inPipeline !== false && lead.adPlatform !== "email") return null; // andere Pipeline: bleibt, wo sie ist
   const to = await ensureSentStage(db, tenantId); if (!to) return null;
   const { pipelineStageSets } = await import("./meta-ads"); const stages = stagesOf(await pipelineStageSets(db, tenantId), "email");
   const move = sentCardMove(lead, stages); if (!move) return null;
-  await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: move.to, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
   const name = input.campaignName.slice(0, 160);
+  // Neu in der Pipeline über diese Kampagne: Karte gehört zur Kampagne und bekommt deren Lead-Kategorie (gewählte Kategorie bzw. die zur Leadsparte passende)
+  let categoryId: number | null = null;
+  if (move.intake && input.campaignId) { try { const { campaignCategoryFor } = await import("./inbox"); const { emailCampaigns } = await import("../drizzle/schema"); const campaign = (await db.select({ id: emailCampaigns.id, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.id, input.campaignId))).limit(1))[0]; if (campaign) categoryId = await campaignCategoryFor(db, tenantId, campaign); } catch { categoryId = null; } }
+  await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: move.to, pipelineUpdatedAt: new Date(), ...(move.intake && input.campaignId ? { adCampaignId: `email-${input.campaignId}`, adCampaignName: name } : {}), ...(categoryId && categoryId !== lead.categoryId ? { categoryId } : {}) }).where(eq(leads.id, lead.id));
   await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: move.from, toStage: move.to, actorUserId: null, note: move.intake ? `E-Mail aus „${name}“ versendet – automatisch aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen` : `E-Mail aus „${name}“ versendet` });
   if (move.intake) { const { autoAssign } = await import("./pipeline-extras"); await autoAssign(db, tenantId, lead.id); } // Verteilung wie beim Übernehmen von Hand
   return move;

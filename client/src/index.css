@@ -3294,6 +3294,7 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .email-leads-zuletzt{min-width:118px}
 .email-leads-zuletzt small{display:block;margin-top:1px;font-size:10.5px}
 .xl-cut{max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.xl-archived{color:#8a87a8}
 .xl-cut.is-firma{max-width:170px}
 /* „Neue Kampagne“-Menü: kompakt, nie länger als der Bildschirm */
 .starter-menu{max-height:min(430px,70vh);overflow-y:auto}

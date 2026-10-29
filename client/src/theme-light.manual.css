@@ -1751,3 +1751,4 @@ html:not(.dark) .fact-icon.is-emoji { background: #ffffff !important; box-shadow
 /* Kampagnen zusammenführen */
 html:not(.dark) .merge-rules { color: #475467 !important; }
 html:not(.dark) .merge-quick .cl-folder-act { border-color: #e4e7ec !important; }
+html:not(.dark) .xl-archived { color: #667085 !important; }

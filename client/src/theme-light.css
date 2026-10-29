@@ -1776,6 +1776,7 @@ html:not(.dark) .inbox-item:hover .inbox-pick-box, html:not(.dark) .inbox-item.i
 html:not(.dark) .inbox-item.is-picked .inbox-pick-box { background: #111318 !important; border: 2px solid #111318 !important; }
 html:not(.dark) .inbox-item.is-picked { background: #f8fafb !important; }
 html:not(.dark) .inbox-tag.is-answered { color: #3c7f64 !important; }
+html:not(.dark) .xl-archived { color: #8a94a6 !important; }
 html:not(.dark) .cd-rows li.is-picked { background: #f8fafb !important; }
 html:not(.dark) .inbox-bulk-actions button.is-lead { color: #4b5568 !important; border-color: #d9dfe7 !important; }
 html:not(.dark) .ki-box { border: 1px solid #d9dfe7 !important; background: #f8fafb !important; }
@@ -3958,3 +3959,4 @@ html:not(.dark) .fact-icon.is-emoji { background: #ffffff !important; box-shadow
 /* Kampagnen zusammenführen */
 html:not(.dark) .merge-rules { color: #475467 !important; }
 html:not(.dark) .merge-quick .cl-folder-act { border-color: #e4e7ec !important; }
+html:not(.dark) .xl-archived { color: #667085 !important; }

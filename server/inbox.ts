@@ -297,32 +297,32 @@ export async function campaignCategoryFor(db: Db, tenantId: number, campaign: Ca
   const rows = await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false)));
   return campaignCategoryFrom(rows, campaign)?.id ?? null;
 }
-/** Bis zu dieser Zeit bekamen Interessenten aus dem Posteingang immer die erste Kategorie (Fehler) – ab dann die Kategorie ihrer Kampagne. */
-export const INBOX_CATEGORY_FIX_AT = new Date("2026-10-29T17:25:00Z");
+const CATEGORY_FIX_NOTE = "Kategorie an die Kampagne";
 /**
- * Einmal nach dem Start: Interessenten, die aus dem Posteingang zu einer E-Mail-Kampagne angelegt wurden und durch den alten
- * Fehler die erste Kategorie (z. B. Photovoltaik) statt der Kategorie ihrer Kampagne bekamen → Kategorie der Kampagne.
- * Nur Karten von vor der Korrektur und nur, wenn sie noch in der ersten Kategorie stehen – bewusst umgestellte bleiben.
+ * Einmal je Kontakt: Karten in der Pipeline „E-Mail-Kampagne“ bekommen die Lead-Kategorie ihrer Kampagne (gewählte Kategorie bzw.
+ * die zur Leadsparte passende) – wie beim Aufnehmen in die Kampagne. Welche Kampagne: die verknüpfte (email-…), sonst die
+ * letzte Kampagne, in der der Kontakt Empfänger ist. Ein Vermerk im Verlauf sorgt dafür, dass es nur einmal passiert –
+ * danach von Hand geänderte Kategorien bleiben.
  */
-export async function fixInboxLeadCategories(db: Db): Promise<number> {
-  // Wer über den Posteingang in die Pipeline kam (neu angelegt oder als bestehender Kontakt übernommen), hat einen Vermerk „Aus Posteingang: …“ im Verlauf
-  const marks = await db.select({ leadId: pipelineEvents.leadId }).from(pipelineEvents).where(and(like(pipelineEvents.note, "Aus Posteingang%"), lt(pipelineEvents.createdAt, INBOX_CATEGORY_FIX_AT)));
-  const leadIds = Array.from(new Set(marks.map((row) => row.leadId).filter((id): id is number => typeof id === "number"))); if (!leadIds.length) return 0;
-  const rows: Array<{ id: number; tenantId: number; categoryId: number; adCampaignId: string | null }> = [];
-  for (let i = 0; i < leadIds.length; i += 500) rows.push(...await db.select({ id: leads.id, tenantId: leads.tenantId, categoryId: leads.categoryId, adCampaignId: leads.adCampaignId }).from(leads).where(and(eq(leads.kind, "vertrieb"), like(leads.adCampaignId, "email-%"), inArray(leads.id, leadIds.slice(i, i + 500)))));
+export async function fixCampaignLeadCategories(db: Db): Promise<number> {
+  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, categoryId: leads.categoryId, adCampaignId: leads.adCampaignId }).from(leads).where(and(eq(leads.kind, "vertrieb"), or(like(leads.adCampaignId, "email-%"), eq(leads.adPlatform, "email"))));
   if (!rows.length) return 0;
+  const done = new Set((await db.select({ leadId: pipelineEvents.leadId }).from(pipelineEvents).where(like(pipelineEvents.note, `${CATEGORY_FIX_NOTE}%`))).map((row) => row.leadId));
   let fixed = 0;
   for (const tenantId of Array.from(new Set(rows.map((row) => row.tenantId)))) {
+    const own = rows.filter((row) => row.tenantId === tenantId && !done.has(row.id)); if (!own.length) continue;
     const categoryRows = await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false)));
-    const first = categoryRows.filter((row) => row.status === "aktiv").sort((a, b) => a.id - b.id)[0]; if (!first) continue; // so wurde die Kategorie früher gewählt
-    const own = rows.filter((row) => row.tenantId === tenantId && row.categoryId === first.id); if (!own.length) continue;
-    const campaignIds = Array.from(new Set(own.map((row) => Number(String(row.adCampaignId).slice(6))).filter((id) => Number.isInteger(id) && id > 0)));
+    const recipientRows = await db.select({ leadId: emailCampaignRecipients.leadId, campaignId: emailCampaignRecipients.campaignId, id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, own.map((row) => row.id))));
+    const latestCampaign = new Map<number, number>(); for (const row of recipientRows.sort((a, b) => a.id - b.id)) if (row.leadId) latestCampaign.set(row.leadId, row.campaignId);
+    const campaignOf = (lead: { id: number; adCampaignId: string | null }) => { const linked = Number(String(lead.adCampaignId ?? "").startsWith("email-") ? String(lead.adCampaignId).slice(6) : ""); return Number.isInteger(linked) && linked > 0 ? linked : latestCampaign.get(lead.id) ?? null; };
+    const campaignIds = Array.from(new Set(own.map(campaignOf).filter((id): id is number => typeof id === "number")));
     const campaigns = campaignIds.length ? await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, campaignIds))) : [];
     for (const lead of own) {
-      const campaign = campaigns.find((row) => `email-${row.id}` === lead.adCampaignId); if (!campaign) continue;
+      const campaign = campaigns.find((row) => row.id === campaignOf(lead)); if (!campaign) continue;
       const wanted = campaignCategoryFrom(categoryRows, campaign); if (!wanted || wanted.id === lead.categoryId) continue;
+      const before = categoryRows.find((row) => row.id === lead.categoryId);
       await db.update(leads).set({ categoryId: wanted.id }).where(eq(leads.id, lead.id));
-      await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "kategorie", actorUserId: null, note: `Kategorie an die Kampagne „${campaign.name}“ angepasst: „${wanted.name}“ (vorher „${first.name}“)` });
+      await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "kategorie", actorUserId: null, note: `${CATEGORY_FIX_NOTE} „${campaign.name}“ angepasst: „${wanted.name}“${before ? ` (vorher „${before.name}“)` : ""}` });
       fixed += 1;
     }
   }

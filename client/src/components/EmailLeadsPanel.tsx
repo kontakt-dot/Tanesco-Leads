@@ -1,5 +1,5 @@
 import { undoIdOf, withUndo } from "@/components/UndoPanel";
-import { Fragment, useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Ban, History, Phone } from "lucide-react";
 import RestoreStateDialog from "@/components/RestoreStateDialog";
 import BlockContactDialog, { UnblockButton } from "@/components/BlockContactDialog";
@@ -111,7 +111,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
     <div className="email-leads-filters">
       <input className="email-leads-search" placeholder={pipeline ? `Suchen: Name, Firma, Telefon, E-Mail, Ort, PLZ, Liste, ${campaignWord}` : "Suchen: Name, Firma, E-Mail, Ort, Liste"} value={search} onChange={(event) => setSearch(event.target.value)} />
       {(!pipeline || source !== "ads") && <select className="lead-action-select" aria-label="Liste" value={listName ?? ""} onChange={(event) => setListName(event.target.value || null)}><option value="">Alle Listen</option>{(data.data?.lists ?? []).map((name) => <option key={name} value={name}>{name}</option>)}</select>}
-      <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">{campaignWordPlural}</option>{(data.data?.campaigns ?? []).map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select>
+      <select className="lead-action-select" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">{campaignWordPlural}</option>{(data.data?.campaigns ?? []).map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}{(campaign as { archived?: boolean }).archived ? " · Archiv" : ""}</option>)}</select>
       {pipeline && <select className="lead-action-select" aria-label="Stufe" value={stageFilter ?? ""} onChange={(event) => setStageFilter(event.target.value || null)}><option value="">Alle Stufen</option>{stageDefs.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select>}
       <select className="lead-action-select" aria-label="Vertriebler" value={owner === "ohne" ? "ohne" : owner ?? ""} onChange={(event) => setOwner(event.target.value === "ohne" ? "ohne" : event.target.value ? Number(event.target.value) : null)}><option value="">Alle Vertriebler</option>{(owners.data ?? []).map((item) => <option key={item.userId} value={item.userId}>{item.name}</option>)}<option value="ohne">Ohne Vertriebler</option></select>
       {gefiltert && <button type="button" className="email-leads-reset" onClick={resetAll}>Filter entfernen</button>}
@@ -158,7 +158,7 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
             {pipeline && <td>{lead.phone || "–"}</td>}
             {pipeline && <td>{[lead.postcode, lead.city].filter(Boolean).join(" ") || "–"}</td>}
             <td className="xl-cut is-liste" title={pipeline ? "" : lead.listName ?? ""}>{pipeline ? herkunft(lead) : lead.listName || "–"}</td>
-            <td className="xl-cut" title={lead.campaigns.map((campaign) => campaign.name).join(", ")}>{lead.campaigns.length ? lead.campaigns.map((campaign) => campaign.name).join(", ") : <span className="text-slate-500">in keiner</span>}</td>
+            <td className="xl-cut" title={lead.campaigns.map((campaign) => `${campaign.name}${(campaign as { archived?: boolean }).archived ? " (Archiv)" : ""}`).join(", ")}>{lead.campaigns.length ? lead.campaigns.map((campaign) => <span key={campaign.id} className={(campaign as { archived?: boolean }).archived ? "xl-archived" : undefined}>{campaign.name}{(campaign as { archived?: boolean }).archived ? " · Archiv" : ""}</span>).reduce<ReactNode[]>((parts, node, index) => index ? [...parts, ", ", node] : [node], []) : <span className="text-slate-500">in keiner</span>}</td>
             {pipeline && <td>{lead.calls?.count ? <span className={`email-leads-calls ${lead.calls.lastResult === "erreicht" || lead.calls.lastResult === "rueckruf" ? "is-reached" : ""}`} title={callCounterText(lead.calls) ?? ""}>{lead.calls.count}× <small>{callResultLabel(lead.calls.lastResult)}</small></span> : "–"}</td>}
             <td onClick={(event) => { if (lead.mails) event.stopPropagation(); }}>{lead.mails ? <button type="button" className="email-leads-mails" aria-expanded={mailsFor === lead.id} title="Zeigt, welche E-Mails an diesen Kontakt rausgingen – mit Datum und Uhrzeit" onClick={() => setMailsFor(mailsFor === lead.id ? null : lead.id)}><b>{lead.mails}</b>{lead.lastSentAt ? <small>zuletzt {new Date(lead.lastSentAt).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</small> : null}</button> : "–"}</td>
             <td>{lead.stage ? stageLabel(lead.stage, stageDefs) : "–"}</td>
