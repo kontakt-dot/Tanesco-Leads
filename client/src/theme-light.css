@@ -1793,6 +1793,7 @@ html:not(.dark) .rv-step { color: #111318 !important; }
 html:not(.dark) .rv-step-label { color: #8a94a6 !important; }
 html:not(.dark) .rv-kind.is-first { color: #506c8b !important; }
 html:not(.dark) .rv-kind.is-followup { background: #f3f6f8 !important; color: #4b5568 !important; }
+html:not(.dark) .rv-due { color: #8b7e4b !important; }
 html:not(.dark) .inbox-sent-sparte { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .thread-head { color: #4b5568 !important; }
 html:not(.dark) .thread-head strong { color: #0f172a !important; }
@@ -3951,6 +3952,7 @@ html:not(.dark) .thread-note.is-src-ki { color: #6d28d9 !important; } html:not(.
 html:not(.dark) .thread-frame { border: 1px solid #e4e7ec !important; }
 html:not(.dark) .inbox-avatar.av-us { background: linear-gradient(135deg, #e11d48, #9f1239) !important; }
 html:not(.dark) .rv-kind.is-followup { background: #fff1f2 !important; color: #be123c !important; }
+html:not(.dark) .rv-due { border-color: #fcd34d !important; color: #92400e !important; background: #fffbeb !important; }
 html:not(.dark) .rv-step-label, html:not(.dark) .rv-editor-kind small { color: #667085 !important; }
 html:not(.dark) .cl-list-chip { border-color: #e4e7ec !important; background: #ffffff !important; color: #344054 !important; }
 html:not(.dark) .cl-list-chip small { background: #fff1f2 !important; color: #be123c !important; }

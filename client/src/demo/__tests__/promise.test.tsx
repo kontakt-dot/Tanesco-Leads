@@ -217,6 +217,47 @@ describe("Freigabe getrennt nach Erst-E-Mails und Follow-ups (Chat-Build)", () =
     expect((await call("leadops.generateCampaignDrafts", { campaignId: saved.id, limit: 5, kind: "followup" })).drafts).toHaveLength(1); expect(rows()[0]).toMatchObject({ draftNodeId: "m2", draftState: "entwurf" });
     expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true })).toMatchObject({ approved: 2 }); // ohne Art: beides
   });
+  it("Follow-ups in der Wartezeit stehen mit „fällig ab“ in der Liste und lassen sich vorab freigeben – sie gehen dann von selbst raus, sobald die Wartezeit um ist", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Freigabe-Vorab", rows: [{ firstName: "Vera", lastName: "Vorab", company: "Vorab Wärme", email: "vera@freigabe-vorab.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Freigabe-Vorab", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listName: "Freigabe-Vorab" }, tree, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    const vera = () => getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === saved.id)!;
+    await call("leadops.saveCampaignDraft", { recipientId: vera().id, subject: "Persönlich", text: "Sehr geehrte Frau Vorab,\n\nzum Kennenlernen stellen wir Ihnen 10 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
+    await call("leadops.runEmailCampaigns"); expect(vera()).toMatchObject({ sentCount: 1, nodeId: "w1" }); // in der Wartezeit
+    const queue = await call("leadops.campaignReviewQueue", { campaignId: saved.id }); expect(queue.counts).toMatchObject({ followUps: 1, spaeter: 1 });
+    const item = queue.items.find((entry: any) => entry.id === vera().id); expect(item).toMatchObject({ followUp: true, step: 2, nodeId: "m2", nodeLabel: "Kurze Nachfrage" }); expect(item.dueAt).toBeTruthy();
+    await call("leadops.saveCampaignDraft", { recipientId: vera().id, subject: "Kurze Nachfrage", text: "Sehr geehrte Frau Vorab,\n\nhatten Sie schon Gelegenheit, über unser Angebot nachzudenken?\n\nVielen Dank", approve: false });
+    expect(vera()).toMatchObject({ draftNodeId: "m2", draftState: "entwurf", nodeId: "w1" }); // der Entwurf gilt dem Follow-up, nicht der schon gesendeten Erst-E-Mail
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true, kind: "followup" })).toMatchObject({ approved: 1 }); expect(vera().draftState).toBe("freigegeben");
+    await call("leadops.runEmailCampaigns"); expect(vera().sentCount).toBe(1); // noch nicht fällig
+    vera().nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns"); expect(vera().sentCount).toBe(2);
+    const sent = getStore().tables.emailCampaignEvents.filter((event) => event.recipientId === vera().id && event.kind === "gesendet"); expect(sent[1].nodeId).toBe("m2"); expect(String(sent[1].body ?? "")).toContain("Gelegenheit, über unser Angebot");
+  });
+  it("Oberfläche: wartende Follow-ups tragen „fällig ab …“ in der Liste und im Kopf", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Freigabe-Badge", rows: [{ firstName: "Vera", lastName: "Badge", company: "Badge Wärme", email: "vera@freigabe-badge.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 30, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Freigabe-Badge", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listName: "Freigabe-Badge" }, tree, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    const vera = () => getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === saved.id)!;
+    await call("leadops.saveCampaignDraft", { recipientId: vera().id, subject: "Persönlich", text: "Sehr geehrte Frau Badge,\n\nzum Kennenlernen stellen wir Ihnen 10 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
+    await call("leadops.runEmailCampaigns"); expect(vera()).toMatchObject({ sentCount: 1, nodeId: "w1" });
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.querySelector(".cl-name")?.textContent?.includes("Freigabe-Badge"))!;
+    const part = Array.from(card.querySelectorAll<HTMLButtonElement>(".cl-approval-part")).find((node) => /Follow-up/.test(node.textContent ?? ""))!; expect(part.textContent).toMatch(/^1 Follow-up ab /); // auf der Karte: ab wann zur Freigabe
+    await act(async () => { fireEvent.click(part); }); await settle(500); await settle(300);
+    const dialog = document.querySelector(".review-dialog")!; expect(dialog).toBeTruthy();
+    expect(dialog.querySelector(".rv-head p")?.textContent).toContain("1 Follow-ups noch in der Wartezeit");
+    const due = dialog.querySelector(".rv-list .rv-due"); expect(due?.textContent).toMatch(/^fällig ab /);
+    expect(dialog.querySelector(".rv-editor-kind .rv-due")?.textContent).toMatch(/^fällig ab /);
+    expect(Array.from(dialog.querySelectorAll<HTMLButtonElement>(".rv-head-actions button")).some((node) => /Follow-ups? freigeben$/.test(node.textContent?.trim() ?? "") || /Follow-ups? schreiben$/.test(node.textContent?.trim() ?? ""))).toBe(true);
+    // „Zurück“ im Browser schließt nur das Fenster – die Übersicht bleibt
+    const before = window.location.href; await act(async () => { window.history.back(); }); await settle(400);
+    expect(document.querySelector(".review-dialog")).toBeNull(); expect(window.location.href).toBe(before); expect(view.container.querySelector(".cl-list")).toBeTruthy();
+  });
   it("Übersicht: „Erst-E-Mails“ auf der Karte öffnet die Freigabe direkt nur für Erst-E-Mails – der Freigeben-Knopf nennt und nimmt nur diese", async () => {
     const { rows } = await setup();
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");

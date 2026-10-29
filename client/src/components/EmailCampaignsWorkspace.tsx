@@ -306,10 +306,24 @@ function ApprovalPill({ firstMails, plan, onClick, onReview }: { firstMails: num
   // Erst-E-Mails und Follow-ups einzeln anklickbar: öffnet die Freigabe nur für diese Art – „Zur Freigabe“ für beides
   return <span className="cl-approval" title={hint}><button type="button" className="cl-approval-main" onClick={onClick}><PenLine aria-hidden="true" /><strong>Zur Freigabe</strong></button>{parts.map((part) => <button key={part.kind} type="button" className="cl-approval-part" title={onReview ? part.title : hint} onClick={() => (onReview ?? onClick)?.(part.kind)}>{part.text}</button>)}</span>;
 }
-/** E-Mails direkt aus der Kampagnen-Übersicht freigeben – ohne die Kampagne zu öffnen; `kind` zeigt gleich nur Erst-E-Mails oder nur Follow-ups. */
+/**
+ * E-Mails direkt aus der Kampagnen-Übersicht freigeben – ohne die Kampagne zu öffnen; `kind` zeigt gleich nur Erst-E-Mails oder nur Follow-ups.
+ * Das Fenster bekommt einen eigenen Eintrag im Browser-Verlauf: „Zurück“ schließt nur das Fenster (statt die Seite zu wechseln).
+ * Rückfragen (Bestätigen) und die Karte eines Kontakts liegen außerhalb des Fensters – ein Klick dort schließt es nicht.
+ */
+const REVIEW_HISTORY = "tanesco-review";
 function ReviewDialog({ campaign, onClose, onOpenLead }: { campaign: { id: number; kind: ReviewKind } | null; onClose: () => void; onOpenLead: (publicId: string) => void }) {
-  return <Dialog open={Boolean(campaign)} onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent className="review-dialog" showCloseButton={false} onOpenAutoFocus={(event) => event.preventDefault()}>
+  const open = Boolean(campaign); const closing = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    try { window.history.pushState({ ...(window.history.state ?? {}), [REVIEW_HISTORY]: true }, "", window.location.href); } catch { /* egal */ }
+    const onPop = () => { closing.current = true; onClose(); };
+    window.addEventListener("popstate", onPop);
+    return () => { window.removeEventListener("popstate", onPop); if (!closing.current) { try { if ((window.history.state ?? {})[REVIEW_HISTORY]) window.history.back(); } catch { /* egal */ } } closing.current = false; };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const outside = (event: Event) => { const target = event.target as HTMLElement | null; if (target?.closest(".app-confirm-backdrop, .lead-overlay, [data-sonner-toaster]")) event.preventDefault(); };
+  return <Dialog open={open} onOpenChange={(value) => { if (!value) onClose(); }}>
+    <DialogContent className="review-dialog" showCloseButton={false} onOpenAutoFocus={(event) => event.preventDefault()} onInteractOutside={outside} onFocusOutside={outside}>
       <DialogHeader className="sr-only"><DialogTitle>E-Mails freigeben</DialogTitle><DialogDescription>Erst-E-Mails und Follow-ups dieser Kampagne prüfen und freigeben.</DialogDescription></DialogHeader>
       {campaign && <CampaignReviewPanel key={`${campaign.id}-${campaign.kind}`} campaignId={campaign.id} initialKind={campaign.kind} onClose={onClose} onOpenLead={onOpenLead} />}
     </DialogContent>

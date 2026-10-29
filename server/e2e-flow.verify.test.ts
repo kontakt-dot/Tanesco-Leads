@@ -2544,11 +2544,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
     expect(recipients.every((row) => row.sentCount === 0)).toBe(true); // ohne Freigabe geht nichts raus
     const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0 });
-    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toEqual({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 }); // der Versand-Lauf hat die Entwürfe schon geschrieben (Vorlage, ohne KI-Schlüssel) und wartet auf Freigabe
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 }); // der Versand-Lauf hat die Entwürfe schon geschrieben (Vorlage, ohne KI-Schlüssel) und wartet auf Freigabe
     const rita = queue.items.find((item) => item.email === "rita@review-e2e.example")!; expect(rita.city).toBe("Kassel");
     const drafts = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [rita.id] }); // ohne KI-Schlüssel: Vorlage mit den Daten des Kontakts
     expect(drafts.drafts).toHaveLength(1); expect(drafts.drafts[0].subject).toContain("Review Dach GmbH"); expect(drafts.drafts[0].text).not.toContain("{{"); expect(drafts.drafts[0].text).not.toMatch(/ {2}/); expect(drafts.drafts[0].text).toMatch(/^Sehr geehrte Damen und Herren,/); /* ohne bekannte Anrede nie „Guten Tag Rita Review“ */ expect(drafts.drafts[0].options.map((option) => option.key)).toEqual(["frei", "drittanbieter"]); expect(drafts.drafts[0].options[1].text).toContain("Drittpartner bei Review Dach GmbH"); expect(drafts.drafts[0].options[1].text).toContain("Zwischenhändler"); expect(drafts.drafts[0].options[1].text).toContain("direkte Zusammenarbeit"); // Kernbotschaft Drittanbieter-Ansatz
-    expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).counts).toEqual({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 });
+    expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).counts).toMatchObject({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 });
     await owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "Persönlich für Review Dach", text: "Guten Tag Frau Review,\n\nIhr Betrieb in Kassel ist uns aufgefallen. Kurz telefonieren?\n\nViele Grüße", approve: false });
     await owner.leadops.runEmailCampaigns(); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, rita.id)))[0].sentCount).toBe(0); // gespeichert ≠ freigegeben
     await owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "Persönlich für Review Dach", text: "Guten Tag Frau Review,\n\nIhr Betrieb in Kassel ist uns aufgefallen. Kurz telefonieren?\n\nViele Grüße", approve: true, approach: "drittanbieter" }); expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).items.find((item) => item.id === rita.id)?.draftApproach).toBe("drittanbieter");
@@ -2556,7 +2556,12 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const ritaRow = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, rita.id)))[0]; expect(ritaRow.sentCount).toBe(1);
     const sentEvent = (await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, rita.id), eq(emailCampaignEvents.kind, "gesendet"))))[0]; expect(sentEvent.subject).toBe("Persönlich für Review Dach");
     const olaf = recipients.find((row) => row.email === "olaf@offen-e2e.example")!; expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, olaf.id)))[0].sentCount).toBe(0);
+    // Rita steckt jetzt in der Wartezeit: ein neuer Entwurf gilt ihrem nächsten Follow-up (vorab), nie der schon gesendeten Erst-E-Mail
+    const ahead = await owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "Nachfrage vorab", text: "Sehr geehrte Frau Review,\n\nhatten Sie schon Gelegenheit, über unser Angebot nachzudenken?\n\nVielen Dank", approve: false }); expect(ahead.draftState).toBe("entwurf");
+    const ritaAhead = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, rita.id)))[0]; expect(ritaAhead.draftNodeId).toBeTruthy(); expect(ritaAhead.draftNodeId).not.toBe(sentEvent.nodeId); expect(ritaAhead.sentCount).toBe(1);
+    await db.update(emailCampaignRecipients).set({ draftNodeId: sentEvent.nodeId }).where(eq(emailCampaignRecipients.id, rita.id)); // ein Entwurf für die schon gesendete E-Mail lässt sich nicht mehr speichern
     await expect(owner.leadops.saveCampaignDraft({ recipientId: rita.id, subject: "x", text: "schon raus", approve: true })).rejects.toThrow(/schon raus/);
+    await db.update(emailCampaignRecipients).set({ draftNodeId: ritaAhead.draftNodeId }).where(eq(emailCampaignRecipients.id, rita.id));
     // Tageslimit (alle Kampagnen zusammen): heute wurden schon viele gesendet → mit Limit 1 geht Olaf nicht mehr raus
     delete process.env.EMAIL_THROTTLE_OFF;
     try {
@@ -3577,7 +3582,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const after = await db.select().from(emailCampaignRecipients).where(inArray(emailCampaignRecipients.id, [bert, dora, carl]));
     for (const row of after) { expect(row).toMatchObject({ campaignId: target.id, nodeId: "m2", draftNodeId: "m2", draftState: "entwurf", draftApproach: "drittanbieter", sentCount: 1 }); }
     expect(after.find((row) => row.id === bert)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === dora)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === carl)!.draftText).toContain("10 Test-Leads");
-    const queue = await owner.leadops.campaignReviewQueue({ campaignId: target.id }); expect(queue.counts).toMatchObject({ followUps: 3 }); expect(queue.items.find((item) => item.id === dora)).toMatchObject({ step: 2, followUp: true, testLeads: 20 }); expect(queue.items.find((item) => item.id === dora)?.sentBefore).toMatchObject({ subject: "Start für Wartet GmbH", count: 1 });
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: target.id }); expect(queue.items.filter((item) => item.followUp && !item.dueAt)).toHaveLength(3); expect(queue.counts.followUps).toBe(3 + queue.counts.spaeter); // 3 fällig – dazu Follow-ups, die noch in der Wartezeit stecken (vorab freigebbar) expect(queue.items.find((item) => item.id === dora)).toMatchObject({ step: 2, followUp: true, testLeads: 20 }); expect(queue.items.find((item) => item.id === dora)?.sentBefore).toMatchObject({ subject: "Start für Wartet GmbH", count: 1 });
     // Freigeben → geht aus dem Ziel raus, als 2. E-Mail
     await owner.leadops.saveCampaignDraft({ recipientId: dora, subject: "Nachfrage Wartet GmbH", text: after.find((row) => row.id === dora)!.draftText!, approve: true }); await owner.leadops.runEmailCampaigns();
     const doraAfter = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, dora)))[0]; expect(doraAfter).toMatchObject({ campaignId: target.id, sentCount: 2, status: "fertig" });
@@ -3642,7 +3647,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const manual = await owner.leadops.createPipelineContact({ source: "kaltakquise", firstName: "Manu", lastName: "Manuell", phone: "+49 69 5550999" }); expect((await db.select().from(leads).where(eq(leads.publicId, manual.publicId)))[0].categoryId).toBe(combined!.id);
   }, 40000);
 
-  it("63t. Freigabe getrennt: „Alle freigeben“, „wieder prüfen“, „neu schreiben“ und „Entwürfe schreiben“ gelten nur für Erst-E-Mails bzw. nur für Follow-ups", async () => {
+  it("63t. Freigabe getrennt und vorab: Follow-ups in der Wartezeit stehen mit „fällig ab“ in der Liste und lassen sich vorab freigeben (gehen dann von selbst raus); „Alle freigeben“, „wieder prüfen“, „neu schreiben“, „Entwürfe schreiben“ nur je Art", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const starter = await owner.leadops.emailCampaignStarter();
     await owner.leadops.importColdList({ listName: "Freigabe-Art", toPipeline: false, rows: [{ firstName: "Vera", lastName: "Art", company: "Art Wärme", email: "vera@freigabe-art-e2e.example" }, { firstName: "Nils", lastName: "Art", company: "Art Solar", email: "nils@freigabe-art-e2e.example" }] });
     const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
@@ -3650,27 +3655,35 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
     let [vera, nils] = await rows();
-    // Vera: Erst-E-Mail von Hand freigegeben und raus → nach der Wartezeit wartet ihr Follow-up zur Prüfung; Nils: Erst-E-Mail wartet zur Prüfung
+    // Vera: Erst-E-Mail von Hand freigegeben und raus → sie steckt in der Wartezeit (1 Stunde); Nils: Erst-E-Mail wartet zur Prüfung
     await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: "Persönlich für Art Wärme", text: "Sehr geehrte Frau Art,\n\nzum Kennenlernen stellen wir Ihnen 10 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
-    await owner.leadops.runEmailCampaigns(); [vera, nils] = await rows(); expect(vera.sentCount).toBe(1); expect(nils.sentCount).toBe(0);
-    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, vera.id)); await owner.leadops.runEmailCampaigns(); [vera, nils] = await rows();
-    expect(vera).toMatchObject({ sentCount: 1, nodeId: "m2", draftNodeId: "m2" });
-    await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: "Kurze Nachfrage", text: "Sehr geehrte Frau Art,\n\nhatten Sie schon Gelegenheit, über unser Angebot nachzudenken?\n\nVielen Dank", approve: false }); // geprüfter Text (kein Ersatz aus der Vorlage)
+    await owner.leadops.runEmailCampaigns(); [vera, nils] = await rows(); expect(vera).toMatchObject({ sentCount: 1, nodeId: "w1", status: "wartet" }); expect(nils.sentCount).toBe(0);
+    // Freigabe-Liste: Veras Follow-up steht schon jetzt drin – mit „fällig ab“ (Ende der Wartezeit), als Follow-up zum Schritt „Kurze Nachfrage“
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ erste: 1, followUps: 1, spaeter: 1 });
+    const veraItem = queue.items.find((item) => item.id === vera.id)!; expect(veraItem).toMatchObject({ followUp: true, step: 2, nodeId: "m2", nodeLabel: "Kurze Nachfrage", draftState: null }); expect(veraItem.dueAt).toBeTruthy(); expect(Math.abs(new Date(veraItem.dueAt!).getTime() - new Date(vera.nextActionAt!).getTime())).toBeLessThan(60_000);
+    expect(queue.items.find((item) => item.id === nils.id)).toMatchObject({ followUp: false, dueAt: null });
+    // Entwurf für das wartende Follow-up schreiben (ohne KI: Ersatz aus der Vorlage für GENAU den Schritt m2) – und von Hand prüfen
+    const made = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [vera.id] }); expect(made.drafts).toHaveLength(1); expect(made.drafts[0].nodeId).toBe("m2");
+    [vera] = await rows(); expect(vera).toMatchObject({ nodeId: "w1", draftNodeId: "m2", draftState: "entwurf" });
+    await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: "Kurze Nachfrage", text: "Sehr geehrte Frau Art,\n\nhatten Sie schon Gelegenheit, über unser Angebot nachzudenken?\n\nVielen Dank", approve: false }); // geprüfter Text
     await owner.leadops.saveCampaignDraft({ recipientId: nils.id, subject: "Erste an Art Solar", text: "Sehr geehrter Herr Art,\n\nwir liefern Photovoltaik-Interessenten aus Ihrer Region.\n\nVielen Dank", approve: false });
-    [vera, nils] = await rows(); expect(vera.draftState).toBe("entwurf"); expect(nils.draftState).toBe("entwurf");
-    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ erste: 1, followUps: 1, entwurf: 2 });
-    // nur Follow-ups freigeben → Nils' Erst-E-Mail bleibt zur Prüfung
+    [vera, nils] = await rows(); expect(vera).toMatchObject({ draftState: "entwurf", draftNodeId: "m2", nodeId: "w1" }); expect(nils.draftState).toBe("entwurf");
+    // nur Follow-ups freigeben → Veras wartendes Follow-up ist freigegeben, Nils' Erst-E-Mail bleibt zur Prüfung; die Wartezeit läuft weiter
     expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true, kind: "followup" })).toMatchObject({ approved: 1 });
-    [vera, nils] = await rows(); expect(vera.draftState).toBe("freigegeben"); expect(nils.draftState).toBe("entwurf");
+    [vera, nils] = await rows(); expect(vera).toMatchObject({ draftState: "freigegeben", nodeId: "w1" }); expect(nils.draftState).toBe("entwurf"); expect(new Date(vera.nextActionAt!).getTime()).toBeGreaterThan(Date.now() + 30 * 60_000);
+    await owner.leadops.runEmailCampaigns(); [vera] = await rows(); expect(vera.sentCount).toBe(1); // noch nicht fällig → nichts geht raus
     expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true, kind: "erste" })).toMatchObject({ approved: 1 }); [vera, nils] = await rows(); expect(nils.draftState).toBe("freigegeben");
     // nur die Erst-E-Mails wieder prüfen → das Follow-up bleibt freigegeben
     expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: false, kind: "erste" })).toMatchObject({ reverted: 1 }); [vera, nils] = await rows(); expect(nils.draftState).toBe("entwurf"); expect(vera.draftState).toBe("freigegeben");
-    // nur Follow-ups neu schreiben → Nils' Entwurf bleibt; „Entwürfe schreiben“ nur für Follow-ups findet Vera wieder
-    expect(await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id, kind: "followup" })).toEqual({ reset: 1 }); [vera, nils] = await rows(); expect(vera.draftState).toBeNull(); expect(nils.draftState).toBe("entwurf");
-    expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5, kind: "erste" })).drafts).toHaveLength(0);
-    expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5, kind: "followup" })).drafts).toHaveLength(1); [vera] = await rows(); expect(vera).toMatchObject({ draftNodeId: "m2", draftState: "entwurf" });
-    // ohne Art: alles (geprüfte Texte) – Veras neuer Entwurf ist nur Ersatz aus der Vorlage und bleibt bewusst zur Prüfung
-    const all = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true }); expect(all.approved + (all.templateOnly ?? 0)).toBe(2); expect(all.approved).toBeGreaterThanOrEqual(1);
+    // Wartezeit um → das vorab freigegebene Follow-up geht von selbst raus, mit dem geprüften Text
+    await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.id, vera.id)); await owner.leadops.runEmailCampaigns(); [vera, nils] = await rows();
+    expect(vera.sentCount).toBe(2); expect(nils.sentCount).toBe(0);
+    const veraMails = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, vera.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id)); expect(veraMails).toHaveLength(2); expect(veraMails[1].nodeId).toBe("m2"); expect(veraMails[1].body).toContain("Gelegenheit, über unser Angebot nachzudenken");
+    // nur Erst-E-Mails neu schreiben → Nils' Entwurf weg, „Entwürfe schreiben“ nur für Erst-E-Mails findet ihn wieder; ohne Art: alles
+    expect(await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id, kind: "erste" })).toEqual({ reset: 1 }); [, nils] = await rows(); expect(nils.draftState).toBeNull();
+    expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5, kind: "followup" })).drafts).toHaveLength(0); // kein Follow-up offen (Veras Serie ist durch)
+    expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, limit: 5, kind: "erste" })).drafts).toHaveLength(1); [, nils] = await rows(); expect(nils).toMatchObject({ draftNodeId: "m1", draftState: "entwurf" });
+    const all = await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true }); expect(all.approved + (all.templateOnly ?? 0)).toBe(1); // Nils' Ersatz-Entwurf aus der Vorlage bleibt bewusst zur Prüfung
   }, 40000);
 
   it("63. Verträge: Bausteine speichern, zur Unterschrift senden, öffentliche Seite, Unterschrift mit Nachweis (Zeit, IP, Gerät, Prüfsummen), PDF, Ablehnen, Vorlage", async () => {

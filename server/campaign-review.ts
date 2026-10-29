@@ -7,7 +7,8 @@
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leads, mailSettings } from "../drizzle/schema";
-import { audienceLists, kiModusOf } from "../shared/email-campaigns";
+import { audienceLists, kiModusOf, stopsOnReply } from "../shared/email-campaigns";
+import { nextEmailOf } from "../shared/follow-up-plan";
 import { applyPayFit, DEFAULT_SPARTE, fitsSparte, fixQuestionCount, isEnergySparte, mentionsQuestions, numberWord, offerChain, offersForeignLeads, paysOnlyFitting, qualifyPhrase, questionCount, questionTopics, resolveSparte, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
 import { extractProfile } from "../shared/lead-finder";
 import { cleanDraftText, dropAdPlatforms, shortParagraphs, PORTAL_RE, smoothQualifyPhrase, withTestOffer, promisedTestLeads, TEST_LEADS, approachLabel, approachOf, LEGACY_APPROACH, DRAFT_APPROACHES, copiesTemplate, dropThirdPartyClaim, fixTreeQuestions, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
@@ -46,18 +47,43 @@ export async function setCampaignDailyLimit(db: Db, tenantId: number, limit: num
   return { limit: value };
 }
 
-/** Der Schritt, für den gerade ein Entwurf fällig ist: der aktuelle Schritt des Empfängers (wenn es eine E-Mail ist), sonst die erste E-Mail des Ablaufs. */
-export function dueSendNode(tree: EmailTree, recipient: Pick<Recipient, "nodeId">): Extract<EmailNode, { type: "send" }> | null {
+type DueRecipient = Pick<Recipient, "nodeId"> & Partial<Pick<Recipient, "status" | "sentCount" | "nextActionAt" | "lastSentAt" | "openedAt" | "clickedAt" | "clickedUrls">> & { sentNodeIds?: string[] | null };
+/**
+ * Die nächste E-Mail eines Empfängers, der gerade wartet (Wartezeit oder Wenn-Abfrage): welcher Schritt und ab wann – so, wie der
+ * Zeitplaner ihn erreichen wird (Wenn-Abfragen mit dem heutigen Stand, schon gesendete Schritte übersprungen). `null` = keine weitere E-Mail.
+ */
+export function upcomingSend(tree: EmailTree, recipient: DueRecipient, now = Date.now()): { node: Extract<EmailNode, { type: "send" }>; readyAt: Date } | null {
+  const next = nextEmailOf(tree, { id: 0, nodeId: recipient.nodeId ?? null, status: recipient.status ?? "wartet", sentCount: recipient.sentCount ?? 1, nextActionAt: recipient.nextActionAt ?? null, lastSentAt: recipient.lastSentAt ?? null, openedAt: recipient.openedAt ?? null, clickedAt: recipient.clickedAt ?? null, repliedAt: null, clickedUrls: (Array.isArray(recipient.clickedUrls) ? recipient.clickedUrls : []) as string[], sentNodeIds: recipient.sentNodeIds ?? null }, now, false);
+  const node = next ? tree.nodes.find((item): item is Extract<EmailNode, { type: "send" }> => item.id === next.nodeId && item.type === "send") : null;
+  return node ? { node, readyAt: new Date(next!.readyAt) } : null;
+}
+/**
+ * Der Schritt, für den ein Entwurf fällig ist: der aktuelle Schritt des Empfängers (wenn es eine E-Mail ist); steckt er in einer
+ * Wartezeit oder Wenn-Abfrage, die nächste E-Mail danach (so lassen sich Follow-ups schon vorab schreiben und freigeben); sonst die erste E-Mail des Ablaufs.
+ */
+export function dueSendNode(tree: EmailTree, recipient: DueRecipient): Extract<EmailNode, { type: "send" }> | null {
   const current = recipient.nodeId ? tree.nodes.find((node) => node.id === recipient.nodeId) : null;
   if (current && current.type === "send") return current;
+  if (current) { const ahead = upcomingSend(tree, recipient); if (ahead) return ahead.node; }
   return firstSendNode(tree);
+}
+/** Schon gesendete Schritte je Empfänger (dieselbe E-Mail geht nie zweimal raus) – für die Vorhersage der nächsten E-Mail. */
+export async function sentNodeMap(db: Db, tenantId: number, recipientIds: number[]): Promise<Map<number, string[]>> {
+  const map = new Map<number, string[]>();
+  for (let offset = 0; offset < recipientIds.length; offset += 1000) {
+    const chunk = recipientIds.slice(offset, offset + 1000); if (!chunk.length) break;
+    const events = await db.select({ recipientId: emailCampaignEvents.recipientId, nodeId: emailCampaignEvents.nodeId }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), inArray(emailCampaignEvents.recipientId, chunk)));
+    for (const event of events) if (event.nodeId) { const list = map.get(event.recipientId) ?? []; if (!list.includes(event.nodeId)) list.push(event.nodeId); map.set(event.recipientId, list); }
+  }
+  return map;
 }
 async function loadContext(db: Db, tenantId: number, recipient: Recipient, nodeId?: string | null) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, recipient.campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0];
   if (!campaign) throw new Error("Kampagne nicht gefunden.");
   const lead = recipient.leadId ? (await db.select().from(leads).where(and(eq(leads.id, recipient.leadId), eq(leads.tenantId, tenantId))).limit(1))[0] ?? null : null;
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
-  const node = (nodeId ? tree.nodes.find((item): item is Extract<EmailNode, { type: "send" }> => item.id === nodeId && item.type === "send") : null) ?? dueSendNode(tree, recipient);
+  const sentNodeIds = recipient.sentCount > 0 ? (await sentNodeMap(db, tenantId, [recipient.id])).get(recipient.id) ?? [] : [];
+  const node = (nodeId ? tree.nodes.find((item): item is Extract<EmailNode, { type: "send" }> => item.id === nodeId && item.type === "send") : null) ?? dueSendNode(tree, { ...recipient, sentNodeIds });
   if (!node) throw new Error("Die Kampagne hat keine E-Mail im Ablauf.");
   const phone = await senderPhone(db, tenantId);
   const values = recipientValues({ firstName: lead?.firstName ?? recipient.name?.split(" ")[0], lastName: lead?.lastName ?? recipient.name?.split(" ").slice(1).join(" "), company: lead?.company ?? recipient.company, city: lead?.city, salutation: (lead?.metadata as { salutation?: string } | null)?.salutation ?? null, email: recipient.email, fields: Object.fromEntries(Object.entries(extraFieldsOf(lead?.metadata)).filter(([key, value]) => !PORTAL_RE.test(key) && !PORTAL_RE.test(String(value ?? "")))), phone }); // Aroundhome-Daten bekommt die KI gar nicht erst zu sehen
@@ -339,10 +365,11 @@ export async function approveAllDrafts(db: Db, tenantId: number, campaignId: num
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
   const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
+  const sentNodes = await sentNodeMap(db, tenantId, rows.filter((row) => row.sentCount > 0).map((row) => row.id));
   let changed = 0; let withoutDraft = 0; let templateOnly = 0;
   for (const row of rows) {
     if (!ofKind(row, kind)) continue; // nur Erst-E-Mails bzw. nur Follow-ups – getrennt freigeben
-    const node = dueSendNode(tree, row); if (!node) continue;
+    const node = dueSendNode(tree, { ...row, sentNodeIds: sentNodes.get(row.id) ?? [] }); if (!node) continue; // auch Follow-ups, die noch in der Wartezeit stecken (vorab freigeben)
     const fits = Boolean(row.draftState) && draftFitsNode(row, node.id) && Boolean(row.draftSubject?.trim()) && (row.draftText ?? "").trim().length >= 10;
     if (approve) {
       if (!fits) { withoutDraft += 1; continue; }
@@ -551,8 +578,10 @@ export async function generateDrafts(db: Db, tenantId: number, input: { campaign
     const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
     const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
     const rows = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, input.campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]))).orderBy(asc(emailCampaignRecipients.id))).filter((row) => ofKind(row, input.kind)); // nur Erst-E-Mails bzw. nur Follow-ups, wenn gewünscht
-    ids = rows.filter((row) => { const node = dueSendNode(tree, row); return node && row.nodeId === node.id && (!row.draftState || !draftFitsNode(row, node.id)); }).slice(0, limit).map((row) => row.id);
-    if (!ids.length) ids = rows.filter((row) => { const node = dueSendNode(tree, row); return node && row.sentCount === 0 && (!row.draftState || !draftFitsNode(row, node.id)); }).slice(0, limit).map((row) => row.id); // Rückfall: Erst-E-Mails (z. B. direkt nach dem Start)
+    const sentNodes = await sentNodeMap(db, tenantId, rows.filter((row) => row.sentCount > 0).map((row) => row.id));
+    const nodeOf = (row: Recipient) => dueSendNode(tree, { ...row, sentNodeIds: sentNodes.get(row.id) ?? [] });
+    const open = rows.filter((row) => { const node = nodeOf(row); return node && (!row.draftState || !draftFitsNode(row, node.id)); });
+    ids = [...open.filter((row) => row.nodeId === nodeOf(row)?.id), ...open.filter((row) => row.nodeId !== nodeOf(row)?.id)].slice(0, limit).map((row) => row.id); // erst die fälligen (am E-Mail-Schritt), dann Erst-E-Mails und Follow-ups, die noch in der Wartezeit stecken
   }
   const drafts = []; let failed = 0;
   for (const id of ids) { try { drafts.push(await draftForRecipient(db, tenantId, id)); } catch { failed += 1; } }
@@ -585,16 +614,24 @@ export async function reviewQueue(db: Db, tenantId: number, campaignId: number) 
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
   const all = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]))).orderBy(asc(emailCampaignRecipients.id));
-  const rows = all.map((row) => { const node = dueSendNode(tree, row); return node && (row.nodeId === node.id || row.sentCount === 0) ? { row, node } : null; }).filter((item): item is { row: Recipient; node: Extract<EmailNode, { type: "send" }> } => Boolean(item));
+  // Was ging an diese Kontakte schon raus? Für Follow-ups: die E-Mail davor (Betreff, Datum), wie viele Test-Leads darin versprochen wurden – und welche Schritte schon raus sind
+  const followIds = all.filter((row) => row.sentCount > 0).map((row) => row.id);
+  const sentRows = followIds.length ? await db.select({ recipientId: emailCampaignEvents.recipientId, nodeId: emailCampaignEvents.nodeId, subject: emailCampaignEvents.subject, body: emailCampaignEvents.body, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), inArray(emailCampaignEvents.recipientId, followIds))).orderBy(asc(emailCampaignEvents.id)) : [];
+  const sentOf = (recipientId: number) => sentRows.filter((event) => event.recipientId === recipientId);
+  const stopOnReply = stopsOnReply(campaign); const now = Date.now();
+  // Fällige E-Mails (am E-Mail-Schritt), Erst-E-Mails – und Follow-ups, die noch in der Wartezeit stecken: die stehen mit „fällig ab …“ schon vorab zur Freigabe
+  const rows = all.map((row) => {
+    const sentNodeIds = sentOf(row.id).map((event) => event.nodeId).filter((id): id is string => Boolean(id));
+    const current = row.nodeId ? tree.nodes.find((node) => node.id === row.nodeId) : null;
+    if (current && current.type === "send") return { row, node: current, dueAt: null as Date | null };
+    if (current && row.sentCount > 0) { if (stopOnReply && row.repliedAt) return null; const ahead = upcomingSend(tree, { ...row, sentNodeIds }, now); return ahead ? { row, node: ahead.node, dueAt: ahead.readyAt.getTime() > now + 60_000 ? ahead.readyAt : null } : null; }
+    const node = dueSendNode(tree, { ...row, sentNodeIds }); return node && row.sentCount === 0 ? { row, node, dueAt: null as Date | null } : null;
+  }).filter((item): item is { row: Recipient; node: Extract<EmailNode, { type: "send" }>; dueAt: Date | null } => Boolean(item));
   const leadIds = Array.from(new Set(rows.map(({ row }) => row.leadId).filter((id): id is number => typeof id === "number")));
   const leadRows = leadIds.length ? await db.select({ id: leads.id, publicId: leads.publicId, city: leads.city, listName: leads.listName, company: leads.company, firstName: leads.firstName, lastName: leads.lastName, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, leadIds))) : [];
-  // Was ging an diese Kontakte schon raus? Für Follow-ups: die E-Mail davor (Betreff, Datum) und wie viele Test-Leads darin versprochen wurden
-  const followIds = rows.filter(({ row }) => row.sentCount > 0).map(({ row }) => row.id);
-  const sentRows = followIds.length ? await db.select({ recipientId: emailCampaignEvents.recipientId, subject: emailCampaignEvents.subject, body: emailCampaignEvents.body, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), inArray(emailCampaignEvents.recipientId, followIds))).orderBy(asc(emailCampaignEvents.id)) : [];
-  const sentOf = (recipientId: number) => sentRows.filter((event) => event.recipientId === recipientId);
-  const items = rows.map(({ row, node }) => { const lead = leadRows.find((item) => item.id === row.leadId) ?? null; const fits = draftFitsNode(row, node.id); const sent = row.sentCount > 0 ? sentOf(row.id) : []; const last = sent[sent.length - 1] ?? null; const promised = sent.length ? promisedTestLeads(sent) : null; return { id: row.id, email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, step: row.sentCount + 1, sentBefore: last ? { subject: last.subject ?? "", at: last.createdAt, count: sent.length } : null, testLeads: promised ?? TEST_LEADS, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits ? withoutLegacyOptions(row.draftOptions) ?? [] : []) as DraftOption[], draftApproach: fits ? approachOf(row.draftApproach) : null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
+  const items = rows.map(({ row, node, dueAt }) => { const lead = leadRows.find((item) => item.id === row.leadId) ?? null; const fits = draftFitsNode(row, node.id); const sent = row.sentCount > 0 ? sentOf(row.id) : []; const last = sent[sent.length - 1] ?? null; const promised = sent.length ? promisedTestLeads(sent) : null; return { id: row.id, email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, step: row.sentCount + 1, dueAt, sentBefore: last ? { subject: last.subject ?? "", at: last.createdAt, count: sent.length } : null, testLeads: promised ?? TEST_LEADS, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits ? withoutLegacyOptions(row.draftOptions) ?? [] : []) as DraftOption[], draftApproach: fits ? approachOf(row.draftApproach) : null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
   const withDraft = items.filter((item) => item.draftText);
-  return { items, counts: { offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length, erste: items.filter((item) => !item.followUp).length, followUps: items.filter((item) => item.followUp).length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } };
+  return { items, counts: { offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length, erste: items.filter((item) => !item.followUp).length, followUps: items.filter((item) => item.followUp).length, faellig: items.filter((item) => !item.dueAt).length, spaeter: items.filter((item) => item.dueAt).length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } };
 }
 
 /** Entwurf speichern, freigeben oder Freigabe zurücknehmen – gilt für den aktuellen Schritt des Empfängers. Freigegeben = geht beim nächsten Lauf raus. */
