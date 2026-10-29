@@ -2831,16 +2831,21 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-lists{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .cl-list-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:26px;padding:2px 10px 2px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#d7d5ee;font-size:12px;font-weight:600;line-height:1.2}
 .cl-list-chip .cl-list-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+.cl-list-chip.is-single .cl-list-name{max-width:min(520px,calc(100vw - 140px))}
 .cl-list-chip small{padding:0 6px;border-radius:999px;background:rgba(129,120,255,.18);color:#c4bfff;font-size:10.5px;font-weight:700;line-height:1.6}
 .cl-list-emoji{font-size:13px;line-height:1}
 .cl-list-chip.is-other{color:#b3b0d0;font-weight:500}
-.cl-list-chip.is-more{cursor:pointer;border-style:dashed;color:#c4bfff}
-.cl-list-chip.is-more:hover{background:rgba(129,120,255,.12);border-color:rgba(129,120,255,.5)}
-.cl-list-chip.is-more svg{width:13px;height:13px}
+.cl-list-chip.is-more,.cl-list-chip.is-menu{cursor:pointer;color:#c4bfff;font:inherit;font-weight:650}
+.cl-list-chip.is-more{border-style:dashed}
+.cl-list-chip.is-menu{border-color:rgba(129,120,255,.35);background:rgba(129,120,255,.08)}
+.cl-list-chip.is-more:hover,.cl-list-chip.is-menu:hover,.cl-list-chip.is-menu[data-state=open]{background:rgba(129,120,255,.16);border-color:rgba(129,120,255,.55)}
+.cl-list-chip.is-more svg,.cl-list-chip.is-menu svg{width:13px;height:13px;transition:transform .15s}
+.cl-list-chip.is-menu[data-state=open] svg{transform:rotate(180deg)}
 .cl-lists-menu{min-width:260px;max-width:min(420px,calc(100vw - 32px));padding:6px}
 .cl-lists-menu-head{margin:4px 8px 6px;font-size:11px;font-weight:700;letter-spacing:.02em;color:#8a87a8}
 .cl-lists-menu-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;cursor:default}
-.cl-lists-menu-item strong{font-size:12.5px;font-weight:650;overflow-wrap:anywhere}
+.cl-lists-menu-item strong{font-size:12.5px;font-weight:650;overflow-wrap:anywhere;white-space:normal}
+.cl-lists-menu-item+.cl-lists-menu-item{border-top:1px solid rgba(255,255,255,.06)}
 .cl-lists-menu-item small{font-size:11px;color:#8a87a8}
 .cl-alerts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .cl-alerts .cl-next{margin-top:0}

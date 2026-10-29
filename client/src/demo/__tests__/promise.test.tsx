@@ -132,19 +132,23 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
     expect(tags().length).toBeGreaterThan(0); expect(tags().every((text) => text === "♨️ Wärmepumpe")).toBe(true);
   });
 
-  it("Kampagnen-Karte: Emoji ganz links, Listen mit 📋 und „+N weitere“ ab der dritten Liste", async () => {
+  it("Kampagnen-Karte: Emoji ganz links; eine Liste direkt lesbar, ab zwei Listen ein Klapp-Menü mit allen Namen und Zahlen", async () => {
     const campaign = getStore().tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!;
-    campaign.audience = { source: "liste", listNames: ["Dachdecker Hessen", "Solarteure Hessen", "Elektriker NRW", "Fensterbauer Süd"] } as never;
+    campaign.audience = { source: "liste", listNames: ["Dachdecker Hessen", "PV_WP_Aroundhome_Vielkaeufer_ab_100_Leads_Monat", "Elektriker NRW"] } as never;
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const view = mount(); await settle(300); await settle(300);
     const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Dachdecker Hessen – Erstkontakt"))!;
     expect(card.querySelector(".cl-title > :first-child")?.classList.contains("sparte-emoji")).toBe(true); expect(card.querySelector(".cl-title .sparte-emoji")?.textContent).toBe("☀️");
-    const lists = card.querySelector(".cl-lists"); expect(lists).toBeTruthy(); expect(lists!.getAttribute("aria-label")).toBe("4 Listen in dieser Kampagne");
-    const chips = Array.from(lists!.querySelectorAll(".cl-list-chip:not(.is-more)")).map((node) => node.textContent?.trim() ?? ""); expect(chips.length).toBe(2); expect(chips[0]).toContain("📋"); expect(chips[0]).toContain("Dachdecker Hessen"); expect(chips[1]).toContain("Solarteure Hessen");
-    const more = lists!.querySelector<HTMLButtonElement>(".cl-list-chip.is-more"); expect(more?.textContent).toContain("+2 weitere");
-    // eine Kampagne mit genau einer Liste: ein Chip, kein Menü
+    const lists = card.querySelector(".cl-lists"); expect(lists).toBeTruthy(); expect(lists!.getAttribute("aria-label")).toBe("3 Listen in dieser Kampagne");
+    expect(lists!.querySelectorAll(".cl-list-chip").length).toBe(1); // nur der Knopf – keine abgeschnittenen Namen auf der Karte
+    const trigger = lists!.querySelector<HTMLButtonElement>(".cl-list-chip.is-menu")!; expect(trigger.textContent).toContain("📋"); expect(trigger.textContent).toContain("3 Listen"); expect(trigger.querySelector("small")?.textContent).toMatch(/^\d+$/); // Summe mit E-Mail
+    await act(async () => { fireEvent.keyDown(trigger, { key: "ArrowDown" }); }); await settle(200); // öffnet das Menü (wie ein Klick)
+    const menu = document.querySelector(".cl-lists-menu"); expect(menu).toBeTruthy();
+    const names = Array.from(menu!.querySelectorAll(".cl-lists-menu-item strong")).map((node) => node.textContent); expect(names).toEqual(["Dachdecker Hessen", "PV_WP_Aroundhome_Vielkaeufer_ab_100_Leads_Monat", "Elektriker NRW"]); // volle Namen
+    expect(menu!.querySelector(".cl-lists-menu-item small")?.textContent).toMatch(/mit E-Mail · \d+ Kontakte/); expect(menu!.textContent).toContain("3 Listen in dieser Kampagne");
+    // eine Liste: der Name steht direkt auf der Karte, kein Menü
     const other = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
-    expect(other.querySelectorAll(".cl-list-chip:not(.is-more)").length).toBe(1); expect(other.querySelector(".cl-list-chip.is-more")).toBeNull();
+    expect(other.querySelectorAll(".cl-list-chip").length).toBe(1); expect(other.querySelector(".cl-list-chip.is-single .cl-list-name")?.textContent).toBe("Solarteure Hessen"); expect(other.querySelector(".cl-list-chip.is-menu")).toBeNull();
   });
 
   it("Freigabe: Filter Erste/Follow-ups, Schild je Entwurf und Hinweis „davor von uns … 20 Test-Leads“ im Editor", async () => {

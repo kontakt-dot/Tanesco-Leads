@@ -1539,9 +1539,11 @@ html:not(.dark) .cl-audience { color: #4b5568 !important; }
 html:not(.dark) .cl-list-chip { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .cl-list-chip small { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .cl-list-chip.is-other { color: #4b5568 !important; }
-html:not(.dark) .cl-list-chip.is-more { color: #4b5568 !important; }
-html:not(.dark) .cl-list-chip.is-more:hover { background: #f3f6f8 !important; border-color: #d9dfe7 !important; }
+html:not(.dark) .cl-list-chip.is-more, html:not(.dark) .cl-list-chip.is-menu { color: #4b5568 !important; }
+html:not(.dark) .cl-list-chip.is-menu { border-color: #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .cl-list-chip.is-more:hover, html:not(.dark) .cl-list-chip.is-menu:hover, html:not(.dark) .cl-list-chip.is-menu[data-state=open] { background: #f3f6f8 !important; border-color: #d9dfe7 !important; }
 html:not(.dark) .cl-lists-menu-head { color: #8a94a6 !important; }
+html:not(.dark) .cl-lists-menu-item+.cl-lists-menu-item { border-top: 1px solid #e8ecf1 !important; }
 html:not(.dark) .cl-lists-menu-item small { color: #8a94a6 !important; }
 html:not(.dark) .cl-tag { background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .cl-tag.is-sparte { color: #0f172a !important; background: #f3f6f8 !important; }
@@ -3921,8 +3923,10 @@ html:not(.dark) .rv-step-label, html:not(.dark) .rv-editor-kind small { color: #
 html:not(.dark) .cl-list-chip { border-color: #e4e7ec !important; background: #ffffff !important; color: #344054 !important; }
 html:not(.dark) .cl-list-chip small { background: #fff1f2 !important; color: #be123c !important; }
 html:not(.dark) .cl-list-chip.is-other { color: #667085 !important; }
-html:not(.dark) .cl-list-chip.is-more { color: #bc001d !important; border-color: #f1c2ca !important; }
-html:not(.dark) .cl-list-chip.is-more:hover { background: #fff7f8 !important; }
+html:not(.dark) .cl-list-chip.is-more, html:not(.dark) .cl-list-chip.is-menu { color: #bc001d !important; border-color: #f1c2ca !important; }
+html:not(.dark) .cl-list-chip.is-menu { background: #fff7f8 !important; }
+html:not(.dark) .cl-list-chip.is-more:hover, html:not(.dark) .cl-list-chip.is-menu:hover, html:not(.dark) .cl-list-chip.is-menu[data-state=open] { background: #fff1f2 !important; border-color: #e7a2ad !important; }
+html:not(.dark) .cl-lists-menu-item + .cl-lists-menu-item { border-top-color: #eef0f3 !important; }
 html:not(.dark) .cl-lists-menu-head, html:not(.dark) .cl-lists-menu-item small { color: #667085 !important; }
 html:not(.dark) .sparte-badge small { color: #be123c !important; }
 html:not(.dark) .sparte-badge.is-standard { border-color: #e4e7ec !important; background: #f9fafb !important; color: #475467 !important; }
