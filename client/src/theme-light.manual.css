@@ -1712,6 +1712,11 @@ html:not(.dark) .cl-approval svg, html:not(.dark) .cl-approval strong { color: #
 html:not(.dark) .cl-approval span::before { color: #fb7185 !important; }
 html:not(.dark) .cl-approval:hover { background: #ffe4e6 !important; }
 html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #9f1239 !important; }
+html:not(.dark) .sparte-badge { border-color: #fecdd3 !important; background: #fff1f2 !important; color: #9f1239 !important; }
+html:not(.dark) .sparte-badge small { color: #be123c !important; }
+html:not(.dark) .sparte-badge.is-standard { border-color: #e4e7ec !important; background: #f9fafb !important; color: #475467 !important; }
+html:not(.dark) .sparte-badge.is-standard small { color: #667085 !important; }
+html:not(.dark) .cl-approval:focus-visible, html:not(.dark) .cat-pick:focus-visible, html:not(.dark) .list-picker-more:focus-visible { outline-color: #bc001d !important; }
 html:not(.dark) .audience-status .is-warn { background: #ffe4e6 !important; color: #9f1239 !important; box-shadow: inset 0 0 0 1px #fecdd3 !important; }
 html:not(.dark) .cl-spec dt { color: #667085 !important; }
 html:not(.dark) .cl-spec dd { color: #101828 !important; }

@@ -89,16 +89,17 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     // Einstellungen als eigene Felder mit Zeichen – ohne Liste, ohne „persönlich“-Zähler, Drip „pro Stunde“, Versand mit ausgeschriebenen Tagen
     const label = (node: Element) => Array.from(node.querySelector("dt")?.childNodes ?? []).filter((child) => !(child instanceof HTMLElement && child.classList.contains("fact-icon"))).map((child) => child.textContent).join("");
     const specs = Object.fromEntries(Array.from(card.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent]));
-    expect(specs).toEqual({ Leadsparte: "Photovoltaik & Wärmepumpe", KI: "ausVorlage für alle", "Bei Antwort": "Serie stoppt", Versand: "Montag bis Freitag, 09:00–11:30 und 14:00–16:30", Drip: "40 pro Stunde", "A/B-Betreff": "A vorn" });
-    expect(Array.from(card.querySelectorAll(".cl-spec")).map(label)).toEqual(["Leadsparte", "KI", "Bei Antwort", "Versand", "Drip", "A/B-Betreff"]); // feste Reihenfolge
-    expect(card.querySelector(".cl-spec.is-sparte .fact-icon")?.textContent).toBe("☀️♨️"); // Zeichen der Leadsparte (PV & WP)
-    expect(Array.from(card.querySelectorAll(".cl-spec:not(.is-sparte) .fact-icon svg")).length).toBe(5); // jedes andere Feld mit eigenem Zeichen
+    expect(specs).toEqual({ KI: "ausVorlage für alle", "Bei Antwort": "Serie stoppt", Versand: "Montag bis Freitag, 09:00–11:30 und 14:00–16:30", Drip: "40 pro Stunde", "A/B-Betreff": "A vorn" });
+    expect(Array.from(card.querySelectorAll(".cl-spec")).map(label)).toEqual(["KI", "Bei Antwort", "Versand", "Drip", "A/B-Betreff"]); // feste Reihenfolge
+    expect(Array.from(card.querySelectorAll(".cl-spec .fact-icon svg")).length).toBe(5); // jedes Feld mit eigenem Zeichen
+    // Leadsparte als Schild neben dem Namen – ohne gewählte Sparte dezent mit „Standard“
+    const badge = card.querySelector(".cl-title .sparte-badge")!; expect(badge.querySelector(".sparte-badge-emoji")?.textContent).toBe("☀️♨️"); expect(badge.textContent).toBe("☀️♨️Photovoltaik & WärmepumpeStandard"); expect(badge.classList.contains("is-standard")).toBe(true);
     expect(card.textContent).not.toContain("Liste „Dachdecker Hessen“"); expect(card.textContent).not.toMatch(/persönlich|\/Std\./);
     const review = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
     expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); // wer noch keine E-Mail hat – und warum
     expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe3 Erst-E-Mails warten"); // alles, was auf Freigabe wartet, in einem Hinweis
     const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe");
-    expect(review.querySelector(".cl-spec.is-sparte .fact-icon")?.textContent).toBe("☀️"); // Photovoltaik
+    expect(review.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); // aus dem Namen erkannt
   });
   it("Versand: eine gespeicherte Tageszeit, die genau der normalen Zeit entspricht, steht nicht extra da – nur echte Abweichungen („freitags bis 13:00“)", async () => {
     const row = getStore().tables.emailCampaigns.find((item) => item.name === "Dachdecker Hessen – Erstkontakt")!;
@@ -121,8 +122,8 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     expect(head.querySelector(".ch-side .cd-state")?.textContent).toBe("Aktiv"); expect(Array.from(head.querySelectorAll(".ch-side .campaign-act")).map((node) => node.textContent?.trim())).toEqual(["Pausieren", "Bearbeiten", "Karten verteilen", "Archivieren"]);
     const factLabel = (node: Element) => Array.from(node.querySelector("dt")?.childNodes ?? []).filter((child) => !(child instanceof HTMLElement && child.classList.contains("fact-icon"))).map((child) => child.textContent).join("");
     const facts = Object.fromEntries(Array.from(head.querySelectorAll(".ch-fact")).map((node) => [factLabel(node), Array.from(node.querySelectorAll("dd > span")).map((part) => part.textContent)]));
-    expect(head.querySelector(".ch-fact.is-sparte .fact-icon")?.textContent).toBe("☀️"); expect(head.querySelectorAll(".ch-fact .fact-icon").length).toBe(6); // jede Angabe mit Zeichen
-    expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], Leadsparte: ["Photovoltaik", "aus Name oder Liste erkannt"], KI: ["schreibt einzeln", "mit Freigabe · freier Vorschlag"], Versand: ["09:00–11:30 und 14:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
+    expect(head.querySelector(".ch-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); expect(head.querySelectorAll(".ch-fact .fact-icon").length).toBe(5); // Leadsparte neben dem Namen, jede Angabe mit Zeichen
+    expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], KI: ["schreibt einzeln", "mit Freigabe · freier Vorschlag"], Versand: ["09:00–11:30 und 14:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
     expect(head.querySelector(".ch-alerts .cl-approval")?.textContent).toBe("Zur Freigabe3 Erst-E-Mails warten"); // Freigabe in einem Hinweis, auch oben in der Kampagne
     expect(head.querySelector(".cd-chips")).toBeNull(); // keine lange Schilder-Reihe mehr
   });

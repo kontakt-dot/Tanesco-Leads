@@ -840,8 +840,8 @@ html:not(.dark) .list-picker-tools button { border: 1px solid #e8ecf1 !important
 html:not(.dark) .list-picker-tools button:hover { border-color: #d9dfe7 !important; color: #0f172a !important; }
 html:not(.dark) .list-picker-tools button.is-danger:hover { color: #8a5a5a !important; }
 html:not(.dark) .list-picker-more { border: 1px dashed #e8ecf1 !important; color: #0f172a !important; }
-html:not(.dark) .list-picker-more:hover { background: #ffffff !important; }
-html:not(.dark) .list-picker-more svg { color: #8a3e49 !important; }
+html:not(.dark) .list-picker-more:hover { border-color: #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .list-picker-more svg { color: #111318 !important; }
 html:not(.dark) .list-picker-more small { color: #8a94a6 !important; }
 html:not(.dark) .tree-move { border: 1px solid #e8ecf1 !important; background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .tree-move:hover { border-color: #d9dfe7 !important; color: #0f172a !important; }
@@ -1333,7 +1333,7 @@ html:not(.dark) html:not(.dark) .pipeline-card-collapse { color: #111318 !import
 html:not(.dark) html:not(.dark) .pipeline-card-collapse:hover { background: #111318 !important; color: #0f172a !important; }
 html:not(.dark) html:not(.dark) .pipeline-card-collapse-bottom { color: #111318 !important; }
 html:not(.dark) .audience-status span { color: #0f172a !important; }
-html:not(.dark) .audience-status .is-warn { background: #ffffff !important; color: #8b5a60 !important; }
+html:not(.dark) .audience-status .is-warn { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .audience-status .is-muted { color: #4b5568 !important; }
 html:not(.dark) .audience-status .is-pending { background: #f3f6f8 !important; color: #0f172a !important; }
 html:not(.dark) .audience-sync { background: linear-gradient(135deg, #2a2e3a, #111318) !important; color: #0f172a !important; }
@@ -1455,10 +1455,10 @@ html:not(.dark) .cd-progress i { border: 1px dashed #e8ecf1 !important; color: #
 html:not(.dark) .cd-progress i:nth-child(1).is-on { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .cd-progress i:nth-child(2).is-on { color: #338074 !important; }
 html:not(.dark) .cd-progress i:nth-child(3).is-on { color: #506c8b !important; }
-html:not(.dark) .cd-progress i:nth-child(4).is-on { background: #ffffff !important; color: #8b5a60 !important; }
+html:not(.dark) .cd-progress i:nth-child(4).is-on { background: #f3f6f8 !important; color: #111318 !important; }
 html:not(.dark) .cd-progress i:nth-child(5).is-on { color: #3c7f64 !important; }
 html:not(.dark) .cd-progress i.is-bad { color: #8a5a5a !important; }
-html:not(.dark) .cd-progress i.is-wait { color: #8b5a60 !important; }
+html:not(.dark) .cd-progress i.is-wait { border-color: #d9dfe7 !important; color: #4b5568 !important; }
 html:not(.dark) .cd-next small { color: #111318 !important; }
 html:not(.dark) .cd-next em { color: #8a94a6 !important; }
 html:not(.dark) .cd-rows>li.is-problem .cd-next small { color: #8b5a60 !important; }
@@ -1466,7 +1466,7 @@ html:not(.dark) .cd-sim button { background: #ffffff !important; color: #4b5568 
 html:not(.dark) .cd-feed li button:hover:not(:disabled) { background: #f8fafb !important; }
 html:not(.dark) .cd-feed-dot { background: #f3f6f8 !important; color: #4b5568 !important; }
 html:not(.dark) .cd-feed li.is-geoeffnet .cd-feed-dot { color: #506c8b !important; }
-html:not(.dark) .cd-feed li.is-geklickt .cd-feed-dot { background: #ffffff !important; color: #8b5a60 !important; }
+html:not(.dark) .cd-feed li.is-geklickt .cd-feed-dot { background: #f3f6f8 !important; color: #111318 !important; }
 html:not(.dark) .cd-feed li.is-antwort .cd-feed-dot { color: #3c7f64 !important; }
 html:not(.dark) .cd-feed li.is-fehler .cd-feed-dot, html:not(.dark) .cd-feed li.is-bounce .cd-feed-dot, html:not(.dark) .cd-feed li.is-beschwerde .cd-feed-dot, html:not(.dark) .cd-feed li.is-abgemeldet .cd-feed-dot { color: #8b5a60 !important; }
 html:not(.dark) .cd-feed li.is-beendet .cd-feed-dot { background: #f8fafb !important; color: #4b5568 !important; }
@@ -1529,6 +1529,9 @@ html:not(.dark) .cj-btn:hover:not(:disabled) { background: #f8fafb !important; }
 html:not(.dark) .cj-btn.is-danger { color: #8b5a60 !important; }
 html:not(.dark) .cl-card { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
 html:not(.dark) .cl-card:hover { border-color: #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .sparte-badge { border: 1px solid #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .sparte-badge small { color: #4b5568 !important; }
+html:not(.dark) .sparte-badge.is-standard { border-color: #e8ecf1 !important; background: #f8fafb !important; color: #111318 !important; }
 html:not(.dark) .cl-name strong { color: #0f172a !important; }
 html:not(.dark) .cl-meta { color: #8a94a6 !important; }
 html:not(.dark) .cl-audience { color: #4b5568 !important; }
@@ -1541,10 +1544,10 @@ html:not(.dark) .cl-f span { color: #8a94a6 !important; }
 html:not(.dark) .cl-f strong { color: #0f172a !important; }
 html:not(.dark) .cl-f small { color: #8a94a6 !important; }
 html:not(.dark) .cl-f small.is-bad { color: #8a5a5a !important; }
-html:not(.dark) .cl-f small.is-wait { color: #8b5a60 !important; }
+html:not(.dark) .cl-f small.is-wait { color: #4b5568 !important; }
 html:not(.dark) .cl-f i { background: #111318 !important; }
 html:not(.dark) .cl-seg { background: #f8fafb !important; }
-html:not(.dark) .cl-seg em.is-bad { background: #db3854 !important; }
+html:not(.dark) .cl-seg em.is-wait { background: #111318 !important; }
 html:not(.dark) .cl-folder { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #111318 !important; }
 html:not(.dark) .cl-folder i { background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .cl-folder:hover { border-color: #e8ecf1 !important; color: #0f172a !important; }
@@ -1574,14 +1577,14 @@ html:not(.dark) .cl-spec dt { color: #8a94a6 !important; }
 html:not(.dark) .cl-spec dd { color: #0f172a !important; }
 html:not(.dark) .cl-spec dd small { color: #4b5568 !important; }
 html:not(.dark) .cl-spec.is-warn dd { color: #8b5a60 !important; }
-html:not(.dark) .fact-icon { background: #ffffff !important; color: #8a3e49 !important; }
+html:not(.dark) .fact-icon { background: #f3f6f8 !important; color: #111318 !important; }
 html:not(.dark) .fact-icon.is-emoji { background: #f8fafb !important; }
-html:not(.dark) .cl-approval { background: #ffffff !important; color: #0f172a !important; }
-html:not(.dark) .cl-approval svg { color: #8a3e49 !important; }
-html:not(.dark) .cl-approval strong { color: #8a3e49 !important; }
+html:not(.dark) .cl-approval { border: 1px solid #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .cl-approval svg { color: #111318 !important; }
+html:not(.dark) .cl-approval strong { color: #4b5568 !important; }
 html:not(.dark) .cl-approval span::before { color: #0f172a !important; }
-html:not(.dark) .cl-approval:hover { background: #ffffff !important; }
-html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #8b5a60 !important; }
+html:not(.dark) .cl-approval:hover { background: #f3f6f8 !important; }
+html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #4b5568 !important; }
 html:not(.dark) .xl-head h2 { color: #0f172a !important; }
 html:not(.dark) .xl-head h2 span { color: #4b5568 !important; background: #f8fafb !important; }
 html:not(.dark) .xl-head p { color: #8a94a6 !important; }
@@ -1695,7 +1698,7 @@ html:not(.dark) .cl-next b { color: #0f172a !important; }
 html:not(.dark) .cl-next.is-paused, html:not(.dark) .cl-next.is-done { color: #8a94a6 !important; }
 html:not(.dark) .cl-next.is-paused svg, html:not(.dark) .cl-next.is-done svg { color: #8a94a6 !important; }
 html:not(.dark) .cl-next.is-approval { color: #0f172a !important; }
-html:not(.dark) .cl-next.is-approval svg { color: #8a3e49 !important; }
+html:not(.dark) .cl-next.is-approval svg { color: #111318 !important; }
 html:not(.dark) .cl-next.is-approval b { color: #0f172a !important; }
 html:not(.dark) .cl-next-more { color: #8a94a6 !important; }
 html:not(.dark) .drip-box { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
@@ -1729,7 +1732,7 @@ html:not(.dark) .reply-stop.is-review.is-on { color: #8b7e4b !important; }
 html:not(.dark) .reply-stop.is-review.is-on svg { color: #8a6913 !important; }
 html:not(.dark) .dash-pill.is-amber { color: #8b7e4b !important; }
 html:not(.dark) .cl-daily { color: #4b5568 !important; }
-html:not(.dark) .cl-daily.is-full { color: #8b5a60 !important; }
+html:not(.dark) .cl-daily.is-full { color: #4b5568 !important; }
 html:not(.dark) .reply-stop.is-review.is-off-muted { border-color: #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .reply-stop.is-review.is-off-muted svg { color: #8a94a6 !important; }
 html:not(.dark) .lead-block-btn { color: #8b5a60 !important; }
@@ -1774,16 +1777,16 @@ html:not(.dark) .rv-step { color: #111318 !important; }
 html:not(.dark) .cd-chip.is-ki { border-color: #d9dfe7 !important; color: #4b5568 !important; }
 html:not(.dark) .cat-pick { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .cat-pick:hover { border-color: #e8ecf1 !important; background: #f8fafb !important; }
-html:not(.dark) .cat-pick.is-on { background: #ffffff !important; color: #0f172a !important; }
-html:not(.dark) .cat-pick-check { color: #8a3e49 !important; }
+html:not(.dark) .cat-pick.is-on { border-color: #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .cat-pick-check { color: #111318 !important; }
 html:not(.dark) .cat-pick.is-other { color: #4b5568 !important; }
-html:not(.dark) .cat-free-close { color: #8b5a60 !important; }
+html:not(.dark) .cat-free-close { color: #4b5568 !important; }
 html:not(.dark) .sparte-field>span { color: #111318 !important; }
 html:not(.dark) .sparte-field small { color: #8a94a6 !important; }
 html:not(.dark) .sparte-field small strong { color: #0f172a !important; }
-html:not(.dark) .sparte-field small.sparte-warn { color: #0f172a !important; background: #ffffff !important; }
-html:not(.dark) .sparte-fix { background: #ffffff !important; color: #0f172a !important; }
-html:not(.dark) .sparte-fix:hover { background: #ffffff !important; }
+html:not(.dark) .sparte-field small.sparte-warn { color: #0f172a !important; background: #f8fafb !important; border: 1px solid #d9dfe7 !important; }
+html:not(.dark) .sparte-fix { border: 1px solid #d9dfe7 !important; background: #f3f6f8 !important; color: #0f172a !important; }
+html:not(.dark) .sparte-fix:hover { background: #f3f6f8 !important; }
 html:not(.dark) .dash-pill.is-sparte { color: #0f172a !important; border-color: #d9dfe7 !important; background: #f3f6f8 !important; }
 html:not(.dark) .rv-refs { color: #4b5568 !important; }
 html:not(.dark) .rv-refs svg { color: #44748a !important; }
@@ -3881,6 +3884,11 @@ html:not(.dark) .cl-approval svg, html:not(.dark) .cl-approval strong { color: #
 html:not(.dark) .cl-approval span::before { color: #fb7185 !important; }
 html:not(.dark) .cl-approval:hover { background: #ffe4e6 !important; }
 html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #9f1239 !important; }
+html:not(.dark) .sparte-badge { border-color: #fecdd3 !important; background: #fff1f2 !important; color: #9f1239 !important; }
+html:not(.dark) .sparte-badge small { color: #be123c !important; }
+html:not(.dark) .sparte-badge.is-standard { border-color: #e4e7ec !important; background: #f9fafb !important; color: #475467 !important; }
+html:not(.dark) .sparte-badge.is-standard small { color: #667085 !important; }
+html:not(.dark) .cl-approval:focus-visible, html:not(.dark) .cat-pick:focus-visible, html:not(.dark) .list-picker-more:focus-visible { outline-color: #bc001d !important; }
 html:not(.dark) .audience-status .is-warn { background: #ffe4e6 !important; color: #9f1239 !important; box-shadow: inset 0 0 0 1px #fecdd3 !important; }
 html:not(.dark) .cl-spec dt { color: #667085 !important; }
 html:not(.dark) .cl-spec dd { color: #101828 !important; }

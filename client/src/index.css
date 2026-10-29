@@ -1522,9 +1522,9 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .list-picker-preview{flex-basis:100%}
 /* weitere Listen ein-/ausklappen – die Listen der Kampagne stehen immer da */
 .list-picker-more{display:flex;align-items:center;gap:8px;width:100%;margin-top:8px;padding:9px 12px;border-radius:10px;border:1px dashed rgba(255,255,255,.16);background:transparent;color:#d7d5ee;font-size:12.5px;font-weight:650;text-align:left;cursor:pointer;transition:background-color .15s,border-color .15s}
-.list-picker-more:hover{border-color:rgba(251,44,54,.45);background:rgba(251,44,54,.06)}
-.list-picker-more:focus-visible{outline:2px solid rgba(251,44,54,.7);outline-offset:2px}
-.list-picker-more svg{width:16px;height:16px;flex:0 0 auto;color:#fb7185;transition:transform .2s}
+.list-picker-more:hover{border-color:rgba(129,120,255,.45);background:rgba(129,120,255,.08)}
+.list-picker-more:focus-visible{outline:2px solid rgba(129,120,255,.7);outline-offset:2px}
+.list-picker-more svg{width:16px;height:16px;flex:0 0 auto;color:#b3abff;transition:transform .2s}
 .list-picker-more svg.is-open{transform:rotate(180deg)}
 .list-picker-more small{margin-left:auto;font-size:11px;font-weight:500;color:#8a87a8;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){.list-picker-more svg{transition:none}}
@@ -2380,7 +2380,7 @@ html:not(.dark) .pipeline-card-collapse-bottom{color:#4f46e5!important;border-co
 /* Zielgruppe auf einen Blick: Kontakte, ohne E-Mail, gesperrt, noch nicht aufgenommen */
 .audience-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px}
 .audience-status span{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:rgba(148,163,184,.12);color:#cbd5e1;font-size:11px;font-weight:600;white-space:nowrap}
-.audience-status .is-warn{background:rgba(251,44,54,.14);color:#fda4af}
+.audience-status .is-warn{background:rgba(129,120,255,.16);color:#c4bfff}
 .audience-status .is-muted{background:transparent;color:#94a3b8;padding-left:0}
 .audience-status .is-pending{background:rgba(129,120,255,.18);color:#d4d0ff}
 .audience-sync{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border-radius:999px;border:0;background:linear-gradient(135deg,#8278ff,#6258df);color:#fff;font-size:11.5px;font-weight:700;cursor:pointer}
@@ -2696,10 +2696,10 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cd-progress i:nth-child(1).is-on{border:0;background:rgba(130,120,255,.22);color:#c4bfff}
 .cd-progress i:nth-child(2).is-on{border:0;background:rgba(45,212,191,.18);color:#5eead4}
 .cd-progress i:nth-child(3).is-on{border:0;background:rgba(96,165,250,.2);color:#93c5fd}
-.cd-progress i:nth-child(4).is-on{border:0;background:rgba(251,44,54,.18);color:#fda4af}
+.cd-progress i:nth-child(4).is-on{border:0;background:rgba(232,121,249,.16);color:#f0abfc}
 .cd-progress i:nth-child(5).is-on{border:0;background:rgba(52,211,153,.2);color:#6ee7b7}
 .cd-progress i.is-bad{border:0;background:rgba(248,113,113,.18);color:#fca5a5}
-.cd-progress i.is-wait{border-style:solid;border-color:rgba(251,44,54,.45);color:#fda4af}
+.cd-progress i.is-wait{border-style:solid;border-color:rgba(129,120,255,.45);color:#c4bfff}
 .cd-next{min-width:0;display:flex;flex-direction:column;align-items:flex-end;text-align:right}
 .cd-next small{font-size:11.5px;color:#c9c6ee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .cd-next em{font-style:normal;font-size:11px;color:#8a87a8}
@@ -2713,7 +2713,7 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cd-feed li button:hover:not(:disabled){background:rgba(255,255,255,.04)}
 .cd-feed-dot{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:999px;background:rgba(130,120,255,.18);color:#c4bfff}
 .cd-feed li.is-geoeffnet .cd-feed-dot{background:rgba(96,165,250,.18);color:#93c5fd}
-.cd-feed li.is-geklickt .cd-feed-dot{background:rgba(251,44,54,.16);color:#fda4af}
+.cd-feed li.is-geklickt .cd-feed-dot{background:rgba(232,121,249,.16);color:#f0abfc}
 .cd-feed li.is-antwort .cd-feed-dot{background:rgba(52,211,153,.18);color:#6ee7b7}
 .cd-feed li.is-fehler .cd-feed-dot,.cd-feed li.is-bounce .cd-feed-dot,.cd-feed li.is-beschwerde .cd-feed-dot,.cd-feed li.is-abgemeldet .cd-feed-dot{background:rgba(251,113,133,.16);color:#fda4af}
 .cd-feed li.is-beendet .cd-feed-dot{background:rgba(255,255,255,.06);color:#a5a3c4}
@@ -2806,6 +2806,16 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-card:hover{border-color:rgba(255,255,255,.14);background:rgba(255,255,255,.04)}
 .cl-main{grid-area:main;min-width:0;display:flex;flex-direction:column;gap:6px;align-self:center;cursor:pointer}
 .cl-name{display:block;text-align:left;max-width:100%}
+/* Leadsparte als Schild neben dem Namen (Karte und Kopf) – dunkel in Lila, hell in Rot; ohne gewählte Sparte dezent */
+.cl-title{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0}
+.ch-title{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0}
+.sparte-badge{display:inline-flex;align-items:center;gap:6px;min-height:24px;max-width:100%;padding:2px 10px 2px 7px;border-radius:999px;border:1px solid rgba(129,120,255,.4);background:rgba(129,120,255,.14);color:#d4d0ff;font-size:12px;font-weight:700;line-height:1.2;white-space:nowrap}
+.sparte-badge-emoji{font-size:13px;letter-spacing:1px}
+.sparte-badge small{font-size:11px;font-weight:500;color:#a5a3c4}
+.sparte-badge small::before{content:"· "}
+.sparte-badge.is-standard{border-color:rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#c9c6ee}
+.ch-title .sparte-badge{min-height:28px;padding:3px 12px 3px 9px;font-size:13px}
+@container (max-width:720px){.sparte-badge{white-space:normal}}
 .cl-name strong{display:block;font-size:15px;font-weight:700;color:#f5f3ff;line-height:1.3}
 .cl-name:hover strong{text-decoration:underline;text-underline-offset:3px}
 .cl-meta{display:flex;flex-wrap:wrap;gap:0 6px;margin:0;font-size:12px;line-height:1.45;color:#8a87a8}
@@ -2829,12 +2839,12 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-f strong{font-size:17px;font-weight:800;color:#f5f3ff;font-variant-numeric:tabular-nums;line-height:1.2}
 .cl-f small{font-size:10.5px;line-height:1.35;color:#8a87a8}
 .cl-f small.is-bad{color:#fca5a5;font-weight:600}
-.cl-f small.is-wait{color:#fda4af}
+.cl-f small.is-wait{color:#c4bfff}
 .cl-f i{position:absolute;left:0;bottom:0;height:3px;border-radius:0 3px 3px 0;background:var(--bar,#8278ff)}
-.cl-f.is-open{--bar:#60a5fa}.cl-f.is-click{--bar:#fb7185}.cl-f.is-reply{--bar:#34d399}
+.cl-f.is-open{--bar:#60a5fa}.cl-f.is-click{--bar:#e879f9}.cl-f.is-reply{--bar:#34d399}
 .cl-seg{position:absolute;left:0;right:0;bottom:0;height:3px;display:flex;background:rgba(255,255,255,.08)}
 .cl-seg em{display:block;height:100%}
-.cl-seg em.is-ok{background:#2dd4bf}.cl-seg em.is-wait{background:#fda4af}.cl-seg em.is-bad{background:#f43f5e}
+.cl-seg em.is-ok{background:#2dd4bf}.cl-seg em.is-wait{background:#c4b5fd}.cl-seg em.is-bad{background:#f87171}
 /* Schmalere Liste (z. B. Seitenleiste offen): Kennzahlen über die ganze Breite unter Name und Knöpfen – nie gequetscht */
 @container (max-width:1320px){.cl-card{grid-template-areas:"head side" "funnel funnel" "main main"}.cl-funnel{width:auto}.cl-main{align-self:start}}
 @container (max-width:720px){.cl-card{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "funnel" "main" "side";padding:14px}.cl-funnel{grid-template-columns:repeat(3,minmax(0,1fr))}.cl-f:nth-child(4){box-shadow:none}.cl-f:nth-child(n+4){border-top:1px solid rgba(255,255,255,.06)}.cl-audience-name{max-width:100%}.cl-side{justify-content:flex-start;flex-wrap:wrap}} /* Handy: Kennzahlen in zwei Reihen, Karte nie breiter als der Bildschirm */
@@ -2914,7 +2924,7 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cl-spec dd small{margin-left:6px;font-size:11.5px;font-weight:500;color:#a5a3c4}
 .cl-spec dd small::before{content:"· ";color:#6f6c8f}
 .cl-spec.is-warn dd{color:#fda4af}
-.fact-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border-radius:7px;background:rgba(251,44,54,.14);color:#fb7185;font-size:13px;line-height:1}
+.fact-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border-radius:7px;background:rgba(129,120,255,.16);color:#b3abff;font-size:13px;line-height:1}
 .fact-icon svg{width:13px;height:13px}
 .fact-icon.is-emoji{background:rgba(255,255,255,.07)}
 .fact-icon.is-pair{width:auto;padding:0 4px;letter-spacing:1px}
@@ -2922,13 +2932,13 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .ch-fact .fact-icon{width:18px;height:18px;border-radius:6px;font-size:11px}.ch-fact .fact-icon svg{width:11px;height:11px}
 @container (max-width:720px){.cl-spec,.cl-spec dd{white-space:normal}.cl-spec{padding-top:4px;padding-bottom:4px}.cl-spec dt{white-space:nowrap}.cl-alerts .audience-status span{white-space:normal}}
 .cl-alerts:empty{display:none}
-.cl-approval{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-height:26px;padding:3px 12px 3px 10px;border-radius:999px;border:1px solid rgba(251,44,54,.45);background:rgba(251,44,54,.12);color:#fecdd3;font-size:12px;font-weight:600;line-height:1.3;text-align:left;cursor:pointer;transition:background-color .15s}
-.cl-approval svg{width:13px;height:13px;flex:0 0 auto;color:#fb7185}
-.cl-approval strong{font-weight:800;color:#fb7185}
-.cl-approval span::before{content:"·";margin-right:8px;color:rgba(254,205,211,.55)}
-.cl-approval:hover{background:rgba(251,44,54,.2)}
-.cl-approval:focus-visible{outline:2px solid rgba(251,44,54,.7);outline-offset:2px}
-.cl-spec.is-sparte dd,.ch-fact.is-sparte .ch-value{color:#fda4af} /* Leadsparte in Rot – wie der Ordner */
+.cl-approval{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-height:26px;padding:3px 12px 3px 10px;border-radius:999px;border:1px solid rgba(129,120,255,.45);background:rgba(129,120,255,.14);color:#d4d0ff;font-size:12px;font-weight:600;line-height:1.3;text-align:left;cursor:pointer;transition:background-color .15s}
+.cl-approval svg{width:13px;height:13px;flex:0 0 auto;color:#b3abff}
+.cl-approval strong{font-weight:800;color:#c4bfff}
+.cl-approval span::before{content:"·";margin-right:8px;color:rgba(212,208,255,.5)}
+.cl-approval:hover{background:rgba(129,120,255,.22)}
+.cl-approval:focus-visible{outline:2px solid rgba(129,120,255,.7);outline-offset:2px}
+.cl-spec.is-sparte dd,.ch-fact.is-sparte .ch-value{color:#c4bfff} /* Leadsparte hervorgehoben – hell in Rot, dunkel in Lila */
 @media (max-width:720px){.ch-name{flex-basis:100%}.ch-name h1{font-size:22px}.ch-side{justify-content:flex-start}.ch-fact,.ch-fact.is-time,.ch-fact.is-short{flex-basis:140px;padding:9px 12px 10px}.ch-fact.is-wide{flex-basis:100%}}
 /* ===== v185: Kontakte, Sperrliste, Upload-Verlauf – gleiche Sprache wie die Kampagnenseite ===== */
 .xl-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
@@ -3119,7 +3129,7 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cl-next b{font-weight:700;color:#efeeff}
 .cl-next b,.cl-next .nw{white-space:nowrap}
 .cl-next.is-paused,.cl-next.is-done{color:#8f93af}.cl-next.is-paused svg,.cl-next.is-done svg{color:#8f93af}
-.cl-next.is-approval{color:#fecdd3}.cl-next.is-approval svg{color:#fb7185}.cl-next.is-approval b{color:#ffe4e6}
+.cl-next.is-approval{color:#d4d0ff}.cl-next.is-approval svg{color:#b3abff}.cl-next.is-approval b{color:#ede9fe}
 .cl-next-more{display:block;margin:1px 0 0 18px;font-size:11.5px;line-height:1.35;color:#8f93af;text-align:left}
 .cd-followups{margin-top:6px}.cd-followups .cl-next{font-size:12.5px}
 .cd-panel-head{flex-wrap:wrap}
@@ -3177,7 +3187,7 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .reply-stop.is-review.is-on svg{color:#fbbf24}
 .dash-pill.is-amber{border-color:rgba(251,191,36,.5);background:rgba(251,191,36,.12);color:#fde68a}
 .cl-daily{margin-left:auto;font-size:12px;color:#a5a3c4}
-.cl-daily.is-full{color:#fda4af}
+.cl-daily.is-full{color:#c4bfff}
 .reply-stop.is-review.is-off-muted{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:#9a9ec0}
 .reply-stop.is-review.is-off-muted svg{color:#8f93af}
 /* Kontakt sperren (Lead-Seite, Kontakte) */
@@ -3343,20 +3353,20 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cat-picks{display:flex;flex-wrap:wrap;gap:6px}
 .cat-pick{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 12px 4px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);color:#d7d5ee;font-size:12.5px;font-weight:600;line-height:1.2;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s}
 .cat-pick:hover{border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.06)}
-.cat-pick:focus-visible{outline:2px solid rgba(251,44,54,.7);outline-offset:2px}
-.cat-pick.is-on{border-color:rgba(251,44,54,.6);background:rgba(251,44,54,.14);color:#fff1f2}
+.cat-pick:focus-visible{outline:2px solid rgba(129,120,255,.7);outline-offset:2px}
+.cat-pick.is-on{border-color:rgba(129,120,255,.6);background:rgba(129,120,255,.16);color:#ede9fe}
 .cat-pick-emoji{font-size:14px;line-height:1}
 .cat-pick-dot{width:8px;height:8px;border-radius:50%;background:var(--cat,#94a3b8);flex:0 0 auto}
-.cat-pick-check{width:14px;height:14px;color:#fb7185;flex:0 0 auto}
+.cat-pick-check{width:14px;height:14px;color:#b3abff;flex:0 0 auto}
 .cat-pick.is-other{border-style:dashed;color:#a8a6c4;font-weight:500}
 .cat-pick.is-other svg{width:13px;height:13px}
 .cat-free{display:grid;gap:4px}
-.cat-free-close{justify-self:start;padding:0;border:0;background:none;color:#fda4af;font-size:11.5px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.cat-free-close{justify-self:start;padding:0;border:0;background:none;color:#c4bfff;font-size:11.5px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .sparte-field>span{font-size:12px;font-weight:600;color:#c9c6ee}
 .sparte-field small{font-size:11.5px;line-height:1.4;color:#8f93af}
 .sparte-field small strong{color:#e7e5ff;font-weight:700}
-.sparte-field small.sparte-warn{color:#fecdd3;background:rgba(251,44,54,.08);border:1px solid rgba(251,44,54,.3);border-radius:8px;padding:6px 8px}
-.sparte-fix{display:inline-flex;margin-left:6px;padding:2px 8px;border-radius:999px;border:1px solid rgba(251,44,54,.5);background:rgba(251,44,54,.16);color:#ffe4e6;font-size:11px;font-weight:700;cursor:pointer}.sparte-fix:hover{background:rgba(251,44,54,.26)}
+.sparte-field small.sparte-warn{color:#d4d0ff;background:rgba(129,120,255,.08);border:1px solid rgba(129,120,255,.3);border-radius:8px;padding:6px 8px}
+.sparte-fix{display:inline-flex;margin-left:6px;padding:2px 8px;border-radius:999px;border:1px solid rgba(129,120,255,.5);background:rgba(129,120,255,.16);color:#ede9fe;font-size:11px;font-weight:700;cursor:pointer}.sparte-fix:hover{background:rgba(129,120,255,.26)}
 .dash-pill.is-sparte{color:#d9d4ff;border-color:rgba(129,120,255,.45);background:rgba(129,120,255,.12)}
 .rv-refs{display:flex;gap:6px;align-items:flex-start;margin:0 0 10px;font-size:12px;line-height:1.5;color:#a9b4c8}.rv-refs svg{flex:none;margin-top:2px;color:#7dd3fc}.rv-refs strong{color:#d6deea;font-weight:600}
 .cl-mail-missing{margin:12px 16px 0;padding:10px 14px;border-radius:12px;border:1px solid rgba(248,113,113,.45);background:rgba(248,113,113,.1);color:#fecaca;font-size:13px;line-height:1.5}.cl-mail-missing strong{color:#fee2e2}
