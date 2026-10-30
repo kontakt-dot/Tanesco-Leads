@@ -1781,3 +1781,15 @@ html:not(.dark) .cd-period-label { color: #667085 !important; }
 html:not(.dark) .cd-period-label svg { color: #bc001d !important; }
 html:not(.dark) .cd-period-note { color: #9f1239 !important; }
 html:not(.dark) .cd-period-note.is-loading { color: #667085 !important; }
+/* Freigabe-Fenster: Trennstrich vor „Speichern“ / „Freigeben & weiter“ oben rechts */
+html:not(.dark) .rv-editor-tools .rv-editor-buttons { border-left-color: #eaecf0 !important; }
+/* Posteingang: KI-Schreibhilfe und Stufen-Vorschlag im hellen Design */
+html:not(.dark) .inbox-ai-brief { background: #f5f3ff !important; border-color: #ddd6fe !important; }
+html:not(.dark) .inbox-ai-brief.is-listening { background: #fef2f2 !important; border-color: #fca5a5 !important; }
+html:not(.dark) .inbox-ai-brief-icon { color: #7c3aed !important; }
+html:not(.dark) .inbox-ai-brief-input { color: #0f172a !important; }
+html:not(.dark) .inbox-ai-brief-input::placeholder { color: #667085 !important; }
+html:not(.dark) .inbox-lead-suggest { color: #667085 !important; }
+html:not(.dark) .inbox-lead-suggest strong { color: #4c1d95 !important; }
+html:not(.dark) .inbox-lead-suggest.is-interest { color: #15803d !important; }
+html:not(.dark) .inbox-lead-suggest.is-interest strong { color: #166534 !important; }

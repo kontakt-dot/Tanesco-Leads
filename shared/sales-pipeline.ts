@@ -62,6 +62,23 @@ export const stagesForLead = (sets: StageSets, lead: { adPlatform?: string | nul
 /** Alle Stufen aller Pipelines zusammen (für Einstellungen, die pipeline-übergreifend gelten) – gleiche Schlüssel nur einmal. */
 export const unionStages = (sets: StageSets): StageDef[] => { const seen = new Map<string, StageDef>(); for (const list of Object.values(sets)) for (const stage of list) if (!seen.has(stage.key)) seen.set(stage.key, stage); return Array.from(seen.values()); };
 export const isStage = (value: unknown, stages: StageDef[] = PIPELINE_STAGES): value is PipelineStage => typeof value === "string" && stages.some((stage) => stage.key === value);
+/** Stufenname zum Vergleichen: Groß/Klein, Leerzeichen, Emoji und Satzzeichen zählen nicht („Hat Interesse“ = „hat interesse!“, „Kontaktiert“ = „kontaktiert “). */
+export const stageNameKey = (label: string | null | undefined) => String(label ?? "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, " ").trim();
+/**
+ * Eine Stufe in einem (anderen) Stufen-Satz wiederfinden – nach Umbenennen, Löschen und Neuanlegen oder in einer anderen Pipeline:
+ * 1. gleicher Schlüssel, 2. gleicher Name (Groß/Klein egal – der Name der Stufe aus `from`, sonst der gesuchte Text selbst),
+ * 3. gleiche Rolle (Eingang / Gewonnen / Verloren). Gibt es nichts Passendes: null (der Aufrufer entscheidet, meist Eingang).
+ * So klappt „In Stufe verschieben“, „In andere Pipeline“ und die Automatik auch dann, wenn die Stufen umbenannt wurden.
+ */
+export function matchStage(wanted: string | null | undefined, to: StageDef[], from?: StageDef[] | null): string | null {
+  if (!wanted) return null;
+  const direct = to.find((stage) => stage.key === wanted); if (direct) return direct.key;
+  const origin = from?.find((stage) => stage.key === wanted) ?? PIPELINE_STAGES.find((stage) => stage.key === wanted) ?? null;
+  const names = Array.from(new Set([origin?.label, wanted.replace(/^stufe_/, "").replace(/_/g, " ")].map(stageNameKey).filter(Boolean)));
+  for (const name of names) { const hit = to.find((stage) => stageNameKey(stage.label) === name); if (hit) return hit.key; }
+  if (origin?.fixed) { const role = to.find((stage) => stage.fixed === origin.fixed); if (role) return role.key; }
+  return null;
+}
 /** Name einer Stufe – unbekannte Standard-Schlüssel (z. B. „neu“ in der E-Mail-Pipeline ohne Spalte „Neu“) behalten ihren Standardnamen, sonst gilt die erste Stufe. */
 export const stageLabel = (key: string | null | undefined, stages: StageDef[] = PIPELINE_STAGES) => stages.find((stage) => stage.key === key)?.label ?? PIPELINE_STAGES.find((stage) => stage.key === key)?.label ?? stages[0]?.label ?? "Neu";
 export const slugStage = (label: string) => `stufe_${label.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30) || "neu"}`;

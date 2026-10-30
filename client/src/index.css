@@ -958,6 +958,19 @@ body.is-card-dragging{user-select:none;cursor:grabbing}
 .inbox-compose{margin:0 24px 20px;padding:12px 14px;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(15,23,42,.4)}
 .inbox-compose:focus-within{border-color:rgba(141,133,255,.55);box-shadow:0 0 0 3px rgba(125,113,255,.14)}
 .inbox-compose-head{display:flex;align-items:center;gap:8px;min-width:0;font-size:12px;color:#a5a1d7}.inbox-compose-head strong{color:#fff;font-weight:600}.inbox-compose-head small{color:#8f93af;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* KI-Schreibhilfe im Antwortbereich: kurze Vorgabe (tippen oder einsprechen) → die KI schreibt den Text ins Antwortfeld, gesendet wird erst per „Senden“ */
+.inbox-ai-brief{display:flex;align-items:center;gap:8px;margin-top:10px;padding:6px 8px 6px 10px;border:1px solid rgba(155,147,255,.28);border-radius:12px;background:rgba(123,111,255,.08)}
+.inbox-ai-brief.is-listening{border-color:rgba(220,38,38,.6);background:rgba(220,38,38,.08)}
+.inbox-ai-brief-icon{flex:none;color:#b7b0ff}
+.inbox-ai-brief-input{flex:1 1 160px;min-width:0;height:32px;border:0;background:transparent;color:#f1effe;font:inherit;font-size:13px;outline:none}
+.inbox-ai-brief-input::placeholder{color:#8f93af}
+.inbox-ai-brief .inbox-ai-write{flex:none;height:32px;white-space:nowrap}
+.inbox-ai-mic{flex:none}
+@media (max-width:720px){.inbox-ai-brief{flex-wrap:wrap}.inbox-ai-brief-input{flex-basis:100%;order:1}.inbox-ai-brief-icon{order:0}.inbox-ai-mic{order:2}.inbox-ai-brief .inbox-ai-write{order:3;flex:1 1 auto;justify-content:center}}
+/* Vorschlag der Stufe (aus der KI-Einschätzung der Antwort) unter dem Stufen-Feld */
+.inbox-lead-suggest{display:block;margin-top:4px;font-size:11px;line-height:1.4;color:#8f93af}
+.inbox-lead-suggest strong{color:#c9c5f5;font-weight:600}
+.inbox-lead-suggest.is-interest{color:#86efac}.inbox-lead-suggest.is-interest strong{color:#bbf7d0}
 .inbox-compose-text{display:block;width:100%;min-height:96px;margin-top:8px;border:0;background:transparent;color:#f1effe;font:inherit;font-size:14px;line-height:1.55;resize:vertical;outline:none}
 .inbox-compose-text::placeholder{color:#8f93af}
 .inbox-compose-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}.inbox-compose-actions small{font-size:11px;color:#8f93af}
@@ -3224,7 +3237,10 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .rv-editor-who{display:grid;gap:2px;min-width:0}
 .rv-editor-who strong{font-size:14.5px;color:#f5f3ff}
 .rv-editor-who small{font-size:12px;color:#8a87a8}
-.rv-editor-tools{display:flex;flex-wrap:wrap;gap:6px}
+.rv-editor-tools{display:flex;flex:1 1 auto;flex-wrap:wrap;align-items:center;gap:6px}
+/* Speichern und „Freigeben & weiter“ stehen oben rechts bei den Werkzeugen (ganz rechts in der Zeile) – nicht mehr unter der Vorschau */
+.rv-editor-tools .rv-editor-buttons{display:flex;gap:8px;margin-left:auto;padding-left:10px;border-left:1px solid rgba(255,255,255,.1)}
+.rv-editor-tools .campaign-act{height:32px;padding:0 12px;font-size:12.5px}
 .rv-note{display:flex;align-items:flex-start;gap:6px;margin:0;padding:8px 10px;border-radius:10px;font-size:12px;line-height:1.45;color:#a5a3c4;background:rgba(255,255,255,.04)}
 .rv-note svg{flex:none;margin-top:2px}
 .rv-note.is-ok{color:#b9f5dc;background:rgba(52,211,153,.1)}
@@ -3525,8 +3541,9 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
   .rv-approaches{grid-template-columns:1fr;gap:6px}
   .rv-preview-frame{height:300px}
   .rv-editor-foot{flex-direction:column;align-items:stretch;gap:8px}
-  .rv-editor-buttons{display:grid;grid-template-columns:1fr;gap:8px}
-  .rv-editor-buttons .campaign-act{justify-content:center;height:42px}
+  .rv-editor-tools{width:100%}
+  .rv-editor-tools .rv-editor-buttons{margin-left:0;padding-left:0;border-left:0;width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .rv-editor-tools .campaign-act{justify-content:center;height:40px}
 }
 /* Kampagnen-Übersicht: Sortierung, Archiv-Schalter und archivierte Karten */
 .cl-sort select{padding-left:30px;min-width:170px}

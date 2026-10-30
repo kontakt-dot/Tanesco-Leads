@@ -9,7 +9,7 @@ import { extraFieldsOf } from "../shared/cold-list";
 import { and, desc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import crypto from "node:crypto";
 import { adInsights, emailCampaignRecipients, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
-import { buildStageSets, stagesOf, entryStage, funnel, isStage, mapMetaFieldData, normalizeStages, pipelineSourceOf, stageLabel, stagesForLead, summarizeCampaigns, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
+import { buildStageSets, stagesOf, entryStage, funnel, isStage, mapMetaFieldData, matchStage, normalizeStages, pipelineSourceOf, stageLabel, stageNameKey, stagesForLead, summarizeCampaigns, unionStages, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
 import { autoAssign, cardExtras, onStageChanged } from "./pipeline-extras";
@@ -209,14 +209,17 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
 }
 export async function moveStage(db: Db, tenantId: number, input: { publicId: string; stage: PipelineStage; note?: string | null; actorUserId: number | null }) {
   const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, input.publicId))).limit(1))[0]; if (!lead) throw new Error("Lead nicht gefunden.");
-  const stagesDef = stagesForLead(await pipelineStageSets(db, tenantId), lead); if (!isStage(input.stage, stagesDef)) throw new Error("Unbekannte Stufe.");
-  const from = isStage(lead.pipelineStage, stagesDef) ? lead.pipelineStage : entryStage(stagesDef);
-  await db.update(leads).set({ pipelineStage: input.stage, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
-  await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: from, toStage: input.stage, actorUserId: input.actorUserId, note: input.note?.trim() || null });
-  if (from !== input.stage) await logActivity(db, tenantId, { kind: "pipeline_stufe", title: `${[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.publicId}: ${stagesDef.find((item) => item.key === from)?.label ?? from} → ${stagesDef.find((item) => item.key === input.stage)?.label ?? input.stage}`, detail: input.note?.trim().slice(0, 200) || null, leadId: lead.id, actorUserId: input.actorUserId, refType: "lead", refId: lead.id });
-  if (input.stage === wonStage(stagesDef)) await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: input.actorUserId, note: "Vertriebspipeline: Lead ist Kunde geworden" });
-  let series: string | null = null; if (from !== input.stage) { const result = await onStageChanged(db, tenantId, { leadId: lead.id, toStage: input.stage }).catch(() => null); if (result?.enrolled) series = result.campaignName ?? null; }
-  return { success: true as const, from, to: input.stage, series };
+  // Die Zielstufe wird in den Stufen der Pipeline des Kontakts wiedergefunden: gleicher Schlüssel, sonst gleicher Name, sonst gleiche Rolle –
+  // damit „In Stufe verschieben“ auch nach dem Umbenennen oder aus einer Liste mit den Stufen einer anderen Pipeline klappt.
+  const sets = await pipelineStageSets(db, tenantId); const stagesDef = stagesForLead(sets, lead);
+  const to = matchStage(input.stage, stagesDef, unionStages(sets)); if (!to) throw new Error(`Unbekannte Stufe „${input.stage}“ – die Pipeline dieses Kontakts hat: ${stagesDef.map((item) => item.label).join(", ")}.`);
+  const from = matchStage(lead.pipelineStage, stagesDef) ?? entryStage(stagesDef);
+  await db.update(leads).set({ pipelineStage: to, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
+  await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: from, toStage: to, actorUserId: input.actorUserId, note: input.note?.trim() || null });
+  if (from !== to) await logActivity(db, tenantId, { kind: "pipeline_stufe", title: `${[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.company || lead.publicId}: ${stagesDef.find((item) => item.key === from)?.label ?? from} → ${stagesDef.find((item) => item.key === to)?.label ?? to}`, detail: input.note?.trim().slice(0, 200) || null, leadId: lead.id, actorUserId: input.actorUserId, refType: "lead", refId: lead.id });
+  if (to === wonStage(stagesDef)) await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: input.actorUserId, note: "Vertriebspipeline: Lead ist Kunde geworden" });
+  let series: string | null = null; if (from !== to) { const result = await onStageChanged(db, tenantId, { leadId: lead.id, toStage: to }).catch(() => null); if (result?.enrolled) series = result.campaignName ?? null; }
+  return { success: true as const, from, to, series };
 }
 export async function pipelineHistory(db: Db, tenantId: number, publicId: string) {
   const lead = (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.publicId, publicId))).limit(1))[0]; if (!lead) return [];
@@ -310,9 +313,11 @@ async function moveOrphanedLeads(db: Db, tenantId: number, before: StageSets, af
   for (const lead of rows) {
     if (only && pipelineSourceOf(lead.adPlatform) !== only) continue;
     const own = stagesForLead(after, lead); if (!lead.stage || own.some((stage) => stage.key === lead.stage)) continue;
-    const entry = entryStage(own); const was = stageLabel(lead.stage, stagesForLead(before, lead));
-    await db.update(leads).set({ pipelineStage: entry, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
-    await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: lead.stage, toStage: entry, actorUserId: null, note: `Stufe „${was}“ gibt es nicht mehr – auf „${stageLabel(entry, own)}“ gesetzt` });
+    const old = stagesForLead(before, lead); const was = stageLabel(lead.stage, old);
+    // Gleichnamige Stufe (gelöscht und neu angelegt, anderer Schlüssel) → Karte bleibt dort; sonst Eingang der Pipeline
+    const target = matchStage(lead.stage, own, old) ?? entryStage(own); const sameName = stageNameKey(was) === stageNameKey(stageLabel(target, own));
+    await db.update(leads).set({ pipelineStage: target, pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id));
+    await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: lead.stage, toStage: target, actorUserId: null, note: sameName ? `Stufe „${was}“ wurde neu angelegt – Karte bleibt in „${stageLabel(target, own)}“` : `Stufe „${was}“ gibt es nicht mehr – auf „${stageLabel(target, own)}“ gesetzt` });
     moved += 1;
   }
   return moved;

@@ -16,7 +16,7 @@ import { recipientValues, renderNode, SUPPRESSION_LABELS, type EmailNode, type E
 import { extraFieldsOf } from "../shared/cold-list";
 import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
 import { newCustomSourceKey, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
-import { contactedStage, entryStage, isStage, lostStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
+import { contactedStage, entryStage, isStage, lostStage, matchStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import { logActivity } from "./activity";
 import { normalizeMessageId } from "../shared/message-id";
@@ -68,8 +68,8 @@ export async function renameCustomPipeline(db: Db, tenantId: number, key: string
 export async function deleteCustomPipeline(db: Db, tenantId: number, key: string, actorUserId: number | null) {
   const settings = await loadSettings(db, tenantId); const pipeline = settings.customPipelines.find((item) => item.key === key); if (!pipeline) throw new Error("Diese Pipeline gibt es nicht.");
   const rows = await db.select({ id: leads.id, stage: leads.pipelineStage }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.adPlatform, key)));
-  const { pipelineStageSets } = await import("./meta-ads"); const sets = await pipelineStageSets(db, tenantId); const coldStages = stagesOfSets(sets, "kaltakquise");
-  for (const row of rows) { const stage = row.stage && coldStages.some((item) => item.key === row.stage) ? row.stage : entryStage(coldStages); await db.update(leads).set({ adPlatform: "kaltakquise", pipelineStage: stage, pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId, note: `Pipeline „${pipeline.label}“ gelöscht – Karte in die Kaltakquise verschoben` }); }
+  const { pipelineStageSets } = await import("./meta-ads"); const sets = await pipelineStageSets(db, tenantId); const coldStages = stagesOfSets(sets, "kaltakquise"); const ownStages = stagesOfSets(sets, key as PipelineSource);
+  for (const row of rows) { const stage = matchStage(row.stage, coldStages, ownStages) ?? entryStage(coldStages); /* gleiche Stufe in der Kaltakquise (Schlüssel, Name oder Rolle), sonst Eingang */ await db.update(leads).set({ adPlatform: "kaltakquise", pipelineStage: stage, pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId, note: `Pipeline „${pipeline.label}“ gelöscht – Karte in die Kaltakquise verschoben` }); }
   await db.delete(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, key)));
   await saveSettings(db, tenantId, { ...settings, customPipelines: settings.customPipelines.filter((item) => item.key !== key), sourceOrder: settings.sourceOrder.filter((item) => item !== key) });
   return { key, moved: rows.length, label: pipeline.label };

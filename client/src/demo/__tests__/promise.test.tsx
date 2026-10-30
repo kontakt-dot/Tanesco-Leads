@@ -269,6 +269,11 @@ describe("Freigabe getrennt nach Erst-E-Mails und Follow-ups (Chat-Build)", () =
     const dialog = document.querySelector(".review-dialog"); expect(dialog).toBeTruthy(); expect(view.container.querySelector(".ch-title")).toBeNull(); // Fenster über der Übersicht, nicht die geöffnete Kampagne
     const kindBar = dialog!.querySelector(".cd-filters.is-kind")!; expect(Array.from(kindBar.querySelectorAll("button")).find((node) => node.getAttribute("aria-selected") === "true")?.textContent).toMatch(/^Erst-E-Mails/);
     expect(Array.from(dialog!.querySelectorAll(".rv-list .rv-step .rv-kind")).map((node) => node.textContent?.trim())).toEqual(["Erst-E-Mail"]);
+    // „Speichern“ und „Freigeben & weiter“ stehen oben rechts bei den Werkzeugen des Editors – unten nur noch die Wortzahl; dazu das X zum Schließen
+    const tools = dialog!.querySelector(".rv-editor-tools .rv-editor-buttons")!; expect(tools).toBeTruthy();
+    expect(Array.from(tools.querySelectorAll("button")).map((node) => node.textContent?.trim())).toEqual(["Speichern", "Freigeben & weiter"]);
+    expect(dialog!.querySelector(".rv-editor-foot button")).toBeNull(); expect(dialog!.querySelector(".rv-editor-foot small")?.textContent).toMatch(/Wörter/);
+    expect(dialog!.querySelector(".review-close")).toBeTruthy();
     const approveButton = Array.from(dialog!.querySelectorAll<HTMLButtonElement>(".rv-head-actions button")).find((node) => /freigeben$/.test(node.textContent?.trim() ?? ""))!; expect(approveButton.textContent?.trim()).toBe("Alle 1 Erst-E-Mail freigeben");
     await act(async () => { fireEvent.click(approveButton); }); await settle(200);
     expect(document.querySelector(".app-confirm-text")?.textContent).toContain("Erst-E-Mail"); expect(document.querySelector(".app-confirm-text")?.textContent).toContain("Follow-ups bleiben unberührt");

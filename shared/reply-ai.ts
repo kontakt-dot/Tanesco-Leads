@@ -154,3 +154,12 @@ export function matchesAiFilter(ai: { kind: ReplyKind; action: ReplyAction } | n
   return ai.kind === filter;
 }
 export const inboxAiFilterLabel = (filter: InboxAiFilter) => INBOX_AI_FILTERS.find((item) => item.key === filter)?.label ?? filter;
+
+/**
+ * KI-Schreibhilfe ohne KI (nicht erreichbar / Chat-Demo): Anrede, Dank, dann die Vorgabe des Nutzers als Satz – oder der vorhandene Entwurf
+ * plus Vorgabe. Zum Weiterschreiben gedacht, nie zum blinden Senden; die Oberfläche sagt dazu, dass die KI gerade nicht erreichbar war.
+ */
+export function briefFallback(anrede: string, brief: string, draft = ""): string {
+  const sentence = brief.trim().replace(/\s+/g, " "); const line = `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}${/[.!?]$/.test(sentence) ? "" : "."}`;
+  return draft ? `${draft.trim()}\n\n${line}` : `${anrede}\n\nvielen Dank für Ihre Nachricht.\n\n${line}`;
+}

@@ -7,7 +7,9 @@ import crypto from "node:crypto";
 import { inboxDeletedMessages, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leads, mailSettings, outboundMessages, pipelineEvents, pipelineNotes, users } from "../drizzle/schema";
 import { decideReply, describeAssessment, DEFAULT_REPLY_AI, isAutoReply, matchesAiFilter, type InboxAiFilter, type ReplyAiSettings } from "../shared/reply-ai";
 import { assessReply } from "./reply-ai";
-import { isStage, stagesOf } from "../shared/sales-pipeline";
+import { contactedStage, isStage, matchStage, stagesOf, unionStages } from "../shared/sales-pipeline";
+import { briefFallback } from "../shared/reply-ai";
+import { byCategoryThenName, campaignTag, type CampaignTag } from "../shared/campaign-tag";
 import { extractPhone } from "../shared/pipeline-extras";
 import { inTimeOfDay, summarizeSent, trackingForSend, type DeliveryGroup, type SentReaction, type SentTracking } from "../shared/sent-tracking";
 import { addSuppression, isSuppressed, removeSuppressionByEmail } from "./pipeline-extras";
@@ -217,7 +219,8 @@ export async function listInbox(db: Db, tenantId: number, options: { filter?: In
   const campaignIds = Array.from(new Set(rows.map((row) => row.message.campaignRecipientId).filter((id): id is number => typeof id === "number")));
   const recipients = campaignIds.length ? await db.select({ id: emailCampaignRecipients.id, campaignId: emailCampaignRecipients.campaignId, campaignName: emailCampaigns.name, campaignFromName: emailCampaigns.fromName, campaignFromEmail: emailCampaigns.fromEmail, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(inArray(emailCampaignRecipients.id, campaignIds)) : [];
   // Lead-Kategorie je Kampagne (für „Als Lead in Pipeline“: die Kategorie der Kampagne ist vorausgewählt)
-  const categoryRows = recipients.length ? await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false))) : [];
+  const categoryRows = recipients.length ? await db.select({ id: leadCategories.id, name: leadCategories.name, emoji: leadCategories.emoji }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false))) : [];
+  const tagByCampaign = new Map<number, CampaignTag>(); for (const recipient of recipients) if (!tagByCampaign.has(recipient.campaignId)) tagByCampaign.set(recipient.campaignId, campaignTag({ name: recipient.campaignName, leadSparte: recipient.leadSparte, leadCategoryIds: recipient.leadCategoryIds, audience: recipient.audience }, categoryRows)); // Kategorie-Schild je Kampagne (Filter-Liste)
   const categoryByCampaign = new Map<number, { id: number; name: string } | null>();
   for (const recipient of recipients) { if (categoryByCampaign.has(recipient.campaignId)) continue; const id = await campaignCategoryFor(db, tenantId, recipient); categoryByCampaign.set(recipient.campaignId, id ? categoryRows.find((row) => row.id === id) ?? null : null); }
   // Welche E-Mails wir diesem Kontakt davor geschickt haben – zum Nachlesen neben der Antwort (neueste zuerst, höchstens fünf)
@@ -232,7 +235,7 @@ export async function listInbox(db: Db, tenantId: number, options: { filter?: In
   const byCampaign = options.campaignId ? byStatus.filter((item) => item.campaignId === options.campaignId) : byStatus;
   // Filter nach KI-Einordnung: eine Art, „automatisch gesperrt“, „zu prüfen“ oder „ohne Einordnung“
   const aiFilter = options.aiKind; const filtered = aiFilter ? byCampaign.filter((item) => matchesAiFilter(item.ai, aiFilter)) : byCampaign;
-  const campaigns = Array.from(items.reduce((map, item) => { if (item.campaignId && item.campaignName) { const entry = map.get(item.campaignId) ?? { id: item.campaignId, name: item.campaignName, count: 0 }; entry.count += 1; map.set(item.campaignId, entry); } return map; }, new Map<number, { id: number; name: string; count: number }>()).values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "de"));
+  const campaigns = Array.from(items.reduce((map, item) => { if (item.campaignId && item.campaignName) { const entry = map.get(item.campaignId) ?? { id: item.campaignId, name: item.campaignName, count: 0, tag: tagByCampaign.get(item.campaignId) ?? null }; entry.count += 1; map.set(item.campaignId, entry); } return map; }, new Map<number, { id: number; name: string; count: number; tag: CampaignTag | null }>()).values()).sort((a, b) => b.count - a.count || byCategoryThenName(a, b));
   // Zähler beziehen sich immer auf den aktiven Posteingang (ohne Archiv/Gesperrt), damit sie beim Wechsel der Filter stabil bleiben
     // Zähler: immer der ganze aktive Posteingang (ohne Archiv/Gesperrt, ohne Zeitraum-Filter), damit sie beim Wechsel der Filter stabil bleiben
   const active = options.filter === "archiv" || options.filter === "gesperrt" || options.from || options.to ? await db.select({ campaignRecipientId: inboxMessages.campaignRecipientId, leadId: inboxMessages.leadId, isRead: inboxMessages.isRead, aiAction: inboxMessages.aiAction }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.archived, false), eq(inboxMessages.blocked, false))) : null;
@@ -351,7 +354,7 @@ export async function createLeadFromMessage(db: Db, tenantId: number, input: { m
   const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");
   // Die Stufe muss zur Ziel-Pipeline passen – auch eigene Stufen wie „Hat Interesse“ (früher fiel alles Unbekannte auf „Kontaktiert“ zurück)
   const { pipelineStageSets } = await import("./meta-ads"); const stageSets = await pipelineStageSets(db, tenantId); const ownStages = stagesOf(stageSets, input.pipeline);
-  const stage = isStage(input.stage, ownStages) ? input.stage : (ownStages.find((item) => /interess|qualifiz/i.test(item.label))?.key ?? ownStages.find((item) => item.key === "kontaktiert")?.key ?? ownStages[1]?.key ?? ownStages[0]?.key ?? "kontaktiert");
+  const stage = matchStage(input.stage, ownStages, unionStages(stageSets)) ?? (ownStages.find((item) => /interess|qualifiz/i.test(item.label))?.key ?? contactedStage(ownStages) ?? ownStages[1]?.key ?? ownStages[0]?.key ?? "kontaktiert");
   if (message.blocked) throw new Error("Dieser Absender ist gesperrt – erst die Sperre aufheben.");
   // Lead-Kategorie: gewählt → die der E-Mail-Kampagne (ihre Lead-Kategorien bzw. die zur Leadsparte passende) → sonst die erste aktive
   const campaignOf = message.campaignRecipientId ? (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte }).from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(eq(emailCampaignRecipients.id, message.campaignRecipientId)).limit(1))[0] ?? null : null;
@@ -401,8 +404,15 @@ export async function createLeadsFromMessages(db: Db, tenantId: number, input: {
  * einen kurzen Antwortentwurf – zum Lesen, Ändern und Abschicken. Ohne KI-Schlüssel kommt eine passende Vorlage.
  * Keine Grußformel am Ende – die Signatur hängt der Versand an.
  */
-export async function suggestReply(db: Db, tenantId: number, messageId: number): Promise<{ text: string; source: "ki" | "vorlage" }> {
+/**
+ * Antwort schreiben lassen. Ohne `brief` wie bisher: die KI liest die Nachricht und schlägt eine Antwort vor.
+ * Mit `brief` (KI-Schreibhilfe im Posteingang): der Nutzer sagt in eigenen Worten – getippt oder eingesprochen –, was er antworten will
+ * („Termin nächste Woche anbieten, Dienstag oder Donnerstag“); die KI formuliert daraus die E-Mail. Liegt schon ein `draft` im
+ * Antwortfeld, wird der nach der Vorgabe überarbeitet. Gesendet wird hier nie – der Text landet nur im Antwortfeld.
+ */
+export async function suggestReply(db: Db, tenantId: number, messageId: number, options: { brief?: string | null; draft?: string | null } = {}): Promise<{ text: string; source: "ki" | "vorlage" }> {
   const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");
+  const brief = (options.brief ?? "").trim().slice(0, 2000); const draft = (options.draft ?? "").trim().slice(0, 6000);
   const recipient = message.campaignRecipientId ? (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, message.campaignRecipientId)).limit(1))[0] ?? null : null;
   const sentMails = recipient ? await db.select({ subject: emailCampaignEvents.subject, body: emailCampaignEvents.body, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, recipient.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(desc(emailCampaignEvents.id)).limit(5) : [];
   const lastSent = sentMails[0]?.subject ?? null;
@@ -420,15 +430,18 @@ export async function suggestReply(db: Db, tenantId: number, messageId: number):
     try {
       const { invokeLLM } = await import("./_core/llm");
       const system = `Du beantwortest für Tanesco Digital (einer der größten Leadlieferanten Deutschlands für ${sparte.leads}) Antworten auf unsere Akquise-E-Mails an ${sparte.recipients}. Es geht ausschließlich um ${sparte.leads}${isEnergySparte(sparte) ? "" : " – kein Wort zu Photovoltaik, Solar oder Wärmepumpen"}. Schreibe EINE kurze Antwort (60–120 Wörter) in kurzen Absätzen (je ein bis drei Sätze, dazwischen eine Leerzeile), Deutsch, Sie-Form, freundlich und konkret: beantworte die Fragen aus der Nachricht, nutze nur diese Fakten – Leads selbst online generiert (nie Meta, Facebook oder Instagram nennen), exklusiv, telefonisch vorqualifiziert (${qualifiedBy}${questions ? " – genau diese Zahl, keine andere" : " – keine Zahl nennen"}; Beispiele immer ohne Klammern; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf den Anruf des Betriebs; den Firmennamen des Betriebs nennen wir dabei nicht, das nie behaupten), Übergabe in Echtzeit per Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, ${testLeads} Test-Leads kostenlos individuell für den Betrieb (genau diese Zahl – sie wurde dem Kontakt so zugesagt).${paysOnlyFitting(sparte) ? " Der Betrieb zahlt nur für Leads, die zu ihm passen." : " Behaupte nicht, dass nur passende Leads bezahlt werden – das gilt hier nicht."} Nenne KEINE Preise (die klären wir im Gespräch). Ziel: ein kurzes Telefonat vereinbaren – schlage vor, dass der Interessent zwei Zeitfenster nennt, oder biete an, dass wir anrufen. Bei Absagen: höflich bedanken, kein Druck, Tür offen lassen. Anrede: „Sehr geehrter Herr Nachname,“ / „Sehr geehrte Frau Nachname,“ wenn die Anrede sicher ist (aus der Signatur der Nachricht oder einem eindeutigen Vornamen), sonst nur „Guten Tag,“ – nie „Hallo“, nie „Guten Tag Vorname Nachname“. Keine Grußformel und kein Name am Ende (die Signatur hängt das System an), keine Links, keine Ausrufezeichen. Aroundhome und andere Portale erwähnst du nie; Bewertungen höchstens als Google-Bewertungen, wenn sie in der Nachricht stehen.`;
-      const user = `Eingegangene Antwort von ${message.fromName ?? message.fromEmail} (${message.fromEmail}):\nBetreff: ${message.subject ?? "(ohne Betreff)"}\n\n${(message.bodyText ?? "").slice(0, 4000)}${lastSent ? `\n\nUnsere letzte E-Mail an diesen Kontakt hatte den Betreff: „${lastSent}“` : ""}\n\nSchreibe die Antwort.`;
-      const response = await invokeLLM({ maxTokens: 700, temperature: 0.5, messages: [{ role: "system", content: system }, { role: "user", content: user }] });
+      const briefRule = brief ? `\n\nWICHTIG – Vorgabe des Nutzers: Er hat dir in eigenen Worten gesagt, was er antworten will. Schreibe GENAU das als fertige E-Mail: Inhalt, Zusagen, Termine und Zahlen nur aus seiner Vorgabe (und, wo es passt, aus den Fakten oben) – nichts dazu erfinden, keine Angebote oder Test-Leads ergänzen, die er nicht genannt hat. Die Anrede „${anrede}“ kommt oben hin, keine Grußformel am Ende (die Signatur hängt die Software an).${draft ? " Es gibt schon einen Entwurf im Antwortfeld – überarbeite ihn nach der Vorgabe (ändern, kürzen, ergänzen) statt neu zu schreiben, wenn die Vorgabe sich darauf bezieht." : ""}` : "";
+      const user = `Eingegangene Antwort von ${message.fromName ?? message.fromEmail} (${message.fromEmail}):\nBetreff: ${message.subject ?? "(ohne Betreff)"}\n\n${(message.bodyText ?? "").slice(0, 4000)}${lastSent ? `\n\nUnsere letzte E-Mail an diesen Kontakt hatte den Betreff: „${lastSent}“` : ""}${brief ? `\n\nVorgabe des Nutzers (so will er antworten): „${brief}“` : ""}${brief && draft ? `\n\nBisheriger Entwurf im Antwortfeld:\n${draft}` : ""}\n\n${brief ? "Schreibe die Antwort nach der Vorgabe." : "Schreibe die Antwort."}`;
+      const response = await invokeLLM({ maxTokens: 700, temperature: brief ? 0.3 : 0.5, messages: [{ role: "system", content: system + briefRule }, { role: "user", content: user }] });
       const text = String(response.choices[0]?.message.content ?? "").trim();
-      if (text.length > 30) { const { stripClosing } = await import("./campaign-review"); const { dropAdPlatforms, shortParagraphs } = await import("../shared/email-campaigns"); return { text: shortParagraphs(withTestOffer(withQuestionTopics(fixQuestionCount(applyPayFit(dropAdPlatforms(stripClosing(text)), { sparte }), sparte), sparte), testLeads)), source: "ki" }; } // Zahl der Fragen (mit Teaser) und „nur passende Leads zahlen“ passend zur Sparte, nie Meta & Co., kurze Absätze
+      if (text.length > 30) { const { stripClosing } = await import("./campaign-review"); const { dropAdPlatforms, shortParagraphs } = await import("../shared/email-campaigns"); const cleaned = withQuestionTopics(fixQuestionCount(applyPayFit(dropAdPlatforms(stripClosing(text)), { sparte }), sparte), sparte); return { text: shortParagraphs(brief ? cleaned : withTestOffer(cleaned, testLeads)), source: "ki" }; } // Zahl der Fragen (mit Teaser) und „nur passende Leads zahlen“ passend zur Sparte, nie Meta & Co., kurze Absätze; das Test-Lead-Angebot nur ohne Vorgabe ergänzen
     } catch { /* Vorlage unten */ }
   }
+  if (brief) return { text: briefFallback(anrede, brief, draft), source: "vorlage" }; // KI nicht erreichbar: die Vorgabe als Rohtext – der Nutzer schreibt sie selbst zu Ende
   const text = `${anrede}\n\nvielen Dank für Ihre Rückmeldung.\n\nGerne stimme ich die Einzelheiten direkt mit Ihnen ab – unsere Anfragen sind exklusiv, telefonisch vorqualifiziert und werden in Echtzeit übergeben, und zum Kennenlernen erhalten Sie ${testLeads} Test-Leads kostenlos. Passt Ihnen diese Woche ein kurzes Telefonat? Nennen Sie mir gerne zwei Zeitfenster, oder wir rufen Sie einfach an.`;
   return { text, source: "vorlage" };
 }
+
 /** Antwort aus dem Posteingang schicken (über den eingerichteten Versand). */
 export async function reply(db: Db, tenantId: number, input: { messageId: number; text: string; actorUserId?: number | null; attachments?: MailAttachmentInput[] | null; appUrl?: string | null }) {
   const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");
@@ -507,5 +520,9 @@ export async function listSent(db: Db, tenantId: number, options: { search?: str
     .where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), ...(from ? [gte(emailCampaignEvents.createdAt, from)] : []), ...(to ? [lt(emailCampaignEvents.createdAt, to)] : [])))
     .orderBy(desc(emailCampaignEvents.createdAt)).limit(5000) : undefined;
   const result = summarizeSent(items, { ...options, from, to }, { limit, overview });
-  return { ...result, capped };
+  // Kategorie-Schild je Kampagne für die Kampagnen-Auswahl („☀️♨️ Photovoltaik & Wärmepumpe · Name“)
+  const tagSource = result.campaigns.length ? await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadSparte: emailCampaigns.leadSparte, leadCategoryIds: emailCampaigns.leadCategoryIds, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, result.campaigns.map((row) => row.id)))) : [];
+  const tagCategories = tagSource.length ? await db.select({ id: leadCategories.id, name: leadCategories.name, emoji: leadCategories.emoji }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)) : [];
+  const campaigns = result.campaigns.map((row) => { const source = tagSource.find((item) => item.id === row.id); return { ...row, tag: source ? campaignTag(source, tagCategories) : null }; });
+  return { ...result, campaigns, capped };
 }

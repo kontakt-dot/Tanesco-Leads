@@ -2811,6 +2811,13 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const message = await owner.leadops.storeInboxMessage({ fromEmail: "chef@antwort-vorschlag.example", fromName: "Carla Chef", subject: "Re: Hallo", bodyText: "Klingt interessant, was kostet das?" });
     const suggestion = await owner.leadops.suggestInboxReply({ messageId: message.id });
     expect(suggestion.source).toBe("vorlage"); expect(suggestion.text).toMatch(/^Guten Tag,/); expect(suggestion.text).not.toContain("Carla Chef,"); /* kein „Guten Tag Vorname Nachname“ */ expect(suggestion.text).toContain("Telefonat"); expect(suggestion.text).toContain("10 Test-Leads"); expect(suggestion.text).not.toMatch(/Grüßen\s*$/);
+    // KI-Schreibhilfe: der Nutzer sagt kurz, was er antworten will – ohne KI-Schlüssel kommt die Vorgabe als Rohtext (Anrede, Dank, Vorgabe als Satz); mit Entwurf wird angehängt; nichts wird gesendet
+    const sentBefore = (await owner.leadops.listSent({ kind: "antwort" })).items.length;
+    const briefed = await owner.leadops.suggestInboxReply({ messageId: message.id, brief: "termin nächste Woche anbieten, Dienstag oder Donnerstag" });
+    expect(briefed.source).toBe("vorlage"); expect(briefed.text).toBe("Guten Tag,\n\nvielen Dank für Ihre Nachricht.\n\nTermin nächste Woche anbieten, Dienstag oder Donnerstag."); expect(briefed.text).not.toContain("Test-Leads");
+    const revised = await owner.leadops.suggestInboxReply({ messageId: message.id, brief: "bitte Telefonnummer erwähnen!", draft: briefed.text });
+    expect(revised.text).toBe(`${briefed.text}\n\nBitte Telefonnummer erwähnen!`);
+    expect((await owner.leadops.listSent({ kind: "antwort" })).items.length).toBe(sentBefore);
     // Listen-Anreicherung: Webseite aus der Firmen-Domain beim Upload, Ansprechpartner aus der E-Mail-Adresse
     await owner.leadops.importColdList({ listName: "Anreicherung", toPipeline: false, rows: [{ company: "Koppen Solar", email: "stefan.koppen@koppen-solar.example" }, { company: "Ohne Namen GmbH", email: "info@ohne-namen.example" }] });
     const enriched = await owner.leadops.enrichListContacts({ listName: "Anreicherung" });
@@ -3762,5 +3769,38 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const copy = await owner.leadops.duplicateContract({ id: saved.id }); expect((await owner.leadops.getContract({ id: copy.id })).status).toBe("entwurf");
     expect((await owner.leadops.listContracts()).filter((row) => ["Leadliefervertrag E2E", "Zweiter", "Dritter"].includes(row.title) || row.title.includes("(Kopie)")).length).toBeGreaterThanOrEqual(4);
     await owner.leadops.deleteContractTemplate({ id: template.id });
+  }, 40000);
+
+  it("63u. Stufen umbenannt oder neu angelegt: Verschieben, „In andere Pipeline“, Mehrfachauswahl und Speichern der Stufen finden die Stufe am Namen (nicht nur am Schlüssel)", async () => {
+    // Eigene Pipeline mit eigenen Stufen: gleiche Namen wie der Standard (Kontaktiert, Termin), aber andere Schlüssel – so wie nach Löschen und Neuanlegen
+    const pipe = await owner.leadops.createCustomPipeline({ label: "Stufen-Test" });
+    const own = [{ key: "neu", label: "Eingang", hint: "", fixed: "entry" as const }, { key: "stufe_k1", label: "Kontaktiert", hint: "" }, { key: "stufe_t1", label: "Termin", hint: "" }, { key: "kunde", label: "Kunde", hint: "", fixed: "won" as const }, { key: "raus", label: "Kein Interesse", hint: "", fixed: "lost" as const }];
+    await owner.leadops.savePipelineStages({ source: pipe.key, stages: own });
+    const importedStufen = await owner.leadops.importColdList({ pipeline: "kaltakquise", listName: "Stufen-Test Kalt", rows: [{ firstName: "Karl", lastName: "Kontakt", phone: "+49 30 9177001", email: "karl@stufen-test.example" }, { firstName: "Tina", lastName: "Termin", phone: "+49 30 9177002", email: "tina@stufen-test.example" }, { firstName: "Vera", lastName: "Verloren", phone: "+49 30 9177003", email: "vera@stufen-test.example" }] }); expect(importedStufen.created).toBe(3);
+    const byMail = async (email: string) => (await db.select({ id: leads.id, publicId: leads.publicId, stage: leads.pipelineStage, platform: leads.adPlatform }).from(leads).where(and(eq(leads.kind, "vertrieb"), eq(leads.email, email))).limit(1))[0];
+    const karl = await byMail("karl@stufen-test.example"); const tina = await byMail("tina@stufen-test.example"); const vera = await byMail("vera@stufen-test.example");
+    await owner.leadops.movePipelineStage({ publicId: karl.publicId, stage: "kontaktiert" }); await owner.leadops.movePipelineStage({ publicId: tina.publicId, stage: "termin" }); await owner.leadops.movePipelineStage({ publicId: vera.publicId, stage: "verloren" });
+    // „In andere Pipeline“: Kontaktiert → Kontaktiert (anderer Schlüssel), Termin → Termin, Verloren → „Kein Interesse“ (gleiche Rolle) – nicht alles auf den Eingang
+    expect((await owner.leadops.moveLeadsToPipeline({ publicIds: [karl.publicId, tina.publicId, vera.publicId], target: pipe.key })).moved).toBe(3);
+    expect((await byMail("karl@stufen-test.example")).stage).toBe("stufe_k1"); expect((await byMail("tina@stufen-test.example")).stage).toBe("stufe_t1"); expect((await byMail("vera@stufen-test.example")).stage).toBe("raus");
+    // Verschieben mit einem Standard-Schlüssel (z. B. aus einer Liste der Standard-Stufen) findet die gleichnamige eigene Stufe; ohne Namensvetter: klare Meldung mit den vorhandenen Stufen
+    const movedKarl = await owner.leadops.movePipelineStage({ publicId: karl.publicId, stage: "termin" }); expect(movedKarl.to).toBe("stufe_t1");
+    await expect(owner.leadops.movePipelineStage({ publicId: karl.publicId, stage: "qualifiziert" })).rejects.toThrow(/Unbekannte Stufe „qualifiziert“ – die Pipeline dieses Kontakts hat: Eingang, Kontaktiert, Termin, Kunde, Kein Interesse/);
+    expect((await owner.leadops.movePipelineStage({ publicId: karl.publicId, stage: "Kontaktiert" })).to).toBe("stufe_k1"); // auch ein Name statt Schlüssel
+    // Mehrfachauswahl über zwei Pipelines mit dem Standard-Schlüssel: jede Karte landet in „ihrer“ Kontaktiert-Stufe
+    await owner.leadops.importColdList({ pipeline: "kaltakquise", listName: "Stufen-Test Kalt 2", rows: [{ firstName: "Bodo", lastName: "Bulk", phone: "+49 30 9177004", email: "bodo@stufen-test.example" }] }); const bodo = await byMail("bodo@stufen-test.example");
+    expect((await owner.leadops.bulkMovePipelineStage({ publicIds: [tina.publicId, bodo.publicId], stage: "kontaktiert" })).moved).toBe(2);
+    expect((await byMail("tina@stufen-test.example")).stage).toBe("stufe_k1"); expect((await byMail("bodo@stufen-test.example")).stage).toBe("kontaktiert");
+    // Stufe „Termin“ löschen und mit neuem Schlüssel wieder anlegen: Karten bleiben in „Termin“ (Vermerk), Karten gelöschter Stufen ohne Namensvetter gehen auf den Eingang
+    await owner.leadops.movePipelineStage({ publicId: karl.publicId, stage: "stufe_t1" });
+    await owner.leadops.savePipelineStages({ source: pipe.key, stages: [own[0], own[1], { key: "stufe_t2neu", label: "Termin", hint: "" }, own[3], own[4]] });
+    expect((await byMail("karl@stufen-test.example")).stage).toBe("stufe_t2neu");
+    const karlHistory = await owner.leadops.pipelineHistory({ publicId: karl.publicId }); expect(karlHistory[0].note).toMatch(/„Termin“ wurde neu angelegt – Karte bleibt in „Termin“/);
+    await owner.leadops.savePipelineStages({ source: pipe.key, stages: [own[0], own[1], own[3], own[4]] });
+    expect((await byMail("karl@stufen-test.example")).stage).toBe("neu"); expect((await owner.leadops.pipelineHistory({ publicId: karl.publicId }))[0].note).toMatch(/„Termin“ gibt es nicht mehr – auf „Eingang“ gesetzt/);
+    // Board zeigt die Karten in ihren Spalten; eigene Pipeline löschen → Kaltakquise: Kontaktiert bleibt Kontaktiert
+    const board = await owner.leadops.pipelineOverview({ source: pipe.key }); expect(board.stages.find((stage) => stage.key === "stufe_k1")?.leads.map((lead) => lead.publicId).sort()).toEqual([tina.publicId].sort());
+    await owner.leadops.deleteCustomPipeline({ key: pipe.key });
+    expect((await byMail("tina@stufen-test.example")).stage).toBe("kontaktiert"); expect((await byMail("vera@stufen-test.example")).stage).toBe("verloren"); expect((await byMail("karl@stufen-test.example")).stage).toBe("neu");
   }, 40000);
 });
