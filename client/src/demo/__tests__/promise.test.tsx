@@ -300,6 +300,33 @@ describe("Pipeline „E-Mail-Kampagne“ ohne Spalte „Neu“ (Chat-Build)", ()
   });
 });
 
+describe("Kampagnen-Übersicht: Zeitraum der Zahlen (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Zeitraum-Knöpfe über den Kennzahlen: Gesamt ist Standard, „Heute“ zählt nur E-Mails von heute, „Eigener“ zeigt Von/Bis; kein Knopf „Fällige Schritte jetzt ausführen“ mehr", async () => {
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    expect(Array.from(view.container.querySelectorAll("header button")).some((node) => /Fällige Schritte/.test(node.textContent ?? ""))).toBe(false);
+    const chips = () => Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cd-filters.is-period button")); expect(chips().map((node) => node.textContent)).toEqual(["Gesamt", "Heute", "7 Tage", "30 Tage", "Eigener"]);
+    expect(chips().find((node) => node.getAttribute("aria-selected") === "true")?.textContent).toBe("Gesamt"); expect(view.container.querySelector(".cd-period-note")).toBeNull();
+    const sentCard = () => Array.from(view.container.querySelectorAll<HTMLElement>(".cd-kpis .cd-kpi")).find((node) => node.querySelector("span")?.textContent === "Gesendet")!;
+    const overall = Number(sentCard().querySelector("strong")?.textContent); expect(overall).toBeGreaterThan(0);
+    const all = await call("leadops.listEmailCampaigns"); const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const today = await call("leadops.listEmailCampaigns", { from: todayStart, until: new Date() });
+    const sumMails = (rows: any[]) => rows.filter((row: any) => !row.isTemplate && !row.archivedAt).reduce((acc: number, row: any) => acc + (row.stats.mails?.sent ?? 0), 0);
+    expect(sumMails(today)).toBeLessThan(sumMails(all)); // der Seed hat E-Mails aus den letzten Tagen – heute nur ein Teil
+    await act(async () => { fireEvent.click(chips().find((node) => node.textContent === "Heute")!); }); await settle(400); await settle(300);
+    expect(view.container.querySelector(".cd-period-note")?.textContent).toBe("Zahlen für heute"); expect(localStorage.getItem("kampagnen-zeitraum")).toBe("today");
+    expect(Number(sentCard().querySelector("strong")?.textContent)).toBe(sumMails(today)); expect(Array.from(view.container.querySelectorAll(".cd-kpis .cd-kpi span")).some((node) => node.textContent === "Neu aufgenommen")).toBe(true);
+    await act(async () => { fireEvent.click(chips().find((node) => node.textContent === "Eigener")!); }); await settle(200);
+    const inputs = view.container.querySelectorAll<HTMLInputElement>('.cd-period-range input[type="date"]'); expect(inputs).toHaveLength(2);
+    await act(async () => { fireEvent.change(inputs[0], { target: { value: "2020-01-01" } }); fireEvent.change(inputs[1], { target: { value: "2020-01-31" } }); }); await settle(400); await settle(300);
+    expect(view.container.querySelector(".cd-period-note")?.textContent).toBe("Zahlen für 01.01.2020 – 31.01.2020"); expect(Number(sentCard().querySelector("strong")?.textContent)).toBe(0);
+    await act(async () => { fireEvent.click(chips().find((node) => node.textContent === "Gesamt")!); }); await settle(400); await settle(300);
+    expect(Number(sentCard().querySelector("strong")?.textContent)).toBe(overall); expect(view.container.querySelector(".cd-period-note")).toBeNull();
+  });
+});
+
 describe("Kampagnen zusammenführen (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });

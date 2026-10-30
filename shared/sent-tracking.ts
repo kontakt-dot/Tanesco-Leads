@@ -94,6 +94,38 @@ export function campaignMailStats(events: TrackEvent[], stamps: Map<number, Reci
   return { sent, opened, clicked, replied };
 }
 
+/** Zeitraum „von–bis“ (beide Grenzen zählen mit); ohne Grenzen gilt alles. */
+export type Period = { from?: Date | string | null; until?: Date | string | null } | null | undefined;
+export const hasPeriod = (period: Period): period is { from?: Date | string | null; until?: Date | string | null } => Boolean(period && (period.from || period.until));
+export function inPeriod(value: Date | string | null | undefined, period: Period): boolean {
+  if (!hasPeriod(period)) return true; if (!value) return false; const time = at(value);
+  return (!period.from || time >= at(period.from)) && (!period.until || time <= at(period.until));
+}
+/**
+ * Zahlen einer Kampagne für einen Zeitraum – je E-Mail UND je Person, bezogen auf die E-Mails, die im Zeitraum rausgingen:
+ * geöffnet/geklickt/beantwortet zählt, was zu diesen E-Mails gehört (auch wenn die Reaktion erst nach dem Zeitraum kam).
+ * Unzustellbar und Abmeldungen: die Ereignisse im Zeitraum. So passt die Übersicht zum Ordner „Gesendet“ mit Datumsfilter.
+ */
+export function campaignStatsIn(events: TrackEvent[], stamps: Map<number, RecipientStamps>, period: Period) {
+  const byRecipient = new Map<number, TrackEvent[]>();
+  for (const event of events) byRecipient.set(event.recipientId, [...(byRecipient.get(event.recipientId) ?? []), event]);
+  const mails = { sent: 0, opened: 0, clicked: 0, replied: 0 }; const people = { sent: new Set<number>(), opened: new Set<number>(), clicked: new Set<number>(), replied: new Set<number>(), bounced: new Set<number>(), unsubscribed: new Set<number>() };
+  for (const [recipientId, list] of Array.from(byRecipient.entries())) {
+    const sends = list.filter((event) => event.kind === "gesendet").map((event) => event.createdAt);
+    for (const sentAt of sends) {
+      if (!inPeriod(sentAt, period)) continue;
+      const tracking = trackingForSend(sentAt, list, sends, stamps.get(recipientId) ?? null); mails.sent += 1; people.sent.add(recipientId);
+      if (tracking.openedAt || tracking.clickedAt || tracking.repliedAt) { mails.opened += 1; people.opened.add(recipientId); }
+      if (tracking.clickedAt) { mails.clicked += 1; people.clicked.add(recipientId); }
+      if (tracking.repliedAt) { mails.replied += 1; people.replied.add(recipientId); }
+    }
+    if (list.some((event) => event.kind === "bounce" && inPeriod(event.createdAt, period))) people.bounced.add(recipientId);
+    if (list.some((event) => event.kind === "abgemeldet" && inPeriod(event.createdAt, period))) people.unsubscribed.add(recipientId);
+  }
+  const sent = people.sent.size; const opened = people.opened.size; const clicked = people.clicked.size; const replied = people.replied.size; const bounced = people.bounced.size;
+  return { mails, sent, opened, clicked, replied, bounced, unsubscribed: people.unsubscribed.size, openRate: sent ? Math.round((opened / sent) * 100) : 0, clickRate: sent ? Math.round((clicked / sent) * 100) : 0, bounceRate: sent ? Math.round((bounced / sent) * 100) : 0 };
+}
+
 /**
  * Uhrzeit (Europe/Berlin) eines Zeitpunkts in einem Tages-Fenster „von–bis“ (z. B. 09:00–11:30), egal an welchem Tag.
  * „bis“ zählt mit: 09:00–11:30 enthält auch eine Mail um 11:30 Uhr. Über Mitternacht geht auch (22:00–06:00).

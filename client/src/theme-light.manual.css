@@ -1770,3 +1770,14 @@ html:not(.dark) .mh-sender-box.is-ok { color: #047857 !important; }
 html:not(.dark) .mh-sender-box.is-warn { color: #92400e !important; }
 html:not(.dark) .mh-sender-box.is-bad { color: #bc001d !important; }
 html:not(.dark) .mh-mini.is-accent { border-color: #fecdd3 !important; color: #bc001d !important; }
+
+/* Freigabe-Fenster: Kopf und Schließen-Knopf */
+html:not(.dark) .review-dialog .rv-head { background: rgba(255, 255, 255, .97) !important; border-bottom-color: #eaecf0 !important; }
+html:not(.dark) .review-close { background: #ffffff !important; border-color: #d9dfe7 !important; color: #101828 !important; }
+html:not(.dark) .review-close:hover { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #bc001d !important; }
+
+/* Zeitraum in der Kampagnen-Übersicht */
+html:not(.dark) .cd-period-label { color: #667085 !important; }
+html:not(.dark) .cd-period-label svg { color: #bc001d !important; }
+html:not(.dark) .cd-period-note { color: #9f1239 !important; }
+html:not(.dark) .cd-period-note.is-loading { color: #667085 !important; }

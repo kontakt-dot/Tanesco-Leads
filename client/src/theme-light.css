@@ -1419,6 +1419,10 @@ html:not(.dark) .pipeline-page .card-move-row .card-move-pill { background: #f8f
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover, html:not(.dark) .pipeline-page .card-move-row .card-move-pill:focus-within { background: #f8fafb !important; border-color: #e8ecf1 !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: #111318 !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline, html:not(.dark) .pipeline-page .card-move-row .card-move-pill .card-move-pipeline:focus { color: #111318 !important; }
+html:not(.dark) .cd-period-label { color: #8a94a6 !important; }
+html:not(.dark) .cd-period-label svg { color: #111318 !important; }
+html:not(.dark) .cd-period-note { color: #4b5568 !important; }
+html:not(.dark) .cd-period-note.is-loading { color: #8a94a6 !important; }
 html:not(.dark) .cd-kpi-pick { color: #4b5568 !important; }
 html:not(.dark) .cd-kpi-pick::after { color: #4b5568 !important; }
 html:not(.dark) .cd-kpi-pick select { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
@@ -1596,6 +1600,9 @@ html:not(.dark) .cl-approval strong { color: #4b5568 !important; }
 html:not(.dark) .cl-approval-part::before { color: #0f172a !important; }
 html:not(.dark) .cl-approval-main:hover, html:not(.dark) .cl-approval-part:hover { background: #f3f6f8 !important; }
 html:not(.dark) .cl-approval-part:hover { color: #0f172a !important; }
+html:not(.dark) .review-dialog .rv-head { background: #ffffff !important; border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .review-close { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #0f172a !important; }
+html:not(.dark) .review-close:hover { background: #f3f6f8 !important; border-color: #d9dfe7 !important; }
 html:not(.dark) .cl-spec.is-sparte dd, html:not(.dark) .ch-fact.is-sparte .ch-value { color: #4b5568 !important; }
 html:not(.dark) .xl-head h2 { color: #0f172a !important; }
 html:not(.dark) .xl-head h2 span { color: #4b5568 !important; background: #f8fafb !important; }
@@ -3999,3 +4006,14 @@ html:not(.dark) .mh-sender-box.is-ok { color: #047857 !important; }
 html:not(.dark) .mh-sender-box.is-warn { color: #92400e !important; }
 html:not(.dark) .mh-sender-box.is-bad { color: #bc001d !important; }
 html:not(.dark) .mh-mini.is-accent { border-color: #fecdd3 !important; color: #bc001d !important; }
+
+/* Freigabe-Fenster: Kopf und Schließen-Knopf */
+html:not(.dark) .review-dialog .rv-head { background: rgba(255, 255, 255, .97) !important; border-bottom-color: #eaecf0 !important; }
+html:not(.dark) .review-close { background: #ffffff !important; border-color: #d9dfe7 !important; color: #101828 !important; }
+html:not(.dark) .review-close:hover { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #bc001d !important; }
+
+/* Zeitraum in der Kampagnen-Übersicht */
+html:not(.dark) .cd-period-label { color: #667085 !important; }
+html:not(.dark) .cd-period-label svg { color: #bc001d !important; }
+html:not(.dark) .cd-period-note { color: #9f1239 !important; }
+html:not(.dark) .cd-period-note.is-loading { color: #667085 !important; }

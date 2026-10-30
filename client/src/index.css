@@ -2641,6 +2641,14 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 /* ================= E-Mail-Kampagnen: Kennzahlen, Kampagnenseite, Kontakt-Verlauf (v183) ================= */
 .cd-kpibar{margin-bottom:16px}
 .cd-kpibar-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+/* Zeitraum der Zahlen in der Kampagnen-Übersicht: Gesamt · Heute · 7 Tage · 30 Tage · Eigener (von–bis) */
+.cd-period{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto}
+.cd-period-label{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a87a8}
+.cd-period-label svg{width:14px;height:14px;color:#b3abff}
+.cd-filters.is-period{margin-bottom:0}
+.cd-period-range{margin-left:0}
+.cd-period-note{font-size:12px;color:#c4bfff;white-space:nowrap}
+.cd-period-note.is-loading{color:#8f93af}
 .cd-kpi-pick{position:relative;display:inline-flex;align-items:center;gap:10px;min-width:0;max-width:100%;font-size:12.5px;color:#a5a3c4}
 .cd-kpi-pick::after{content:"";position:absolute;right:14px;top:50%;width:7px;height:7px;border-right:1.75px solid currentColor;border-bottom:1.75px solid currentColor;color:#a5a3c4;transform:translateY(-70%) rotate(45deg);pointer-events:none}
 .cd-kpi-pick select{-webkit-appearance:none;appearance:none;line-height:32px;height:34px;min-width:240px;max-width:min(860px,100%);field-sizing:content;padding-right:36px!important;text-overflow:ellipsis;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#f1f0fb;font-size:13px;font-weight:600;padding:0 10px}
@@ -2970,9 +2978,14 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cl-approval-part:hover{text-decoration-color:#ede9fe;color:#f1efff}
 .cl-approval-main:focus-visible,.cl-approval-part:focus-visible{outline:2px solid rgba(129,120,255,.7);outline-offset:1px}
 /* Freigabe als Fenster über der Kampagnen-Übersicht */
-.review-dialog{width:min(1480px,96vw)!important;max-width:min(1480px,96vw)!important;max-height:94vh;overflow:auto;padding:10px!important;gap:0!important}
-.review-dialog .rv-panel{border:0;background:transparent;padding:8px}
-.review-dialog .rv-list{max-height:calc(94vh - 220px)}
+.review-dialog{width:min(1480px,96vw)!important;max-width:min(1480px,96vw)!important;max-height:94vh;display:flex!important;flex-direction:column;overflow:hidden;padding:0!important;gap:0!important}
+.review-dialog .rv-panel{border:0;background:transparent;padding:0 16px 16px;overflow:auto;max-height:94vh}
+.review-dialog .rv-head{position:sticky;top:0;z-index:5;margin:0 -16px;padding:14px 60px 10px 16px;background:rgba(19,17,34,.97);backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.06)} /* Kopf mit „Schließen“ bleibt beim Scrollen sichtbar */
+.review-dialog .rv-list{max-height:calc(94vh - 240px)}
+.review-close{position:absolute;top:12px;right:12px;z-index:6;display:grid;place-items:center;width:34px;height:34px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(19,17,34,.9);color:#e5e1fd;cursor:pointer;transition:background-color .15s,border-color .15s}
+.review-close svg{width:16px;height:16px}
+.review-close:hover{background:rgba(129,120,255,.22);border-color:rgba(129,120,255,.55)}
+.review-close:focus-visible{outline:2px solid rgba(129,120,255,.7);outline-offset:2px}
 .cl-spec.is-sparte dd,.ch-fact.is-sparte .ch-value{color:#c4bfff} /* Leadsparte hervorgehoben – hell in Rot, dunkel in Lila */
 @media (max-width:720px){.ch-name{flex-basis:100%}.ch-name h1{font-size:22px}.ch-side{justify-content:flex-start}.ch-fact,.ch-fact.is-time,.ch-fact.is-short{flex-basis:140px;padding:9px 12px 10px}.ch-fact.is-wide{flex-basis:100%}}
 /* ===== v185: Kontakte, Sperrliste, Upload-Verlauf – gleiche Sprache wie die Kampagnenseite ===== */
