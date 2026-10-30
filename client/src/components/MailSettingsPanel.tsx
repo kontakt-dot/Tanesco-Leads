@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
 import { normalizeSignature, type MailSignature } from "../../../shared/email-signature";
+import { MAILBOX_KINDS, mailboxPreset, type MailboxKind } from "../../../shared/mailbox";
 import { CheckCircle2, Mail, RefreshCw, Send, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -28,6 +29,8 @@ export default function MailSettingsPanel() {
   const senders = trpc.leadops.listMailSenders.useQuery(undefined, { retry: false });
   const saveSender = trpc.leadops.saveMailSender.useMutation({ onSuccess: () => { toast.success("Absender-Adresse gespeichert. Wichtig: Die Adresse muss bei deinem Mail-Anbieter als Absender bestätigt sein."); utils.leadops.listMailSenders.invalidate(); }, onError: (error) => toast.error(error.message) });
   const removeSender = trpc.leadops.deleteMailSender.useMutation({ onSuccess: () => { toast.success("Absender-Adresse entfernt."); utils.leadops.listMailSenders.invalidate(); }, onError: (error) => toast.error(error.message) });
+  const saveMailbox = trpc.leadops.saveMailSender.useMutation({ onSuccess: (_result, variables) => { toast.success(variables.mailbox && variables.mailbox.kind !== "keins" ? "Postfach gespeichert – jetzt „Testmail“ klicken, dann weißt du, ob es versendet." : "Absender-Adresse gespeichert."); utils.leadops.listMailSenders.invalidate(); }, onError: (error) => toast.error(error.message) });
+  const testSender = trpc.leadops.testMailSender.useMutation({ onSuccess: (result) => { toast.success(`Testmail über das Postfach an ${result.to} geschickt – das Postfach versendet.`); utils.leadops.listMailSenders.invalidate(); }, onError: (error) => { toast.error(error.message, { duration: 12000 }); utils.leadops.listMailSenders.invalidate(); } });
   const weekly = trpc.leadops.sendWeeklyReport.useMutation({ onSuccess: (result) => toast.success(result.sent ? `Wochenbericht an ${(result as { to?: string }).to} geschickt.` : `Nicht gesendet: ${(result as { note?: string }).note ?? ""}`), onError: (error) => toast.error(error.message) });
   const [newSender, setNewSender] = useState({ fromName: "", fromEmail: "", dailyLimit: 40 });
   const replies = trpc.leadops.checkMailReplies.useMutation({ onSuccess: (result) => toast.success(`${result.scanned} Mails geprüft, ${result.matched} Antworten erkannt.`), onError: (error) => toast.error(error.message) });
@@ -58,9 +61,10 @@ export default function MailSettingsPanel() {
         </div>
         <p className="mt-3 text-[11px] text-slate-500">Schalter gelten nach „Speichern“ unten.</p>
       </section>
-      <section className="rounded-xl border border-white/10 bg-white/[.018] p-4"><span className="eyebrow">ABSENDER-ADRESSEN</span><p className="mt-1 text-xs text-slate-400">Ab etwa 80 Mails am Tag lohnt eine zweite Adresse (z. B. auf einer Neben-Domain). Der Versand verteilt sich automatisch – jeder Kontakt behält fest seine Adresse, damit Antworten im selben Faden bleiben. Jede Zusatz-Adresse hat ihr eigenes Tageslimit; ist es erreicht, übernimmt die Haupt-Adresse. Wichtig: Jede Adresse muss bei deinem Mail-Anbieter als Absender bestätigt sein.</p>
+      <section className="rounded-xl border border-white/10 bg-white/[.018] p-4"><span className="eyebrow">ABSENDER-ADRESSEN</span><p className="mt-1 text-xs text-slate-400">Ab etwa 80 Mails am Tag lohnt eine zweite Adresse (z. B. auf einer Neben-Domain). Der Versand verteilt sich automatisch – jeder Kontakt behält fest seine Adresse, damit Antworten im selben Faden bleiben. Jede Zusatz-Adresse hat ihr eigenes Tageslimit; ist es erreicht, übernimmt die Haupt-Adresse.</p>
+        <p className="mt-2 text-xs text-slate-400"><strong className="text-slate-200">Eigenes Postfach:</strong> Für viele Mails am Tag bekommt jede Adresse ihr eigenes Postfach (Google Workspace, Microsoft 365 oder ein anderer Anbieter). Dann gehen ihre Mails über dieses Postfach raus – wie normale Geschäftspost einer Person – statt über den Anbieter oben. Antworten laufen weiter in deinen Posteingang hier. Ohne eigenes Postfach muss die Adresse beim Anbieter oben als Absender bestätigt sein.</p>
         <ul className="mt-3 grid gap-2">{senders.data?.main && <li className="mh-sender"><strong>{senders.data.main.fromEmail}</strong><small>Haupt-Adresse (aus den Einstellungen oben) · heute {senders.data.main.sentToday} gesendet</small></li>}
-          {(senders.data?.senders ?? []).map((row) => <li key={row.id} className={`mh-sender ${row.active ? "" : "is-off"}`}><strong>{row.fromEmail}</strong><small>{row.fromName ? `${row.fromName} · ` : ""}Limit {row.dailyLimit}/Tag · heute {row.sentToday} gesendet{row.active ? "" : " · pausiert"}</small><span className="mh-sender-tools"><button type="button" className="mh-mini" onClick={() => saveSender.mutate({ id: row.id, fromEmail: row.fromEmail, fromName: row.fromName, dailyLimit: row.dailyLimit, active: !row.active })}>{row.active ? "Pausieren" : "Aktivieren"}</button><button type="button" className="mh-mini is-danger" onClick={async () => { if (await confirmAction(`Absender ${row.fromEmail} entfernen? Neue Mails gehen dann wieder über die Haupt-Adresse.`)) removeSender.mutate({ id: row.id }); }}>Entfernen</button></span></li>)}
+          {(senders.data?.senders ?? []).map((row) => <SenderRow key={row.id} row={row as SenderRowData} saving={saveMailbox.isPending} testing={testSender.isPending} mainEmail={senders.data?.main?.fromEmail ?? null} onSave={(input) => saveMailbox.mutate(input)} onToggle={() => saveSender.mutate({ id: row.id, fromEmail: row.fromEmail, fromName: row.fromName, dailyLimit: row.dailyLimit, active: !row.active })} onTest={() => testSender.mutate({ id: row.id })} onRemove={async () => { if (await confirmAction(`Absender ${row.fromEmail} entfernen? Neue Mails gehen dann wieder über die Haupt-Adresse.`)) removeSender.mutate({ id: row.id }); }} />)}
         </ul>
         <div className="mt-3 grid gap-2 md:grid-cols-4"><Input placeholder="Name (z. B. Tanesco Vertrieb)" value={newSender.fromName} onChange={(event) => setNewSender({ ...newSender, fromName: event.target.value })} /><Input placeholder="adresse@neben-domain.de" value={newSender.fromEmail} onChange={(event) => setNewSender({ ...newSender, fromEmail: event.target.value })} /><Input type="number" placeholder="Limit/Tag (40)" value={newSender.dailyLimit} onChange={(event) => setNewSender({ ...newSender, dailyLimit: Number(event.target.value) || 40 })} /><Button variant="outline" disabled={!newSender.fromEmail.includes("@") || saveSender.isPending} onClick={() => { saveSender.mutate({ fromEmail: newSender.fromEmail, fromName: newSender.fromName || null, dailyLimit: newSender.dailyLimit }); setNewSender({ fromName: "", fromEmail: "", dailyLimit: 40 }); }}>Hinzufügen</Button></div>
       </section>
@@ -86,6 +90,46 @@ export default function MailSettingsPanel() {
  * Signatur für Antworten aus dem Posteingang und Einzel-E-Mails aus der Karte: Grußformel, Name, Position, Logo,
  * Firmenblock (aus Einstellungen → Branding → Fußzeile), Telefon, E-Mail, Webseite – mit Live-Vorschau.
  */
+type SenderMailboxView = { kind: MailboxKind; host: string; port: number; secure: boolean; user: string; hasPassword: boolean; ready: boolean; missing: string[]; lastTestAt: string | Date | null; lastTestStatus: string | null; lastError: string | null } | null;
+type SenderRowData = { id: number; fromName: string | null; fromEmail: string; dailyLimit: number; active: boolean; sentToday: number; mailbox: SenderMailboxView };
+type MailboxForm = { kind: MailboxKind | "keins"; host: string; port: number; secure: boolean; user: string; password: string; dailyLimit: number; fromName: string };
+const mailboxFormOf = (row: SenderRowData): MailboxForm => ({ kind: row.mailbox?.kind ?? "keins", host: row.mailbox?.host ?? "", port: row.mailbox?.port ?? 587, secure: row.mailbox?.secure ?? false, user: row.mailbox?.user ?? row.fromEmail, password: "", dailyLimit: row.dailyLimit, fromName: row.fromName ?? "" });
+const testStamp = (value: string | Date) => new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+/** Eine Absender-Adresse: Stand (Limit, heute gesendet, Postfach-Ampel) und aufklappbar das eigene Postfach (Art, Zugang, Testmail). */
+function SenderRow({ row, mainEmail, saving, testing, onSave, onToggle, onTest, onRemove }: { row: SenderRowData; mainEmail: string | null; saving: boolean; testing: boolean; onSave: (input: { id: number; fromEmail: string; fromName: string | null; dailyLimit: number; active: boolean; mailbox: { kind: MailboxKind | "keins"; host: string | null; port: number | null; secure: boolean; user: string | null; password: string | null } }) => void; onToggle: () => void; onTest: () => void; onRemove: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [box, setBox] = useState<MailboxForm>(() => mailboxFormOf(row));
+  const signature = `${row.mailbox?.kind ?? ""}|${row.mailbox?.host ?? ""}|${row.mailbox?.port ?? ""}|${row.mailbox?.user ?? ""}|${row.mailbox?.hasPassword ? 1 : 0}|${row.dailyLimit}|${row.fromName ?? ""}`;
+  useEffect(() => { setBox(mailboxFormOf(row)); }, [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  const preset = mailboxPreset(box.kind);
+  const chooseKind = (kind: MailboxKind | "keins") => { const next = mailboxPreset(kind); setBox({ ...box, kind, host: next?.host ?? "", port: next?.port ?? 587, secure: next?.secure ?? false, user: box.user || row.fromEmail }); };
+  const status = !row.mailbox ? { tone: "", text: "sendet über den Anbieter oben" }
+    : !row.mailbox.ready ? { tone: "is-warn", text: `Postfach unvollständig – ${row.mailbox.missing.join(", ")} fehlt` }
+    : row.mailbox.lastTestStatus === "ok" ? { tone: "is-ok", text: `Postfach ${mailboxPreset(row.mailbox.kind)?.label ?? ""} · versendet (zuletzt ${row.mailbox.lastTestAt ? testStamp(row.mailbox.lastTestAt) : "–"})` }
+    : row.mailbox.lastTestStatus === "fehler" ? { tone: "is-bad", text: `Postfach-Fehler: ${row.mailbox.lastError ?? "Versand fehlgeschlagen"}` }
+    : { tone: "is-warn", text: `Postfach ${mailboxPreset(row.mailbox.kind)?.label ?? ""} eingerichtet – noch nicht getestet` };
+  const save = () => onSave({ id: row.id, fromEmail: row.fromEmail, fromName: box.fromName.trim() || null, dailyLimit: Math.max(1, Math.min(2000, Math.round(box.dailyLimit || 40))), active: row.active, mailbox: { kind: box.kind, host: box.kind === "smtp" ? box.host.trim() || null : null, port: box.kind === "smtp" ? box.port || null : null, secure: box.kind === "smtp" ? box.secure : (preset?.secure ?? false), user: box.user.trim() || null, password: box.password || null } });
+  return <li className={`mh-sender ${row.active ? "" : "is-off"} ${open ? "is-open" : ""}`}>
+    <div className="mh-sender-main"><strong>{row.fromEmail}</strong><small>{row.fromName ? `${row.fromName} · ` : ""}Limit {row.dailyLimit}/Tag · heute {row.sentToday} gesendet{row.active ? "" : " · pausiert"}</small><small className={`mh-sender-box ${status.tone}`}>{status.text}</small></div>
+    <span className="mh-sender-tools"><button type="button" className={`mh-mini ${row.mailbox ? "" : "is-accent"}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? "Zuklappen" : row.mailbox ? "Postfach bearbeiten" : "Eigenes Postfach"}</button><button type="button" className="mh-mini" onClick={onToggle}>{row.active ? "Pausieren" : "Aktivieren"}</button><button type="button" className="mh-mini is-danger" onClick={onRemove}>Entfernen</button></span>
+    {open && <div className="mh-mailbox" role="group" aria-label={`Postfach für ${row.fromEmail}`}>
+      <div className="mh-mailbox-grid">
+        <label className="mh-field"><span>Postfach</span><select className="lead-action-select" value={box.kind} onChange={(event) => chooseKind(event.target.value as MailboxKind | "keins")}><option value="keins">Kein eigenes Postfach – Anbieter oben</option>{MAILBOX_KINDS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
+        <label className="mh-field"><span>Name</span><Input value={box.fromName} placeholder="z. B. Taner Tanesco" onChange={(event) => setBox({ ...box, fromName: event.target.value })} /></label>
+        <label className="mh-field"><span>Limit/Tag</span><Input type="number" min={1} max={2000} value={box.dailyLimit} onChange={(event) => setBox({ ...box, dailyLimit: Number(event.target.value) || 40 })} /></label>
+      </div>
+      {box.kind !== "keins" && <>
+        <p className="mh-mailbox-hint">{preset?.hint}</p>
+        <div className="mh-mailbox-grid">
+          {box.kind === "smtp" && <><label className="mh-field"><span>Server</span><Input placeholder="z. B. smtp.ionos.de" value={box.host} onChange={(event) => setBox({ ...box, host: event.target.value })} /></label><label className="mh-field"><span>Port</span><Input type="number" value={box.port} onChange={(event) => { const port = Number(event.target.value) || 587; setBox({ ...box, port, secure: port === 465 }); }} /></label><label className="mh-field is-check"><span>TLS sofort (Port 465)</span><input type="checkbox" checked={box.secure} onChange={(event) => setBox({ ...box, secure: event.target.checked })} /></label></>}
+          <label className="mh-field"><span>Benutzer</span><Input placeholder={row.fromEmail} value={box.user} onChange={(event) => setBox({ ...box, user: event.target.value })} /></label>
+          <label className="mh-field"><span>{box.kind === "smtp" ? "Passwort" : "App-Passwort"}</span><Input type="password" autoComplete="new-password" placeholder={row.mailbox?.hasPassword ? "gespeichert – leer lassen zum Behalten" : "hier eintragen"} value={box.password} onChange={(event) => setBox({ ...box, password: event.target.value })} /></label>
+        </div>
+      </>}
+      <div className="mh-mailbox-actions"><Button size="sm" variant="outline" disabled={saving} onClick={save}>{saving ? "Speichert …" : "Speichern"}</Button>{row.mailbox?.ready && <Button size="sm" variant="outline" disabled={testing} title={`Schickt eine Testmail über ${row.fromEmail} an ${mainEmail ?? row.fromEmail}`} onClick={onTest}><Send /> {testing ? "Sendet …" : `Testmail an ${mainEmail ?? row.fromEmail}`}</Button>}<small className="text-xs text-slate-500">{box.kind === "keins" ? "Ohne eigenes Postfach läuft die Adresse über den Anbieter oben – dort muss sie als Absender bestätigt sein." : "Erst speichern, dann Testmail – landet sie an, versendet das Postfach."}</small></div>
+    </div>}
+  </li>;
+}
 function SignatureSection({ form, setForm, onSave, saving }: { form: Form; setForm: (next: Form) => void; onSave: () => void; saving: boolean }) {
   const sig = form.signature;
   const set = (patch: Partial<MailSignature>) => setForm({ ...form, signature: { ...sig, ...patch } });

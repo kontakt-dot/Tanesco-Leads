@@ -11,6 +11,7 @@ import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { emailCampaignEvents, emailCampaignRecipients, emailCampaigns, inboxMessages, mailSenders, mailSettings, memberships, users } from "../drizzle/schema";
 import { DEFAULT_CAMPAIGN_DAILY_LIMIT, dayStartIn } from "../shared/email-campaigns";
 import { deliverMail } from "./email-onboarding";
+import { isMailboxKind, mailboxMissing, mailboxOf, mailboxPreset, type MailboxKind } from "../shared/mailbox";
 import type { Db } from "./lead-pipeline";
 
 /* ---------------------------------------------------------------- Domain-Check (SPF/DKIM/DMARC) – nutzt die vorhandene Prüfung aus den E-Mail-Einstellungen */
@@ -61,20 +62,48 @@ export async function listSenders(db: Db, tenantId: number) {
   const mainEmail = settings?.fromEmail?.trim().toLowerCase() ?? null;
   const extraSent = extra.reduce((sum, row) => sum + (today.get(row.fromEmail.toLowerCase()) ?? 0), 0);
   const totalToday = Array.from(today.values()).reduce((sum, value) => sum + value, 0);
+  const mailboxView = (row: typeof mailSenders.$inferSelect) => isMailboxKind(row.mailboxKind) ? { kind: row.mailboxKind as MailboxKind, host: row.smtpHost ?? mailboxPreset(row.mailboxKind)?.host ?? "", port: row.smtpPort ?? mailboxPreset(row.mailboxKind)?.port ?? 587, secure: row.smtpSecure, user: row.smtpUser ?? "", hasPassword: Boolean(row.smtpPassword), ready: Boolean(mailboxOf(row)), missing: mailboxMissing(row), lastTestAt: row.lastTestAt, lastTestStatus: row.lastTestStatus, lastError: row.lastError } : null; // nie das Passwort
   return {
     main: mainEmail ? { fromEmail: mainEmail, fromName: settings?.fromName ?? null, sentToday: Math.max(0, totalToday - extraSent) } : null,
-    senders: extra.map((row) => ({ id: row.id, fromName: row.fromName, fromEmail: row.fromEmail, dailyLimit: row.dailyLimit, active: row.active, sentToday: today.get(row.fromEmail.toLowerCase()) ?? 0 })),
+    senders: extra.map((row) => ({ id: row.id, fromName: row.fromName, fromEmail: row.fromEmail, dailyLimit: row.dailyLimit, active: row.active, sentToday: today.get(row.fromEmail.toLowerCase()) ?? 0, mailbox: mailboxView(row) })),
   };
 }
-export async function saveSender(db: Db, tenantId: number, input: { id?: number | null; fromName?: string | null; fromEmail: string; dailyLimit?: number | null; active?: boolean | null }) {
+/** Postfach-Angaben einer Absender-Adresse: `kind` „keins“ entfernt das Postfach; leeres Passwort behält das gespeicherte. */
+export type MailboxInput = { kind: MailboxKind | "keins"; host?: string | null; port?: number | null; secure?: boolean | null; user?: string | null; password?: string | null };
+export async function saveSender(db: Db, tenantId: number, input: { id?: number | null; fromName?: string | null; fromEmail: string; dailyLimit?: number | null; active?: boolean | null; mailbox?: MailboxInput | null }) {
   const email = input.fromEmail.trim().toLowerCase(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw new Error("Bitte eine gültige Absender-Adresse angeben.");
   const limit = Math.max(1, Math.min(2000, Math.round(input.dailyLimit ?? 40)));
-  const values = { fromName: input.fromName?.trim() || null, fromEmail: email, dailyLimit: limit, ...(typeof input.active === "boolean" ? { active: input.active } : {}) };
+  const values: Partial<typeof mailSenders.$inferInsert> = { fromName: input.fromName?.trim() || null, fromEmail: email, dailyLimit: limit, ...(typeof input.active === "boolean" ? { active: input.active } : {}) };
+  if (input.mailbox) {
+    if (input.mailbox.kind === "keins") Object.assign(values, { mailboxKind: null, smtpHost: null, smtpPort: null, smtpSecure: false, smtpUser: null, smtpPassword: null, lastTestAt: null, lastTestStatus: null, lastError: null });
+    else {
+      const preset = mailboxPreset(input.mailbox.kind); if (!preset) throw new Error("Unbekannte Postfach-Art.");
+      const host = (input.mailbox.host ?? "").trim() || preset.host; if (!host) throw new Error("Bitte den Server des Postfachs angeben (z. B. smtp.ionos.de).");
+      const port = input.mailbox.port && input.mailbox.port > 0 && input.mailbox.port < 65536 ? Math.round(input.mailbox.port) : preset.port;
+      Object.assign(values, { mailboxKind: input.mailbox.kind, smtpHost: host.slice(0, 200), smtpPort: port, smtpSecure: typeof input.mailbox.secure === "boolean" ? input.mailbox.secure : port === 465, smtpUser: ((input.mailbox.user ?? "").trim() || email).slice(0, 320), lastTestAt: null, lastTestStatus: null, lastError: null, ...(input.mailbox.password ? { smtpPassword: input.mailbox.password } : {}) }); // Passwort leer = gespeichertes behalten
+    }
+  }
   if (input.id) { await db.update(mailSenders).set(values).where(and(eq(mailSenders.id, input.id), eq(mailSenders.tenantId, tenantId))); return { id: input.id }; }
   const existing = (await db.select({ id: mailSenders.id }).from(mailSenders).where(and(eq(mailSenders.tenantId, tenantId), eq(mailSenders.fromEmail, email))).limit(1))[0];
   if (existing) { await db.update(mailSenders).set(values).where(eq(mailSenders.id, existing.id)); return { id: existing.id }; }
-  const inserted = await db.insert(mailSenders).values({ tenantId, ...values, active: input.active ?? true });
+  const inserted = await db.insert(mailSenders).values({ tenantId, fromEmail: email, ...values, active: input.active ?? true });
   return { id: Number(inserted[0]?.insertId) || 0 };
+}
+/** Testmail über das eigene Postfach einer Absender-Adresse – an die Haupt-Adresse (oder eine angegebene). Ergebnis bleibt als Ampel gespeichert. */
+export async function testSender(db: Db, tenantId: number, input: { id: number; to?: string | null }) {
+  const row = (await db.select().from(mailSenders).where(and(eq(mailSenders.id, input.id), eq(mailSenders.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Absender-Adresse nicht gefunden.");
+  if (!isMailboxKind(row.mailboxKind)) throw new Error("Diese Adresse hat kein eigenes Postfach – sie sendet über den Anbieter aus den Einstellungen.");
+  const missing = mailboxMissing(row); if (missing.length) throw new Error(`Postfach unvollständig: ${missing.join(", ")} fehlt.`);
+  const settings = (await db.select({ fromEmail: mailSettings.fromEmail, imapUsername: mailSettings.imapUsername }).from(mailSettings).where(eq(mailSettings.tenantId, tenantId)).limit(1))[0] ?? null;
+  const target = (input.to ?? "").trim() || settings?.fromEmail?.trim() || row.fromEmail; if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) throw new Error("Bitte eine gültige Empfängeradresse angeben.");
+  const { senderTransportFor, noteSenderResult } = await import("./mail-settings");
+  const ready = await senderTransportFor(db, tenantId, row.id); if (!ready) throw new Error("Postfach unvollständig – bitte Server, Benutzer und Passwort prüfen.");
+  try {
+    await ready.transport.verify();
+    const result = await ready.transport.sendMail({ from: ready.from, to: target, replyTo: ready.replyTo, subject: `Testmail von ${row.fromEmail}`, text: `Das Postfach ${row.fromEmail} versendet. Diese Nachricht wurde aus Einstellungen → E-Mail-Versand → Absender-Adressen verschickt.`, html: `<p>Das Postfach <strong>${row.fromEmail}</strong> versendet.</p><p style="color:#6a7282;font-size:12px">Verschickt aus Tanesco Leads → Einstellungen → E-Mail-Versand → Absender-Adressen.</p>` });
+    await noteSenderResult(db, row.id, true);
+    return { ok: true as const, to: target, messageId: (result as { messageId?: string }).messageId ?? null };
+  } catch (error) { const message = error instanceof Error ? error.message.slice(0, 300) : "Versand fehlgeschlagen"; await noteSenderResult(db, row.id, false, message); throw new Error(`Testmail über ${row.fromEmail} fehlgeschlagen: ${message}`); }
 }
 export async function deleteSender(db: Db, tenantId: number, id: number) { await db.delete(mailSenders).where(and(eq(mailSenders.id, id), eq(mailSenders.tenantId, tenantId))); return { success: true as const }; }
 
@@ -82,7 +111,7 @@ async function sentTodayBySender(db: Db, tenantId: number, now = new Date()) {
   const rows = await db.select({ sender: emailCampaignEvents.sender, count: sql<number>`count(*)` }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), gte(emailCampaignEvents.createdAt, dayStartIn(now)))).groupBy(emailCampaignEvents.sender);
   return new Map(rows.map((row) => [String(row.sender ?? "").toLowerCase(), Number(row.count) || 0]));
 }
-export type SenderPool = { pool: Array<{ fromName: string | null; fromEmail: string; left: number | null }>; pick: (contactEmail: string) => { fromName: string | null; fromEmail: string } | null };
+export type SenderPool = { pool: Array<{ id: number | null; fromName: string | null; fromEmail: string; left: number | null; ownMailbox: boolean }>; pick: (contactEmail: string) => { id: number | null; fromName: string | null; fromEmail: string } | null };
 /**
  * Verteilung beim Versand: jeder Kontakt bekommt fest „seine“ Adresse (gleichmäßig verteilt). Ist deren Tagesbudget
  * aufgebraucht, übernimmt die Haupt-Adresse. Ohne Zusatz-Adressen bleibt alles wie bisher (kein Eingriff).
@@ -92,15 +121,16 @@ export async function senderPoolFor(db: Db, tenantId: number): Promise<SenderPoo
   const active = senders.filter((row) => row.active);
   if (!active.length || !main) return null;
   const budgets = new Map(active.map((row) => [row.fromEmail, Math.max(0, row.dailyLimit - row.sentToday)]));
-  const all = [{ fromName: main.fromName, fromEmail: main.fromEmail }, ...active.map((row) => ({ fromName: row.fromName, fromEmail: row.fromEmail }))];
+  const mainPick = { id: null as number | null, fromName: main.fromName, fromEmail: main.fromEmail };
+  const all = [mainPick, ...active.map((row) => ({ id: row.id as number | null, fromName: row.fromName, fromEmail: row.fromEmail }))];
   const hash = (text: string) => { let value = 0; for (const char of text.toLowerCase()) value = (value * 31 + char.charCodeAt(0)) >>> 0; return value; };
   return {
-    pool: [{ fromName: main.fromName, fromEmail: main.fromEmail, left: null }, ...active.map((row) => ({ fromName: row.fromName, fromEmail: row.fromEmail, left: budgets.get(row.fromEmail) ?? 0 }))],
+    pool: [{ id: null, fromName: main.fromName, fromEmail: main.fromEmail, left: null, ownMailbox: false }, ...active.map((row) => ({ id: row.id, fromName: row.fromName, fromEmail: row.fromEmail, left: budgets.get(row.fromEmail) ?? 0, ownMailbox: Boolean(row.mailbox?.ready) }))],
     pick: (contactEmail: string) => {
       const chosen = all[hash(contactEmail) % all.length];
       if (chosen.fromEmail === main.fromEmail) return chosen;
       const left = budgets.get(chosen.fromEmail) ?? 0;
-      if (left <= 0) return { fromName: main.fromName, fromEmail: main.fromEmail }; // Budget der Zusatz-Adresse für heute aufgebraucht → Haupt-Adresse
+      if (left <= 0) return mainPick; // Budget der Zusatz-Adresse für heute aufgebraucht → Haupt-Adresse
       budgets.set(chosen.fromEmail, left - 1);
       return chosen;
     },

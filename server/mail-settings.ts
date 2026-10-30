@@ -6,7 +6,9 @@
 import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { looksLikeAutoReplySubject } from "../shared/reply-ai";
 import dns from "node:dns/promises";
-import { emailCampaignEvents, emailCampaignRecipients, mailSettings, tenantSettings } from "../drizzle/schema";
+import { emailCampaignEvents, emailCampaignRecipients, mailSenders, mailSettings, tenantSettings } from "../drizzle/schema";
+import { mailboxOf } from "../shared/mailbox";
+import crypto from "node:crypto";
 import { normalizeSignature, renderSignatureHtml, renderSignatureText, type MailSignature, type SignatureContext } from "../shared/email-signature";
 import { COMPANY_FOOTER, TANESCO_LOGO_PATH } from "../shared/email-design";
 import type { Db } from "./lead-pipeline";
@@ -80,6 +82,30 @@ export async function transportFor(db: Db | null, tenantId: number | null) {
   }
   if (process.env.SMTP_URL) return { transport: nodemailer.createTransport({ url: process.env.SMTP_URL, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 } as never) as unknown as MailTransport, from: process.env.SMTP_FROM ?? "Tanesco Leads <no-reply@tanesco.digital>", replyTo: tenantRow ? (tenantRow.replyTo?.trim() || (tenantRow.imapEnabled && /@/.test(tenantRow.imapUsername ?? "") ? tenantRow.imapUsername!.trim() : undefined)) : undefined, source: "hosting" as const }; // auch beim Versand über den Hosting-Server: Antworten ins Abhol-Postfach
   return null;
+}
+/* ---------------------------------------------------------------- Eigenes Postfach je Absender-Adresse */
+const senderTransports = new Map<string, MailTransport>();
+export type SenderTransport = { transport: MailTransport; from: string; replyTo: string | undefined; senderId: number; fromEmail: string; mailbox: { kind: string; host: string; port: number; user: string } };
+/**
+ * Versand über das eigene Postfach einer Absender-Adresse (Einstellungen → E-Mail-Versand → Absender-Adressen → Postfach).
+ * `null`, wenn die Adresse kein (vollständiges) Postfach hat – dann gilt der Anbieter aus den Einstellungen.
+ * Antworten gehen an „Antwort an“ bzw. das Abhol-Postfach aus den Einstellungen, damit sie weiter auf der Plattform ankommen.
+ */
+export async function senderTransportFor(db: Db, tenantId: number, senderId: number): Promise<SenderTransport | null> {
+  const row = (await db.select().from(mailSenders).where(and(eq(mailSenders.id, senderId), eq(mailSenders.tenantId, tenantId))).limit(1))[0]; if (!row) return null;
+  const box = mailboxOf(row); if (!box) return null;
+  const nodemailer = await import("nodemailer");
+  const key = `${row.id}:${box.host}:${box.port}:${box.secure ? 1 : 0}:${box.user}:${crypto.createHash("sha1").update(box.password).digest("hex").slice(0, 16)}`;
+  let transport = senderTransports.get(key);
+  if (!transport) { transport = nodemailer.createTransport({ host: box.host, port: box.port, secure: box.secure, auth: { user: box.user, pass: box.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 }) as unknown as MailTransport; senderTransports.set(key, transport); if (senderTransports.size > 200) senderTransports.delete(senderTransports.keys().next().value!); }
+  const settings = (await db.select().from(mailSettings).where(eq(mailSettings.tenantId, tenantId)).limit(1))[0] ?? null;
+  const replyTo = settings ? (replyToFor(settings) ?? settings.fromEmail?.trim() ?? undefined) : undefined;
+  const from = row.fromName ? `"${row.fromName.replace(/"/g, "")}" <${row.fromEmail}>` : row.fromEmail;
+  return { transport, from, replyTo: replyTo && replyTo.toLowerCase() !== row.fromEmail.toLowerCase() ? replyTo : undefined, senderId: row.id, fromEmail: row.fromEmail, mailbox: { kind: box.kind, host: box.host, port: box.port, user: box.user } };
+}
+/** Ergebnis des letzten Versands/Tests am Postfach merken – die Ampel in den Einstellungen zeigt es. */
+export async function noteSenderResult(db: Db, senderId: number, ok: boolean, error?: string | null) {
+  await db.update(mailSenders).set({ lastTestAt: new Date(), lastTestStatus: ok ? "ok" : "fehler", lastError: ok ? null : (error ?? "Versand fehlgeschlagen").slice(0, 300) }).where(eq(mailSenders.id, senderId)).catch(() => null);
 }
 /** Ist ein E-Mail-Versand eingerichtet? `simulated`: ohne Versand wird nur beim Entwickeln/Testen simuliert – in der echten App geht dann nichts raus. */
 export async function mailReadyFor(db: Db, tenantId: number): Promise<{ ready: boolean; simulated: boolean }> {

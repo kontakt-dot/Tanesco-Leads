@@ -16,7 +16,7 @@ import { and, asc, desc, eq, inArray, like, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
-import { undoLog, tenants, leadCategories, categoryFields, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineStageConfigs, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings } from "../drizzle/schema";
+import { undoLog, tenants, leadCategories, categoryFields, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineStageConfigs, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings, mailSenders } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
@@ -2778,6 +2778,26 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     const senderEvents = await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")));
     expect(senderEvents).toHaveLength(2); expect(senderEvents.every((event) => event.sender && ["vertrieb@tanesco-test.example", "zweite@tanesco-zwei.example"].includes(event.sender))).toBe(true);
+    // Eigenes Postfach je Absender-Adresse: speichern (Passwort bleibt verborgen, leer lassen behält es), Ampel, Testmail über das Postfach, Versand über das Postfach, „keins“ entfernt es
+    const boxed = await owner.leadops.saveMailSender({ id: sender.id, fromEmail: "zweite@tanesco-zwei.example", fromName: "Tanesco Zwei", dailyLimit: 2, mailbox: { kind: "google", user: "zweite@tanesco-zwei.example", password: "app-passwort-123" } });
+    expect(boxed.id).toBe(sender.id);
+    let row = (await owner.leadops.listMailSenders()).senders.find((item) => item.id === sender.id)!;
+    expect(row.mailbox).toMatchObject({ kind: "google", host: "smtp.gmail.com", port: 465, secure: true, user: "zweite@tanesco-zwei.example", hasPassword: true, ready: true, missing: [], lastTestStatus: null }); expect(JSON.stringify(row)).not.toContain("app-passwort-123");
+    expect((await db.select().from(mailSenders).where(eq(mailSenders.id, sender.id)))[0]).toMatchObject({ mailboxKind: "google", smtpHost: "smtp.gmail.com", smtpPort: 465, smtpSecure: true, smtpPassword: "app-passwort-123" });
+    await owner.leadops.saveMailSender({ id: sender.id, fromEmail: "zweite@tanesco-zwei.example", fromName: "Tanesco Zwei", dailyLimit: 3, mailbox: { kind: "smtp", host: "127.0.0.1", port: 1, secure: false, user: "zweite@tanesco-zwei.example", password: "" } }); // Passwort leer = behalten; Server ohne Postfach dahinter (Port 1)
+    row = (await owner.leadops.listMailSenders()).senders.find((item) => item.id === sender.id)!; expect(row.mailbox).toMatchObject({ kind: "smtp", host: "127.0.0.1", port: 1, hasPassword: true, ready: true }); expect(row.dailyLimit).toBe(3);
+    const boxedPool = await health.senderPoolFor(db, S.tenantId as number); expect(boxedPool!.pool.find((item) => item.id === sender.id)).toMatchObject({ ownMailbox: true }); expect(boxedPool!.pool[0]).toMatchObject({ id: null, ownMailbox: false });
+    await expect(owner.leadops.testMailSender({ id: sender.id })).rejects.toThrow(/Testmail über zweite@tanesco-zwei.example fehlgeschlagen/); // kein Postfach erreichbar → Fehler steht als Ampel
+    row = (await owner.leadops.listMailSenders()).senders.find((item) => item.id === sender.id)!; expect(row.mailbox).toMatchObject({ lastTestStatus: "fehler" }); expect(row.mailbox!.lastError).toBeTruthy(); expect(row.mailbox!.lastTestAt).toBeTruthy();
+    // Versand: eine Mail über das (kaputte) Postfach schlägt fehl und nennt das Postfach – nie still über den Anbieter aus den Einstellungen
+    const { deliverMail } = await import("./email-onboarding");
+    const viaBox = await deliverMail({ to: "ziel@sender-e2e.example", subject: "Über das Postfach", html: "<p>Hallo</p>" }, { db, tenantId: S.tenantId as number, from: { name: "Tanesco Zwei", email: "zweite@tanesco-zwei.example", senderId: sender.id } });
+    expect(viaBox).toMatchObject({ ok: false, status: "fehlgeschlagen", via: "zweite@tanesco-zwei.example" }); expect(viaBox.note).toContain("Postfach zweite@tanesco-zwei.example (127.0.0.1)");
+    const viaMain = await deliverMail({ to: "ziel@sender-e2e.example", subject: "Über den Anbieter", html: "<p>Hallo</p>" }, { db, tenantId: S.tenantId as number, from: { name: "Tanesco Zwei", email: "zweite@tanesco-zwei.example", senderId: null } });
+    expect(viaMain.ok).toBe(true); expect(viaMain.via).toBeUndefined(); // ohne Postfach: wie bisher über den Anbieter (hier simuliert)
+    await owner.leadops.saveMailSender({ id: sender.id, fromEmail: "zweite@tanesco-zwei.example", fromName: "Tanesco Zwei", dailyLimit: 2, mailbox: { kind: "keins" } });
+    row = (await owner.leadops.listMailSenders()).senders.find((item) => item.id === sender.id)!; expect(row.mailbox).toBeNull(); expect((await db.select().from(mailSenders).where(eq(mailSenders.id, sender.id)))[0].smtpPassword).toBeNull();
+    await expect(owner.leadops.testMailSender({ id: sender.id })).rejects.toThrow(/kein eigenes Postfach/);
     // Warmlaufen: Limit folgt der Rampe
     await owner.leadops.saveMailSettings({ provider: "smtp", campaignDailyLimit: 100, warmupEnabled: true } as never);
     const status = await owner.leadops.campaignDailyStatus(); expect(status.warmup).not.toBeNull(); expect(status.limit).toBe(40); expect((status as { configured?: number }).configured).toBe(100); // Woche 1

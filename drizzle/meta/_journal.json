@@ -673,6 +673,13 @@
       "when": 1794100000000,
       "tag": "0095_kampagnen_kennung_laenger",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "5",
+      "when": 1794200000000,
+      "tag": "0096_absender_postfach",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,7 @@
 import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 import { emailEvents, emailTemplates, memberships, tenants, users } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
-import { transportFor } from "./mail-settings";
+import { noteSenderResult, senderTransportFor, transportFor } from "./mail-settings";
 
 export type OnboardingKind = "willkommen" | "erinnerung_1" | "erinnerung_2" | "erinnerung_3";
 export const ONBOARDING_KINDS: OnboardingKind[] = ["willkommen", "erinnerung_1", "erinnerung_2", "erinnerung_3"];
@@ -89,14 +89,22 @@ export async function sendEvent(db: Db, tenantId: number, eventId: number, conte
 
 /** Versand über die Mandanten-Einstellungen (Einstellungen → E-Mail-Versand), sonst SMTP_URL vom Hosting; ohne beides: simuliert. */
 export type MailAttachment = { filename: string; content: string; contentType?: string; encoding?: "base64" };
-export async function deliverMail(mail: { to: string; subject: string; html: string; text?: string; attachments?: MailAttachment[] }, options: { db?: Db | null; tenantId?: number | null; from?: { name?: string | null; email: string } | null } = {}): Promise<{ ok: boolean; status: "gesendet" | "simuliert" | "fehlgeschlagen"; messageId?: string; note?: string; notConfigured?: boolean }> {
+export async function deliverMail(mail: { to: string; subject: string; html: string; text?: string; attachments?: MailAttachment[] }, options: { db?: Db | null; tenantId?: number | null; from?: { name?: string | null; email: string; senderId?: number | null } | null } = {}): Promise<{ ok: boolean; status: "gesendet" | "simuliert" | "fehlgeschlagen"; messageId?: string; note?: string; notConfigured?: boolean; via?: string }> {
+  const text = mail.text ?? mail.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const attachments = mail.attachments?.length ? mail.attachments.map((item) => ({ filename: item.filename, content: item.content, contentType: item.contentType, ...(item.encoding ? { encoding: item.encoding } : {}) })) : undefined;
+  // Absender-Adresse mit eigenem Postfach: die Mail geht über dieses Postfach raus (nie über den Anbieter aus den Einstellungen – sonst stimmt die Absender-Domain nicht)
+  const own = options.from?.senderId && options.db && options.tenantId ? await senderTransportFor(options.db, options.tenantId, options.from.senderId).catch(() => null) : null;
+  if (own) {
+    try { const result = await own.transport.sendMail({ from: own.from, replyTo: own.replyTo, to: mail.to, subject: mail.subject, html: mail.html, text, ...(attachments ? { attachments } : {}) }); await noteSenderResult(options.db!, own.senderId, true); return { ok: true, status: "gesendet", messageId: result.messageId, via: own.fromEmail }; }
+    catch (error) { const message = error instanceof Error ? error.message.slice(0, 220) : "Versand fehlgeschlagen"; if (process.env.MAIL_DEBUG) console.error("[MAIL_DEBUG]", error); await noteSenderResult(options.db!, own.senderId, false, message); return { ok: false, status: "fehlgeschlagen", note: `Postfach ${own.fromEmail} (${own.mailbox.host}): ${message}`, via: own.fromEmail }; }
+  }
   const ready = await transportFor(options.db ?? null, options.tenantId ?? null).catch(() => null);
   // Ohne eingerichteten Versand: in der echten App NIE so tun, als wäre gesendet worden (früher stand dann trotzdem „gesendet“).
   // Nur beim Entwickeln und in Tests wird simuliert (EMAIL_SIMULATE=1 erzwingt es auch sonst).
   if (!ready) return process.env.NODE_ENV === "production" && process.env.EMAIL_SIMULATE !== "1" ? { ok: false, status: "fehlgeschlagen", notConfigured: true, note: "Kein E-Mail-Versand eingerichtet (Einstellungen → E-Mail-Versand) – nichts gesendet" } : { ok: true, status: "simuliert", note: "Kein E-Mail-Versand eingerichtet (Einstellungen → E-Mail-Versand) – Versand simuliert" };
   try {
     const from = options.from?.email ? (options.from.name ? `"${options.from.name.replace(/"/g, "")}" <${options.from.email}>` : options.from.email) : ready.from; /* zusätzliche Absender-Adresse (muss beim Mail-Anbieter freigegeben sein) */
-    const result = await ready.transport.sendMail({ from, replyTo: ready.replyTo, to: mail.to, subject: mail.subject, html: mail.html, text: mail.text ?? mail.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(), ...(mail.attachments?.length ? { attachments: mail.attachments.map((item) => ({ filename: item.filename, content: item.content, contentType: item.contentType, ...(item.encoding ? { encoding: item.encoding } : {}) })) } : {}) });
+    const result = await ready.transport.sendMail({ from, replyTo: ready.replyTo, to: mail.to, subject: mail.subject, html: mail.html, text, ...(attachments ? { attachments } : {}) });
     return { ok: true, status: "gesendet", messageId: result.messageId };
   } catch (error) { if (process.env.MAIL_DEBUG) console.error("[MAIL_DEBUG]", error); return { ok: false, status: "fehlgeschlagen", note: error instanceof Error ? error.message.slice(0, 220) : "Versand fehlgeschlagen" }; }
 }

@@ -1761,3 +1761,12 @@ html:not(.dark) .xl-archived { color: #667085 !important; }
 html:not(.dark) .cat-pick-head, html:not(.dark) .cat-pick-empty { color: #667085 !important; }
 html:not(.dark) .cat-pick-item.is-current, html:not(.dark) .cat-pick-item .cat-pick-check { color: #bc001d !important; }
 html:not(.dark) .restore-inline-head h2 { color: #101828 !important; } html:not(.dark) .restore-intro { color: #475467 !important; } html:not(.dark) .restore-inline .restore-foot { border-top-color: #eef0f3 !important; }
+
+/* Absender-Adressen: eigenes Postfach */
+html:not(.dark) .mh-mailbox { border-color: #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .mh-field { color: #667085 !important; }
+html:not(.dark) .mh-mailbox-hint { color: #475467 !important; }
+html:not(.dark) .mh-sender-box.is-ok { color: #047857 !important; }
+html:not(.dark) .mh-sender-box.is-warn { color: #92400e !important; }
+html:not(.dark) .mh-sender-box.is-bad { color: #bc001d !important; }
+html:not(.dark) .mh-mini.is-accent { border-color: #fecdd3 !important; color: #bc001d !important; }

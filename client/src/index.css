@@ -3491,8 +3491,18 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .mh-sender.is-off{opacity:.6}
 .mh-sender strong{font-size:13px}
 .mh-sender small{color:#9ca0ba}
-.mh-sender-tools{margin-left:auto;display:flex;gap:6px}
+.mh-sender-tools{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px}
 .mh-sender-tools .mh-mini{margin-top:0}
+.mh-sender-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mh-sender-box{font-size:11.5px}.mh-sender-box.is-ok{color:#8ff0c6}.mh-sender-box.is-warn{color:#fde68a}.mh-sender-box.is-bad{color:#fda4af}
+.mh-mini.is-accent{border-color:rgba(129,120,255,.5);color:#c4bfff}
+/* Eigenes Postfach je Absender-Adresse (aufklappbar) */
+.mh-mailbox{flex-basis:100%;margin-top:6px;padding:10px 12px;border-radius:10px;border:1px dashed rgba(255,255,255,.14);background:rgba(255,255,255,.025);display:grid;gap:8px}
+.mh-mailbox-grid{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.mh-field{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:#9ca0ba}.mh-field>span{font-weight:600}.mh-field.is-check{flex-direction:row;align-items:center;gap:8px;padding-top:18px}
+.mh-field .lead-action-select{height:40px}
+.mh-mailbox-hint{margin:0;font-size:11.5px;line-height:1.45;color:#a5a3c4}
+.mh-mailbox-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 /* Freigeben am Handy: eine Spalte, große Knöpfe, Vorschau kleiner */
 @media (max-width:760px){
   .rv-panel{padding:10px}
