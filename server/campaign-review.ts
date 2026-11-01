@@ -539,10 +539,10 @@ export async function fixQuestionCounts(db: Db): Promise<{ campaigns: number; dr
     if (tree) { await db.update(emailCampaigns).set({ tree, updatedAt: campaign.updatedAt }).where(eq(emailCampaigns.id, campaign.id)); fixedCampaigns += 1; } // Reihenfolge der Kampagnen bleibt
     const rows = await db.select({ id: emailCampaignRecipients.id, sentCount: emailCampaignRecipients.sentCount, draftSource: emailCampaignRecipients.draftSource, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, draftOptions: emailCampaignRecipients.draftOptions }).from(emailCampaignRecipients)
       .where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), isNotNull(emailCampaignRecipients.draftState)));
-    // Test-Angebot je Entwurf: die Zahl der Sparte – Follow-ups an Kontakte, denen schon mehr versprochen wurde, behalten diese Zahl
+    // Test-Angebot je Entwurf: Erst-E-Mail die Zahl der Sparte (PV & WP 20, sonst 10), Follow-ups dieselbe Zahl wie die E-Mail davor
     const followIds = rows.filter((row) => row.sentCount > 0).map((row) => row.id);
     const sent = followIds.length ? await db.select({ recipientId: emailCampaignEvents.recipientId, body: emailCampaignEvents.body, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.kind, "gesendet"), inArray(emailCampaignEvents.recipientId, followIds))) : [];
-    const offerOf = (row: { id: number; sentCount: number }) => testOfferFor(sparte, row.sentCount > 0 ? promisedTestLeads(sent.filter((event) => event.recipientId === row.id)) : null); // PV & WP 20, sonst 10 – ein höheres Versprechen bleibt
+    const offerOf = (row: { id: number; sentCount: number }) => testOfferFor(sparte, row.sentCount > 0 ? promisedTestLeads(sent.filter((event) => event.recipientId === row.id)) : null); // Erst-E-Mail: Zahl der Sparte, Follow-up: dieselbe Zahl wie davor
     // nie Meta & Co. („online“), kurze Absätze, Zahl der Fragen mit Beispielen ohne Klammern und der Logik-Kette, Test-Angebot mit der richtigen Zahl
     const refresh = (text: string, testLeads: number | null) => shortParagraphs(withQuestionTopics(fixQuestionCount(cleanDraftText(text, testLeads), sparte), sparte));
     const subjectWith = (subject: string, testLeads: number | null) => (testLeads === null ? dropAdPlatforms(subject) : withTestOffer(dropAdPlatforms(subject), testLeads));

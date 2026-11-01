@@ -515,11 +515,11 @@ export function testLeadsFor(sparte?: { key?: string | null } | null): number {
   return !key || key === "pv-wp" || key === "photovoltaik" || key === "waermepumpe" ? TEST_LEADS_ENERGY : TEST_LEADS;
 }
 /**
- * Welche Zahl gilt für diesen Kontakt? Die der Sparte – außer ihm wurden schon mehr versprochen (ein Versprechen bleibt). Wurden ihm
- * früher weniger genannt (z. B. 10 vor der Umstellung bei PV & WP), bekommt er jetzt die höhere Zahl der Sparte.
+ * Welche Zahl gilt für diesen Kontakt? Hat er schon eine E-Mail mit Test-Angebot bekommen, genau diese Zahl wieder – ein Kontakt liest
+ * in allen E-Mails dieselbe Zahl (wer 10 bekam, bekommt wieder 10; wer 20 bekam, wieder 20). Neue Kontakte: die Zahl der Sparte.
  */
 export function testOfferFor(sparte: { key?: string | null } | null | undefined, promised: number | null | undefined): number {
-  const own = testLeadsFor(sparte); return typeof promised === "number" && promised > own ? promised : own;
+  return typeof promised === "number" && promised > 0 ? promised : testLeadsFor(sparte);
 }
 /** Seit wann die Vorlagen 10 statt 20 sagen – ältere E-Mails ohne gespeicherten Text versprachen noch 20. */
 export const TEST_OFFER_CHANGED_AT = new Date("2026-10-29T11:50:00Z");

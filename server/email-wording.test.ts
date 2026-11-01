@@ -59,8 +59,8 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
     expect(TEST_LEADS).toBe(10); expect(TEST_LEADS_ENERGY).toBe(20);
     for (const [name, count] of [["Photovoltaik & Wärmepumpe", 20], ["Photovoltaik", 20], ["Wärmepumpe", 20], ["Hausnotruf", 10], ["Treppenlift", 10], ["Alarmanlage", 10], ["Hörgeräte", 10]] as const) expect(testLeadsFor(resolveSparte(name))).toBe(count);
     expect(testLeadsFor(null)).toBe(20); // ohne Sparte = Standard Photovoltaik & Wärmepumpe
-    // ein höheres Versprechen von früher bleibt, ein niedrigeres wird auf die Zahl der Sparte angehoben
-    expect(testOfferFor(resolveSparte("Hausnotruf"), 20)).toBe(20); expect(testOfferFor(resolveSparte("Hausnotruf"), null)).toBe(10); expect(testOfferFor(resolveSparte("Photovoltaik"), 10)).toBe(20); expect(testOfferFor(resolveSparte("Wärmepumpe"), 30)).toBe(30);
+    // ein Kontakt liest in allen E-Mails dieselbe Zahl: wer 10 bekam, bekommt wieder 10, wer 20 bekam, wieder 20 – neue Kontakte die Zahl der Sparte
+    expect(testOfferFor(resolveSparte("Hausnotruf"), 20)).toBe(20); expect(testOfferFor(resolveSparte("Hausnotruf"), null)).toBe(10); expect(testOfferFor(resolveSparte("Photovoltaik"), 10)).toBe(10); expect(testOfferFor(resolveSparte("Photovoltaik"), null)).toBe(20); expect(testOfferFor(resolveSparte("Wärmepumpe"), 30)).toBe(30); expect(testOfferFor(null, 10)).toBe(10);
     const starter = JSON.stringify(starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") })); expect(starter).toContain("20 Test-Leads"); expect(starter).not.toMatch(/\b10 Test-Leads/); // feste Vorlagen (Standard PV & WP): 20
     expect(thirdPartyTemplate({ firma: "Muster GmbH" }, resolveSparte("Hausnotruf")!).text).toContain("10 Test-Leads kostenlos");
     expect(thirdPartyTemplate({ firma: "Muster GmbH" }, resolveSparte("Photovoltaik & Wärmepumpe")!).text).toContain("20 Test-Leads kostenlos"); expect(thirdPartyTemplate({ firma: "Muster GmbH" }).text).toContain("20 Test-Leads kostenlos");

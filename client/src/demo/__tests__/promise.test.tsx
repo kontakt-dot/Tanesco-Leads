@@ -63,7 +63,7 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
     const second = sentOf(paul().id)[1]; expect(second.bodySource).toBe("vorlage"); expect(String(second.body)).toContain("20 Test-Leads"); expect(String(second.body)).not.toMatch(/\b10 Test-Leads/);
   });
 
-  it("PV & WP: 20 Test-Leads in KI-Entwürfen, Vorlagen und Follow-ups – auch bei Kontakten, denen in der 10er-Zeit 10 genannt wurden; ein eigener Text behält seine Zahl, ein höheres Versprechen bleibt", async () => {
+  it("PV & WP: neue Kontakte bekommen 20 Test-Leads (KI-Entwurf, Vorlage); jedes Follow-up nennt dieselbe Zahl wie die E-Mail davor (20 bleibt 20, 10 aus der 10er-Zeit bleibt 10, 30 bleibt 30); ein eigener Text behält seine Zahl", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design"); const { TEST_OFFER_CHANGED_AT } = await import("../../../../shared/email-campaigns");
     await call("leadops.importColdList", { listName: "Energie-Demo", rows: [{ firstName: "Erik", lastName: "Energie", company: "Energie Solar", email: "erik@energie-demo.example" }, { firstName: "Hanna", lastName: "Hand", company: "Hand Wärme", email: "hanna@energie-demo.example" }, { firstName: "Frida", lastName: "Früher", company: "Früher Solar", email: "frida@energie-demo.example" }] });
     const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
@@ -80,18 +80,18 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
     await call("leadops.runEmailCampaigns");
     const [erik, hanna, frida1] = rows();
     expect(String(erik.draftText)).toContain("20 Test-Leads"); expect(String(erik.draftText)).not.toMatch(/\b10 Test-Leads/); // KI-Entwurf: 20
-    expect(frida1).toMatchObject({ draftNodeId: "m2", draftState: "entwurf" }); expect(String(frida1.draftText)).toContain("20 Test-Leads"); expect(String(frida1.draftText)).not.toMatch(/\b10 Test-Leads/); // nach 10 jetzt 20
+    expect(frida1).toMatchObject({ draftNodeId: "m2", draftState: "entwurf" }); expect(String(frida1.draftText)).toContain("10 Test-Leads"); expect(String(frida1.draftText)).not.toMatch(/\b20 Test-Leads/); // ihr wurden 10 genannt → wieder 10
     const queue = await call("leadops.campaignReviewQueue", { campaignId: saved.id });
     expect(queue.items.find((item: any) => item.id === erik.id)).toMatchObject({ step: 1, followUp: false, testLeads: 20 });
-    expect(queue.items.find((item: any) => item.id === frida1.id)).toMatchObject({ step: 2, followUp: true, testLeads: 20, promisedBefore: 10 });
-    // Erik: KI-Entwurf freigeben → geht mit 20 raus; Hanna: eigener Text mit 30 → bleibt 30; Frida: Follow-up mit 20
+    expect(queue.items.find((item: any) => item.id === frida1.id)).toMatchObject({ step: 2, followUp: true, testLeads: 10, promisedBefore: 10 });
+    // Erik: KI-Entwurf freigeben → geht mit 20 raus; Hanna: eigener Text mit 30 → bleibt 30; Frida: Follow-up wieder mit 10
     await call("leadops.saveCampaignDraft", { recipientId: erik.id, subject: String(erik.draftSubject), text: String(erik.draftText), approve: true });
     await call("leadops.saveCampaignDraft", { recipientId: hanna.id, subject: "Persönlich für Hand Wärme", text: "Sehr geehrte Frau Hand,\n\nzum Kennenlernen stellen wir Ihnen 30 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
     await call("leadops.saveCampaignDraft", { recipientId: frida1.id, subject: String(frida1.draftSubject), text: String(frida1.draftText), approve: true });
     await call("leadops.runEmailCampaigns");
     const sentOf = (recipientId: number) => getStore().tables.emailCampaignEvents.filter((event) => event.recipientId === recipientId && event.kind === "gesendet").sort((a, b) => a.id - b.id);
-    expect(String(sentOf(erik.id)[0].body)).toContain("20 Test-Leads"); expect(String(sentOf(hanna.id)[0].body)).toContain("30 Test-Leads"); const fridaFollow = sentOf(frida1.id).find((event) => event.nodeId === "m2"); expect(String(fridaFollow?.body)).toContain("20 Test-Leads"); expect(String(fridaFollow?.body)).not.toMatch(/\b10 Test-Leads/);
-    // Follow-ups: Erik 20, Hanna behält ihre 30 (ein höheres Versprechen bleibt)
+    expect(String(sentOf(erik.id)[0].body)).toContain("20 Test-Leads"); expect(String(sentOf(hanna.id)[0].body)).toContain("30 Test-Leads"); const fridaFollow = sentOf(frida1.id).find((event) => event.nodeId === "m2"); expect(String(fridaFollow?.body)).toContain("10 Test-Leads"); expect(String(fridaFollow?.body)).not.toMatch(/\b20 Test-Leads/);
+    // Follow-ups: Erik wieder 20, Hanna wieder ihre 30 – immer dieselbe Zahl wie davor
     for (const row of rows()) row.nextActionAt = new Date(Date.now() - 1000);
     await call("leadops.runEmailCampaigns");
     const [erik2, hanna2] = rows();
