@@ -493,3 +493,26 @@ describe("Reiter „Verlauf“ (Chat-Build)", () => {
     expect(contacts.container.querySelector(".email-leads-restore")).toBeNull(); expect(contacts.container.textContent).not.toContain("Früheren Stand wiederherstellen");
   });
 });
+
+describe("KI schreibt nach dem Start alle Entwürfe vor – auch außerhalb der Versandzeit (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Starten mit „KI mit Freigabe“: alle Entwürfe sofort da, obwohl gerade keine Versandzeit ist; ohne Freigabe geht nichts raus; pausiert = kein Vorschreiben", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Nacht-Demo", rows: Array.from({ length: 6 }, (_, index) => ({ firstName: `Nora${index}`, lastName: "Nacht", company: `Nacht Solar ${index}`, email: `nora${index}@nacht-demo.example` })) });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 24, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const day = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" })).getDay();
+    const closed = { enabled: true, weekdays: [(day + 3) % 7], from: "07:30", to: "08:00", timezone: "Europe/Berlin" }; // heute keine Versandzeit
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Nacht-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: closed, abSplit: 50, audience: { source: "liste", listName: "Nacht-Demo" }, tree, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const rows = getStore().tables.emailCampaignRecipients.filter((item) => item.campaignId === saved.id);
+    expect(rows).toHaveLength(6); expect(rows.every((row) => row.draftState === "entwurf" && row.draftNodeId === "m1" && String(row.draftText).length > 40)).toBe(true);
+    expect(getStore().tables.emailCampaignEvents.filter((event) => event.campaignId === saved.id && event.kind === "gesendet")).toHaveLength(0); // ohne Freigabe geht nichts raus
+    const listed = (await call("leadops.listEmailCampaigns")).find((row: any) => row.id === saved.id); expect(listed.review).toMatchObject({ zurFreigabe: 6, ohneEntwurf: 0, vorschreiben: true });
+    const queue = await call("leadops.campaignReviewQueue", { campaignId: saved.id }); expect(queue.prewriting).toBe(true); expect(queue.counts).toMatchObject({ offen: 0, entwurf: 6 });
+    // ein Entwurf verworfen → der nächste Lauf schreibt ihn wieder vor, auch außerhalb der Versandzeit
+    Object.assign(rows[0], { draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null });
+    await call("leadops.runEmailCampaigns"); expect(getStore().tables.emailCampaignRecipients.find((item) => item.id === rows[0].id)).toMatchObject({ draftState: "entwurf", draftNodeId: "m1" });
+    await call("leadops.setEmailCampaignStatus", { id: saved.id, status: "pausiert" }); expect((await call("leadops.campaignReviewQueue", { campaignId: saved.id })).prewriting).toBe(false); // pausiert: die KI schreibt nichts vor
+  });
+});

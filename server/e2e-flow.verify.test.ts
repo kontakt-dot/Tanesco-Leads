@@ -2543,7 +2543,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
     expect(recipients.every((row) => row.sentCount === 0)).toBe(true); // ohne Freigabe geht nichts raus
-    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0 });
+    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0, ohneEntwurf: recipients.filter((row) => !row.draftState).length, vorschreiben: false }); /* ohne KI-Schlüssel schreibt die KI nichts vor */
     const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 }); // der Versand-Lauf hat die Entwürfe schon geschrieben (Vorlage, ohne KI-Schlüssel) und wartet auf Freigabe
     const rita = queue.items.find((item) => item.email === "rita@review-e2e.example")!; expect(rita.city).toBe("Kassel");
     const drafts = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [rita.id] }); // ohne KI-Schlüssel: Vorlage mit den Daten des Kontakts
@@ -3918,6 +3918,43 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const freshSms = await owner.leadops.sendOptInSms({ publicId: rosa.publicId, buyerName: "Müller Solartechnik, Frankfurt" }); const publicPage = await fetch(`${apiBase}/opt-in/${freshSms.link.split("/").pop()}`); const pageHtml = await publicPage.text();
     expect(pageHtml).toContain("https://www.tanescodigital.de/datenschutz"); expect(pageHtml).toContain("Datenschutzerklärung"); expect(pageHtml).toContain("mailto:kontakt@tanescodigital.de"); expect(pageHtml).toContain("telefonisch und per E-Mail kontaktieren");
     const revokedPage = await fetch(`${apiBase}/opt-in/${token}`); expect(await revokedPage.text()).toContain("Datenschutzerklärung"); // auch nach Widerruf bleibt der Hinweis stehen
+  }, 60000);
+
+  it("63x. Entwürfe vorschreiben: nach dem Start schreibt die KI im Hintergrund alle Entwürfe – auch außerhalb der Versandzeit, nie doppelt, ohne Freigabe geht nichts raus", async () => {
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key"; const plan = globalThis as { __draftPlan?: string[] };
+    try {
+      plan.__draftPlan = [];
+      const { starterBlocks } = await import("../shared/email-design"); const { prewriteDrafts, prewriteTick, withDraftLock, isDrafting } = await import("./campaign-review");
+      await owner.leadops.importColdList({ listName: "Vorab-KI", toPipeline: false, rows: Array.from({ length: 7 }, (_, index) => ({ firstName: `Nora${index}`, lastName: "Nacht", company: `Solar Nacht ${index} GmbH`, city: "Kassel", email: `nora.nacht${index}.vorab@gmx.de` })) });
+      const starter = await owner.leadops.emailCampaignStarter();
+      const tree = { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Mehr Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 48, next: "a2" }, { id: "a2", type: "send" as const, label: "Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+      const day = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" })).getDay();
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Vorab-KI", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Vorab-KI" }, tree, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: true, weekdays: [(day + 3) % 7], from: "07:30", to: "08:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: campaign.id });
+      const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+      const start = await rows(); expect(start).toHaveLength(7);
+      const listed = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(listed.review).toMatchObject({ vorschreiben: true }); expect(listed.review!.ohneEntwurf).toBe(start.filter((row) => !row.draftState).length); expect(listed.review!.ohneEntwurf).toBeGreaterThan(0);
+      // ein Empfänger ist gerade „in Arbeit“ (z. B. im Versandlauf) – das Vorschreiben lässt ihn aus, nie doppelt
+      const busyId = start.find((row) => !row.draftState)!.id;
+      const inner = await withDraftLock(busyId, async () => { expect(isDrafting(busyId)).toBe(true); expect(await withDraftLock(busyId, async () => "doppelt")).toBeNull(); return prewriteDrafts(db, { campaignId: campaign.id, max: 20 }); });
+      expect(inner).toMatchObject({ failed: 0, open: 1 }); expect(isDrafting(busyId)).toBe(false);
+      let current = await rows(); expect(current.filter((row) => !row.draftState).map((row) => row.id)).toEqual([busyId]);
+      // nächster Durchgang: der letzte; zwei Durchgänge gleichzeitig → einer wartet (null)
+      const [first, second] = await Promise.all([prewriteTick(db, { campaignId: campaign.id }), prewriteTick(db, { campaignId: campaign.id })]);
+      expect([first, second].filter((result) => result === null)).toHaveLength(1); expect((first ?? second)!).toMatchObject({ written: 1, open: 0 });
+      current = await rows();
+      expect(current.every((row) => row.draftState === "entwurf" && row.draftNodeId === "a1" && (row.draftSource === "ki" || row.draftSource === "kiweb") && (row.draftText ?? "").includes("Solar Nacht"))).toBe(true); // jeder Entwurf persönlich von der KI
+      expect(await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")))).toHaveLength(0); // ohne Freigabe geht nichts raus
+      expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }) as { prewriting?: boolean; counts: { offen: number } })).toMatchObject({ prewriting: true, counts: { offen: 0 } });
+      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toEqual({ written: 0, failed: 0, open: 0 }); // nichts mehr zu tun
+      // pausiert oder ohne KI-Schlüssel: kein Vorschreiben
+      await owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "pausiert" });
+      expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: false });
+      await owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "aktiv" }); delete process.env.ANTHROPIC_API_KEY;
+      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toEqual({ written: 0, failed: 0, open: 0 });
+      expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: false });
+      await owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "pausiert" });
+    } finally { plan.__draftPlan = []; if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
   }, 60000);
 
   it("63w. Listennamen: technische Namen werden beim Upload lesbar, bestehende Listen werden überall umbenannt (Kontakte, Upload-Verlauf, Schlagwort, Kampagnen-Zielgruppen)", async () => {

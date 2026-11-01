@@ -144,4 +144,20 @@ export function startEmailCampaignScheduler(intervalSeconds = Number(process.env
   setTimeout(() => void tick(), 15_000).unref?.(); // gleich nach dem Serverstart einmal – z. B. nach einem Update auf Railway
   return campaignTimer;
 }
+let prewriteTimer: ReturnType<typeof setInterval> | undefined;
+/**
+ * KI-Entwürfe vorschreiben (EMAIL_PREWRITE_TICK_SECONDS, Standard 60, 0 = aus): Ist eine Kampagne mit „KI mit Freigabe“ gestartet, schreibt die
+ * KI im Hintergrund alle fehlenden Entwürfe – auch nachts, am Wochenende und nach dem Tageslimit. Eigener Takt, damit der Versand nie darauf wartet.
+ */
+export function startDraftPrewriter(intervalSeconds = Number(process.env.EMAIL_PREWRITE_TICK_SECONDS ?? 60)) {
+  if (prewriteTimer || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return undefined;
+  const tick = async () => {
+    try { const db = await getDb(); if (!db) return; const { prewriteTick } = await import("./campaign-review"); const result = await prewriteTick(db);
+      if (result && (result.written || result.failed)) console.log(`[E-Mail-Kampagnen] Entwürfe vorgeschrieben: ${result.written}${result.failed ? ` (${result.failed} nicht geklappt – neuer Versuch in 30 Minuten)` : ""} – noch ${result.open} offen`); }
+    catch (error) { console.error("[E-Mail-Kampagnen] Entwürfe vorschreiben:", error instanceof Error ? error.message : error); }
+  };
+  prewriteTimer = setInterval(tick, intervalSeconds * 1000); prewriteTimer.unref?.();
+  setTimeout(() => void tick(), 40_000).unref?.(); // kurz nach dem Serverstart einmal
+  return prewriteTimer;
+}
 export function stopDeliveryScheduler() { if (timer) clearInterval(timer); timer = undefined; }

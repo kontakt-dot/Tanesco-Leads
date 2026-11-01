@@ -9,7 +9,7 @@ import { createContext } from "./context";
 import { registerStripeWebhook } from "../stripe";
 import { registerPublicApiRoutes } from "../publicApi";
 import { ensurePublicAppUrl, rememberPublicHost } from "../public-url";
-import { startDeliveryScheduler, startDialerScheduler, startEmailCampaignScheduler } from "../delivery-scheduler";
+import { startDeliveryScheduler, startDialerScheduler, startDraftPrewriter, startEmailCampaignScheduler } from "../delivery-scheduler";
 import { runIntegrationHealthChecks } from "../integration-health";
 import { registerFileRoutes } from "../storage";
 import { registerTelephonyRoutes } from "../telephony-routes";
@@ -48,6 +48,7 @@ async function startServer() {
   registerPublicApiRoutes(app);
   startDialerScheduler(); // Predictive-Dialer (DIALER_TICK_SECONDS, Standard 5, 0 = aus)
   startEmailCampaignScheduler(); // E-Mail-Kampagnen im Minutentakt (EMAIL_CAMPAIGN_TICK_SECONDS, Standard 60)
+  startDraftPrewriter(); // KI schreibt nach dem Start alle Entwürfe vor – auch nachts (EMAIL_PREWRITE_TICK_SECONDS, Standard 60)
   // Technische Listennamen („PV_WP_…_neu“) einmalig lesbar machen – idempotent, bewusst vergebene Namen bleiben
   setTimeout(() => { void (async () => { try { const { getDb } = await import("../db"); const db = await getDb(); if (!db) return; const { tidyListNames } = await import("../sales-outreach"); const changes = await tidyListNames(db); if (changes.length) console.log(`[Listen] ${changes.length} Listennamen aufgeräumt`); } catch (error) { console.error("[Listen] Aufräumen fehlgeschlagen:", error instanceof Error ? error.message : error); } })(); }, 5_000);
   startDeliveryScheduler(); // Lieferintervalle + Wiederholungen (DELIVERY_SCHEDULER_INTERVAL_MINUTES, Standard 15, 0 = aus)

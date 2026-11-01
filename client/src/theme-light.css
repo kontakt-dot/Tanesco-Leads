@@ -1570,6 +1570,12 @@ html:not(.dark) .cl-f small.is-wait { color: #4b5568 !important; }
 html:not(.dark) .cl-f i { background: #111318 !important; }
 html:not(.dark) .cl-seg { background: #f8fafb !important; }
 html:not(.dark) .cl-seg em.is-wait { background: #111318 !important; }
+html:not(.dark) .cl-f small.cl-why.is-ok { color: #187469 !important; }
+html:not(.dark) .cl-f small.cl-why.is-wait, html:not(.dark) .cd-kpi small.cd-why.is-wait { color: #111318 !important; }
+html:not(.dark) .cl-f small.cl-why.is-bad, html:not(.dark) .cd-kpi small.cd-why.is-bad { color: #883e3e !important; }
+html:not(.dark) .cl-f small.cl-why.is-open, html:not(.dark) .cd-kpi small.cd-why.is-open { color: #8a94a6 !important; }
+html:not(.dark) .cl-f small.cl-why.is-blocked { color: #8a6913 !important; }
+html:not(.dark) .cl-f small.cl-why.is-done { color: #8a94a6 !important; }
 html:not(.dark) .cl-folder { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #111318 !important; }
 html:not(.dark) .cl-folder i { background: #f8fafb !important; color: #4b5568 !important; }
 html:not(.dark) .cl-folder:hover { border-color: #e8ecf1 !important; color: #0f172a !important; }
@@ -1740,6 +1746,9 @@ html:not(.dark) .rv-panel { border: 1px solid #e8ecf1 !important; background: #f
 html:not(.dark) .rv-head h2 { color: #0f172a !important; }
 html:not(.dark) .rv-head p { color: #4b5568 !important; }
 html:not(.dark) .rv-limit { color: #8b7e4b !important; }
+html:not(.dark) .rv-prewrite { border: 1px solid #d9dfe7 !important; background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .rv-prewrite svg { color: #111318 !important; }
+html:not(.dark) .cl-approval-part.is-writing { color: #4b5568 !important; }
 html:not(.dark) .rv-item:hover { background: #f8fafb !important; }
 html:not(.dark) .rv-item.is-active { background: #f3f6f8 !important; border-color: #111318 !important; }
 html:not(.dark) .rv-state em { background: #f8fafb !important; color: #4b5568 !important; }
@@ -3598,7 +3607,9 @@ html:not(.dark) .cl-f small.is-wait { color: #be123c !important; }
 html:not(.dark) .cl-f.is-sent { --bar: #bc001d; } html:not(.dark) .cl-f.is-open { --bar: #2563eb; } html:not(.dark) .cl-f.is-click { --bar: #e11d48; } html:not(.dark) .cl-f.is-reply { --bar: #059669; }
 html:not(.dark) .cl-f i { background: var(--bar) !important; }
 html:not(.dark) .cl-seg { background: #e4e7ec !important; }
-html:not(.dark) .cl-seg em.is-ok { background: #0d9488 !important; } html:not(.dark) .cl-seg em.is-wait { background: #fda4af !important; } html:not(.dark) .cl-seg em.is-bad { background: #bc001d !important; }
+html:not(.dark) .cl-seg em.is-ok { background: #0d9488 !important; } html:not(.dark) .cl-seg em.is-wait { background: #7c3aed !important; } html:not(.dark) .cl-seg em.is-bad { background: #bc001d !important; } html:not(.dark) .cl-seg em.is-open { background: #667085 !important; }
+html:not(.dark) .cl-f small.cl-why.is-ok { color: #0d9488 !important; } html:not(.dark) .cl-f small.cl-why.is-wait, html:not(.dark) .cd-kpi small.cd-why.is-wait { color: #7c3aed !important; } html:not(.dark) .cl-f small.cl-why.is-bad, html:not(.dark) .cd-kpi small.cd-why.is-bad { color: #bc001d !important; } html:not(.dark) .cl-f small.cl-why.is-open, html:not(.dark) .cd-kpi small.cd-why.is-open { color: #667085 !important; }
+html:not(.dark) .cl-f small.cl-why.is-blocked { color: #b45309 !important; } html:not(.dark) .cl-f small.cl-why.is-done { color: #667085 !important; }
 @container (max-width: 720px) { html:not(.dark) .cl-f:nth-child(n+4) { border-top-color: #e4e7ec !important; } html:not(.dark) .cl-f:nth-child(4) { box-shadow: none !important; } }
 /* v185 – Kontakte, Sperrliste, Upload-Verlauf (hell) */
 html:not(.dark) .xl-head h2, html:not(.dark) .xl-person-text strong, html:not(.dark) .email-leads-table .email-leads-name, html:not(.dark) .uh-main strong, html:not(.dark) .uh-num b, html:not(.dark) .sp-main strong, html:not(.dark) .sp-title, html:not(.dark) .sp-how b { color: #0f172a !important; }
@@ -3686,6 +3697,9 @@ html:not(.dark) .rv-panel, html:not(.dark) .rv-editor { background: #ffffff !imp
 html:not(.dark) .rv-head h2, html:not(.dark) .rv-editor-who strong, html:not(.dark) .rv-banner strong { color: #0f172a !important; }
 html:not(.dark) .rv-head p, html:not(.dark) .rv-editor-who small, html:not(.dark) .rv-editor-foot > small, html:not(.dark) .rv-state small, html:not(.dark) .rv-field { color: #667085 !important; }
 html:not(.dark) .rv-limit { background: #fffbeb !important; border-color: #fcd34d !important; color: #92400e !important; }
+html:not(.dark) .rv-prewrite { background: #f4f3ff !important; border-color: #c7c2fe !important; color: #3f2fbf !important; }
+html:not(.dark) .rv-prewrite svg { color: #5b4bd6 !important; }
+html:not(.dark) .cl-approval-part.is-writing { color: #4c3fc4 !important; }
 html:not(.dark) .rv-item:hover { background: #f8fafc !important; }
 html:not(.dark) .rv-item.is-active { background: #fff1f2 !important; border-color: #bc001d !important; }
 html:not(.dark) .rv-state em { background: #f1f5f9 !important; color: #475467 !important; }
