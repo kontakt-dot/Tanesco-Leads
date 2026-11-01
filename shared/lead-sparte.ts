@@ -144,28 +144,38 @@ export const SPARTE_PHRASE = "Lead-Lieferanten in Deutschland für {{sparte}}";
 /** Platzhalter {{sparte}}: ohne Kampagne „Ihre Branche“ – mit Kampagne deren Sparte (ein Wert aus der Liste des Kontakts hat Vorrang). */
 export const SPARTE_FALLBACK = "Ihre Branche";
 export function withSparte<T extends Record<string, string>>(values: T, sparte: Pick<Sparte, "topic">): T { return { ...values, sparte: values.sparte && values.sparte !== SPARTE_FALLBACK ? values.sparte : sparte.topic }; }
-/* ---------------------------------------------------------------- „Sie zahlen nur für Leads, die passen“ */
-/** Nur bei Photovoltaik und Wärmepumpe zahlt der Betrieb ausschließlich für Leads, die zu ihm passen – in allen anderen Sparten gilt das nicht. */
-export const paysOnlyFitting = (sparte: Pick<Sparte, "key">) => isEnergySparte(sparte);
-export const PAY_FIT_SENTENCE = "Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.";
+/* ---------------------------------------------------------------- „Sie zahlen nur für Leads, die passen“ – steht in keiner E-Mail mehr */
+/**
+ * Seit 01.11.2026 steht in keiner E-Mail mehr, dass der Betrieb nur für passende Leads zahlt – die Testphase ist kostenlos, der Satz
+ * passt nicht dazu. Früher stand er bei Photovoltaik und Wärmepumpe im freien Vorschlag und in der Drittanbieter-Vorlage.
+ */
 const PAY_FIT_RE = /\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*\b[^.!?\n]{0,60}\b(?:nur|ausschließlich)\b[^.!?\n]{0,60}\bpass\w*|\b(?:nur|ausschließlich)\b[^.!?\n]{0,40}\bpass\w*[^.!?\n]{0,40}\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*/i;
 /** Steht im Text, dass nur passende Leads bezahlt werden? */
 export const mentionsPayFit = (text: string) => PAY_FIT_RE.test(text);
-const CLOSING_RE = /antworten sie|rufen sie|anrufen|\{\{kontaktweg\}\}|lassen sie uns|vielen dank/i;
-/**
- * PV & WP: im freien Vorschlag steht in der Erst-E-Mail immer, dass nur passende Leads bezahlt werden (fehlt der Satz, kommt er
- * vor den Schluss) – früher galt das für den individuellen Ansatz, den der freie Vorschlag ersetzt. In allen anderen Sparten
- * fliegt jeder Satz dazu raus – das gilt dort nicht.
- */
-export function applyPayFit(text: string, options: { sparte: Pick<Sparte, "key">; approach?: string | null; followUp?: boolean }): string {
-  if (!paysOnlyFitting(options.sparte)) {
-    if (!mentionsPayFit(text)) return text;
-    return text.split(/(\n+)/).map((part) => part.split(/(?<=[.!?])\s+/).filter((sentence) => !mentionsPayFit(sentence)).join(" ")).join("").replace(/\n{3,}/g, "\n\n").trim();
+const CLAUSE_SEP = /(,\s+und\s+|\s+[–—-]\s+|;\s+)/;
+/** Ein Satz ohne den Teil „nur passende Leads zahlen“: „Sie zahlen nur für Leads, die passen, und zum Testen bekommen Sie 20 Test-Leads kostenlos.“ → „Zum Testen bekommen Sie 20 Test-Leads kostenlos.“ – leer, wenn nichts übrig bleibt. */
+function withoutPayFitClause(sentence: string): string {
+  const end = /[.!?]+$/.exec(sentence)?.[0] ?? ""; const core = sentence.replace(/[.!?]+$/, "");
+  const parts = core.split(CLAUSE_SEP);
+  if (parts.length < 2) return "";
+  const kept: string[] = []; let dropped = false;
+  for (let index = 0; index < parts.length; index += 2) { if (mentionsPayFit(parts[index])) { dropped = true; continue; } kept.push(kept.length ? `${parts[index - 1]}${parts[index]}` : parts[index]); }
+  if (!dropped || !kept.length) return "";
+  const rest = kept.join("").trim().replace(/^und\s+/i, "");
+  return rest ? `${rest.charAt(0).toUpperCase()}${rest.slice(1)}${end || "."}` : "";
+}
+/** Jeden Satz (und jeden Aufzählungspunkt) herausnehmen, der sagt, dass nur passende Leads bezahlt werden – alles andere bleibt, wie es ist. */
+export function dropPayFit(text: string): string {
+  if (!text || !mentionsPayFit(text)) return text;
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    if (!mentionsPayFit(line)) { out.push(line); continue; }
+    const bullet = /^\s*(?:[•*–-]|\d+[.)])\s+/.exec(line)?.[0] ?? "";
+    const sentences = line.slice(bullet.length).match(/[^.!?]+(?:[.!?]+|$)/g) ?? [];
+    const kept = sentences.map((sentence) => sentence.trim()).map((sentence) => (mentionsPayFit(sentence) ? withoutPayFitClause(sentence) : sentence)).filter(Boolean).join(" ");
+    if (kept) out.push(`${bullet}${kept}`); // sonst fällt die Zeile ganz weg (auch ein Aufzählungspunkt)
   }
-  if (options.approach !== "frei" || options.followUp || mentionsPayFit(text)) return text;
-  const parts = text.split(/\n{2,}/); let at = parts.length;
-  for (let index = parts.length - 1; index > 0; index -= 1) { if (CLOSING_RE.test(parts[index])) at = index; else break; } // vor den Schluss (Kontaktweg, „Vielen Dank“)
-  parts.splice(at, 0, PAY_FIT_SENTENCE); return parts.join("\n\n");
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 /** „eines Fachbetriebs“, „eines Fachhändlers“, „eines Anbieters“ */
 export const partnerGenitive = (sparte: Pick<Sparte, "partner">) => sparte.partner === "Fachbetrieb" ? "Fachbetriebs" : sparte.partner === "Fachhändler" ? "Fachhändlers" : "Anbieters";

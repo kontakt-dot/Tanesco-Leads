@@ -9,7 +9,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from
 import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leads, mailSettings } from "../drizzle/schema";
 import { audienceLists, kiModusOf, stopsOnReply } from "../shared/email-campaigns";
 import { nextEmailOf } from "../shared/follow-up-plan";
-import { applyPayFit, DEFAULT_SPARTE, fitsSparte, fixQuestionCount, isEnergySparte, mentionsQuestions, numberWord, offerChain, offersForeignLeads, paysOnlyFitting, qualifyPhrase, questionCount, questionTopics, resolveSparte, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
+import { DEFAULT_SPARTE, dropPayFit, fitsSparte, fixQuestionCount, isEnergySparte, mentionsPayFit, mentionsQuestions, numberWord, offerChain, offersForeignLeads, qualifyPhrase, questionCount, questionTopics, resolveSparte, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
 import { extractProfile } from "../shared/lead-finder";
 import { cleanDraftText, dropAdPlatforms, shortParagraphs, PORTAL_RE, smoothQualifyPhrase, withTestOffer, promisedTestLeads, testLeadsFor, testOfferFor, approachLabel, approachOf, LEGACY_APPROACH, DRAFT_APPROACHES, copiesTemplate, dropThirdPartyClaim, fixTreeQuestions, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
@@ -126,14 +126,14 @@ function systemFor(sparte: Sparte, testLeads: number = testLeadsFor(sparte)): st
 
 LEADSPARTE dieser Kampagne: ${sparte.label}.${sparte.categories?.length ? ` Gewählte Lead-Kategorien: ${sparte.categories.join(", ")} – richte die E-Mails genau auf diese Leads aus.` : ""} Jede E-Mail handelt ausschließlich von ${sparte.leads} – Interessenten für ${sparte.topic}, die Tanesco gewinnt und an den Empfänger übergibt. Keine andere Sparte erwähnen${energy ? "" : " – kein Wort zu Photovoltaik, Solar, PV oder Wärmepumpen"}. Vorlage und Beispiel unten können aus einer anderen Sparte stammen: übernimm daraus nur Aufbau und Ton, nie das Thema.
 
-Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selbst online generieren (eigene Online-Leadgenerierung), ${qualify}${examples ? ` – abgefragt werden ${examples}` : ""}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf den Anruf des Betriebs. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt.${paysOnlyFitting(sparte) ? " Abrechnung: Der Betrieb zahlt nur für Leads, die zu ihm passen." : " Behaupte NICHT, dass der Betrieb nur für passende Leads zahlt – das gilt in dieser Sparte nicht."} Test-Angebot: ${testLeads} Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – genau ${testWord}, nie eine andere Zahl (auch wenn Vorlage oder Beispiel eine andere nennen).${promised} Baue dieses Angebot in beide Ansätze ein, Drittanbieter und freien Vorschlag (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
+Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selbst online generieren (eigene Online-Leadgenerierung), ${qualify}${examples ? ` – abgefragt werden ${examples}` : ""}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf den Anruf des Betriebs. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt. Schreibe NIE, dass der Betrieb nur für passende Leads zahlt oder nur passende Leads bezahlt werden – dieser Satz kommt in keiner E-Mail vor (die Testphase ist kostenlos). Test-Angebot: ${testLeads} Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – genau ${testWord}, nie eine andere Zahl (auch wenn Vorlage oder Beispiel eine andere nennen).${promised} Baue dieses Angebot in beide Ansätze ein, Drittanbieter und freien Vorschlag (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
 
 1) "drittanbieter" – Drittanbieter-Ansatz. Kernbotschaft, die IMMER enthalten sein muss: Wir sind einer der größten Lead-Lieferanten Deutschlands, und über unsere Quellen haben wir mitbekommen, dass bei der Firma sehr wahrscheinlich Leads ankommen, die ohnehin von uns stammen – nur weitergereicht über Zwischenhändler. Dieser Umweg macht Qualität und Preis kaputt: Die Leads werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und beim Betrieb kommen genervte Interessenten und falsche Kontaktdaten an. Genau deshalb streben wir die direkte Zusammenarbeit mit dieser Firma an (kürzere Lieferkette, besserer Preis ohne Zwischenstufen, mehr Transparenz, direkte Qualitätskontrolle). Formuliere es als begründete Vermutung („sehr wahrscheinlich“, „gehen wir davon aus“), nie als bewiesene Tatsache, und erfinde keinen konkreten Zwischenhändler-Namen. Seriös und förmlich, darf eine kurze Aufzählung der Vorteile haben, bittet um ein Telefonat mit dem Ansprechpartner aus dem Leadmanagement. Trotzdem IMMER persönlich und individuell, nie Serienbrief: mindestens zwei konkrete Bezüge auf genau diese Firma (etwas Wörtliches oder Konkretes von der Webseite, die Leistung/Spezialisierung, Region/Einzugsgebiet, Größe oder Geschäftsfeld) – einer davon im ersten Absatz, bevor die Kernbotschaft kommt, und die Vorteile auf die Situation der Firma bezogen. 120–200 Wörter.
 
 2) "frei" – Freier Vorschlag: deine eigene, kreative Idee für genau diese Firma – ein Aufhänger, der nur zu ihr passt, z. B. eine kluge Frage zu ihrem Geschäft, eine Beobachtung zu ihrer Region oder Zielgruppe, ein kleines Rechenbeispiel oder ein Vergleich. Ganz anders aufgebaut als der Drittanbieter-Ansatz.
 - Lies dafür Webseite und Impressum genau: Was bietet die Firma an (Produkte, Leistungen, Marken, Spezialisierung), für wen, wo (Standorte, Einzugsgebiet), seit wann, wie groß, wer führt sie? Greife mindestens zwei konkrete Punkte auf – gern mit den Worten der Webseite. Ohne Webseite: aus den Angaben (Firma, Ort, Liste, weitere Felder).
 - Kein Satz darf so allgemein sein, dass er wortgleich in jeder E-Mail stehen könnte – ausgenommen Test-Angebot, Qualifizierung und Schluss. Übernimm KEINEN Satz aus der Vorlage der Kampagne – sie zeigt nur Thema und Ton. Keine Floskeln, keine Aufzählung. 80–140 Wörter.
-- Ohne die Drittanbieter-Kernbotschaft (Leads, die bei der Firma ankommen, stammen in Wahrheit von uns). Normale Aussagen zu unserem Angebot sind erlaubt (exklusiv, nicht an Dritte weiterverkauft, ohne Umweg über Portale, eigene Generierung).${paysOnlyFitting(sparte) ? " In der Erst-E-Mail steht immer ein Satz, dass der Betrieb nur für Leads zahlt, die zu ihm passen (z. B. „Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.“)." : ""}
+- Ohne die Drittanbieter-Kernbotschaft (Leads, die bei der Firma ankommen, stammen in Wahrheit von uns). Normale Aussagen zu unserem Angebot sind erlaubt (exklusiv, nicht an Dritte weiterverkauft, ohne Umweg über Portale, eigene Generierung).
 
 Wie wir die Interessenten gewinnen: nur „online“ bzw. „eigene Online-Leadgenerierung“ – nenne NIE Meta, Facebook, Instagram, Google oder andere Plattformen.
 Aroundhome erwähnst du NIE – weder den Namen noch Zahlen, Antworten, Bewertungen oder Anfragen von dort, auch nicht umschrieben. Auch keine anderen Portale oder Vermittler beim Namen. Bewertungen darfst du nur ansprechen, wenn in den Daten ausdrücklich Google-Bewertungen stehen – dann als „Google-Bewertungen“ und nur mit genau diesen Zahlen; sonst gar keine Bewertungen erwähnen.
@@ -233,7 +233,7 @@ export function dropCompanyNameClaim(text: string): string {
 export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean; partner?: string; sparte?: Pick<Sparte, "key"> & { questions?: number | null; topics?: string[] | null; partner?: string }; approach?: string | null; testLeads?: number | null }): string {
   const testLeads = options.testLeads ?? testLeadsFor(options.sparte); // Zahl der Sparte (PV & WP 20, sonst 10) – oder die höhere, die dem Kontakt schon versprochen wurde
   const withFacts = ensureFacts(fixGreeting(dropCompanyNameClaim(withTestOffer(text.trim(), testLeads)), options.greeting), options.followUp, options.partner, options.sparte, testLeads);
-  const payFit = options.sparte ? applyPayFit(withFacts, { sparte: options.sparte, approach: options.approach, followUp: options.followUp }) : withFacts; // PV & WP: „nur passende Leads zahlen“ im freien Vorschlag – sonst nirgends erzwungen
+  const payFit = dropPayFit(withFacts); // „Sie zahlen nur für Leads, die passen“ steht in keiner E-Mail – schreibt die KI ihn trotzdem, fliegt er raus
   const done = cleanDraftText(ensureClosing(payFit, options.phone), testLeads);
   // Zahl der Fragen passend zur Sparte (auch wenn die KI „zehn“ aus der Vorlage übernimmt) – dahinter Beispiele ohne Klammern und die Logik-Kette
   const sparte = options.sparte ? { ...options.sparte, partner: options.sparte.partner ?? options.partner } : null;
@@ -503,23 +503,21 @@ export async function clearWrongSparteDrafts(db: Db): Promise<number> {
   return cleared;
 }
 /**
- * Einmal nach dem Serverstart: offene Erst-E-Mail-Entwürfe im freien Vorschlag in PV- & WP-Kampagnen bekommen den Satz
- * „Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.“ (wie neue Entwürfe). Freigegebene und selbst geschriebene
- * Texte bleiben unverändert. Mehrfach ausführbar ohne Nebenwirkung.
+ * Einmal nach dem Serverstart: der Satz „Sie zahlen nur für Leads, die passen“ kommt aus allen offenen Entwürfen (auch freigegebenen,
+ * Erst-E-Mails wie Follow-ups, samt Alternativ-Vorschlägen) heraus – die Testphase ist kostenlos, der Satz passt nicht dazu.
+ * Selbst geschriebene Texte bleiben, wie sie sind. Mehrfach ausführbar ohne Nebenwirkung. Gibt zurück, wie viele Entwürfe geändert wurden.
  */
-export async function addPayFitToDrafts(db: Db): Promise<number> {
-  const campaigns = (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience, isTemplate: emailCampaigns.isTemplate, kiAnsatz: emailCampaigns.kiAnsatz }).from(emailCampaigns).where(isNull(emailCampaigns.archivedAt))).filter((row) => !row.isTemplate);
+export async function dropPayFitFromDrafts(db: Db): Promise<number> {
+  const rows = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText, draftSubject: emailCampaignRecipients.draftSubject, draftOptions: emailCampaignRecipients.draftOptions, draftSource: emailCampaignRecipients.draftSource }).from(emailCampaignRecipients)
+    .where(and(inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), isNotNull(emailCampaignRecipients.draftState)));
   let changed = 0;
-  for (const campaign of campaigns) {
-    const sparte = sparteOfCampaign(campaign); if (!paysOnlyFitting(sparte)) continue;
-    const rows = await db.select({ id: emailCampaignRecipients.id, draftText: emailCampaignRecipients.draftText, draftOptions: emailCampaignRecipients.draftOptions, draftApproach: emailCampaignRecipients.draftApproach, draftSource: emailCampaignRecipients.draftSource }).from(emailCampaignRecipients)
-      .where(and(eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), eq(emailCampaignRecipients.draftState, "entwurf"), eq(emailCampaignRecipients.sentCount, 0)));
-    for (const row of rows) {
-      if (row.draftSource === "hand" || (row.draftApproach || kiAnsatzOf(campaign)) !== "frei" || !row.draftText) continue;
-      const text = applyPayFit(row.draftText, { sparte, approach: "frei" }); if (text === row.draftText) continue;
-      const options = Array.isArray(row.draftOptions) ? (row.draftOptions as DraftOption[]).map((item) => item?.key === "frei" && item.text ? { ...item, text: applyPayFit(item.text, { sparte, approach: "frei" }) } : item) : row.draftOptions;
-      await db.update(emailCampaignRecipients).set({ draftText: text, draftOptions: options as DraftOption[] | null }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
-    }
+  for (const row of rows) {
+    const options = Array.isArray(row.draftOptions) ? row.draftOptions as DraftOption[] : null;
+    const touched = (row.draftSource !== "hand" && mentionsPayFit(row.draftText ?? "")) || Boolean(options?.some((item) => item?.text && mentionsPayFit(item.text)));
+    if (!touched) continue;
+    const text = row.draftSource === "hand" || !row.draftText ? row.draftText : shortParagraphs(dropPayFit(row.draftText));
+    const nextOptions = options ? options.map((item) => (item?.text && mentionsPayFit(item.text) ? { ...item, text: shortParagraphs(dropPayFit(item.text)) } : item)) : row.draftOptions;
+    await db.update(emailCampaignRecipients).set({ draftText: text, draftOptions: nextOptions as DraftOption[] | null }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
   }
   return changed;
 }

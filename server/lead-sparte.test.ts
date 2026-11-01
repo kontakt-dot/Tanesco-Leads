@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fixTreeQuestions, recipientValues, smoothQualifyPhrase, starterTree, thirdPartyTemplate } from "../shared/email-campaigns";
 import { starterBlocks } from "../shared/email-design";
 import { categoriesForSparte, sparteFromCategories } from "../shared/lead-sparte";
-import { applyPayFit, detectSparte, fitsSparte, fixQuestionCount, foreignSparteIn, mentionsPayFit, mentionsQuestions, offerChain, PAY_FIT_SENTENCE, qualifyBy, qualifyPhrase, questionCount, resolveSparte, sparteOf, withSparte, questionTopics, SPARTEN, topicsSentence, withQuestionTopics } from "../shared/lead-sparte";
+import { detectSparte, dropPayFit, fitsSparte, fixQuestionCount, foreignSparteIn, mentionsPayFit, mentionsQuestions, offerChain, qualifyBy, qualifyPhrase, questionCount, resolveSparte, sparteOf, withSparte, questionTopics, SPARTEN, topicsSentence, withQuestionTopics } from "../shared/lead-sparte";
 import { ensureFacts, finishDraft } from "./campaign-review";
 
 describe("Leadsparte: die KI schreibt passend zur Sparte – nie Wärmepumpen an Hausnotruf-Firmen", () => {
@@ -49,25 +49,27 @@ describe("Leadsparte: die KI schreibt passend zur Sparte – nie Wärmepumpen an
     expect(finishDraft("Sehr geehrte Damen und Herren,\n\nkurzer Text.", { greeting: "Sehr geehrte Damen und Herren", phone: "", followUp: false, partner: "Anbieter", sparte: hausnotruf })).toContain("Der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.");
     expect(thirdPartyTemplate({ firma: "Solar GmbH" }).text).toContain("im Bereich Photovoltaik und Wärmepumpen"); // Standard bleibt wie bisher
   });
-  it("„Sie zahlen nur für Leads, die passen“: nur bei PV & WP – im freien Vorschlag immer, in anderen Sparten nie", () => {
+  it("„Sie zahlen nur für Leads, die passen“ steht in keiner E-Mail mehr – in keiner Sparte, keinem Ansatz, keiner Vorlage (die Testphase ist kostenlos)", () => {
     const pv = resolveSparte("PV & WP")!; const hausnotruf = resolveSparte("Hausnotruf")!;
-    const draft = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Website steht etwas Konkretes.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail.\n\nVielen Dank";
-    const withFit = applyPayFit(draft, { sparte: pv, approach: "frei" });
-    expect(withFit).toContain(PAY_FIT_SENTENCE); expect(withFit.indexOf(PAY_FIT_SENTENCE)).toBeLessThan(withFit.indexOf("Wenn das für Sie interessant ist")); // vor dem Schluss
-    expect(applyPayFit(withFit, { sparte: pv, approach: "frei" })).toBe(withFit); // nie doppelt
-    expect(applyPayFit(draft, { sparte: pv, approach: "frei", followUp: true })).toBe(draft); // Nachfass-Mail: kein Muss
-    expect(applyPayFit(draft, { sparte: pv, approach: "drittanbieter" })).toBe(draft);
-    expect(applyPayFit(draft, { sparte: pv, approach: "individuell" })).toBe(draft); // den individuellen Ansatz gibt es nicht mehr
-    const wrong = "Sehr geehrte Damen und Herren,\n\nunsere Hausnotruf-Leads sind exklusiv. Sie zahlen nur für Leads, die zu Ihnen passen. Keine Vorkasse.\n\nVielen Dank";
-    const cleaned = applyPayFit(wrong, { sparte: hausnotruf, approach: "frei" });
-    expect(mentionsPayFit(cleaned)).toBe(false); expect(cleaned).toContain("unsere Hausnotruf-Leads sind exklusiv."); expect(cleaned).toContain("Keine Vorkasse.");
-    for (const text of ["Bezahlt werden nur passende Leads.", "Abgerechnet werden ausschließlich Leads, die passen.", "Sie zahlen nur für Anfragen, die wirklich passen."]) expect(mentionsPayFit(text)).toBe(true);
-    expect(mentionsPayFit("Keine Vorkasse, keine lange Vertragsbindung.")).toBe(false);
-    // ganzer Entwurf: PV bekommt den Satz, Hausnotruf nie
-    expect(finishDraft("Sehr geehrter Herr Wiebe,\n\nkurzer Text.", { greeting: "Sehr geehrter Herr Wiebe", phone: "", followUp: false, sparte: pv, approach: "frei" })).toContain(PAY_FIT_SENTENCE);
-    expect(finishDraft("Sehr geehrte Damen und Herren,\n\nSie zahlen nur für Leads, die passen.", { greeting: "Sehr geehrte Damen und Herren", phone: "", followUp: false, sparte: hausnotruf, approach: "frei", partner: "Anbieter" })).not.toMatch(/zahlen nur/);
-    expect(thirdPartyTemplate({ firma: "Solar GmbH" }, pv).text).toContain("Sie zahlen nur für Leads, die zu Ihnen passen");
-    expect(thirdPartyTemplate({ firma: "Notruf GmbH" }, hausnotruf).text).not.toMatch(/zahlen nur/);
+    for (const text of ["Bezahlt werden nur passende Leads.", "Abgerechnet werden ausschließlich Leads, die passen.", "Sie zahlen nur für Anfragen, die wirklich passen.", "Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen."]) expect(mentionsPayFit(text)).toBe(true);
+    expect(mentionsPayFit("Keine Vorkasse, keine lange Vertragsbindung.")).toBe(false); expect(mentionsPayFit("Zum Testen bekommen Sie 20 Test-Leads kostenlos.")).toBe(false);
+    // ganzer Satz weg, der Rest des Absatzes bleibt
+    const wrong = "Sehr geehrte Damen und Herren,\n\nunsere Leads sind exklusiv. Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen. Keine Vorkasse.\n\nVielen Dank";
+    expect(dropPayFit(wrong)).toBe("Sehr geehrte Damen und Herren,\n\nunsere Leads sind exklusiv. Keine Vorkasse.\n\nVielen Dank");
+    // mit dem Test-Angebot in einem Satz: nur der Teil fliegt raus – das Test-Angebot bleibt
+    expect(dropPayFit("Sie zahlen nur für Leads, die wirklich zu Ihnen passen, und zum Testen bekommen Sie 20 Test-Leads kostenlos.")).toBe("Zum Testen bekommen Sie 20 Test-Leads kostenlos.");
+    expect(dropPayFit("Keine Vorkasse – Sie zahlen nur für passende Leads.")).toBe("Keine Vorkasse.");
+    // eigener Absatz und Aufzählungspunkt: ganz weg, ohne Lücke
+    expect(dropPayFit("Absatz eins.\n\nSie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.\n\nVielen Dank")).toBe("Absatz eins.\n\nVielen Dank");
+    expect(dropPayFit("• Keine Vorkasse\n• Sie zahlen nur für Leads, die zu Ihnen passen\n• Keine Bindung")).toBe("• Keine Vorkasse\n• Keine Bindung");
+    const clean = "Sehr geehrter Herr Wiebe,\n\nkurzer Text.\n\nVielen Dank"; expect(dropPayFit(clean)).toBe(clean); expect(dropPayFit(dropPayFit(wrong))).toBe(dropPayFit(wrong));
+    // ganze Entwürfe: nie mit dem Satz – auch wenn die KI ihn schreibt
+    for (const sparte of [pv, hausnotruf]) for (const approach of ["frei", "drittanbieter"]) {
+      const done = finishDraft("Sehr geehrte Damen und Herren,\n\nkurzer Text. Sie zahlen nur für Leads, die passen.", { greeting: "Sehr geehrte Damen und Herren", phone: "", followUp: false, sparte, approach, partner: sparte.partner });
+      expect(mentionsPayFit(done)).toBe(false); expect(done).toContain("Test-Leads kostenlos");
+    }
+    expect(thirdPartyTemplate({ firma: "Solar GmbH" }, pv).text).not.toMatch(/zahlen nur|nur für Leads, die/); expect(thirdPartyTemplate({ firma: "Notruf GmbH" }, hausnotruf).text).not.toMatch(/zahlen nur|nur für Leads, die/);
+    expect(thirdPartyTemplate({ firma: "Solar GmbH" }, pv).text).toContain("20 Test-Leads kostenlos");
   });
 });
 

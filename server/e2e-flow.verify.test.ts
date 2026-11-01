@@ -3161,19 +3161,33 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(nina.draftApproach).toBe("drittanbieter"); expect(nina.draftText).toContain("im Bereich Hausnotruf"); expect(nina.draftText).not.toMatch(/Photovoltaik|Wärmepumpe/);
     const frei = (nina.draftOptions as Array<{ key: string; text: string }>).find((item) => item.key === "frei")!;
     expect(frei.text).toContain("Lead-Lieferanten in Deutschland für Hausnotruf"); expect(frei.text).not.toMatch(/Photovoltaik|Wärmepumpe/); // Vorlage mit {{sparte}}
-    // „Sie zahlen nur für Leads, die passen“ gilt nur bei PV & WP: in Hausnotruf-Entwürfen nirgends, im freien PV-Entwurf immer
+    // „Sie zahlen nur für Leads, die passen“ steht in keiner E-Mail mehr – nicht bei Hausnotruf, nicht bei PV & WP, in keinem Ansatz (die Testphase ist kostenlos)
     expect(nina.draftText).not.toMatch(/zahlen nur|nur für Leads, die/); expect(frei.text).not.toMatch(/zahlen nur|nur für Leads, die/);
     await owner.leadops.importColdList({ listName: "Sparte-PV", toPipeline: false, rows: [{ firstName: "Paul", lastName: "Paneel", company: "Paneel Solar GmbH", email: "paul@sparte-pv-e2e.example" }] });
     const pvCampaign = await owner.leadops.saveEmailCampaign({ ...base, name: "PV & WP • Erstkontakt", audience: { source: "liste", listName: "Sparte-PV" }, kiModus: "freigabe", kiAnsatz: "frei" } as never);
     await owner.leadops.startEmailCampaign({ id: pvCampaign.id }); await owner.leadops.runEmailCampaigns();
     const paul = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, pvCampaign.id)))[0];
-    expect(paul.draftApproach).toBe("frei"); expect(paul.draftText).toContain("Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.");
-    expect((paul.draftOptions as Array<{ key: string; text: string }>).find((item) => item.key === "drittanbieter")?.text).toContain("Sie zahlen nur für Leads, die zu Ihnen passen");
-    // älterer PV-Entwurf ohne den Satz → einmal nach dem Start ergänzt (nur offen, nur im freien Vorschlag, nicht selbst geschrieben)
-    const { addPayFitToDrafts } = await import("./campaign-review");
-    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrter Herr Paneel,\n\nalter Entwurf ohne den Satz.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail.\n\nVielen Dank" }).where(eq(emailCampaignRecipients.id, paul.id));
-    expect(await addPayFitToDrafts(db)).toBeGreaterThanOrEqual(1); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, paul.id)))[0].draftText).toContain("Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.");
-    expect(await addPayFitToDrafts(db)).toBe(0);
+    expect(paul.draftApproach).toBe("frei"); expect(paul.draftText).not.toMatch(/zahlen nur|zahlen dabei nur|nur für Leads, die/); expect(paul.draftText).toContain("20 Test-Leads kostenlos");
+    expect((paul.draftOptions as Array<{ key: string; text: string }>).every((item) => !/zahlen nur|zahlen dabei nur|nur für Leads, die/.test(item.text))).toBe(true);
+    // älterer Entwurf (und Alternative) mit dem Satz → einmal nach dem Start herausgenommen; ein selbst geschriebener Text bleibt, wie er ist
+    const { dropPayFitFromDrafts } = await import("./campaign-review");
+    const oldOptions = (paul.draftOptions as Array<{ key: string; text: string }>).map((item) => ({ ...item, text: `${item.text}\n\nSie zahlen nur für Leads, die zu Ihnen passen.` }));
+    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrter Herr Paneel,\n\nalter Entwurf. Sie zahlen nur für Leads, die wirklich zu Ihnen passen, und zum Testen bekommen Sie 20 Test-Leads kostenlos.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail.\n\nVielen Dank", draftOptions: oldOptions, draftState: "freigegeben" }).where(eq(emailCampaignRecipients.id, paul.id));
+    expect(await dropPayFitFromDrafts(db)).toBeGreaterThanOrEqual(1);
+    const payFitFixed = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, paul.id)))[0];
+    expect(payFitFixed.draftText).toBe("Sehr geehrter Herr Paneel,\n\nalter Entwurf. Zum Testen bekommen Sie 20 Test-Leads kostenlos.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail.\n\nVielen Dank"); // Test-Angebot bleibt
+    expect((payFitFixed.draftOptions as Array<{ text: string }>).every((item) => !/zahlen nur|nur für Leads, die/.test(item.text))).toBe(true);
+    expect(await dropPayFitFromDrafts(db)).toBe(0); // mehrfach ohne Nebenwirkung
+    const handText = "Sehr geehrter Herr Paneel,\n\nmein eigener Text: Sie zahlen nur für Leads, die passen.\n\nVielen Dank";
+    await db.update(emailCampaignRecipients).set({ draftText: handText, draftSource: "hand", draftOptions: null }).where(eq(emailCampaignRecipients.id, paul.id));
+    expect(await dropPayFitFromDrafts(db)).toBe(0); expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, paul.id)))[0].draftText).toBe(handText);
+    // gespeicherte Vorlage mit dem Satz → bereinigt, sobald die Kampagnen geladen werden (Text und Aufzählung)
+    const pvRow = (await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, pvCampaign.id)))[0]; const payFitTree = JSON.parse(JSON.stringify(pvRow.tree)) as { nodes: Array<{ type: string; blocks?: Array<{ type: string; text?: string; items?: string[] }> }> };
+    const firstSend = payFitTree.nodes.find((node) => node.type === "send")!; firstSend.blocks!.push({ type: "text", text: "Sie zahlen dabei nur für Leads, die wirklich zu Ihnen passen." } as never, { type: "bullets", items: ["Keine Vorkasse", "Sie zahlen nur für Leads, die zu Ihnen passen"] } as never);
+    await db.update(emailCampaigns).set({ tree: payFitTree as never }).where(eq(emailCampaigns.id, pvCampaign.id));
+    await owner.leadops.listEmailCampaigns();
+    const cleanTree = JSON.stringify((await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, pvCampaign.id)))[0].tree);
+    expect(cleanTree).not.toMatch(/zahlen nur|zahlen dabei nur|nur für Leads, die/); expect(cleanTree).toContain("Keine Vorkasse");
     // alter Entwurf mit Wärmepumpen-Text in der Hausnotruf-Kampagne (vor dieser Version geschrieben) → einmal nach dem Start verworfen; eigener Text bleibt
     const { clearWrongSparteDrafts } = await import("./campaign-review");
     await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrte Frau Notruf,\n\nunsere PV- und Wärmepumpen-Leads …", draftSource: "ki" }).where(eq(emailCampaignRecipients.id, nina.id));
