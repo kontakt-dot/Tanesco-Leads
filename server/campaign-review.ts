@@ -11,7 +11,7 @@ import { audienceLists, kiModusOf, stopsOnReply } from "../shared/email-campaign
 import { nextEmailOf } from "../shared/follow-up-plan";
 import { DEFAULT_SPARTE, dropPayFit, fitsSparte, fixQuestionCount, isEnergySparte, mentionsPayFit, mentionsQuestions, numberWord, offerChain, offersForeignLeads, qualifyPhrase, questionCount, questionTopics, resolveSparte, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
 import { extractProfile } from "../shared/lead-finder";
-import { cleanDraftText, dropAdPlatforms, shortParagraphs, PORTAL_RE, smoothQualifyPhrase, withTestOffer, promisedTestLeads, testLeadsFor, testOfferFor, approachLabel, approachOf, LEGACY_APPROACH, DRAFT_APPROACHES, copiesTemplate, dropThirdPartyClaim, fixTreeQuestions, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
+import { cleanDraftText, dropAdPlatforms, giftFollowUp, mentionsBinding, shortParagraphs, PORTAL_RE, smoothQualifyPhrase, withTestOffer, promisedTestLeads, testLeadsFor, testOfferFor, approachLabel, approachOf, LEGACY_APPROACH, DRAFT_APPROACHES, copiesTemplate, dropThirdPartyClaim, fixTreeQuestions, thirdPartyTemplate, contactWay, type DraftApproach, type DraftOption, type EmailNode, blocksToPlainText, dayStartIn, DEFAULT_CAMPAIGN_DAILY_LIMIT, fillPlaceholdersSafe, firstSendNode, kiAnsatzOf, recipientValues, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { invokeLLM } from "./_core/llm";
 import { readWebsiteText } from "./lead-finder";
@@ -142,7 +142,7 @@ Pflichtinhalte in JEDER E-Mail, egal welcher Ansatz (in Erst-E-Mails ausführlic
 
 Regeln für beide: Deutsch, Sie-Form. Kurze Absätze, damit die E-Mail leicht lesbar ist: je Absatz ein bis drei Sätze (etwa zwei bis drei Zeilen), dazwischen immer eine Leerzeile – nie ein langer Textblock. Für die Anrede gibt es genau zwei Formen: „Sehr geehrter Herr Nachname,“ / „Sehr geehrte Frau Nachname,“ – oder „Sehr geehrte Damen und Herren,“. Nie „Hallo“, „Hi“, „Moin“, nie „Guten Tag Vorname Nachname“, nie nur der Vorname. Herr oder Frau darfst du aus einem eindeutigen Vornamen ableiten (Stefan → Herr, Katrin → Frau); ist der Vorname nicht eindeutig oder fehlt der Nachname, schreibst du „Sehr geehrte Damen und Herren“. Steht in den Angaben kein Ansprechpartner, nimm den Geschäftsführer oder Inhaber aus dem Impressum (siehe „Geschäftsführung laut Impressum“ bzw. den Webseiten-Auszug) und sprich diese Person in BEIDEN Vorschlägen direkt mit Herr/Frau und Nachnamen an (ohne Vornamen und Titel) – aber nur, wenn der Name wörtlich im Auszug steht, nie geraten. Erst wenn es gar keinen Namen gibt: „Sehr geehrte Damen und Herren“ – nie „Hallo“ ohne Namen. Nichts erfinden: keine Zahlen, Standorte, Zitate, Namen oder Fakten, die nicht in den Angaben oder auf der Webseite stehen – Webseiten-Zitate nur wörtlich aus dem Auszug. Keine Floskeln, kein „ich habe Ihre Webseite besucht“, keine Links, kein Knopf, keine Terminbuchung, keine Ausrufezeichen. Der Schluss ist immer gleich aufgebaut: vorletzter Absatz = ein klarer Satz, was zu tun ist – „Wenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter <Telefon des Absenders>.“ (Telefon steht in den Angaben; fehlt es: nur „antworten Sie einfach auf diese E-Mail“; eine Variante wie „Lassen Sie uns gerne sprechen: …“ ist erlaubt, die Nummer muss dann trotzdem drinstehen) – und die letzte Zeile lautet genau „Vielen Dank“. KEINE Grußformel danach – kein „Mit freundlichen Grüßen“, kein „Viele Grüße“, kein Name: Die Signatur, die das System automatisch anhängt, enthält Gruß und Namen schon. Betreff je Vorschlag: konkret, persönlich, höchstens 70 Zeichen, kein Clickbait.
 Die Vorlage der Kampagne zeigt nur Thema und Ton – übernimm daraus keine Sätze; jede E-Mail wird neu für genau diese Firma geschrieben (Thema immer die Leadsparte oben).
-Nachfass-Mails (wenn der Auftrag sagt, dass schon E-Mails raus sind): kurz (50–110 Wörter), knüpfen in einem Halbsatz an die vorige E-Mail an, ohne sie zu wiederholen – danach ein NEUER Aufhänger oder konkreter Mehrwert (eine Frage zum Bedarf, ein passender Punkt von der Webseite, ein Angebot wie kostenlose Test-Leads, ein konkreter Terminvorschlag). Keine erneute lange Vorstellung von Tanesco, derselbe Ansatz wie verlangt, genauso individuell.`;
+Nachfass-Mails (wenn der Auftrag sagt, dass schon E-Mails raus sind): kurz (50–110 Wörter), knüpfen in einem Halbsatz an die vorige E-Mail an, ohne sie zu wiederholen – danach ein NEUER Aufhänger oder konkreter Mehrwert (eine Frage zum Bedarf, ein passender Punkt von der Webseite, ein Angebot wie kostenlose Test-Leads, ein konkreter Terminvorschlag). Keine erneute lange Vorstellung von Tanesco, derselbe Ansatz wie verlangt, genauso individuell. Das Test-Angebot heißt in Nachfass-Mails: die Test-Leads schenken wir dem Betrieb – kostenlos und unverbindlich. Schreibe in Nachfass-Mails nie „ohne lange Bindung“, „keine Vertragsbindung“ oder „ohne Vorkasse“.`;
 }
 
 /** Grußformel am Textende entfernen – die Signatur aus den E-Mail-Einstellungen bringt „Mit freundlichen Grüßen“ und den Namen schon mit (sonst stünde es doppelt). */
@@ -233,7 +233,7 @@ export function dropCompanyNameClaim(text: string): string {
 export function finishDraft(text: string, options: { greeting: string; phone: string; followUp: boolean; partner?: string; sparte?: Pick<Sparte, "key"> & { questions?: number | null; topics?: string[] | null; partner?: string }; approach?: string | null; testLeads?: number | null }): string {
   const testLeads = options.testLeads ?? testLeadsFor(options.sparte); // Zahl der Sparte (PV & WP 20, sonst 10) – oder die höhere, die dem Kontakt schon versprochen wurde
   const withFacts = ensureFacts(fixGreeting(dropCompanyNameClaim(withTestOffer(text.trim(), testLeads)), options.greeting), options.followUp, options.partner, options.sparte, testLeads);
-  const payFit = dropPayFit(withFacts); // „Sie zahlen nur für Leads, die passen“ steht in keiner E-Mail – schreibt die KI ihn trotzdem, fliegt er raus
+  const payFit = options.followUp ? giftFollowUp(dropPayFit(withFacts)) : dropPayFit(withFacts); // „Sie zahlen nur für Leads, die passen“ steht in keiner E-Mail – in Nachfass-Mails sind die Test-Leads ein Geschenk (kostenlos, unverbindlich), nie „ohne lange Bindung“
   const done = cleanDraftText(ensureClosing(payFit, options.phone), testLeads);
   // Zahl der Fragen passend zur Sparte (auch wenn die KI „zehn“ aus der Vorlage übernimmt) – dahinter Beispiele ohne Klammern und die Logik-Kette
   const sparte = options.sparte ? { ...options.sparte, partner: options.sparte.partner ?? options.partner } : null;
@@ -501,6 +501,24 @@ export async function clearWrongSparteDrafts(db: Db): Promise<number> {
     }
   }
   return cleared;
+}
+/**
+ * Einmal nach dem Serverstart: offene Follow-up-Entwürfe (auch freigegebene, samt Alternativen) ohne „ohne lange Bindung“ – die Test-Leads
+ * sind in Nachfass-Mails ein Geschenk, kostenlos und unverbindlich. Selbst geschriebene Texte bleiben. Mehrfach ausführbar ohne Nebenwirkung.
+ */
+export async function giftFollowUpDrafts(db: Db): Promise<number> {
+  const rows = await db.select({ id: emailCampaignRecipients.id, sentCount: emailCampaignRecipients.sentCount, draftText: emailCampaignRecipients.draftText, draftOptions: emailCampaignRecipients.draftOptions, draftSource: emailCampaignRecipients.draftSource }).from(emailCampaignRecipients)
+    .where(and(inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), isNotNull(emailCampaignRecipients.draftState), gte(emailCampaignRecipients.sentCount, 1)));
+  let changed = 0;
+  for (const row of rows) {
+    const options = Array.isArray(row.draftOptions) ? row.draftOptions as DraftOption[] : null;
+    const fix = (text: string) => shortParagraphs(giftFollowUp(text));
+    const textChanged = row.draftSource !== "hand" && Boolean(row.draftText) && fix(row.draftText!) !== row.draftText;
+    const optionsChanged = Boolean(options?.some((item) => item?.text && mentionsBinding(item.text)));
+    if (!textChanged && !optionsChanged) continue;
+    await db.update(emailCampaignRecipients).set({ draftText: textChanged ? fix(row.draftText!) : row.draftText, draftOptions: (options ? options.map((item) => (item?.text && mentionsBinding(item.text) ? { ...item, text: fix(item.text) } : item)) : row.draftOptions) as DraftOption[] | null }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
+  }
+  return changed;
 }
 /**
  * Einmal nach dem Serverstart: der Satz „Sie zahlen nur für Leads, die passen“ kommt aus allen offenen Entwürfen (auch freigegebenen,

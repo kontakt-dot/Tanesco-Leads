@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanDraftText, dropAdPlatforms, fixTreeQuestions, modernizeTree, nodeWithTestOffer, promisedTestLeads, shortParagraphs, splitSentences, starterTree, TEST_LEADS, TEST_LEADS_ENERGY, TEST_OFFER_CHANGED_AT, testLeadsFor, testLeadsIn, testOfferFor, thirdPartyTemplate, withTestOffer, type EmailTree } from "../shared/email-campaigns";
+import { cleanDraftText, dropAdPlatforms, firstSendNode, fixTreeQuestions, giftFollowUp, modernizeTree, nodeWithTestOffer, promisedTestLeads, shortParagraphs, splitSentences, starterTree, TEST_LEADS, TEST_LEADS_ENERGY, TEST_OFFER_CHANGED_AT, testLeadsFor, testLeadsIn, testOfferFor, thirdPartyTemplate, withTestOffer, type EmailTree } from "../shared/email-campaigns";
 import { starterBlocks } from "../shared/email-design";
 import { polishBlocks, sanitizeDraft, heuristicEmailDraft } from "../shared/email-ai";
 import { resolveSparte } from "../shared/lead-sparte";
@@ -83,6 +83,22 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
     const fresh = JSON.stringify(modernizeTree(old)); expect(fresh).not.toMatch(/\b20\b/); expect(fresh.match(/10 Test-Leads/g)).toHaveLength(5); // Betreff, Text, Aufzählung und die Nachfass-Mail in beiden Zweigen
     expect(JSON.stringify(fixTreeQuestions(old, resolveSparte("Hausnotruf")!))).not.toMatch(/20 Test-Leads/); // auch beim Speichern/Start über die Sparten-Anpassung
     expect(cleanDraftText("Zum Kennenlernen bekommen Sie 20 Test-Leads kostenlos.", TEST_LEADS)).toBe("Zum Kennenlernen bekommen Sie 10 Test-Leads kostenlos."); // offene Entwürfe – mit der Zahl, die dem Kontakt zusteht
+  });
+  it("Follow-ups: die Test-Leads sind ein Geschenk – kostenlos und unverbindlich, nie „ohne lange Bindung“; Erst-E-Mails bleiben, wie sie sind", () => {
+    const follow = JSON.stringify(starterBlocks("nachfassen")); expect(follow).toContain("20 Test-Leads, individuell für Ihren Betrieb telefonisch qualifiziert – als Geschenk von uns, kostenlos und unverbindlich."); expect(follow).not.toMatch(/Bindung|Vorkasse/);
+    expect(giftFollowUp("Das Angebot steht weiterhin: 10 Test-Leads kostenlos, individuell für Ihren Betrieb telefonisch qualifiziert – ohne Vorkasse und ohne lange Bindung.")).toBe("Das Angebot steht weiterhin: 10 Test-Leads, individuell für Ihren Betrieb telefonisch qualifiziert – als Geschenk von uns, kostenlos und unverbindlich."); // die alte Vorlage, Zahl bleibt
+    expect(giftFollowUp("Ihre 20 Test-Leads warten – keine Vorkasse, keine lange Vertragsbindung.")).toBe("Ihre 20 Test-Leads warten – als Geschenk von uns, kostenlos und unverbindlich.");
+    expect(giftFollowUp("Kurz nachgefragt: 10 kostenlose Test-Leads stehen bereit, ohne lange Bindung.")).toBe("Kurz nachgefragt: 10 kostenlose Test-Leads stehen bereit – als Geschenk von uns und unverbindlich.");
+    expect(giftFollowUp("Hallo.\n\nEs gibt keine langfristige Vertragsbindung.\n\nVielen Dank")).toBe("Hallo.\n\nVielen Dank"); // eigener Satz nur zur Bindung → weg
+    expect(giftFollowUp("• Keine langfristige Vertragsbindung\n• Echtzeit per API")).toBe("• Echtzeit per API");
+    for (const text of ["Ein Satz ohne Bindung-Thema.", "Starke Kundenbindung in Ihrer Region.", "20 Test-Leads – als Geschenk von uns, kostenlos und unverbindlich."]) expect(giftFollowUp(text)).toBe(text);
+    // gespeicherter Ablauf: nur die Nachfass-Mails werden umgestellt, die Erst-E-Mail (mit „Keine langfristige Vertragsbindung“ als Vorteil der Zusammenarbeit) bleibt
+    const old = starterTree({ first: [{ id: "f1", type: "bullets", items: ["Keine langfristige Vertragsbindung", "Zum Kennenlernen: 20 Test-Leads kostenlos"] }], followUp: [{ id: "n1", type: "text", text: "{{begruessung}},\n\nDas Angebot steht weiterhin: 20 Test-Leads kostenlos, individuell für Ihren Betrieb telefonisch qualifiziert – ohne Vorkasse und ohne lange Bindung.\n\nVielen Dank" }] }) as EmailTree;
+    const fresh = modernizeTree(old, 20)!; const firstId = firstSendNode(fresh)!.id;
+    const sends = fresh.nodes.filter((node) => node.type === "send") as Array<Extract<EmailTree["nodes"][number], { type: "send" }>>;
+    expect(JSON.stringify(sends.find((node) => node.id === firstId)!.blocks)).toContain("Keine langfristige Vertragsbindung");
+    for (const node of sends.filter((item) => item.id !== firstId)) { const json = JSON.stringify(node.blocks); expect(json).not.toMatch(/lange Bindung|Vorkasse/); expect(json).toContain("als Geschenk von uns, kostenlos und unverbindlich"); }
+    expect(modernizeTree(fresh, 20)).toBeNull(); // nichts mehr zu tun
   });
   it("Ein Versprechen bleibt: Follow-ups nennen die Zahl Test-Leads, die der Kontakt schon gelesen hat (20) – neue Erst-E-Mails 10", () => {
     expect(testLeadsIn("Zum Kennenlernen: 20 Test-Leads kostenlos.")).toBe(20); expect(testLeadsIn("Wir bieten zehn kostenlose Test-Leads an.")).toBe(10); expect(testLeadsIn("Die ersten 20 Leads sind kostenlos.")).toBe(20);

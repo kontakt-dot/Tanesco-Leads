@@ -221,10 +221,11 @@ export function renderNode(node: Extract<EmailNode, { type: "send" }>, design: E
  * toten „Termin“-Knöpfe raus. Gibt null zurück, wenn nichts zu ändern war.
  */
 export function modernizeTree(tree: EmailTree, testLeads: number = TEST_LEADS): EmailTree | null {
-  let changed = false;
+  let changed = false; const firstId = firstSendNode(tree)?.id ?? null;
   const nodes = tree.nodes.map((node) => {
     if (node.type !== "send") return node;
-    const blocks = node.blocks.filter((block) => { const dead = isDeadButton(block); if (dead) changed = true; return !dead; }).map((block) => {
+    const followUp = Boolean(firstId) && node.id !== firstId; // Nachfass-Mail: Test-Leads als Geschenk, nie „ohne lange Bindung“
+    const blocks = (followUp ? blocksAsGift(node.blocks) : node.blocks).filter((block) => { const dead = isDeadButton(block); if (dead) changed = true; return !dead; }).map((block) => {
       if (block.type === "bullets") { const items = block.items.map((item) => withTestOffer(dropAdPlatforms(dropPayFit(item)), testLeads)).filter((item) => item.trim()); if (items.length !== block.items.length || items.some((item, index) => item !== block.items[index])) { changed = true; return { ...block, items }; } return block; } // nie „Sie zahlen nur für Leads, die passen“
       if (block.type !== "text" && block.type !== "heading") return block;
       const text = block.text.replace(/^(guten tag|hallo|liebe[r]?)\s*(\{\{\s*anrede\s*\}\}\s*\{\{\s*nachname\s*\}\}|\{\{\s*vorname\s*\}\}|\{\{\s*name\s*\}\})?\s*,/i, "{{begruessung}},").replace(/^(Kurz nachgefragt|Passt es gerade nicht|Noch Fragen zu unserem Angebot),\s*\{\{\s*vorname\s*\}\}(\??)$/i, (_m, head: string, q: string) => `${head}${q}`);
@@ -233,7 +234,8 @@ export function modernizeTree(tree: EmailTree, testLeads: number = TEST_LEADS): 
     });
     const subject = withTestOffer(node.subject ?? "", testLeads); const subjectB = node.subjectB ? withTestOffer(node.subjectB, testLeads) : node.subjectB; // Test-Angebot im Betreff mit der Zahl der Sparte
     const subjectChanged = subject !== (node.subject ?? "") || subjectB !== node.subjectB; if (subjectChanged) changed = true;
-    return blocks === node.blocks && !subjectChanged ? node : { ...node, blocks, ...(subjectChanged ? { subject, ...(node.subjectB !== undefined ? { subjectB } : {}) } : {}) };
+    const sameBlocks = blocks.length === node.blocks.length && blocks.every((block, index) => block === node.blocks[index]); if (!sameBlocks) changed = true;
+    return sameBlocks && !subjectChanged ? node : { ...node, blocks, ...(subjectChanged ? { subject, ...(node.subjectB !== undefined ? { subjectB } : {}) } : {}) };
   });
   return changed ? { ...tree, nodes } : null;
 }
@@ -549,6 +551,45 @@ export function withTestOffer(text: string, count: number = TEST_LEADS): string 
   let out = text;
   for (const source of TEST_OFFER_RES) out = out.replace(new RegExp(source, "gi"), (all: string, lead: string, raw: string) => (countValueOf(raw) === count ? all : `${lead}${countTextFor(count, raw)}`));
   return out;
+}
+/* ---------------------------------------------------------------- Follow-ups: die Test-Leads sind ein Geschenk */
+const BINDING_RE = /\b(?:ohne|keine[rn]?)\s+(?:lange[nrs]?\s+|langfristige[nrs]?\s+)?(?:Vertrags)?[Bb]indung(?![-\wäöüß])/i;
+/** Steht im Text „ohne lange Bindung“, „keine Vertragsbindung“ o. Ä.? */
+export const mentionsBinding = (text: string) => BINDING_RE.test(text);
+/** So heißt es in Nachfass-Mails beim Test-Angebot. */
+export const FOLLOW_UP_GIFT = "als Geschenk von uns, kostenlos und unverbindlich";
+const OLD_FOLLOW_UP_RE = /(\S+) Test-Leads kostenlos, individuell für Ihren Betrieb telefonisch qualifiziert – ohne Vorkasse und ohne lange Bindung\./g;
+const BINDING_PART_RE = /\s*(?:[–—-]|,)?\s*(?:(?:ohne|keine)\s+Vorkasse\s*(?:und|,|sowie)\s*)?(?:ohne|keine[rn]?)\s+(?:lange[nrs]?\s+|langfristige[nrs]?\s+)?(?:Vertrags)?[Bb]indung(?![-\wäöüß])(?:\s*(?:und|,|sowie)\s*(?:ohne|keine)\s+Vorkasse)?/gi;
+/**
+ * Nachfass-Mails: die Test-Leads bekommt der Betrieb von uns geschenkt – kostenlos und unverbindlich. „Ohne lange Bindung“ (und „ohne
+ * Vorkasse“ beim Test-Angebot) passt dazu nicht: „… qualifiziert – ohne Vorkasse und ohne lange Bindung.“ → „… qualifiziert – als Geschenk
+ * von uns, kostenlos und unverbindlich.“; ein Satz oder Aufzählungspunkt nur zur Bindung fällt ganz weg. Mehrfach ohne Nebenwirkung.
+ */
+export function giftFollowUp(text: string): string {
+  if (!text) return text;
+  let out = text.replace(OLD_FOLLOW_UP_RE, (_all, count: string) => `${count} Test-Leads, individuell für Ihren Betrieb telefonisch qualifiziert – ${FOLLOW_UP_GIFT}.`); // die alte Vorlage
+  if (!mentionsBinding(out)) return out;
+  const lines: string[] = [];
+  for (const line of out.split("\n")) {
+    if (!mentionsBinding(line)) { lines.push(line); continue; }
+    const bullet = /^\s*(?:[•*–-]|\d+[.)])\s+/.exec(line)?.[0] ?? "";
+    const sentences = line.slice(bullet.length).match(/[^.!?]+(?:[.!?]+|$)/g) ?? [];
+    const kept = sentences.map((sentence) => sentence.trim()).map((sentence) => {
+      if (!mentionsBinding(sentence)) return sentence;
+      if (testLeadsIn(sentence) === null) return ""; // ein Satz nur zur Bindung → weg
+      const end = /[.!?]+$/.exec(sentence)?.[0] ?? ".";
+      let core = sentence.replace(/[.!?]+$/, "").replace(BINDING_PART_RE, "").replace(/[\s,–—-]+$/, "").trim();
+      if (!/unverbindlich/i.test(core)) core = `${core} – ${/kostenlos|gratis|geschenkt/i.test(core) ? "als Geschenk von uns und unverbindlich" : FOLLOW_UP_GIFT}`;
+      return `${core}${end}`;
+    }).filter(Boolean).join(" ");
+    if (kept) lines.push(`${bullet}${kept}`);
+  }
+  out = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+}
+/** Texte einer Nachfass-Mail im Ablauf mit dem Test-Angebot als Geschenk (ohne „lange Bindung“). */
+export function blocksAsGift(blocks: EmailBlock[]): EmailBlock[] {
+  return blocks.map((block) => (block.type === "text" || block.type === "heading" ? (giftFollowUp(block.text) === block.text ? block : { ...block, text: giftFollowUp(block.text) }) : block.type === "bullets" && block.items.some((item) => giftFollowUp(item) !== item) ? { ...block, items: block.items.map(giftFollowUp).filter((item) => item.trim()) } : block));
 }
 /** Texte einer E-Mail ohne „Sie zahlen nur für Leads, die passen“ – Sicherheitsnetz direkt vor dem Versand (Vorlage und KI-Text). */
 export function blocksWithoutPayFit(blocks: EmailBlock[]): EmailBlock[] {

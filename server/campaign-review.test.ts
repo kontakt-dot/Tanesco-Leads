@@ -56,6 +56,9 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     // Follow-up an einen Kontakt, dem 20 versprochen wurden: der Entwurf nennt wieder 20 – auch wenn die KI 10 schreibt oder das Angebot fehlt
     const promised = finishDraft("Sehr geehrte Frau Kurz,\n\nkurz nachgefragt: 10 Test-Leads kostenlos stehen weiter für Sie bereit.", { greeting, phone: "", followUp: true, sparte: DEFAULT_SPARTE, testLeads: 20 });
     expect(promised).toContain("20 Test-Leads kostenlos"); expect(promised).not.toMatch(/\b10 Test-Leads/);
+    const gift = finishDraft("Sehr geehrte Frau Kurz,\n\nkurz nachgefragt: 20 Test-Leads stehen weiter für Sie bereit – ohne Vorkasse und ohne lange Bindung.", { greeting, phone: "", followUp: true, sparte: DEFAULT_SPARTE, testLeads: 20 });
+    expect(gift).toContain("als Geschenk von uns, kostenlos und unverbindlich"); expect(gift).not.toMatch(/Bindung|Vorkasse/); // Follow-up: Test-Leads als Geschenk
+    expect(finishDraft("Sehr geehrte Frau Kurz,\n\nkeine Vorkasse, keine lange Vertragsbindung. Zum Kennenlernen: 20 Test-Leads kostenlos.", { greeting, phone: "", followUp: false, sparte: DEFAULT_SPARTE, testLeads: 20 })).toContain("keine lange Vertragsbindung"); // Erst-E-Mail bleibt
     const added = finishDraft("Sehr geehrte Frau Kurz,\n\nkurz nachgefragt.", { greeting, phone: "", followUp: true, sparte: DEFAULT_SPARTE, testLeads: 20 });
     expect(added).toContain("Zum Kennenlernen: 20 Test-Leads kostenlos");
     expect(kept).not.toMatch(/Firmenname/); expect(kept).toContain("anhand von zehn Fragen telefonisch vorqualifiziert."); // Firmennamen-Satz entfernt, Rest bleibt sauber

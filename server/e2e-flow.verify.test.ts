@@ -3478,6 +3478,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(vera.draftText).toContain("20 Test-Leads"); expect(vera.draftText).not.toMatch(/\b10 Test-Leads/); expect(vera.draftSubject).not.toMatch(/\b10 Test-Leads/);
     expect((vera.draftOptions as Array<{ text: string }>).every((item) => !/\b10 Test-Leads/.test(item.text))).toBe(true); // auch die Alternativen
     expect(olga.draftText).toContain("20 Test-Leads"); expect(nils.draftText).toContain("10 Test-Leads"); expect(nils.draftText).not.toMatch(/\b20 Test-Leads/);
+    expect(vera.draftText).toContain("kostenlos und unverbindlich"); expect(`${vera.draftText}\n${nils.draftText}\n${olga.draftText}`).not.toMatch(/lange Bindung|Vertragsbindung/); // Follow-up: Test-Leads als Geschenk, nie „ohne lange Bindung“
     const queue2 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue2.counts).toMatchObject({ erste: 0, followUps: 3 });
     const veraItem = queue2.items.find((item) => item.id === vera.id)!; expect(veraItem).toMatchObject({ step: 2, followUp: true, nodeLabel: "Kurze Nachfrage", testLeads: 20 }); expect(veraItem.sentBefore).toMatchObject({ subject: "Persönlich für Versprechen Wärme", count: 1 }); expect(veraItem.sentBefore?.at).toBeTruthy();
     expect(queue2.items.find((item) => item.id === nils.id)).toMatchObject({ step: 2, testLeads: 10, promisedBefore: 10 }); expect(queue2.items.find((item) => item.id === olga.id)).toMatchObject({ step: 2, testLeads: 20 });
@@ -3486,6 +3487,12 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ draftText: nils.draftText!.replace(/10 Test-Leads/g, "20 Test-Leads") }).where(eq(emailCampaignRecipients.id, nils.id));
     const { fixQuestionCounts } = await import("./campaign-review"); await fixQuestionCounts(db);
     expect((await rows())[0].draftText).toContain("20 Test-Leads"); expect((await rows())[1].draftText).toContain("10 Test-Leads"); expect((await rows())[1].draftText).not.toMatch(/\b20 Test-Leads/);
+    // alter Follow-up-Entwurf mit „ohne Vorkasse und ohne lange Bindung“ → einmal nach dem Start: Test-Leads als Geschenk, Zahl bleibt
+    const { giftFollowUpDrafts } = await import("./campaign-review"); const veraDraftBefore = (await rows())[0].draftText!;
+    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrte Frau Versprechen,\n\nDas Angebot steht weiterhin: 20 Test-Leads kostenlos, individuell für Ihren Betrieb telefonisch qualifiziert – ohne Vorkasse und ohne lange Bindung.\n\nVielen Dank" }).where(eq(emailCampaignRecipients.id, vera.id));
+    expect(await giftFollowUpDrafts(db)).toBeGreaterThanOrEqual(1); expect((await rows())[0].draftText).toBe("Sehr geehrte Frau Versprechen,\n\nDas Angebot steht weiterhin: 20 Test-Leads, individuell für Ihren Betrieb telefonisch qualifiziert – als Geschenk von uns, kostenlos und unverbindlich.\n\nVielen Dank");
+    expect(await giftFollowUpDrafts(db)).toBe(0);
+    await db.update(emailCampaignRecipients).set({ draftText: veraDraftBefore }).where(eq(emailCampaignRecipients.id, vera.id));
     // Freigeben und senden: Veras Follow-up geht mit 20 raus, Nils' mit 10 – beide Texte gespeichert
     await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: vera.draftSubject!, text: vera.draftText!, approve: true });
     await owner.leadops.saveCampaignDraft({ recipientId: nils.id, subject: nils.draftSubject!, text: nils.draftText!, approve: true });

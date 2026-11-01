@@ -42,6 +42,7 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
     expect(vera2).toMatchObject({ sentCount: 1, nodeId: "m2", draftState: "entwurf", draftNodeId: "m2" });
     expect(String(vera2.draftText)).toContain("20 Test-Leads"); expect(String(vera2.draftText)).not.toMatch(/\b10 Test-Leads/); expect((vera2.draftOptions as Array<{ text: string }>).every((item) => !/\b10 Test-Leads/.test(item.text))).toBe(true);
     expect(String(olga2.draftText)).toContain("20 Test-Leads"); expect(String(nils2.draftText)).toContain("10 Test-Leads"); expect(String(nils2.draftText)).not.toContain("20 Test-Leads");
+    expect(String(nils2.draftText)).toContain("kostenlos und unverbindlich"); expect([vera2, nils2, olga2].every((row) => !/lange Bindung|Vertragsbindung/.test(String(row.draftText)))).toBe(true); // Follow-up: Test-Leads als Geschenk
     const queue2 = await call("leadops.campaignReviewQueue", { campaignId: saved.id }); expect(queue2.counts).toMatchObject({ erste: 0, followUps: 3 });
     expect(queue2.items.find((item: any) => item.id === vera.id)).toMatchObject({ step: 2, followUp: true, nodeLabel: "Kurze Nachfrage", testLeads: 20, sentBefore: { subject: "Persönlich für Versprechen Wärme", count: 1 } });
     expect(queue2.items.find((item: any) => item.id === nils.id)).toMatchObject({ step: 2, testLeads: 10 }); expect(queue2.items.find((item: any) => item.id === olga.id)).toMatchObject({ step: 2, testLeads: 20 });
