@@ -3631,7 +3631,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const imported = await owner.leadops.importColdList({ listName, toPipeline: true, rows: [{ firstName: "", lastName: "Thermondo", company: "Thermondo GmbH", email: "kontakt@thermondo-e2e.example", phone: "+49 800 4 200 300" }] });
     expect(imported.created).toBe(1);
     const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, "kontakt@thermondo-e2e.example"))))[0];
-    expect(lead.listName).toBe(listName); expect(lead.adCampaignId!.length).toBeLessThanOrEqual(120); expect(lead.adCampaignId).toMatch(/^liste-wp-heizungsbauer-aroundhome/); expect(lead.adCampaignName).toBe(`Liste: ${listName}`);
+    const tidy = "Wärmepumpe Heizungsbauer Aroundhome Bewertungen größte ab 20 Bewertungen Region Berlin Brandenburg Sachsen 2026"; expect(lead.listName).toBe(tidy); expect(lead.adCampaignId!.length).toBeLessThanOrEqual(120); expect(lead.adCampaignId).toMatch(/^liste-w-rmepumpe-heizungsbauer-aroundhome/); expect(lead.adCampaignName).toBe(`Liste: ${tidy}`); // technischer Dateiname wird beim Upload lesbar
     expect((await owner.leadops.pipelineOverview({ source: "kaltakquise" })).campaigns.some((campaign) => campaign.campaignId === lead.adCampaignId)).toBe(true);
   }, 20000);
 
@@ -3917,5 +3917,37 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const freshSms = await owner.leadops.sendOptInSms({ publicId: rosa.publicId, buyerName: "Müller Solartechnik, Frankfurt" }); const publicPage = await fetch(`${apiBase}/opt-in/${freshSms.link.split("/").pop()}`); const pageHtml = await publicPage.text();
     expect(pageHtml).toContain("https://www.tanescodigital.de/datenschutz"); expect(pageHtml).toContain("Datenschutzerklärung"); expect(pageHtml).toContain("mailto:kontakt@tanescodigital.de"); expect(pageHtml).toContain("telefonisch und per E-Mail kontaktieren");
     const revokedPage = await fetch(`${apiBase}/opt-in/${token}`); expect(await revokedPage.text()).toContain("Datenschutzerklärung"); // auch nach Widerruf bleibt der Hinweis stehen
+  }, 60000);
+
+  it("63w. Listennamen: technische Namen werden beim Upload lesbar, bestehende Listen werden überall umbenannt (Kontakte, Upload-Verlauf, Schlagwort, Kampagnen-Zielgruppen)", async () => {
+    const tenantId = S.tenantId as number; const outreach = await import("./sales-outreach"); const { listImports, tags, emailCampaigns } = await import("../drizzle/schema");
+    // 1) Upload mit technischem Namen → wird gleich lesbar gespeichert
+    const up = await owner.leadops.importColdList({ pipeline: "kaltakquise", listName: "WP_regional_ab_20_Mitarbeiter.xlsx", rows: [{ firstName: "Lena", lastName: "Liste", company: "Liste Wärme GmbH", email: "lena@liste-waerme.example", phone: "+49 30 9199001" }] });
+    expect(up.created).toBe(1);
+    expect((await db.select({ listName: leads.listName }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.email, "lena@liste-waerme.example"))))[0]?.listName).toBe("Wärmepumpe regional ab 20 Mitarbeiter");
+    // 2) Altbestand mit technischem Namen (direkt in der Datenbank, wie vor dem Update) samt Upload, Schlagwort und Kampagne
+    const oldName = "PV_WP_Aroundhome_Vielkaeufer_ab_100_Bewertungen_neu"; const tidy = "Photovoltaik & Wärmepumpe Aroundhome Vielkäufer ab 100 Bewertungen (neu)";
+    const inserted = await db.insert(leads).values({ tenantId, publicId: "LISTOLD001", categoryId: S.pv.id, kind: "vertrieb", firstName: "Otto", lastName: "Altliste", email: "otto@altliste.example", phone: "+49 30 9199002", status: "neu", listName: oldName, adPlatform: "kaltakquise", inPipeline: true, pipelineStage: "neu", metadata: {} });
+    const ottoId = Number(inserted[0]?.insertId);
+    await db.insert(listImports).values({ tenantId, listName: oldName, source: "kaltakquise", rowCount: 1, created: 1, updated: 0, duplicates: 0, toPipeline: true, leadIds: [ottoId] } as never);
+    await db.insert(tags).values({ tenantId, name: `Liste: ${oldName}`.slice(0, 80), color: "#f59e0b" });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Altliste Serie", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: oldName, listNames: [oldName, "Wärmepumpe regional ab 20 Mitarbeiter"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Hallo", blocks: [{ id: "b1", type: "text", text: "Hallo" }], next: null }] } as never, design: {} });
+    const changes = await outreach.tidyListNames(db, tenantId);
+    expect(changes.find((row) => row.from === oldName)).toMatchObject({ to: tidy, renamed: 1 });
+    expect((await db.select({ listName: leads.listName, adCampaignName: leads.adCampaignName }).from(leads).where(eq(leads.id, ottoId)))[0]).toMatchObject({ listName: tidy, adCampaignName: `Liste: ${tidy}` });
+    expect((await db.select({ listName: listImports.listName }).from(listImports).where(and(eq(listImports.tenantId, tenantId), eq(listImports.listName, tidy)))).length).toBe(1);
+    expect((await db.select({ id: tags.id }).from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${tidy}`.slice(0, 80))))).length).toBe(1);
+    const audience = (await db.select({ audience: emailCampaigns.audience }).from(emailCampaigns).where(eq(emailCampaigns.id, campaign.id)))[0]?.audience as { listName?: string; listNames?: string[] };
+    expect(audience.listName).toBe(tidy); expect(audience.listNames).toEqual([tidy, "Wärmepumpe regional ab 20 Mitarbeiter"]);
+    // 3) zweiter Lauf ändert nichts mehr (idempotent); bewusst geschriebene Namen bleiben
+    expect((await outreach.tidyListNames(db, tenantId)).length).toBe(0);
+    // 4) Zusammenstoß: gibt es den lesbaren Namen schon als andere Liste, wird nicht umbenannt
+    await db.insert(leads).values({ tenantId, publicId: "LISTOLD002", categoryId: S.pv.id, kind: "vertrieb", firstName: "Clara", lastName: "Clash", email: "clara@clash.example", status: "neu", listName: "WP_ab_1_Bundesland", adPlatform: "kaltakquise", inPipeline: true, pipelineStage: "neu", metadata: {} });
+    await db.insert(leads).values({ tenantId, publicId: "LISTOLD003", categoryId: S.pv.id, kind: "vertrieb", firstName: "Bea", lastName: "Besteht", email: "bea@besteht.example", status: "neu", listName: "Wärmepumpe ab 1 Bundesland", adPlatform: "kaltakquise", inPipeline: true, pipelineStage: "neu", metadata: {} });
+    expect((await outreach.renameListEverywhere(db, tenantId, "WP_ab_1_Bundesland", "Wärmepumpe ab 1 Bundesland")).skipped).toBe("vorhanden");
+    expect((await db.select({ listName: leads.listName }).from(leads).where(eq(leads.publicId, "LISTOLD002")))[0]?.listName).toBe("WP_ab_1_Bundesland");
+    // 5) Umbenennen über den Upload-Verlauf macht technische Namen ebenfalls lesbar
+    const lena = (await owner.leadops.listImportHistory({})).find((row) => row.listName === "Wärmepumpe regional ab 20 Mitarbeiter");
+    if (lena) expect((await owner.leadops.renameListImport({ id: lena.id, listName: "PV_regional_ab_20_Mitarbeiter" })).listName).toBe("Photovoltaik regional ab 20 Mitarbeiter");
   }, 60000);
 });

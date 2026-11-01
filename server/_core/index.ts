@@ -48,6 +48,8 @@ async function startServer() {
   registerPublicApiRoutes(app);
   startDialerScheduler(); // Predictive-Dialer (DIALER_TICK_SECONDS, Standard 5, 0 = aus)
   startEmailCampaignScheduler(); // E-Mail-Kampagnen im Minutentakt (EMAIL_CAMPAIGN_TICK_SECONDS, Standard 60)
+  // Technische Listennamen („PV_WP_…_neu“) einmalig lesbar machen – idempotent, bewusst vergebene Namen bleiben
+  setTimeout(() => { void (async () => { try { const { getDb } = await import("../db"); const db = await getDb(); if (!db) return; const { tidyListNames } = await import("../sales-outreach"); const changes = await tidyListNames(db); if (changes.length) console.log(`[Listen] ${changes.length} Listennamen aufgeräumt`); } catch (error) { console.error("[Listen] Aufräumen fehlgeschlagen:", error instanceof Error ? error.message : error); } })(); }, 5_000);
   startDeliveryScheduler(); // Lieferintervalle + Wiederholungen (DELIVERY_SCHEDULER_INTERVAL_MINUTES, Standard 15, 0 = aus)
   registerFileRoutes(app);
   app.use("/api/telephony", express.urlencoded({ extended: false }));

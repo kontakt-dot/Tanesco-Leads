@@ -1,4 +1,5 @@
 import { listCampaignId } from "../shared/sales-pipeline";
+import { tidyListName } from "../shared/list-name";
 /**
  * Lead-Finder: Firmen im Internet finden (regional) und anreichern.
  * Quellen: Google Places (GOOGLE_PLACES_API_KEY, beste Qualität) – sonst OpenStreetMap (Nominatim + Overpass, ohne Schlüssel).
@@ -103,7 +104,7 @@ export async function listProspects(db: Db, tenantId: number, options: { query?:
 /** Firmen als Kontakte in die Kaltakquise-Pipeline übernehmen (Liste „Lead-Finder: …“, Vertriebler-Verteilung). */
 export async function prospectsToPipeline(db: Db, tenantId: number, input: { ids: number[]; listName?: string | null; categoryId?: number | null; ownerUserIds?: number[] | null; actorUserId: number | null }) {
   const rows = await db.select().from(companyProspects).where(and(eq(companyProspects.tenantId, tenantId), inArray(companyProspects.id, input.ids))); if (!rows.length) throw new Error("Keine Firmen ausgewählt.");
-  const listName = (input.listName?.trim() || `Lead-Finder: ${rows[0].query ?? "Suche"} ${rows[0].location ?? ""}`).trim().slice(0, 160);
+  const listName = tidyListName(input.listName?.trim() || `Lead-Finder: ${rows[0].query ?? "Suche"} ${rows[0].location ?? ""}`).slice(0, 160);
   const categoryId = await requireVertriebCategoryId(db, tenantId, input.categoryId);
   let tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0]; if (!tag) { await db.insert(tags).values({ tenantId, name: `Liste: ${listName}`.slice(0, 80), color: "#0ea5e9" }); tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0]; }
   const leadIds: number[] = []; let skipped = 0;

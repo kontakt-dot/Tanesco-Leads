@@ -7,6 +7,7 @@ import type { FollowUpPlan } from "../shared/follow-up-plan";
 import { deliveryCounts, isBadDelivery, sentOriginCounts } from "../shared/sent-tracking";
 import { DEFAULT_SPARTE, OLD_ENERGY_PHRASE, resolveSparte, SPARTE_PHRASE, sparteFromCategories, sparteOf, withSparte } from "../shared/lead-sparte";
 import { byCategoryThenName, campaignTag } from "../shared/campaign-tag";
+import { tidyListName } from "../shared/list-name";
 import { fixTreeQuestions, testLeadsOfSent } from "../shared/email-campaigns";
 import { cleanFolderName, folderKey, folderNameIssue, MAX_FOLDERS, planSparteFolders, sortFolders, sortSummary } from "../shared/campaign-folders";
 import crypto from "node:crypto";
@@ -44,7 +45,7 @@ async function tagByName(db: Db, tenantId: number, name: string, color: string) 
 const fillIfEmpty = <T>(current: T | null | undefined, next: T | null | undefined) => (current ?? null) || (next ?? null);
 
 export async function importColdList(db: Db, tenantId: number, input: { pipeline?: PipelineSource | null; listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; ownerShares?: OwnerShare[] | null; shareMode?: ShareMode | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null; toPipeline?: boolean }) {
-  const listName = input.listName.trim(); if (!listName) throw new Error("Bitte einen Listennamen angeben.");
+  const listName = tidyListName(input.listName); if (!listName) throw new Error("Bitte einen Listennamen angeben."); // „PV_WP_…_neu.xlsx“ → lesbarer Name
   const coldPlatform = input.pipeline && isColdLike(input.pipeline) ? platformForSource(input.pipeline) : "kaltakquise"; // eigene Pipeline: Kontakte landen dort if (!input.rows.length) throw new Error("Die Liste enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig).");
   // Kategorie ist freiwillig: ohne Angabe die erste aktive nehmen, sonst ohne Kategorie anlegen.
   const categoryId = await requireVertriebCategoryId(db, tenantId, input.categoryId); // ohne Wahl: „Photovoltaik & Wärmepumpe“ (Vertriebspipeline), sonst die erste aktive Kategorie
@@ -1235,7 +1236,7 @@ export async function listImportHistory(db: Db, tenantId: number, limit = 50) {
  */
 /** Liste eines Uploads umbenennen – z. B. wenn zwei Dateien versehentlich unter demselben Listennamen hochgeladen wurden. Nur die Kontakte dieses Uploads wandern in die neue Liste. */
 export async function renameListImport(db: Db, tenantId: number, input: { id: number; listName: string }, actorUserId: number | null = null) {
-  const listName = input.listName.trim().replace(/\s+/g, " ").slice(0, 160); if (!listName) throw new Error("Bitte einen Listennamen angeben.");
+  const listName = tidyListName(input.listName).slice(0, 160); if (!listName) throw new Error("Bitte einen Listennamen angeben.");
   const row = (await db.select().from(listImports).where(and(eq(listImports.tenantId, tenantId), eq(listImports.id, input.id))).limit(1))[0];
   if (!row) throw new Error("Diesen Upload gibt es nicht mehr.");
   if (row.undoneAt) throw new Error("Dieser Upload wurde zurückgenommen.");
@@ -1244,6 +1245,51 @@ export async function renameListImport(db: Db, tenantId: number, input: { id: nu
   await db.update(listImports).set({ listName }).where(eq(listImports.id, row.id));
   await logActivity(db, tenantId, { kind: "sonstiges", title: `Liste umbenannt: „${row.listName}“ → „${listName}“ (${ids.length} Kontakte)`, actorUserId, refType: "listImport", refId: row.id });
   return { renamed: ids.length, from: row.listName, listName };
+}
+
+/**
+ * Eine Liste überall umbenennen: Kontakte (Listenname, Kampagnen-Kennung), Upload-Verlauf, das Schlagwort „Liste: …“
+ * und die Zielgruppen aller E-Mail-Kampagnen, die die Liste verwenden. Gibt es den neuen Namen schon als andere Liste,
+ * wird nicht umbenannt (sonst würden zwei Listen zusammenfallen).
+ */
+export async function renameListEverywhere(db: Db, tenantId: number, from: string, to: string, actorUserId: number | null = null, note = "umbenannt") {
+  const oldName = from.trim(); const newName = to.trim().replace(/\s+/g, " ").slice(0, 160);
+  if (!oldName || !newName || oldName === newName) return { renamed: 0, skipped: "gleich" as const };
+  const clash = (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.listName, newName))).limit(1))[0];
+  if (clash) return { renamed: 0, skipped: "vorhanden" as const };
+  const ids = (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.listName, oldName)))).map((row) => row.id);
+  if (ids.length) await db.update(leads).set({ listName: newName, adCampaignId: listCampaignId(newName), adCampaignName: `Liste: ${newName}` }).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, ids)));
+  await db.update(listImports).set({ listName: newName }).where(and(eq(listImports.tenantId, tenantId), eq(listImports.listName, oldName)));
+  const oldTag = `Liste: ${oldName}`.slice(0, 80); const newTag = `Liste: ${newName}`.slice(0, 80);
+  const tagClash = (await db.select({ id: tags.id }).from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, newTag))).limit(1))[0];
+  if (!tagClash) await db.update(tags).set({ name: newTag }).where(and(eq(tags.tenantId, tenantId), eq(tags.name, oldTag)));
+  // Zielgruppen der Kampagnen: listName / listNames ersetzen
+  const campaigns = await db.select({ id: emailCampaigns.id, audience: emailCampaigns.audience }).from(emailCampaigns).where(eq(emailCampaigns.tenantId, tenantId));
+  let campaignsChanged = 0;
+  for (const campaign of campaigns) {
+    const audience = (campaign.audience ?? null) as Audience | null; if (!audience) continue;
+    const names = Array.isArray(audience.listNames) ? audience.listNames : null;
+    const touches = audience.listName === oldName || Boolean(names?.includes(oldName)); if (!touches) continue;
+    const next: Audience = { ...audience, ...(audience.listName === oldName ? { listName: newName } : {}), ...(names ? { listNames: Array.from(new Set(names.map((name) => (name === oldName ? newName : name)))) } : {}) };
+    await db.update(emailCampaigns).set({ audience: next }).where(eq(emailCampaigns.id, campaign.id)); campaignsChanged += 1;
+  }
+  await logActivity(db, tenantId, { kind: "sonstiges", title: `Liste ${note}: „${oldName}“ → „${newName}“ (${ids.length} Kontakte${campaignsChanged ? `, ${campaignsChanged} Kampagnen` : ""})`, actorUserId });
+  return { renamed: ids.length, campaigns: campaignsChanged, skipped: null };
+}
+
+/** Technische Listennamen („PV_WP_…_neu“) automatisch lesbar machen – läuft beim Start und nach jedem Upload. Bewusst vergebene Namen bleiben. */
+export async function tidyListNames(db: Db, tenantId?: number) {
+  const where = tenantId ? and(eq(leads.tenantId, tenantId), isNotNull(leads.listName)) : isNotNull(leads.listName);
+  const rows = await db.selectDistinct({ tenantId: leads.tenantId, listName: leads.listName }).from(leads).where(where);
+  const imports = await db.selectDistinct({ tenantId: listImports.tenantId, listName: listImports.listName }).from(listImports).where(tenantId ? eq(listImports.tenantId, tenantId) : sql`1=1`);
+  const seen = new Set<string>(); const changes: Array<{ tenantId: number; from: string; to: string; renamed: number }> = [];
+  for (const row of [...rows, ...imports]) {
+    const name = row.listName ?? ""; const key = `${row.tenantId}|${name}`; if (!name || seen.has(key)) continue; seen.add(key);
+    const tidy = tidyListName(name); if (tidy === name) continue;
+    const result = await renameListEverywhere(db, row.tenantId, name, tidy, null, "automatisch aufgeräumt");
+    if (!result.skipped) changes.push({ tenantId: row.tenantId, from: name, to: tidy, renamed: result.renamed });
+  }
+  return changes;
 }
 
 export async function undoListImport(db: Db, tenantId: number, importId: number, actorUserId: number | null = null) {
