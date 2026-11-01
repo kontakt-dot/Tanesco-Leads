@@ -7,17 +7,18 @@ import { toast } from "sonner";
 import { OPT_IN_STATUS_LABEL, type ScriptStep } from "../../../shared/opt-in";
 
 /**
- * „Opt-in aufnehmen“ im Dialer: Skript in drei Schritten mit eingesetztem Käufernamen. Die Aufnahme startet erst nach dem ersten „Ja“
- * (Erlaubnis für die Aufnahme) und endet nach dem Abschluss – so wird nur der Einwilligungsabschnitt aufgezeichnet. Der Agent bestätigt
- * beide „Ja“; die Abschrift wird nach dem Auflegen automatisch geprüft (Regeln bzw. KI).
+ * „Opt-in aufnehmen“ im Callcenter-Dialer (Telefonie → Wählen): Skript in drei Schritten mit eingesetztem Käufernamen. Die Aufnahme
+ * startet erst nach dem ersten „Ja“ (Erlaubnis für die Aufnahme) und endet nach dem Abschluss – so wird nur der Einwilligungsabschnitt
+ * aufgezeichnet. Der Agent bestätigt beide „Ja“; die Abschrift wird nach dem Auflegen automatisch geprüft (Regeln bzw. KI).
+ * Ohne Lead (Anruf aus einer Rohdaten-Liste) wird der Kontakt beim Start des Opt-ins zum Lead.
  */
-export default function OptInRecorder({ publicId, dialerCallId, open, onClose, onDone }: { publicId: string; dialerCallId: number | null; open: boolean; onClose: () => void; onDone?: () => void }) {
+export default function OptInRecorder({ publicId, dialerCallId, open, onClose, onDone }: { publicId: string | null; dialerCallId: number | null; open: boolean; onClose: () => void; onDone?: () => void }) {
   const [buyerName, setBuyerName] = useState(""); const [touched, setTouched] = useState(false);
   const [phase, setPhase] = useState<"vorbereiten" | "aufnahme" | "fertig">("vorbereiten");
   const [optInId, setOptInId] = useState<number | null>(null); const [recordingNote, setRecordingNote] = useState<string | null>(null); const [recordingActive, setRecordingActive] = useState(false);
   const [attestJa, setAttestJa] = useState(false); const [startedAt, setStartedAt] = useState<number | null>(null); const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<{ status: string; number: string } | null>(null);
-  const script = trpc.leadops.optInScript.useQuery({ publicId, buyerName: touched ? buyerName || null : null }, { retry: false, enabled: open });
+  const script = trpc.leadops.optInScript.useQuery({ publicId, dialerCallId, buyerName: touched ? buyerName || null : null }, { retry: false, enabled: open && Boolean(publicId || dialerCallId) });
   useEffect(() => { if (!touched && script.data?.buyer?.buyerName) setBuyerName(script.data.buyer.buyerName); }, [script.data?.buyer?.buyerName, touched]);
   useEffect(() => { if (!startedAt) return; const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - startedAt) / 1000)), 500); return () => window.clearInterval(timer); }, [startedAt]);
   useEffect(() => { if (!open) { setPhase("vorbereiten"); setOptInId(null); setRecordingNote(null); setRecordingActive(false); setAttestJa(false); setStartedAt(null); setElapsed(0); setResult(null); setTouched(false); setBuyerName(""); } }, [open]);
@@ -31,15 +32,17 @@ export default function OptInRecorder({ publicId, dialerCallId, open, onClose, o
   return <Dialog open={open} onOpenChange={(next) => { if (!next) { if (phase === "aufnahme" && optInId) { finish.mutate({ optInId, attest: { aufnahme: true, ja: false }, cancel: true }); } onClose(); } }}>
     <DialogContent className="opt-in-dialog">
       <DialogHeader><DialogTitle className="flex items-center gap-2"><Mic className="h-5 w-5" /> Opt-in aufnehmen{phase === "aufnahme" && <span className={`opt-in-rec ${recordingActive ? "is-live" : ""}`}>{recordingActive ? "● Aufnahme" : "keine Aufnahme"} {mmss}</span>}</DialogTitle><DialogDescription>Nur der Einwilligungsabschnitt wird aufgezeichnet. Erst fragen, dann aufnehmen – ein heimlicher Mitschnitt ist strafbar.</DialogDescription></DialogHeader>
-      {script.data?.settings.missingCompany && <p className="opt-in-warning">Bitte zuerst unter Einstellungen → Opt-in den Firmennamen eintragen – er wird im Text vorgelesen.</p>}
+      {script.error && <p className="opt-in-warning">{script.error.message}</p>}
+      {script.data?.settings.missingCompany && <p className="opt-in-warning">Bitte zuerst unter Telefonie → Einstellungen → Opt-in den Firmennamen eintragen – er wird im Text vorgelesen.</p>}
+      {script.data?.lead.pending && phase === "vorbereiten" && <p className="opt-in-hint">{script.data.lead.name || "Dieser Kontakt"} ist noch kein Lead (Rohdaten-Liste) – mit dem Start des Opt-ins wird er als Lead angelegt; das Anruf-Ergebnis setzt danach die Stufe.</p>}
       {existingValid && phase === "vorbereiten" && <p className="opt-in-hint">Für diesen Kontakt gibt es schon ein gültiges Opt-in{existingValid.buyerName ? ` für ${existingValid.buyerName}` : ""} ({existingValid.number}). Ein weiteres ist nur nötig, wenn ein anderer Fachbetrieb den Lead bekommt.</p>}
       {phase === "vorbereiten" && <>
         <label className="text-xs text-slate-400">Fachbetrieb, der genannt wird<input className="opt-in-input" list="opt-in-recorder-buyers" placeholder="Firma, Ort – leer lassen = Ersatzformulierung" value={buyerName} onChange={(event) => { setBuyerName(event.target.value); setTouched(true); }} /><datalist id="opt-in-recorder-buyers">{choices.map((choice) => <option key={`${choice.buyerUserId ?? ""}-${choice.buyerName}`} value={choice.buyerName} />)}</datalist></label>
         {suggestions.length > 0 && <small className="opt-in-hint">Laut Lieferkette bekommt den Lead voraussichtlich: {suggestions.slice(0, 3).map((item) => item.buyerName).join(" · ")}{buyerName.trim() ? "" : " – bitte oben eintragen"}</small>}
-        {!buyerName.trim() && <small className="opt-in-hint is-warn">Ohne Firmennamen gilt die Ersatzformulierung („ein Fachbetrieb aus Ihrer Region“) – rechtlich die schwächere Variante. Dann hinterher die SMS-Bestätigung mit Firmennamen schicken.</small>}
+        {!buyerName.trim() && <small className="opt-in-hint is-warn">Ohne Firmennamen gilt die Ersatzformulierung („ein Fachbetrieb aus Ihrer Region“) – rechtlich die schwächere Variante. Dann hinterher die SMS-Bestätigung mit Firmennamen schicken (Gespräche → Opt-in).</small>}
         {steps[0] && <section className="opt-in-step is-current"><h4>{steps[0].title}</h4><p className="opt-in-read">{steps[0].text}</p><small>{steps[0].hint}</small></section>}
         <div className="flex flex-wrap items-center gap-2"><Button className="flux-button" disabled={start.isPending || script.isLoading || Boolean(script.data?.settings.missingCompany)} onClick={() => start.mutate({ publicId, dialerCallId, buyerName: buyerName.trim() || null, buyerUserId: chosen?.buyerUserId ?? null })}><Mic /> {start.isPending ? "Startet …" : "Kunde hat Ja gesagt → Aufnahme starten"}</Button><Button variant="ghost" onClick={onClose}>Abbrechen</Button></div>
-        {!dialerCallId && <small className="opt-in-hint is-warn">Kein aktiver Anruf im App-Dialer – es kann nichts aufgezeichnet werden. Die Einwilligung lässt sich dann nur per SMS bestätigen.</small>}
+        {!dialerCallId && <small className="opt-in-hint is-warn">Kein aktiver Anruf im Dialer – es kann nichts aufgezeichnet werden. Die Einwilligung lässt sich dann nur per SMS bestätigen.</small>}
       </>}
       {phase === "aufnahme" && <>
         {recordingNote && <p className="opt-in-warning">{recordingNote}</p>}
@@ -51,10 +54,10 @@ export default function OptInRecorder({ publicId, dialerCallId, open, onClose, o
         </div>
       </>}
       {phase === "fertig" && result && <>
-        <p className={`opt-in-result ${result.status === "gueltig" ? "is-ok" : result.status === "abgelehnt" ? "is-bad" : "is-warn"}`}>{result.status === "gueltig" ? "Gespeichert – Opt-in gültig. Nach dem Auflegen wird die Abschrift geprüft; das Ergebnis steht am Lead unter „Opt-in“." : result.status === "abgelehnt" ? "Abgebrochen – kein Opt-in." : "Gespeichert, aber unvollständig. Bitte die SMS-Bestätigung schicken (Lead → Opt-in)."}</p>
+        <p className={`opt-in-result ${result.status === "gueltig" ? "is-ok" : result.status === "abgelehnt" ? "is-bad" : "is-warn"}`}>{result.status === "gueltig" ? "Gespeichert – Opt-in gültig. Nach dem Auflegen wird die Abschrift geprüft; das Ergebnis steht unter „Gespräche“ beim Anruf." : result.status === "abgelehnt" ? "Abgebrochen – kein Opt-in." : "Gespeichert, aber unvollständig. Bitte die SMS-Bestätigung schicken (Gespräche → Anruf öffnen → Opt-in)."}</p>
         <div className="flex gap-2"><Button className="flux-button" onClick={onClose}>Fertig</Button></div>
       </>}
-      <small className="opt-in-hint">Status-Namen: {Object.values(OPT_IN_STATUS_LABEL).join(" · ")}. Nachweis mit Aufnahme, Abschrift-Stelle, Prüfsumme und PDF liegt danach am Lead.</small>
+      <small className="opt-in-hint">Status-Namen: {Object.values(OPT_IN_STATUS_LABEL).join(" · ")}. Nachweis mit Aufnahme, Abschrift-Stelle, Prüfsumme und PDF liegt danach unter „Gespräche“ beim Anruf.</small>
     </DialogContent>
   </Dialog>;
 }

@@ -18,7 +18,7 @@ export function OptInBadge({ status, kind, buyerName, missing, compact }: { stat
 }
 
 /**
- * Reiter „Opt-in“ am Lead: alle Einwilligungsnachweise (Formular, Sprachaufnahme, SMS) mit Status, Fehlendem, Ausschnitt der Aufnahme,
+ * Opt-in-Nachweise zum Lead (Callcenter: Gespräche → Anruf): alle Einwilligungsnachweise (Formular, Sprachaufnahme, SMS) mit Status, Fehlendem, Ausschnitt der Aufnahme,
  * Nachweis-PDF, SMS-Bestätigung senden und Widerruf erfassen. Gesendet oder angerufen wird hier nichts automatisch.
  */
 export default function OptInPanel({ publicId, onChanged, compact = false }: { publicId: string; onChanged?: () => void; compact?: boolean }) {
@@ -37,7 +37,7 @@ export default function OptInPanel({ publicId, onChanged, compact = false }: { p
     {smsOpen && <div className="opt-in-sms">
       <label className="text-xs text-slate-400">Fachbetrieb, der in der SMS genannt wird<input className="opt-in-input" list="opt-in-buyers" placeholder="Firma, Ort" value={buyerForSms} onChange={(event) => setSmsBuyer(event.target.value)} /><datalist id="opt-in-buyers">{choices.map((choice) => <option key={`${choice.buyerUserId ?? ""}-${choice.buyerName}`} value={choice.buyerName} />)}</datalist></label>
       {suggested && !smsBuyer && <small className="opt-in-hint">Vorschlag aus der Lieferkette „{suggested.chainName}“: {suggested.buyerName}</small>}
-      {script.data?.settings.missingCompany && <small className="opt-in-hint is-warn">Bitte zuerst unter Einstellungen → Opt-in den Firmennamen eintragen.</small>}
+      {script.data?.settings.missingCompany && <small className="opt-in-hint is-warn">Bitte zuerst unter Telefonie → Einstellungen → Opt-in den Firmennamen eintragen.</small>}
       <div className="flex flex-wrap gap-2"><Button size="sm" className="flux-button" disabled={!buyerForSms.trim() || sendSms.isPending} onClick={() => { const choice = choices.find((item) => item.buyerName === buyerForSms.trim()); sendSms.mutate({ publicId, buyerName: buyerForSms.trim(), buyerUserId: choice?.buyerUserId ?? null }); }}><Smartphone /> {sendSms.isPending ? "Wird gesendet …" : "SMS jetzt senden"}</Button><Button size="sm" variant="ghost" onClick={() => setSmsOpen(false)}>Abbrechen</Button></div>
       <small className="opt-in-hint">Die SMS nennt den Fachbetrieb und enthält einen Bestätigungslink. Erst mit dem Klick des Kunden ist der Nachweis gültig (Bundesnetzagentur: SMS ja, E-Mail-Bestätigung reicht für Telefon-Einwilligungen nicht).</small>
     </div>}

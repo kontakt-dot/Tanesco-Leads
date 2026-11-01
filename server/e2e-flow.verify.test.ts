@@ -16,7 +16,7 @@ import { and, asc, desc, eq, inArray, like, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.EMAIL_THROTTLE_OFF = "1"; // Drip und Tageslimit im Kernablauf aus – sonst ginge je Minute nur eine E-Mail raus (eigene Tests: campaign-drip.test.ts, Test 54)
-import { undoLog, tenants, leadCategories, categoryFields, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineStageConfigs, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings, mailSenders } from "../drizzle/schema";
+import { undoLog, rawContacts, tenants, leadCategories, categoryFields, apiTokens, automationExecutionLogs, callRecords, claims, emailEvents, integrationEvents, leadCallAttempts, leadDeliveries, leadStatusEvents, leads, memberships, orders, suppliers, users, emailCampaignEvents, emailCampaignRecipients, mailSettings, emailCampaigns, emailSuppressions, inboxMessages, outboundMessages, pipelineEvents, pipelineStageConfigs, pipelineTasks, dialerCalls, phoneNumbers, telephonySettings, mailSenders } from "../drizzle/schema";
 import { handleSipgateEvent, reconcileSipgateRecordings, sipgateRecordingResponse, sipgateTestHooks, syncSipgateCalls } from "./dialer";
 import { evaluateOrderEligibility } from "./lead-pipeline";
 import { authenticateRequest, verifyPassword } from "./_core/auth";
@@ -3805,7 +3805,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
   }, 40000);
 
   it("63v. Opt-in-Nachweis (§ 7a UWG): Einstellungen, Skript, Voice-Opt-in ohne/mit Dialer-Anruf samt Prüfung der Abschrift, Opt-in bei Gesprächsfreigabe, SMS-Bestätigung über die öffentliche Seite, Verwendung bei Zustellung, Nachweis-PDF, Widerruf, Formular-Einwilligung", async () => {
-    const tenantId = S.tenantId as number; const optInModule = await import("./opt-in"); const { optIns } = await import("../drizzle/schema");
+    const tenantId = S.tenantId as number; const optInModule = await import("./opt-in"); const dialerModule = await import("./dialer"); const { optIns } = await import("../drizzle/schema");
     // Einstellungen: Firma, Widerruf-Adresse, Datenschutz-Link – ohne Firmennamen lässt sich kein Opt-in aufnehmen
     const saved = await owner.leadops.saveOptInSettings({ companyName: "Tanesco Digital GbR", companyAddress: "Schultheißweg 44, 55252 Wiesbaden", revokeEmail: "kontakt@tanescodigital.de", privacyUrl: "https://www.tanescodigital.de/datenschutz", channels: "telefonisch und per E-Mail", consentTemplate: (await owner.leadops.optInSettings()).consentTemplate, smsTemplate: (await owner.leadops.optInSettings()).smsTemplate, autoSms: false });
     expect(saved.companyName).toBe("Tanesco Digital GbR"); expect((await owner.leadops.optInSettings()).revokeEmail).toBe("kontakt@tanescodigital.de");
@@ -3891,5 +3891,31 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(bare.status).toBe("unvollstaendig"); expect((await owner.leadops.listOptIns({ publicId: petra.publicId })).find((row) => row.id === bare.id)!.missing).toEqual(["Einwilligungstext oder Häkchen im Formular"]);
     // Kurzfassung für Käufer/API: beste Einwilligung für den Fachbetrieb, Nachweis-Link
     const summary = await optInModule.optInSummaryFor(db, tenantId, petra.id, apiBase, { buyerName: "Schmidt Energie, Kassel" }); expect(summary?.status).toBe("gueltig"); expect(summary?.proofUrl).toContain("/api/opt-in/nachweis/");
+    // 9) Callcenter: Anruf aus einer Rohdaten-Liste ohne Lead – Skript aus den Kontaktdaten (pending), beim Start wird der Kontakt zum Lead (Stufe „neu“) und am Anruf verknüpft; Anruf-Detail trägt die Opt-in-Kurzfassung
+    const rawBatch = await owner.leadops.createRawBatch({ name: "Opt-in Rohliste", categoryId: S.pv.id, sourceName: "Messe", mapping: {}, rows: [{ firstName: "Rosa", lastName: "Rohdaten", phone: "+49 30 9177 5004", postcode: "60311", city: "Frankfurt" }] });
+    expect(rawBatch).toMatchObject({ imported: 1, duplicates: 0 }); const rawContact = (await db.select().from(rawContacts).where(and(eq(rawContacts.batchId, rawBatch.batchId), eq(rawContacts.lastName, "Rohdaten"))))[0]; expect(rawContact.leadId).toBeNull(); expect(rawContact.status).toBe("neu");
+    const rawCallId = Number((await db.insert(dialerCalls).values({ tenantId, leadId: null, rawContactId: rawContact.id, agentUserId: ownerUserId, mode: "power", provider: "simulation", providerCallSid: "CAoptin-e2e-raw", fromNumber: "+4969900000", toNumber: rawContact.phone!, status: "verbunden", startedAt: new Date(Date.now() - 40_000), answeredAt: new Date(Date.now() - 30_000), connectedAt: new Date(Date.now() - 30_000) }))[0]?.insertId);
+    const rawScript = await owner.leadops.optInScript({ dialerCallId: rawCallId, buyerName: "Müller Solartechnik, Frankfurt" });
+    expect(rawScript.lead).toMatchObject({ publicId: null, pending: true, name: "Rosa Rohdaten", city: "Frankfurt" }); expect(rawScript.existing).toEqual([]); expect(rawScript.script.steps[1].text).toContain("Rosa Rohdaten"); expect(rawScript.script.steps[1].text).toContain("zum Thema Photovoltaik");
+    expect((await dialerModule.callDetail(db, tenantId, rawCallId))?.optIn).toBeNull();
+    const rawStart = await owner.leadops.startVoiceOptIn({ dialerCallId: rawCallId, buyerName: "Müller Solartechnik, Frankfurt" });
+    expect(rawStart.lead.created).toBe(true); expect(rawStart.recording).toMatchObject({ active: true, own: true });
+    const rosa = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.publicId, rawStart.lead.publicId))))[0]; expect(rosa).toMatchObject({ firstName: "Rosa", lastName: "Rohdaten", status: "neu", categoryId: S.pv.id }); expect((rosa.metadata as { automationPending?: boolean }).automationPending).toBe(true); // „Lead erstellt“-Automatik wartet bis zum Anruf-Ergebnis
+    expect((await db.select({ leadId: rawContacts.leadId }).from(rawContacts).where(eq(rawContacts.id, rawContact.id)))[0]?.leadId).toBe(rosa.id); expect((await db.select({ leadId: dialerCalls.leadId }).from(dialerCalls).where(eq(dialerCalls.id, rawCallId)))[0]?.leadId).toBe(rosa.id);
+    expect((await owner.leadops.finishVoiceOptIn({ optInId: rawStart.id, attest: { aufnahme: true, ja: true } })).status).toBe("gueltig");
+    const rawDetail = await dialerModule.callDetail(db, tenantId, rawCallId); expect(rawDetail?.lead?.publicId).toBe(rosa.publicId); expect(rawDetail?.optIn).toMatchObject({ status: "gueltig", kind: "sprache", buyerName: "Müller Solartechnik, Frankfurt" });
+    // zweiter Aufruf am selben Anruf: Kontakt ist schon Lead → kein neuer Lead, vorhandenes Opt-in wird gelistet
+    const rawAgain = await owner.leadops.optInScript({ dialerCallId: rawCallId }); expect(rawAgain.lead).toMatchObject({ publicId: rosa.publicId, pending: false }); expect(rawAgain.existing).toHaveLength(1);
+    expect((await db.select({ count: sql<number>`count(*)` }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.lastName, "Rohdaten"))))[0]?.count).toBe(1);
+    // Anruf-Ergebnis „interessiert“ nach dem Opt-in: Lead wird genehmigt, Merker verschwindet, kein zweiter Lead
+    const afterResult = await owner.leadops.setCallDisposition({ callId: rawCallId, disposition: "interessiert", notes: "Opt-in liegt vor" });
+    expect(afterResult?.lead?.publicId).toBe(rosa.publicId); const rosaAfter = (await db.select().from(leads).where(eq(leads.id, rosa.id)))[0]; expect(["genehmigt", "zugewiesen"]).toContain(rosaAfter.status); expect((rosaAfter.metadata as { automationPending?: boolean }).automationPending).toBeUndefined();
+    expect((await db.select({ count: sql<number>`count(*)` }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.lastName, "Rohdaten"))))[0]?.count).toBe(1);
+    // ohne Lead und ohne Anruf: klare Fehlermeldung
+    await expect(owner.leadops.optInScript({ publicId: null, dialerCallId: null })).rejects.toThrow(/Kein Lead und kein Anruf/);
+    // öffentliche Bestätigungsseite nennt Datenschutz-Link und Widerruf-Adresse (gestufte Information)
+    const freshSms = await owner.leadops.sendOptInSms({ publicId: rosa.publicId, buyerName: "Müller Solartechnik, Frankfurt" }); const publicPage = await fetch(`${apiBase}/opt-in/${freshSms.link.split("/").pop()}`); const pageHtml = await publicPage.text();
+    expect(pageHtml).toContain("https://www.tanescodigital.de/datenschutz"); expect(pageHtml).toContain("Datenschutzerklärung"); expect(pageHtml).toContain("mailto:kontakt@tanescodigital.de"); expect(pageHtml).toContain("telefonisch und per E-Mail kontaktieren");
+    const revokedPage = await fetch(`${apiBase}/opt-in/${token}`); expect(await revokedPage.text()).toContain("Datenschutzerklärung"); // auch nach Widerruf bleibt der Hinweis stehen
   }, 60000);
 });

@@ -110,7 +110,11 @@ export async function listContacts(db: Db, tenantId: number, filter: { batchId?:
  * Übernahme eines Rohdaten-Kontakts als Lead – derselbe Weg wie beim Import: Lead anlegen, Verlaufseintrag,
  * Automatisierung „Lead erstellt“ (und bei Freigabe „Status geändert“), damit Bestellungen und Auslieferung greifen.
  */
-export async function convertRawContact(db: Db, tenantId: number, rawContactId: number, options: { actorUserId: number | null; initialStatus?: "neu" | "genehmigt"; note?: string | null; categoryId?: number | null }) {
+/**
+ * Rohdaten-Kontakt zum Lead machen. `deferAutomations`: die „Lead erstellt“-Automatik noch nicht ausführen (Opt-in-Start mitten im
+ * Gespräch) – sie läuft nach, sobald das Anruf-Ergebnis gesetzt wird (Merker `automationPending` in den Metadaten).
+ */
+export async function convertRawContact(db: Db, tenantId: number, rawContactId: number, options: { actorUserId: number | null; initialStatus?: "neu" | "genehmigt"; note?: string | null; categoryId?: number | null; deferAutomations?: boolean }) {
   const contact = (await db.select().from(rawContacts).where(and(eq(rawContacts.id, rawContactId), eq(rawContacts.tenantId, tenantId))).limit(1))[0];
   if (!contact) throw new Error("Rohdaten-Kontakt wurde nicht gefunden.");
   if (contact.leadId) { const existing = (await db.select({ id: leads.id, publicId: leads.publicId }).from(leads).where(eq(leads.id, contact.leadId)).limit(1))[0]; if (existing) return { leadId: existing.id, publicId: existing.publicId, alreadyConverted: true as const, automation: null }; }
@@ -123,12 +127,12 @@ export async function convertRawContact(db: Db, tenantId: number, rawContactId: 
   const initialStatus = options.initialStatus ?? "neu";
   const publicId = nanoid(8).toUpperCase();
   const data = contact.data && typeof contact.data === "object" && !Array.isArray(contact.data) ? (contact.data as Record<string, unknown>) : {};
-  const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, firstName: contact.firstName, lastName: contact.lastName, email: contact.email, phone: contact.phone, postcode: contact.postcode, city: contact.city, country: (contact.country as "DE" | "AT" | "CH") ?? "DE", supplierId: supplier?.id ?? null, supplierName: supplier?.name ?? batch.sourceName ?? "Rohdaten (Callcenter)", cost: "0.00", metadata: { ...data, ...(contact.company ? { company: contact.company } : {}), rawContactId: contact.id, rawBatch: batch.name, source: batch.sourceName ?? batch.name }, status: initialStatus });
+  const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, firstName: contact.firstName, lastName: contact.lastName, email: contact.email, phone: contact.phone, postcode: contact.postcode, city: contact.city, country: (contact.country as "DE" | "AT" | "CH") ?? "DE", supplierId: supplier?.id ?? null, supplierName: supplier?.name ?? batch.sourceName ?? "Rohdaten (Callcenter)", cost: "0.00", metadata: { ...data, ...(contact.company ? { company: contact.company } : {}), rawContactId: contact.id, rawBatch: batch.name, source: batch.sourceName ?? batch.name, ...(options.deferAutomations ? { automationPending: true } : {}) }, status: initialStatus });
   const leadId = Number(inserted[0]?.insertId) || 0;
   await db.insert(leadStatusEvents).values({ tenantId, leadId, nextStatus: initialStatus, actorUserId: options.actorUserId, note: `Aus Rohdaten übernommen (${batch.name})${options.note ? ` – ${options.note}` : ""}` });
   await db.update(rawContacts).set({ status: "konvertiert", leadId, categoryId, note: options.note?.slice(0, 320) ?? contact.note }).where(eq(rawContacts.id, contact.id));
-  const automation = await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "lead_erstellt" });
-  if (initialStatus === "genehmigt") await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "status_geändert" });
+  const automation = options.deferAutomations ? null : await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "lead_erstellt" });
+  if (initialStatus === "genehmigt" && !options.deferAutomations) await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "status_geändert" });
   return { leadId, publicId, alreadyConverted: false as const, automation };
 }
 

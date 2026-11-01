@@ -194,9 +194,10 @@ async function smsSender(db: Db, tenantId: number) {
   const from = numbers.find((number) => number.id === settings.defaultNumberId) ?? numbers.find((number) => number.numberType === "mobil") ?? numbers[0];
   return { provider, from: from?.e164 ?? null };
 }
-export type MessageInput = { publicId: string; channel: MessageChannel; text: string; subject?: string | null; templateKey?: string | null; campaignId?: number | null; nodeId?: string | null; actorUserId: number | null; appUrl?: string };
+export type MessageInput = { publicId: string; channel: MessageChannel; text: string; subject?: string | null; templateKey?: string | null; campaignId?: number | null; nodeId?: string | null; actorUserId: number | null; appUrl?: string; anyKind?: boolean };
+/** Nachricht an einen Kontakt. Standard: Vertriebskontakte der Pipeline; `anyKind` erlaubt auch Verkaufs-Leads (Callcenter: Opt-in-SMS an Interessenten). */
 export async function sendLeadMessage(db: Db, tenantId: number, input: MessageInput) {
-  const lead = await leadByPublicId(db, tenantId, input.publicId);
+  const lead = input.anyKind ? ((await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.publicId, input.publicId))).limit(1))[0] ?? (() => { throw new Error("Lead nicht gefunden."); })()) : await leadByPublicId(db, tenantId, input.publicId);
   const category = (await db.select({ name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1))[0];
   const sender = await userName(db, input.actorUserId ?? lead.ownerUserId);
   const values = { ...messageValues({ ...lead, categoryName: category?.name ?? null }, sender), ...recipientValues({ firstName: lead.firstName, lastName: lead.lastName, company: lead.company, city: lead.city, salutation: (metaOf(lead).salutation as string | undefined) ?? null, email: lead.email, fields: extraFieldsOf(lead.metadata) }) };
@@ -232,7 +233,7 @@ export async function sendLeadMessage(db: Db, tenantId: number, input: MessageIn
   const stages = await stagesOfLead(db, tenantId, lead); const current = isStage(lead.pipelineStage, stages) ? lead.pipelineStage : entryStage(stages);
   // Erste Nachricht aus „Neu“ → „Kontaktiert“ (Kontakt hergestellt); gibt es die Stufe nicht, die nächste nach dem Eingang
   const firstTarget = contactedStage(stages) ?? (stages[1] && stages[1].fixed !== "lost" ? stages[1].key : null);
-  if (status !== "fehlgeschlagen" && current === entryStage(stages) && firstTarget) { const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: firstTarget, note: `Erste Nachricht per ${label}`, actorUserId: input.actorUserId }); }
+  if (!input.anyKind && status !== "fehlgeschlagen" && current === entryStage(stages) && firstTarget) { const { moveStage } = await import("./meta-ads"); /* Pipeline-Stufe nur für Vertriebskontakte weiterrücken */ await moveStage(db, tenantId, { publicId: lead.publicId, stage: firstTarget, note: `Erste Nachricht per ${label}`, actorUserId: input.actorUserId }); }
   if (status === "fehlgeschlagen") throw new Error(error ?? `${label} konnte nicht gesendet werden.`);
   return { id: Number(inserted[0]?.insertId) || 0, status, link, error, subject, text, to: toAddress };
 }

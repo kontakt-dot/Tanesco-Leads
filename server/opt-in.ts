@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { callQaConfigs, callRecords, deliveryChains, deliveryStops, dialerCalls, emailSuppressions, leadCategories, leads, optIns, pipelineEvents, tenants, users, type OptInRow } from "../drizzle/schema";
+import { callQaConfigs, callRecords, deliveryChains, deliveryStops, dialerCalls, emailSuppressions, leadCategories, leads, optIns, pipelineEvents, rawBatches, rawContacts, tenants, users, type OptInRow } from "../drizzle/schema";
 import { allChecked, canonicalOptIn, checkConsentText, consentQuote, consentScript, countYes, DEFAULT_OPT_IN_SETTINGS, EMPTY_CHECKS, missingOf, newOptInNumber, normalizeOptInSettings, retainUntil, smsText, statusFromChecks, type OptInChecks, type OptInGrantee, type OptInKind, type OptInSettings, type OptInStatus, type OptInUsage, type ScriptValues } from "../shared/opt-in";
 import { logActivity } from "./activity";
 import type { Db } from "./lead-pipeline";
@@ -106,14 +106,45 @@ export async function buyerChoices(db: Db, tenantId: number): Promise<Array<{ bu
 async function scriptValuesFor(db: Db, lead: typeof leads.$inferSelect, buyerName: string | null, now = new Date()): Promise<ScriptValues> {
   return { now, name: nameOf(lead), firstName: lead.firstName, phone: lead.phone ?? "", city: lead.city, category: (await categoryName(db, lead.categoryId)) ?? "Ihre Anfrage", buyerName };
 }
-/** Skript-Vorschau für den Dialer: Text mit eingesetztem Käufer, Käufer-Vorschläge aus der Lieferkette, vorhandene Einwilligungen. */
-export async function optInScript(db: Db, tenantId: number, input: { publicId: string; buyerUserId?: number | null; buyerName?: string | null }, appUrl?: string | null) {
-  const lead = await leadFor(db, tenantId, { publicId: input.publicId }); const settings = await optInSettingsFor(db, tenantId);
+type LeadRow = typeof leads.$inferSelect;
+type OptInTarget = { lead: LeadRow | null; raw: typeof rawContacts.$inferSelect | null; call: typeof dialerCalls.$inferSelect | null };
+/**
+ * Wen betrifft das Opt-in? Entweder ein Lead (publicId) oder der laufende Anruf im Callcenter-Dialer: dort hängt am Anruf ein Lead –
+ * oder nur ein Rohdaten-Kontakt (Liste aus „Rohdaten“), aus dem erst beim Start des Opt-ins ein Lead wird.
+ */
+async function optInTarget(db: Db, tenantId: number, input: { publicId?: string | null; dialerCallId?: number | null }): Promise<OptInTarget> {
+  const call = input.dialerCallId ? (await db.select().from(dialerCalls).where(and(eq(dialerCalls.id, input.dialerCallId), eq(dialerCalls.tenantId, tenantId))).limit(1))[0] ?? null : null;
+  if (input.publicId) return { lead: await leadFor(db, tenantId, { publicId: input.publicId }), raw: null, call };
+  if (!call) throw new Error("Kein Lead und kein Anruf angegeben.");
+  if (call.leadId) return { lead: await leadFor(db, tenantId, { leadId: call.leadId }), raw: null, call };
+  const raw = call.rawContactId ? (await db.select().from(rawContacts).where(and(eq(rawContacts.id, call.rawContactId), eq(rawContacts.tenantId, tenantId))).limit(1))[0] ?? null : null;
+  if (!raw) throw new Error("Zu diesem Anruf gibt es keinen Kontakt – ein Opt-in braucht einen Lead oder einen Rohdaten-Kontakt.");
+  if (raw.leadId) return { lead: await leadFor(db, tenantId, { leadId: raw.leadId }), raw, call };
+  return { lead: null, raw, call };
+}
+/** Rohdaten-Kontakt wie einen Lead behandeln (für Skript und Käufer-Vorschlag), ohne ihn schon anzulegen. */
+async function pseudoLeadFromRaw(db: Db, tenantId: number, raw: typeof rawContacts.$inferSelect): Promise<LeadRow> {
+  const batch = (await db.select().from(rawBatches).where(eq(rawBatches.id, raw.batchId)).limit(1))[0];
+  const categoryId = raw.categoryId ?? batch?.categoryId ?? 0;
+  return { id: 0, tenantId, publicId: `Rohdaten #${raw.id}`, firstName: raw.firstName, lastName: raw.lastName, company: raw.company, phone: raw.phone, email: raw.email, postcode: raw.postcode, city: raw.city, country: raw.country, categoryId, status: "neu", metadata: {} } as unknown as LeadRow;
+}
+/** Rohdaten-Kontakt beim Start des Opt-ins zum Lead machen (Stufe „neu“) und am Anruf verknüpfen – das spätere Anruf-Ergebnis setzt den Status weiter. */
+async function leadForOptIn(db: Db, tenantId: number, userId: number | null, target: OptInTarget): Promise<LeadRow> {
+  if (target.lead) return target.lead;
+  const { convertRawContact } = await import("./raw-data");
+  const converted = await convertRawContact(db, tenantId, target.raw!.id, { actorUserId: userId, initialStatus: "neu", note: "Opt-in im Gespräch aufgenommen", deferAutomations: true });
+  if (target.call) { await db.update(dialerCalls).set({ leadId: converted.leadId }).where(eq(dialerCalls.id, target.call.id)); if (target.call.callRecordId) await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, target.call.callRecordId)); }
+  return leadFor(db, tenantId, { leadId: converted.leadId });
+}
+/** Skript-Vorschau für den Dialer: Text mit eingesetztem Käufer, Käufer-Vorschläge aus der Lieferkette, vorhandene Einwilligungen. Ohne Lead (Rohdaten-Kontakt im Callcenter) kommt das Skript aus den Kontaktdaten; `lead.pending` sagt, dass der Lead erst beim Start angelegt wird. */
+export async function optInScript(db: Db, tenantId: number, input: { publicId?: string | null; dialerCallId?: number | null; buyerUserId?: number | null; buyerName?: string | null }, appUrl?: string | null) {
+  const target = await optInTarget(db, tenantId, input); const settings = await optInSettingsFor(db, tenantId);
+  const lead = target.lead ?? await pseudoLeadFromRaw(db, tenantId, target.raw!);
   const suggestions = await suggestedBuyersFor(db, tenantId, lead);
   const chosen = input.buyerName ? { buyerUserId: input.buyerUserId ?? null, buyerName: input.buyerName } : suggestions[0] ?? null;
   const script = consentScript(settings, await scriptValuesFor(db, lead, chosen?.buyerName ?? null));
-  const existing = await listOptIns(db, tenantId, { leadId: lead.id }, appUrl);
-  return { lead: { publicId: lead.publicId, name: nameOf(lead), phone: lead.phone, city: lead.city }, buyer: chosen, suggestions, choices: await buyerChoices(db, tenantId), settings: { companyName: settings.companyName, revokeEmail: settings.revokeEmail, privacyUrl: settings.privacyUrl, missingCompany: !settings.companyName }, script, existing };
+  const existing = target.lead ? await listOptIns(db, tenantId, { leadId: target.lead.id }, appUrl) : [];
+  return { lead: { publicId: target.lead?.publicId ?? null, name: nameOf(lead), phone: lead.phone, city: lead.city, pending: !target.lead }, buyer: chosen, suggestions, choices: await buyerChoices(db, tenantId), settings: { companyName: settings.companyName, revokeEmail: settings.revokeEmail, privacyUrl: settings.privacyUrl, missingCompany: !settings.companyName }, script, existing };
 }
 
 /* ---------------------------------------------------------------- Formular (Meta Lead Ads) */
@@ -136,14 +167,15 @@ export async function createFormOptIn(db: Db, tenantId: number, leadId: number, 
 
 /* ---------------------------------------------------------------- Sprache: Voice-Opt-in im App-Dialer */
 /** „Opt-in aufnehmen“: Datensatz anlegen und – bei sipgate – die Aufzeichnung nur für diesen Abschnitt starten. Läuft das Gespräch schon aufgezeichnet, wird nur die Stelle (Sekunde ab Gesprächsbeginn) gemerkt. */
-export async function startVoiceOptIn(db: Db, tenantId: number, userId: number, input: { publicId: string; dialerCallId?: number | null; buyerUserId?: number | null; buyerName?: string | null; appUrl: string }) {
-  const lead = await leadFor(db, tenantId, { publicId: input.publicId }); const settings = await optInSettingsFor(db, tenantId);
-  if (!settings.companyName) throw new Error("Bitte zuerst unter Einstellungen → Opt-in den Firmennamen eintragen – er wird im Einwilligungstext vorgelesen.");
+export async function startVoiceOptIn(db: Db, tenantId: number, userId: number, input: { publicId?: string | null; dialerCallId?: number | null; buyerUserId?: number | null; buyerName?: string | null; appUrl: string }) {
+  const settings = await optInSettingsFor(db, tenantId);
+  if (!settings.companyName) throw new Error("Bitte zuerst unter Telefonie → Einstellungen → Opt-in den Firmennamen eintragen – er wird im Einwilligungstext vorgelesen.");
+  const target = await optInTarget(db, tenantId, input); const lead = await leadForOptIn(db, tenantId, userId, target);
   const buyerName = (input.buyerName ?? "").trim() || null; const now = new Date();
   const script = consentScript(settings, await scriptValuesFor(db, lead, buyerName, now));
   const agent = (await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1))[0]?.name ?? null;
-  const call = input.dialerCallId ? (await db.select().from(dialerCalls).where(and(eq(dialerCalls.id, input.dialerCallId), eq(dialerCalls.tenantId, tenantId))).limit(1))[0] ?? null : null;
-  let recording: { own: boolean; sid: string | null; provider: string; startSec: number | null; note: string | null } = { own: false, sid: null, provider: "keine", startSec: null, note: call ? null : "Kein aktiver Anruf im App-Dialer – es wird nichts aufgezeichnet; Bestätigung bitte per SMS einholen." };
+  const call = target.call;
+  let recording: { own: boolean; sid: string | null; provider: string; startSec: number | null; note: string | null } = { own: false, sid: null, provider: "keine", startSec: null, note: call ? null : "Kein aktiver Anruf im Dialer – es wird nichts aufgezeichnet; Bestätigung bitte per SMS einholen." };
   if (call) {
     const { providerFor } = await import("./dialer"); const { provider, settings: tel } = await providerFor(db, tenantId);
     const startedAt = call.answeredAt ?? call.startedAt ?? now; const startSec = Math.max(0, Math.round((now.getTime() - new Date(startedAt).getTime()) / 1000));
@@ -158,7 +190,7 @@ export async function startVoiceOptIn(db: Db, tenantId: number, userId: number, 
   const number = await nextNumber(db, tenantId);
   const inserted = await db.insert(optIns).values({ tenantId, leadId: lead.id, number, kind: "sprache", status: "offen", grantedTo: "kaeufer", buyerUserId: input.buyerUserId ?? null, buyerName, companyName: settings.companyName, consentText: script.fullText, channels: settings.channels, givenAt: now, collectedBy: agent, collectedByUserId: userId, source: { via: "dialer", dialerCallId: call?.id ?? null, recording }, dialerCallId: call?.id ?? null, recordingStartSec: recording.startSec, checks: EMPTY_CHECKS, missing: missingOf(EMPTY_CHECKS), proofToken: nanoid(32), usages: [] });
   const id = Number(inserted[0]?.insertId) || 0;
-  return { id, number, script, recording: { active: Boolean(recording.sid), own: recording.own, note: recording.note }, buyerName };
+  return { id, number, script, recording: { active: Boolean(recording.sid), own: recording.own, note: recording.note }, buyerName, lead: { publicId: lead.publicId, created: !target.lead } };
 }
 /** „Aufnahme beenden“: Aufzeichnung stoppen (wenn wir sie gestartet haben), die Bestätigung des Agenten festhalten und den Status setzen. Die Abschrift kommt nach dem Auflegen dazu und wird dann geprüft. */
 export async function finishVoiceOptIn(db: Db, tenantId: number, userId: number, input: { optInId: number; attest: { aufnahme: boolean; ja: boolean }; note?: string | null; cancel?: boolean }) {
@@ -241,7 +273,7 @@ export async function optInFromCallRecord(db: Db, tenantId: number, callRecordId
 /* ---------------------------------------------------------------- SMS-Bestätigung */
 export async function sendOptInSms(db: Db, tenantId: number, userId: number | null, input: { publicId?: string | null; leadId?: number | null; buyerUserId?: number | null; buyerName: string; appUrl: string; auto?: boolean }) {
   const lead = await leadFor(db, tenantId, { publicId: input.publicId, leadId: input.leadId }); const settings = await optInSettingsFor(db, tenantId);
-  if (!settings.companyName) throw new Error("Bitte zuerst unter Einstellungen → Opt-in den Firmennamen eintragen.");
+  if (!settings.companyName) throw new Error("Bitte zuerst unter Telefonie → Einstellungen → Opt-in den Firmennamen eintragen.");
   const buyerName = input.buyerName.trim(); if (!buyerName) throw new Error("Bitte den Fachbetrieb angeben, der genannt werden soll.");
   if (!lead.phone) throw new Error("Der Kontakt hat keine Telefonnummer.");
   const token = nanoid(24); const link = optInConfirmUrl(input.appUrl, token);
@@ -251,14 +283,15 @@ export async function sendOptInSms(db: Db, tenantId: number, userId: number | nu
   const inserted = await db.insert(optIns).values({ tenantId, leadId: lead.id, number, kind: "sms", status: "offen", grantedTo: "kaeufer", buyerUserId: input.buyerUserId ?? null, buyerName, companyName: settings.companyName, consentText, channels: settings.channels, collectedBy: input.auto ? "automatisch nach Zuteilung" : null, collectedByUserId: userId, source: { via: "sms", auto: Boolean(input.auto), text }, smsToken: token, smsPhone: lead.phone, smsSentAt: new Date(), checks: EMPTY_CHECKS, missing: ["Bestätigung per Klick"], proofToken: nanoid(32), usages: [] });
   const id = Number(inserted[0]?.insertId) || 0;
   const { sendLeadMessage } = await import("./pipeline-extras");
-  await sendLeadMessage(db, tenantId, { publicId: lead.publicId, channel: "sms", text, templateKey: `optin:${id}`, actorUserId: userId, appUrl: input.appUrl });
+  await sendLeadMessage(db, tenantId, { publicId: lead.publicId, channel: "sms", text, templateKey: `optin:${id}`, actorUserId: userId, appUrl: input.appUrl, anyKind: true });
   await reseal(db, id);
   return { id, number, link, text };
 }
 export async function optInByToken(db: Db, token: string) {
   const row = (await db.select().from(optIns).where(eq(optIns.smsToken, token)).limit(1))[0]; if (!row) return null;
   const lead = (await db.select({ firstName: leads.firstName, lastName: leads.lastName, categoryId: leads.categoryId }).from(leads).where(eq(leads.id, row.leadId)).limit(1))[0];
-  return { row, name: lead ? [lead.firstName, lead.lastName].filter(Boolean).join(" ") : "", category: lead ? await categoryName(db, lead.categoryId) : null };
+  const settings = await optInSettingsFor(db, row.tenantId); // Datenschutz-Link und Widerruf-Adresse für die öffentliche Seite (gestufte Information)
+  return { row, name: lead ? [lead.firstName, lead.lastName].filter(Boolean).join(" ") : "", category: lead ? await categoryName(db, lead.categoryId) : null, privacyUrl: settings.privacyUrl || null, revokeEmail: settings.revokeEmail || null, channels: settings.channels };
 }
 export async function confirmOptIn(db: Db, token: string, meta: { ip?: string | null; userAgent?: string | null }) {
   const found = await optInByToken(db, token); if (!found) throw new Error("Dieser Link ist nicht (mehr) gültig.");

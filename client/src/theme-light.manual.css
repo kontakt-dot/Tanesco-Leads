@@ -1818,3 +1818,4 @@ html:not(.dark) .opt-in-placeholders code { background: #f2f4f7 !important; colo
 html:not(.dark) .opt-in-link { color: #6d28d9 !important; }
 html:not(.dark) .opt-in-rec { background: #eef0f4 !important; color: #344054 !important; } html:not(.dark) .opt-in-rec.is-live { background: #dc2626 !important; color: #fff !important; }
 html:not(.dark) .dialer-optin { border-color: #86efac !important; color: #166534 !important; }
+html:not(.dark) .dialer-optin-state { color: #344054 !important; } html:not(.dark) .dialer-optin-state small { color: #667085 !important; }

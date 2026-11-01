@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { consentScript, DEFAULT_CONSENT_TEMPLATE, DEFAULT_SMS_TEMPLATE, OPT_IN_PLACEHOLDERS, type OptInSettings } from "../../../shared/opt-in";
 
-/** Einstellungen → Opt-in: Firma, Widerruf-Adresse, Datenschutz-Link, Einwilligungstext (Schritt 2), SMS-Text, automatische SMS nach Zuteilung. Mit Vorschau. */
+/** Telefonie → Einstellungen → Opt-in: Firma, Widerruf-Adresse, Datenschutz-Link, Einwilligungstext (Schritt 2), SMS-Text, automatische SMS nach Zuteilung. Mit Vorschau. */
 export default function OptInSettingsPanel() {
   const settings = trpc.leadops.optInSettings.useQuery(undefined, { retry: false });
   const [form, setForm] = useState<OptInSettings | null>(null);

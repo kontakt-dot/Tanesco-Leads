@@ -7,8 +7,7 @@ import { trpc } from "@/lib/trpc";
 import { useSoftphone } from "@/lib/useSoftphone";
 import { CALL_STATUS_LABELS, DISPOSITIONS, type DispositionKey } from "../../../shared/dialer";
 import { lostStage, stageLabel, type PipelineStage, type StageDef } from "../../../shared/sales-pipeline";
-import { ChevronRight, FileCheck2, Mic, MicOff, Phone, PhoneOff, Play, ShieldCheck, X } from "lucide-react";
-import OptInRecorder from "@/components/OptInRecorder";
+import { ChevronRight, Mic, MicOff, Phone, PhoneOff, Play, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -60,7 +59,6 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
   const buildQueue = trpc.leadops.buildDialerQueue.useMutation();
   const setCampaignStatus = trpc.leadops.setDialerCampaignStatus.useMutation();
   const end = trpc.leadops.endDialerCall.useMutation();
-  const [optInOpen, setOptInOpen] = useState(false); // „Opt-in aufnehmen“: Skript + Aufnahme nur für den Einwilligungsabschnitt
   const consent = trpc.leadops.markCallConsent.useMutation({ onSuccess: () => { toast.success("Einwilligung vermerkt – Aufzeichnung läuft."); session.refetch(); }, onError: (error) => toast.error(error.message) });
   const disposition = trpc.leadops.setCallDisposition.useMutation();
   const pipelineSettings = trpc.leadops.pipelineSettings.useQuery(undefined, { retry: false, staleTime: 60_000 });
@@ -230,7 +228,6 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
         {callActive && call?.status === "verbunden" && !phone.simulated && <Button size="sm" variant="outline" onClick={phone.toggleMute}>{phone.muted ? <><MicOff /> Stumm aus</> : <><Mic /> Stumm</>}</Button>}
         {callActive && call?.status === "verbunden" && settings.data?.consentMode === "agent_button" && !settings.data?.recordWithoutConsent && !call.consentAt && <Button size="sm" className="flux-button" onClick={() => consent.mutate({ callId: call.id })} disabled={consent.isPending}><ShieldCheck /> Einwilligung erteilt → Aufzeichnung</Button>}
         {callActive && settings.data?.recordWithoutConsent && settings.data.recordCalls && call?.status === "verbunden" ? <span className="dash-pill" title="Einstellung: Aufzeichnung ohne Einwilligungsabfrage">Aufzeichnung ohne Abfrage</span> : callActive && call?.consentAt && <span className="dash-pill">Aufzeichnung mit Einwilligung</span>}
-        {target && (callActive || call) && <Button size="sm" variant="outline" className="dialer-optin" title="Einwilligung für den Fachbetrieb aufnehmen – nur der Einwilligungsabschnitt wird aufgezeichnet" onClick={() => setOptInOpen(true)}><FileCheck2 /> Opt-in aufnehmen</Button>}
         {!callActive && phase !== "done" && !busy && dialMode === "einzel" && !call && target && <Button size="sm" className="flux-button" onClick={() => { void dialSingle(index); }}><Phone /> Anrufen</Button>}
         {!callActive && phase !== "done" && !busy && dialMode === "manuell" && (!call || call.disposition) && <Button size="sm" className="flux-button" onClick={() => { void dialNext(); }}><Phone /> Nächsten anrufen</Button>}
         {!callActive && phase !== "done" && !busy && dialMode === "power" && (!call || call.disposition) && <Button size="sm" variant="ghost" onClick={() => { void dialNext(); }}>Weiter <ChevronRight /></Button>}
@@ -248,6 +245,5 @@ export default function PipelineDialer({ queue, start, mode: initialMode, listLa
       {lastResult && (!call || call.disposition) && <div className="call-note-box"><span className="eyebrow">LETZTES GESPRÄCH · {lastResult.name.toUpperCase()}</span><p><b>Ergebnis: {lastResult.label}</b>{lastResult.stage ? ` · Karte → ${stageLabel(lastResult.stage, stageDefs)}` : ""}</p>{lastResult.summary ? <p>{lastResult.summary}</p> : <p className="text-slate-400">{lastResult.autoNotes ? "Gesprächsnotiz wird erstellt, sobald Transkript und Bewertung vorliegen." : "Automatische Notiz war ausgeschaltet."}</p>}</div>}
       {phase === "done" && <p className="pipeline-dialer-done">{dialMode === "einzel" ? "Gespräch abgeschlossen – die Notiz steht an der Karte." : `Liste abtelefoniert – ${calls} Anruf${calls === 1 ? "" : "e"}${queueStats.waiting ? `, ${queueStats.waiting} Kontakt${queueStats.waiting === 1 ? "" : "e"} auf Wiederholung (Telefonie → Kampagnen)` : ""}. Die Notizen stehen an den Karten.`}</p>}
     </div>
-    {target && <OptInRecorder publicId={target.publicId} dialerCallId={call?.id ?? null} open={optInOpen} onClose={() => setOptInOpen(false)} onDone={() => session.refetch()} />}
   </aside>;
 }
