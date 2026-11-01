@@ -3552,6 +3552,14 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ clickedAt: new Date() }).where(eq(emailCampaignRecipients.id, nils.id));
     const clicked = await owner.leadops.pipelineOverview({ source: "email", campaignId: "__geklickt" }) as typeof board & { smartLists: { geklickt: number } };
     expect(clicked.smartLists.geklickt).toBeGreaterThanOrEqual(1); expect(clicked.totals.leads).toBe(clicked.smartLists.geklickt); expect(clicked.stages.flatMap((stage) => stage.leads).some((lead) => (lead as { email?: string | null }).email === "nils@versprechen-e2e.example")).toBe(true);
+    // nach E-Mail-Kampagne filtern: nur Karten dieser Kampagne – mit der smarten Liste kombinierbar, Zähler gelten für die Kampagne
+    const allMail = await owner.leadops.pipelineOverview({ source: "email" }) as typeof board & { campaigns: Array<{ campaignId: string; leads: number }>; smartLists: { geklickt: number } };
+    const versprechen = allMail.campaigns.find((item) => item.campaignId === `email-${campaign.id}`)!; expect(versprechen.leads).toBeGreaterThanOrEqual(2);
+    const onlyVersprechen = await owner.leadops.pipelineOverview({ source: "email", campaignId: `email-${campaign.id}` }) as typeof allMail;
+    expect(onlyVersprechen.totals.leads).toBe(versprechen.leads); expect(onlyVersprechen.stages.flatMap((stage) => stage.leads).every((lead) => (lead as { adCampaignId?: string | null }).adCampaignId === `email-${campaign.id}`)).toBe(true);
+    const clickedHere = await owner.leadops.pipelineOverview({ source: "email", campaignId: `email-${campaign.id}`, smartList: "__geklickt" }) as typeof allMail;
+    expect(clickedHere.totals.leads).toBe(onlyVersprechen.smartLists.geklickt); expect(clickedHere.stages.flatMap((stage) => stage.leads).some((lead) => (lead as { email?: string | null }).email === "nils@versprechen-e2e.example")).toBe(true);
+    expect(onlyVersprechen.campaigns.length).toBe(allMail.campaigns.length); // die Auswahl bleibt vollständig
     // Einmal nach dem Start: Kontakte in der Pipeline, die (durch den alten Fehler) noch die erste Kategorie tragen, obwohl ihre Kampagne eine andere hat → Kategorie der Kampagne; bewusst anders gesetzte bleiben
     const { fixCampaignLeadCategories } = await import("./inbox");
     const allCategories = (await owner.leadops.listCategories()).filter((row) => row.status === "aktiv").sort((x, y) => x.id - y.id); const firstCategory = allCategories[0]; const thirdCategory = allCategories.find((row) => row.id !== firstCategory.id && row.id !== S.wp!.id)!; expect(firstCategory.id).not.toBe(S.wp!.id);

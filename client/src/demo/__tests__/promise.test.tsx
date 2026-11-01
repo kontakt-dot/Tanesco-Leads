@@ -456,6 +456,46 @@ describe("Vertriebspipeline: Lead-Kategorien (Chat-Build)", () => {
   });
 });
 
+describe("Vertriebspipeline „E-Mail-Kampagne“: nach E-Mail-Kampagne filtern (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  /** Zwei Karten des Boards kamen über eine zweite E-Mail-Kampagne („Dachdecker Hessen – Erstkontakt“). */
+  async function twoCampaigns() {
+    const store = getStore(); const dach = store.tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!;
+    const before = await call("leadops.pipelineOverview", { source: "email" }); const moved = before.stages.flatMap((stage: any) => stage.leads).slice(0, 2).map((lead: any) => lead.id);
+    for (const lead of store.tables.leads.filter((row) => moved.includes(row.id))) Object.assign(lead, { adCampaignId: `email-${dach.id}`, adCampaignName: dach.name });
+    return { dachKey: `email-${dach.id}`, total: before.totals.leads };
+  }
+  it("Daten: nur Karten einer Kampagne; kombinierbar mit „Interesse“, „Geöffnet“, „Webseite geklickt“ – die Zähler gelten dann für diese Kampagne", async () => {
+    const { dachKey, total } = await twoCampaigns();
+    const board = await call("leadops.pipelineOverview", { source: "email" }); expect(board.totals.leads).toBe(total);
+    expect(board.campaigns.length).toBeGreaterThanOrEqual(2); const dach = board.campaigns.find((item: any) => item.campaignId === dachKey); expect(dach).toMatchObject({ campaignName: "Dachdecker Hessen – Erstkontakt", leads: 2 });
+    const only = await call("leadops.pipelineOverview", { source: "email", campaignId: dachKey });
+    const cards = only.stages.flatMap((stage: any) => stage.leads); expect(cards).toHaveLength(2); expect(cards.every((lead: any) => lead.adCampaignId === dachKey)).toBe(true);
+    expect(only.campaigns.length).toBe(board.campaigns.length); // die Auswahl bleibt vollständig
+    for (const smartList of ["__interesse", "__geoeffnet", "__geklickt"] as const) {
+      const both = await call("leadops.pipelineOverview", { source: "email", campaignId: dachKey, smartList });
+      const key = smartList.slice(2) as "interesse" | "geoeffnet" | "geklickt"; expect(both.totals.leads).toBe(only.smartLists[key]); expect(only.smartLists[key]).toBeLessThanOrEqual(board.smartLists[key]);
+      expect(both.stages.flatMap((stage: any) => stage.leads).every((lead: any) => lead.adCampaignId === dachKey)).toBe(true);
+    }
+    expect((await call("leadops.pipelineOverview", { source: "email", campaignId: "__geoeffnet" })).totals.leads).toBe(board.smartLists.geoeffnet); // smarte Liste wie bisher über campaignId
+  });
+  it("Oberfläche: Auswahl „E-Mail-Kampagne“ mit Anzahl – filtert das Board, die smarte Liste bleibt dazu wählbar", async () => {
+    await twoCampaigns();
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const view = mount(); await settle(400); await settle(400);
+    const select = view.container.querySelector<HTMLSelectElement>("select.pipeline-mail-campaign-filter")!; expect(select).toBeTruthy();
+    const options = Array.from(select.options).map((option) => option.textContent ?? ""); expect(options[0]).toBe("Alle E-Mail-Kampagnen"); expect(options).toContain("Dachdecker Hessen – Erstkontakt (2)"); expect(options.length).toBeGreaterThanOrEqual(3);
+    const total = view.container.querySelectorAll(".pipeline-card").length; expect(total).toBeGreaterThan(2); // Board im gewählten Zeitraum
+    const value = Array.from(select.options).find((option) => option.textContent?.startsWith("Dachdecker Hessen – Erstkontakt"))!.value;
+    await act(async () => { fireEvent.change(select, { target: { value } }); }); await settle(400); await settle(300);
+    expect(view.container.querySelectorAll(".pipeline-card").length).toBe(2); expect(view.container.querySelector<HTMLSelectElement>("select.pipeline-mail-campaign-filter")!.value).toBe(value);
+    const smart = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".smart-list")).map((button) => button.textContent ?? ""); expect(smart.some((text) => text.startsWith("Geöffnet"))).toBe(true); // weiter wählbar
+    await act(async () => { fireEvent.change(view.container.querySelector<HTMLSelectElement>("select.pipeline-mail-campaign-filter")!, { target: { value: "" } }); }); await settle(400); await settle(300);
+    expect(view.container.querySelectorAll(".pipeline-card").length).toBe(total); // „Alle E-Mail-Kampagnen“: wieder alles
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
