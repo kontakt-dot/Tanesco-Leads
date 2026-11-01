@@ -293,12 +293,17 @@ export async function deliverLeadNow(db: Db, input: { tenantId: number; actorUse
         if (target.order) { const delivered = target.order.deliveredCount + 1; await tx.update(orders).set({ deliveredCount: delivered, status: delivered >= target.order.quantity ? "erfüllt" : target.order.status }).where(eq(orders.id, target.order.id)); }
       });
       stopTotal.set(stop.id, (stopTotal.get(stop.id) ?? 0) + 1);
+      // Opt-in: jede Zustellung ist eine „Verwendung“ der Einwilligung (Frist von 5 Jahren beginnt neu); fehlt für diesen Käufer eine Einwilligung, geht auf Wunsch die SMS-Bestätigung raus
+      try { const { recordOptInUsage } = await import("./opt-in"); await recordOptInUsage(db, tenantId, lead.id, { kind: "zustellung", buyerName: stop.buyerName, buyerUserId: stop.buyerUserId ?? null, orderId: target.chain.orderId ?? null }, process.env.APP_URL ?? null); } catch (error) { console.error("[Opt-in] Verwendung nicht protokolliert:", error instanceof Error ? error.message : error); }
       await logActivity(db, tenantId, { kind: "lead_verkauft", title: `Lead ${lead.publicId} an ${stop.buyerName} verkauft`, detail: `${Number(stop.unitPrice ?? 0).toFixed(2).replace(".", ",")} € · ${target.chain.name}${target.order ? ` · Bestellung ${target.order.orderNumber}` : ""}`, leadId: lead.id, actorUserId: input.actorUserId ?? null, refType: "leadDelivery", refId: deliveryId || null });
 
       // Übergabe: API-Calls des Käufer-Kontos des Stops (Benutzer → Integration), sonst dessen Partnerintegration, sonst „angeboten“ (manuell)
       let integration: IntegrationRow | undefined; let outcome: ExportOutcome | undefined; let handOverName = ""; let matchedRule: Awaited<ReturnType<typeof handOverToBuyerEndpoints>>["matchedRule"] = null;
+      // Opt-in-Angaben für den Käufer (flache Felder für die Feldzuordnung: opt_in_number, opt_in_status, opt_in_kind, opt_in_given_at, opt_in_proof_url)
+      const optInFields = await (async () => { try { const { optInSummaryFor } = await import("./opt-in"); const summary = await optInSummaryFor(db, tenantId, lead.id, process.env.APP_URL ?? null, { buyerUserId, buyerName: stop.buyerName }); return summary ? { optInNumber: summary.number, optInStatus: summary.status, optInKind: summary.kind, optInBuyer: summary.buyerName, optInGivenAt: summary.givenAt ? new Date(summary.givenAt).toISOString() : null, optInProofUrl: summary.proofUrl } : {}; } catch { return {}; } })();
+      const currentLeadWithOptIn = { ...currentLead, metadata: { ...metadataOf(currentLead), ...optInFields } } as typeof currentLead;
       if (buyerUserId) {
-        const handOver = await handOverToBuyerEndpoints(db, { tenantId, buyerUserId, lead: currentLead, extraValues: { order_number: target.order?.orderNumber ?? "", unit_price: stop.unitPrice }, skipEmptyFields: settings.skipEmptyApiFields });
+        const handOver = await handOverToBuyerEndpoints(db, { tenantId, buyerUserId, lead: currentLeadWithOptIn, extraValues: { order_number: target.order?.orderNumber ?? "", unit_price: stop.unitPrice, opt_in_number: String(optInFields.optInNumber ?? ""), opt_in_status: String(optInFields.optInStatus ?? ""), opt_in_proof_url: String(optInFields.optInProofUrl ?? "") }, skipEmptyFields: settings.skipEmptyApiFields });
         if (handOver.attempted) { outcome = { eventType: handOver.ok ? "geliefert" : "abgelehnt", externalReference: handOver.partnerReference ?? lead.publicId, responseStatus: handOver.status, responseBody: handOver.summary }; handOverName = `API-Call${handOver.results.length > 1 ? "s" : ""} (${handOver.summary})`; matchedRule = handOver.matchedRule; }
       }
       if (!outcome) {
@@ -307,7 +312,7 @@ export async function deliverLeadNow(db: Db, input: { tenantId: number; actorUse
           attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: target.chain.orderId ?? null, outcome: "angeboten", responseStatus: undefined });
           return { chainId: target.chain.id, stopId: stop.id, buyerName: stop.buyerName, unitPrice: stop.unitPrice, orderId: target.chain.orderId ?? null, result: "angeboten", export: null, attempts };
         }
-        outcome = await exportLeadToIntegration(db, { tenantId, integration, lead: { ...currentLead, metadata: { ...metadataOf(currentLead), deliveredOrderNumber: target.order?.orderNumber ?? null, deliveredUnitPrice: stop.unitPrice } }, externalReference: `${target.order?.orderNumber ?? target.chain.name}/${lead.publicId}`, settings });
+        outcome = await exportLeadToIntegration(db, { tenantId, integration, lead: { ...currentLead, metadata: { ...metadataOf(currentLead), ...optInFields, deliveredOrderNumber: target.order?.orderNumber ?? null, deliveredUnitPrice: stop.unitPrice } }, externalReference: `${target.order?.orderNumber ?? target.chain.name}/${lead.publicId}`, settings });
         handOverName = integration.name;
       }
       const exported = { integrationId: integration?.id ?? 0, integrationName: integration?.name ?? "API-Call", eventType: outcome.eventType, responseStatus: outcome.responseStatus };

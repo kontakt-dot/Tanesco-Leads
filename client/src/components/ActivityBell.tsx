@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { Activity, ArrowDownToLine, Bell, ClipboardCheck, Flame, HandCoins, Headphones, PhoneCall, Play, Reply, Route, Send, ShieldAlert, ShoppingBag, Undo2, UserPlus, X } from "lucide-react";
+import { Activity, ArrowDownToLine, Bell, ClipboardCheck, FileCheck2, Flame, HandCoins, Headphones, PhoneCall, Play, Reply, Route, Send, ShieldAlert, ShoppingBag, Undo2, UserPlus, X } from "lucide-react";
 import type { ActivityDay, ActivityEntry, ActivityKind } from "../../../shared/activity";
 
 /**
@@ -12,7 +12,7 @@ import type { ActivityDay, ActivityEntry, ActivityKind } from "../../../shared/a
 const ICON: Record<ActivityKind, typeof Bell> = {
   kontakt_neu: UserPlus, lead_neu: Flame, upload_rueckgaengig: Undo2, anruf: PhoneCall, gespraech_abgehoert: Headphones, gespraech_bewertet: ClipboardCheck,
   lead_verkauft: HandCoins, bestellung: ShoppingBag, reklamation: ShieldAlert, pipeline_stufe: Route, pipeline_uebernommen: ArrowDownToLine,
-  email_gesendet: Send, email_antwort: Reply, email_fehler: ShieldAlert, kampagne: Play, sonstiges: Activity,
+  email_gesendet: Send, email_antwort: Reply, email_fehler: ShieldAlert, kampagne: Play, opt_in: FileCheck2, sonstiges: Activity,
 };
 const SEEN_KEY = "tanesco-activity-seen";
 const readSeen = () => { try { return localStorage.getItem(SEEN_KEY); } catch { return null; } };

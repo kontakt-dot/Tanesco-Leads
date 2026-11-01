@@ -19,6 +19,8 @@ export interface TelephonyProvider {
   originateCall(input: OriginateInput): Promise<OriginateResult>;
   hangupCall(providerCallSid: string): Promise<void>;
   startRecording(providerCallSid: string, callbackUrl: string, options?: { announcement?: boolean }): Promise<{ recordingSid: string }>;
+  /** Aufzeichnung während des Gesprächs wieder beenden (Voice-Opt-in: nur der Einwilligungsabschnitt wird aufgezeichnet). */
+  stopRecording?(providerCallSid: string): Promise<void>;
   accessToken(identity: string, ttlSeconds?: number): Promise<string | null>;
   /** Textnachricht (SMS oder WhatsApp) senden; from/to in E.164. */
   sendMessage(input: MessageInput): Promise<MessageResult>;

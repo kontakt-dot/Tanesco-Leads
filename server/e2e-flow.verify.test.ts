@@ -3803,4 +3803,93 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.deleteCustomPipeline({ key: pipe.key });
     expect((await byMail("tina@stufen-test.example")).stage).toBe("kontaktiert"); expect((await byMail("vera@stufen-test.example")).stage).toBe("verloren"); expect((await byMail("karl@stufen-test.example")).stage).toBe("neu");
   }, 40000);
+
+  it("63v. Opt-in-Nachweis (§ 7a UWG): Einstellungen, Skript, Voice-Opt-in ohne/mit Dialer-Anruf samt Prüfung der Abschrift, Opt-in bei Gesprächsfreigabe, SMS-Bestätigung über die öffentliche Seite, Verwendung bei Zustellung, Nachweis-PDF, Widerruf, Formular-Einwilligung", async () => {
+    const tenantId = S.tenantId as number; const optInModule = await import("./opt-in"); const { optIns } = await import("../drizzle/schema");
+    // Einstellungen: Firma, Widerruf-Adresse, Datenschutz-Link – ohne Firmennamen lässt sich kein Opt-in aufnehmen
+    const saved = await owner.leadops.saveOptInSettings({ companyName: "Tanesco Digital GbR", companyAddress: "Schultheißweg 44, 55252 Wiesbaden", revokeEmail: "kontakt@tanescodigital.de", privacyUrl: "https://www.tanescodigital.de/datenschutz", channels: "telefonisch und per E-Mail", consentTemplate: (await owner.leadops.optInSettings()).consentTemplate, smsTemplate: (await owner.leadops.optInSettings()).smsTemplate, autoSms: false });
+    expect(saved.companyName).toBe("Tanesco Digital GbR"); expect((await owner.leadops.optInSettings()).revokeEmail).toBe("kontakt@tanescodigital.de");
+    await owner.leadops.importColdList({ pipeline: "kaltakquise", listName: "Opt-in-Test", rows: [{ firstName: "Olaf", lastName: "Optin", phone: "+49 30 9188001", email: "olaf@optin-test.example", postcode: "60311", city: "Frankfurt" }, { firstName: "Petra", lastName: "Pflicht", phone: "+49 30 9188002", email: "petra@optin-test.example", postcode: "34117", city: "Kassel" }] });
+    const leadBy = async (email: string) => (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.email, email))).limit(1))[0];
+    const olaf = await leadBy("olaf@optin-test.example"); const petra = await leadBy("petra@optin-test.example"); expect(olaf && petra).toBeTruthy();
+    // Skript mit eingesetztem Käufer
+    const script = await owner.leadops.optInScript({ publicId: olaf.publicId, buyerName: "Müller Solartechnik, Frankfurt" });
+    expect(script.script.steps.map((step) => step.key)).toEqual(["aufnahme", "einwilligung", "abschluss"]); expect(script.script.steps[1].text).toContain("Tanesco Digital GbR"); expect(script.script.steps[1].text).toContain("an Müller Solartechnik, Frankfurt weitergibt"); expect(script.script.steps[1].text).toContain("Olaf Optin"); expect(script.settings.missingCompany).toBe(false);
+    // 1) Voice-Opt-in ohne aktiven Dialer-Anruf: keine Aufnahme, nur Bestätigung des Agenten → gültig mit Hinweis auf SMS
+    const noCall = await owner.leadops.startVoiceOptIn({ publicId: olaf.publicId, dialerCallId: null, buyerName: "Müller Solartechnik, Frankfurt" });
+    expect(noCall.recording.active).toBe(false); expect(noCall.recording.note).toMatch(/Kein aktiver Anruf/);
+    expect((await owner.leadops.finishVoiceOptIn({ optInId: noCall.id, attest: { aufnahme: true, ja: true } })).status).toBe("gueltig");
+    let list = await owner.leadops.listOptIns({ publicId: olaf.publicId }); const first = list.find((row) => row.id === noCall.id)!;
+    expect(first).toMatchObject({ kind: "sprache", status: "gueltig", grantedTo: "kaeufer", buyerName: "Müller Solartechnik, Frankfurt" }); expect(first.checks?.by).toBe("agent"); expect(first.warning).toMatch(/Ohne Aufnahme/); expect(first.hash).toMatch(/^[0-9a-f]{64}$/); expect(first.number).toMatch(/^OPT-\d{4}-\d{6}$/); expect(first.proofUrl).toMatch(/\/api\/opt-in\/nachweis\/.+\.pdf$/);
+    expect(Math.round((new Date(first.retainUntil!).getTime() - new Date(first.givenAt!).getTime()) / (365.25 * 86_400_000))).toBe(5);
+    // Abbruch ohne Ja → abgelehnt; nicht beide Ja → unvollständig
+    const cancelled = await owner.leadops.startVoiceOptIn({ publicId: olaf.publicId, dialerCallId: null, buyerName: "Müller Solartechnik, Frankfurt" }); expect((await owner.leadops.finishVoiceOptIn({ optInId: cancelled.id, attest: { aufnahme: true, ja: false }, cancel: true })).status).toBe("abgelehnt");
+    const partial = await owner.leadops.startVoiceOptIn({ publicId: olaf.publicId, dialerCallId: null, buyerName: null }); expect((await owner.leadops.finishVoiceOptIn({ optInId: partial.id, attest: { aufnahme: true, ja: false } })).status).toBe("unvollstaendig");
+    expect((await owner.leadops.listOptIns({ publicId: olaf.publicId })).find((row) => row.id === partial.id)!.missing).toContain("Eindeutiges „Ja“");
+    // 2) Mit simuliertem Dialer-Anruf: Aufnahme nur für den Abschnitt (Simulation), danach Prüfung der Abschrift nach Regeln
+    const callStart = new Date(Date.now() - 90_000);
+    const dialerCallId = Number((await db.insert(dialerCalls).values({ tenantId, leadId: petra.id, agentUserId: ownerUserId, mode: "manuell", provider: "simulation", providerCallSid: "CAoptin-e2e-1", fromNumber: "+4969900000", toNumber: petra.phone!, status: "verbunden", startedAt: callStart, answeredAt: new Date(callStart.getTime() + 8_000), connectedAt: new Date(callStart.getTime() + 8_000) }))[0]?.insertId);
+    const withCall = await owner.leadops.startVoiceOptIn({ publicId: petra.publicId, dialerCallId, buyerName: "Schmidt Energie, Kassel" });
+    expect(withCall.recording).toMatchObject({ active: true, own: true, note: null }); expect((await db.select({ consentAt: dialerCalls.consentAt, recordingSid: dialerCalls.recordingSid }).from(dialerCalls).where(eq(dialerCalls.id, dialerCallId)))[0]).toMatchObject({ recordingSid: `REsim-optin-${dialerCallId}` });
+    expect((await owner.leadops.finishVoiceOptIn({ optInId: withCall.id, attest: { aufnahme: true, ja: true } })).status).toBe("gueltig");
+    const spoken = `${withCall.script.steps[0].text}\nKunde: Ja.\n${withCall.script.steps[1].text}\nKunde: Ja, einverstanden.\n${withCall.script.steps[2].text}`;
+    expect(await optInModule.evaluateOptInsForDialerCall(db, tenantId, dialerCallId, null, spoken, "https://rec.e2e.example/optin-1.mp3")).toEqual({ optIns: 1, evaluated: 1 });
+    let petraList = await owner.leadops.listOptIns({ publicId: petra.publicId }); const voice = petraList.find((row) => row.id === withCall.id)!;
+    expect(voice.status).toBe("gueltig"); expect(voice.checks?.by).toBe("regeln"); expect(voice.missing).toEqual([]); expect(voice.warning).toBeNull(); expect(voice.quote).toContain("Ja, einverstanden"); expect(voice.recordingUrl).toBe("https://rec.e2e.example/optin-1.mp3"); expect(voice.hasTranscript).toBe(true); expect(typeof voice.recordingEndSec).toBe("number");
+    // Abschrift ohne das zweite Ja: der Agent hatte bestätigt → bleibt gültig, aber mit Warnung
+    await optInModule.evaluateOptInsForDialerCall(db, tenantId, dialerCallId, null, `${withCall.script.steps[0].text}\nKunde: Ja.\n${withCall.script.steps[1].text}\nKunde: Mhm.\n${withCall.script.steps[2].text}`, null);
+    const warned = (await owner.leadops.listOptIns({ publicId: petra.publicId })).find((row) => row.id === withCall.id)!; expect(warned.status).toBe("gueltig"); expect(warned.warning).toMatch(/Eindeutiges „Ja“ nicht gefunden/);
+    // 3) Externer Dialer: Freigabe eines bewerteten Gesprächs legt den Opt-in aus der Gesamtaufnahme an (Stelle zitiert); Gesprächsliste zeigt ihn
+    const qaScript = (await owner.leadops.optInScript({ publicId: olaf.publicId, buyerName: null })).script;
+    const qaTranscript = `Agent: Guten Tag Herr Optin, hier Tanesco Digital. Sie hatten eine Anfrage zu Photovoltaik gestellt … (Qualifizierung) …\n${qaScript.steps[0].text}\nKunde: Ja.\n${qaScript.steps[1].text}\nKunde: Ja, einverstanden.\n${qaScript.steps[2].text}`;
+    const qaCallId = Number((await db.insert(callRecords).values({ tenantId, provider: "ondialer", externalCallId: "optin-qa-e2e-1", leadId: olaf.id, phone: olaf.phone, agentName: "Taner", campaign: "PV Q4", startedAt: new Date(Date.now() - 3_600_000), durationSeconds: 240, recordingUrl: "https://rec.e2e.example/qa-1.mp3", consent: true, consentSource: "Ansage", transcript: qaTranscript, status: "bewertet", score: 82, verdict: "verkaufbar", decision: "offen" }))[0]?.insertId);
+    await owner.leadops.reviewCall({ callId: qaCallId, decision: "freigegeben" });
+    list = await owner.leadops.listOptIns({ publicId: olaf.publicId }); const fromQa = list.find((row) => row.callRecordId === qaCallId);
+    expect(fromQa).toBeUndefined(); // Olaf hatte schon ein gültiges Opt-in für den Fachbetrieb → kein zweites aus dem Gespräch
+    const qaCall2 = Number((await db.insert(callRecords).values({ tenantId, provider: "ondialer", externalCallId: "optin-qa-e2e-2", leadId: petra.id, phone: petra.phone, agentName: "Francesco", campaign: "PV Q4", startedAt: new Date(Date.now() - 1_800_000), durationSeconds: 200, recordingUrl: "https://rec.e2e.example/qa-2.mp3", consent: true, consentSource: "Ansage", transcript: qaTranscript, status: "bewertet", score: 75, verdict: "verkaufbar", decision: "offen" }))[0]?.insertId);
+    await owner.leadops.revokeOptIn({ optInId: withCall.id, note: "Test: Platz machen" }); // Petra ohne gültiges Opt-in → Freigabe legt eines aus dem Gespräch an
+    await owner.leadops.reviewCall({ callId: qaCall2, decision: "freigegeben" });
+    petraList = await owner.leadops.listOptIns({ publicId: petra.publicId }); const derived = petraList.find((row) => row.callRecordId === qaCall2)!;
+    expect(derived).toMatchObject({ kind: "sprache", status: "gueltig", grantedTo: "kaeufer" }); expect((derived.source as { via: string }).via).toBe("gespraech"); expect(derived.quote).toContain("Ja, einverstanden"); expect(derived.checks?.by).toBe("regeln");
+    const calls = await owner.leadops.listCalls({}); expect((calls.find((row) => row.id === qaCall2) as { optIn?: { status: string } }).optIn?.status).toBe("gueltig");
+    expect((await owner.leadops.optInFromCall({ callId: qaCall2 }))?.created).toBe(false); // gibt es schon
+    // 4) SMS-Bestätigung: Text mit Firmennamen und Link, öffentliche Seite, Klick bestätigt (IP/Zeit), zweite Anfrage abgelehnt
+    const sms = await owner.leadops.sendOptInSms({ publicId: olaf.publicId, buyerName: "Schmidt Energie, Kassel" });
+    expect(sms.text).toContain("Schmidt Energie, Kassel"); expect(sms.text).toContain(sms.link); expect(sms.link).toMatch(/\/opt-in\/[A-Za-z0-9_-]{24}$/);
+    const outbound = (await db.select().from(outboundMessages).where(and(eq(outboundMessages.leadId, olaf.id), eq(outboundMessages.channel, "sms"))).orderBy(desc(outboundMessages.id)).limit(1))[0]; expect(outbound.templateKey).toBe(`optin:${sms.id}`); expect(outbound.text).toContain(sms.link);
+    const token = sms.link.split("/").pop()!; const smsRow = (await db.select().from(optIns).where(eq(optIns.id, sms.id)))[0]; expect(smsRow).toMatchObject({ kind: "sms", status: "offen", smsToken: token, smsPhone: olaf.phone });
+    const page = await fetch(`${apiBase}/opt-in/${token}`); expect(page.status).toBe(200); const html = await page.text(); expect(html).toContain("Schmidt Energie, Kassel"); expect(html).toContain("Ja, ich bin einverstanden"); expect(html).toContain(smsRow.number);
+    const confirmed = await fetch(`${apiBase}/api/opt-in/${token}/confirm`, { method: "POST", headers: { "x-forwarded-for": "203.0.113.9", "user-agent": "E2E-Handy" } }); expect(confirmed.status).toBe(200); expect(await confirmed.json()).toMatchObject({ number: smsRow.number, already: false });
+    const after = (await owner.leadops.listOptIns({ publicId: olaf.publicId })).find((row) => row.id === sms.id)!; expect(after.status).toBe("gueltig"); expect(after.confirmedAt).toBeTruthy(); expect(after.confirmIp).toBe("203.0.113.9"); expect(after.missing).toEqual([]);
+    expect(await (await fetch(`${apiBase}/opt-in/${token}`)).text()).toContain("schon bestätigt");
+    const sms2 = await owner.leadops.sendOptInSms({ publicId: petra.publicId, buyerName: "Neuer Betrieb GmbH, Kassel" }); const token2 = sms2.link.split("/").pop()!;
+    expect((await (await fetch(`${apiBase}/api/opt-in/${token2}/decline`, { method: "POST" })).json())).toMatchObject({ status: "abgelehnt" });
+    expect((await fetch(`${apiBase}/api/opt-in/unbekannt-token/confirm`, { method: "POST" })).status).toBe(400);
+    // 5) Verwendung: Zustellung an den genannten Käufer protokolliert, Frist beginnt neu; autoSms schickt die SMS für einen Käufer ohne Einwilligung
+    const usage = await optInModule.recordOptInUsage(db, tenantId, olaf.id, { kind: "zustellung", buyerName: "Schmidt Energie, Kassel", buyerUserId: null, orderId: null }, apiBase);
+    expect(usage.coveredForBuyer).toBe(true); expect(usage.smsSent).toBe(false);
+    const used = (await owner.leadops.listOptIns({ publicId: olaf.publicId })).find((row) => row.id === sms.id)!; expect(used.usages).toHaveLength(1); expect(used.usages[0]).toMatchObject({ kind: "zustellung", buyerName: "Schmidt Energie, Kassel" }); expect(new Date(used.retainUntil!).getFullYear()).toBe(new Date(used.lastUsedAt!).getFullYear() + 5);
+    await owner.leadops.saveOptInSettings({ ...saved, autoSms: true });
+    const auto = await optInModule.recordOptInUsage(db, tenantId, petra.id, { kind: "zustellung", buyerName: "Ganz Neuer Betrieb, Kassel", buyerUserId: null, orderId: null }, apiBase);
+    expect(auto.coveredForBuyer).toBe(false); expect(auto.smsSent).toBe(true);
+    const autoRow = (await owner.leadops.listOptIns({ publicId: petra.publicId })).find((row) => row.kind === "sms" && row.buyerName === "Ganz Neuer Betrieb, Kassel")!; expect(autoRow.status).toBe("offen"); expect(autoRow.collectedBy).toBe("automatisch nach Zuteilung");
+    await owner.leadops.saveOptInSettings({ ...saved, autoSms: false });
+    // 6) Nachweis-PDF: über die App und über den öffentlichen Nachweis-Link für den Käufer
+    const pdf = await owner.leadops.optInPdf({ id: sms.id }); expect(Buffer.from(pdf.base64, "base64").subarray(0, 5).toString("latin1")).toBe("%PDF-"); expect(pdf.fileName).toContain(smsRow.number);
+    const proof = await fetch(after.proofUrl!.replace(/^https?:\/\/[^/]+/, apiBase)); expect(proof.status).toBe(200); expect(proof.headers.get("content-type")).toContain("application/pdf");
+    expect((await fetch(`${apiBase}/api/opt-in/nachweis/gibt-es-nicht.pdf`)).status).toBe(404);
+    // 7) Widerruf: Status, Sperrliste (E-Mail), „nicht anrufen“ am Lead, Verlauf
+    expect((await owner.leadops.revokeOptIn({ optInId: sms.id, note: "Kunde will keinen Kontakt mehr" })).status).toBe("widerrufen");
+    const revoked = (await owner.leadops.listOptIns({ publicId: olaf.publicId })).find((row) => row.id === sms.id)!; expect(revoked.revokedAt).toBeTruthy(); expect(revoked.revokeNote).toBe("Kunde will keinen Kontakt mehr");
+    expect((await db.select().from(emailSuppressions).where(and(eq(emailSuppressions.tenantId, tenantId), eq(emailSuppressions.email, "olaf@optin-test.example"))))[0]).toMatchObject({ source: "widerruf" });
+    expect(((await db.select({ metadata: leads.metadata }).from(leads).where(eq(leads.id, olaf.id)))[0].metadata as { doNotCall?: boolean }).doNotCall).toBe(true);
+    expect((await owner.leadops.pipelineHistory({ publicId: olaf.publicId })).some((event) => /widerrufen/.test(event.note ?? ""))).toBe(true);
+    // 8) Formular-Einwilligung (Meta): Hinweistext + Häkchen → gültig für unseren Anruf; ohne beides → unvollständig
+    const form = await optInModule.createFormOptIn(db, tenantId, petra.id, { formId: "form-1", formName: "PV Anfrage", leadgenId: "lg-1", createdTime: "2026-10-30T09:15:00Z", disclaimerResponses: [{ checkbox_key: "kontakt_ok", is_checked: "true" }], legalText: "Ich bin einverstanden, dass Tanesco Digital mich telefonisch oder per E-Mail zu meiner Anfrage kontaktiert. Widerruf jederzeit.\n[x] Ja", platform: "facebook" });
+    expect(form.status).toBe("gueltig"); const formRow = (await owner.leadops.listOptIns({ publicId: petra.publicId })).find((row) => row.id === form.id)!; expect(formRow).toMatchObject({ kind: "formular", grantedTo: "eigen", collectedBy: "facebook" }); expect(new Date(formRow.givenAt!).toISOString()).toBe("2026-10-30T09:15:00.000Z");
+    const bare = await optInModule.createFormOptIn(db, tenantId, petra.id, { formId: "form-2", formName: "Nur Anfrage", leadgenId: "lg-2", createdTime: new Date(), disclaimerResponses: [], legalText: null, platform: "facebook" });
+    expect(bare.status).toBe("unvollstaendig"); expect((await owner.leadops.listOptIns({ publicId: petra.publicId })).find((row) => row.id === bare.id)!.missing).toEqual(["Einwilligungstext oder Häkchen im Formular"]);
+    // Kurzfassung für Käufer/API: beste Einwilligung für den Fachbetrieb, Nachweis-Link
+    const summary = await optInModule.optInSummaryFor(db, tenantId, petra.id, apiBase, { buyerName: "Schmidt Energie, Kassel" }); expect(summary?.status).toBe("gueltig"); expect(summary?.proofUrl).toContain("/api/opt-in/nachweis/");
+  }, 60000);
 });

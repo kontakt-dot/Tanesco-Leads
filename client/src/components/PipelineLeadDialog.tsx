@@ -1,5 +1,6 @@
 import { undoIdOf, withUndo } from "@/components/UndoPanel";
 import { Button } from "@/components/ui/button";
+import OptInPanel from "@/components/OptInPanel";
 import { CallAttemptsSection } from "@/components/CallLog";
 import { Input } from "@/components/ui/input";
 import { confirmAction } from "@/lib/confirm";
@@ -28,7 +29,7 @@ import BlockContactDialog, { UnblockButton } from "@/components/BlockContactDial
  * vor dem Anlegen des Leads) – und am Ende das Löschen.
  */
 type Detail = inferRouterOutputs<AppRouter>["leadops"]["pipelineLeadDetail"];
-type Tab = "verlauf" | "notizen" | "aufgaben" | "nachrichten" | "anrufe" | "serien" | "emails";
+type Tab = "verlauf" | "notizen" | "aufgaben" | "nachrichten" | "anrufe" | "serien" | "emails" | "optin";
 type MasterData = { salutation: string; firstName: string; lastName: string; company: string; phone: string; email: string; postcode: string; city: string; categoryId: string };
 const stamp = (value: Date | string | null | undefined, withTime = true) => value ? new Date(value).toLocaleString("de-DE", withTime ? { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" } : { day: "2-digit", month: "2-digit", year: "2-digit" }) : "–";
 const platformLabel = (platform: string | null) => platform === "instagram" ? "Instagram" : platform === "kaltakquise" ? "Kaltakquise" : platform === "posteingang" ? "Posteingang" : platform === "email" ? "E-Mail-Kampagne" : "Facebook";
@@ -47,6 +48,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
   const stageDefs = (detail.data as { stages?: StageDef[] } | undefined)?.stages?.length ? (detail.data as { stages: StageDef[] }).stages : fallbackStageDefs;
   const categories = trpc.leadops.listCategories.useQuery(undefined, { retry: false });
   const thread = useEmailThread(publicId);
+  const optIns = trpc.leadops.listOptIns.useQuery({ publicId }, { retry: false });
   const utils = trpc.useUtils();
   const refresh = () => { utils.leadops.pipelineLeadDetail.invalidate({ publicId }); utils.leadops.leadEmailThread.invalidate({ publicId }); onChanged(); };
   const [tab, setTab] = useState<Tab>("verlauf");
@@ -71,7 +73,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
   const [blockOpen, setBlockOpen] = useState(false); // Kontakt sperren (Sperrliste „Manuell“)
   const telephony = trpc.leadops.getTelephonySettings.useQuery(undefined, { retry: false, staleTime: 60_000 }); const dialerLabel = telephony.data?.provider === "sipgate" ? "Über sipgate anrufen" : "Dialer (Simulation)";
   const dial = () => { if (!lead) return; if (!lead.phone) { toast("Erst eine Telefonnummer eintragen – links bei den Stammdaten."); document.getElementById("lead-page-phone")?.focus(); return; } onDial([{ id: lead.id, publicId: lead.publicId, name: lead.name, phone: lead.phone, stage: stage as DialTarget["stage"], company: lead.company, city: lead.city }], 0, "einzel"); };
-  const tabs: Array<[Tab, string, number | null]> = lead ? [["verlauf", "Verlauf", lead.history.length], ["notizen", "Notizen", lead.noteCount], ["aufgaben", "Aufgaben & Termine", lead.tasks.filter((task) => !task.doneAt).length], ["nachrichten", "Nachrichten", lead.messages.length], ["anrufe", "Anrufe", lead.calls.length], ["serien", "E-Mail-Serien", lead.campaigns.length], ["emails", "E-Mail-Verlauf", thread.data?.items.length ?? lead.inbox.length]] : [];
+  const tabs: Array<[Tab, string, number | null]> = lead ? [["verlauf", "Verlauf", lead.history.length], ["notizen", "Notizen", lead.noteCount], ["aufgaben", "Aufgaben & Termine", lead.tasks.filter((task) => !task.doneAt).length], ["nachrichten", "Nachrichten", lead.messages.length], ["anrufe", "Anrufe", lead.calls.length], ["serien", "E-Mail-Serien", lead.campaigns.length], ["emails", "E-Mail-Verlauf", thread.data?.items.length ?? lead.inbox.length], ["optin", "Opt-in", optIns.data?.length ?? null]] : [];
   const newTabUrl = useMemo(() => (lead && !embedded() ? leadPageUrl(lead.publicId, lead.adPlatform === "kaltakquise" ? "kaltakquise" : lead.adPlatform === "email" || lead.adPlatform === "posteingang" ? "email" : "ads") : null), [lead]);
   if (!lead) return <section className="lead-page"><button type="button" className="lead-page-back" onClick={onClose}><ArrowLeft className="h-4 w-4" /> Vertriebspipeline</button><div className="p-10 text-center text-sm text-slate-400">{detail.isLoading ? "Wird geladen …" : detail.error?.message ?? "Lead nicht gefunden."}</div></section>;
   return <section className="lead-page" aria-label={`Lead-Seite: ${lead.name}`} style={{ borderTopColor: color }}>
@@ -145,6 +147,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
           {tab === "anrufe" && (lead.calls.length ? <ul className="lead-window-list">{lead.calls.map((call) => <li key={call.id}><strong>{CALL_STATUS[call.status] ?? call.status}{call.disposition ? ` · ${call.disposition}` : ""}</strong>{call.summary ? <p>{call.summary}</p> : call.notes ? <p>{call.notes}</p> : null}<small>{stamp(call.startedAt)} · {duration(call.talkSeconds ?? call.durationSeconds)}{call.agent ? ` · ${call.agent}` : ""} · {call.toNumber}</small></li>)}</ul> : <p className="lead-window-empty">Noch kein Anruf. <button type="button" className="text-violet-200 hover:underline" onClick={dial}>Jetzt anrufen</button></p>)}
           {tab === "serien" && (lead.campaigns.length ? <ul className="lead-window-list">{lead.campaigns.map((row) => <li key={row.id}><strong>{row.campaignName}</strong><p>{RECIPIENT_STATUS[row.status] ?? row.status} · {row.sentCount} gesendet{row.variant ? ` · Variante ${row.variant}` : ""}</p><small>{row.lastSentAt ? `zuletzt ${stamp(row.lastSentAt)}` : "noch nichts gesendet"}{row.openedAt ? ` · geöffnet ${stamp(row.openedAt)}` : ""}{row.clickedAt ? ` · geklickt ${stamp(row.clickedAt)}` : ""}{row.repliedAt ? ` · geantwortet ${stamp(row.repliedAt)}` : ""}</small></li>)}</ul> : <p className="lead-window-empty">In keiner E-Mail-Serie.</p>)}
           {tab === "emails" && <EmailThread publicId={lead.publicId} thread={thread.data} />}
+          {tab === "optin" && <OptInPanel publicId={lead.publicId} onChanged={refresh} />}
         </div>
       </section>
     </div>

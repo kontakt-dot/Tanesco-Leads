@@ -680,6 +680,13 @@
       "when": 1794200000000,
       "tag": "0096_absender_postfach",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "5",
+      "when": 1794300000000,
+      "tag": "0097_opt_in_nachweis",
+      "breakpoints": true
     }
   ]
 }

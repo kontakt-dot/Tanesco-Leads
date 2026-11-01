@@ -3740,3 +3740,43 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .restore-inline-head h2{margin:0;font-size:15px;font-weight:700;color:#f1efff}
 .restore-intro{margin:0;font-size:13px;line-height:1.5;color:#a5a3c4;max-width:80ch}
 .restore-inline .restore-foot{border-top:1px solid rgba(255,255,255,.08);padding-top:12px}
+
+/* ---------------------------------------------------------------- Opt-in (Einwilligungsnachweis): Reiter am Lead, Dialer-Fenster, Einstellungen */
+.opt-in-badge{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.opt-in-badge.is-ok{background:rgba(34,197,94,.14);color:#86efac;border-color:rgba(34,197,94,.3)}
+.opt-in-badge.is-wait{background:rgba(96,165,250,.12);color:#bfdbfe;border-color:rgba(96,165,250,.3)}
+.opt-in-badge.is-warn{background:rgba(251,191,36,.14);color:#fde68a;border-color:rgba(251,191,36,.35)}
+.opt-in-badge.is-bad{background:rgba(248,113,113,.14);color:#fecaca;border-color:rgba(248,113,113,.35)}
+.opt-in-panel{display:grid;gap:12px}
+.opt-in-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px}.opt-in-head p{margin:4px 0 0;max-width:620px;font-size:12.5px;line-height:1.5;color:#8f93af}
+.opt-in-sms{display:grid;gap:8px;padding:12px 14px;border:1px solid rgba(155,147,255,.28);border-radius:12px;background:rgba(123,111,255,.08)}
+.opt-in-input{display:block;width:100%;height:38px;margin-top:4px;padding:0 10px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:#0f1117;color:#f1effe;font:inherit;font-size:13.5px;outline:none}.opt-in-input:focus{border-color:#9b93ff}
+.opt-in-hint{display:block;font-size:12px;line-height:1.5;color:#8f93af}.opt-in-hint.is-warn{color:#fcd34d}
+.opt-in-empty{margin:0;padding:14px;border:1px dashed rgba(255,255,255,.14);border-radius:12px;font-size:13px;color:#8f93af}
+.opt-in-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.opt-in-row{padding:12px 14px;border:1px solid rgba(255,255,255,.1);border-left-width:4px;border-radius:12px;background:rgba(255,255,255,.025);display:grid;gap:6px}
+.opt-in-row.is-ok{border-left-color:#22c55e}.opt-in-row.is-wait{border-left-color:#60a5fa}.opt-in-row.is-warn{border-left-color:#fbbf24}.opt-in-row.is-bad{border-left-color:#f87171}
+.opt-in-row-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px}.opt-in-row-head strong{color:#f5f3ff}
+.opt-in-number{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:#a5a1d7}.opt-in-when{margin-left:auto;font-size:12px;color:#8f93af}
+.opt-in-who{margin:0;font-size:12.5px;color:#c9c5f5}.opt-in-who strong{color:#fff}.opt-in-who em{color:#fcd34d;font-style:normal}
+.opt-in-missing{margin:0;font-size:12.5px;color:#fecaca}.opt-in-warning{margin:0;padding:8px 10px;border-radius:9px;background:rgba(251,191,36,.1);font-size:12.5px;line-height:1.5;color:#fde68a}
+.opt-in-checks{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px}.opt-in-checks li.is-on{color:#86efac}.opt-in-checks li.is-off{color:#fca5a5}.opt-in-checks .opt-in-checks-by{color:#8f93af}
+.opt-in-quote{margin:4px 0 0;padding:8px 12px;border-left:3px solid rgba(155,147,255,.5);font-size:13px;line-height:1.55;color:#ddd9ff;font-style:italic}
+.opt-in-audio{width:100%;max-width:520px;margin-top:4px;height:36px}
+.opt-in-usages{margin:0;font-size:12px;color:#8f93af}
+.opt-in-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.opt-in-dialog{max-width:720px;max-height:92vh;overflow:auto;display:grid;gap:12px}
+/* Der Dialer liegt auf z-index 61 – das Aufnahme-Fenster muss darüber liegen, sonst verdeckt der Dialer Schritt 3 und die Knöpfe. */
+.opt-in-dialog.opt-in-dialog{z-index:72}
+[data-slot="dialog-overlay"]:has(+ .opt-in-dialog){z-index:71}
+.opt-in-rec{margin-left:8px;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:rgba(255,255,255,.08);color:#c9c5f5}.opt-in-rec.is-live{background:#dc2626;color:#fff;animation:note-pulse 1.2s ease-in-out infinite}
+.opt-in-step{display:grid;gap:6px;padding:12px 14px;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.025)}.opt-in-step.is-current{border-color:rgba(155,147,255,.45);background:rgba(123,111,255,.08)}
+.opt-in-step h4{margin:0;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a5a1d7}.opt-in-step small{font-size:12px;line-height:1.5;color:#8f93af}
+.opt-in-read{margin:0;font-size:16.5px;line-height:1.6;color:#fff}
+.opt-in-attest{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:12px;font-size:13.5px;color:#f1effe;cursor:pointer}.opt-in-attest input{width:18px;height:18px;accent-color:#7b6fff}
+.opt-in-result{margin:0;padding:12px 14px;border-radius:12px;font-size:14px;line-height:1.55}.opt-in-result.is-ok{background:rgba(34,197,94,.12);color:#bbf7d0}.opt-in-result.is-warn{background:rgba(251,191,36,.12);color:#fde68a}.opt-in-result.is-bad{background:rgba(248,113,113,.12);color:#fecaca}
+.opt-in-textarea{display:block;width:100%;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:#0f1117;color:#f1effe;font:inherit;font-size:13.5px;line-height:1.55;resize:vertical;outline:none}.opt-in-textarea:focus{border-color:#9b93ff}
+.opt-in-placeholders{display:block;margin-top:6px;font-size:11.5px;line-height:1.8;color:#8f93af}.opt-in-placeholders code{margin-right:4px;padding:1px 6px;border-radius:6px;background:rgba(255,255,255,.07);color:#c9c5f5;font-size:11px}
+.opt-in-link{border:0;background:transparent;padding:0;color:#b7b0ff;text-decoration:underline;cursor:pointer;font:inherit;font-size:11.5px}
+.dialer-optin{border-color:rgba(34,197,94,.45)!important;color:#bbf7d0!important}
+@media (max-width:720px){.opt-in-when{margin-left:0;flex-basis:100%}.opt-in-read{font-size:15.5px}}

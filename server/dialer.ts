@@ -362,11 +362,13 @@ export async function handleRecordingEvent(db: Db, input: { providerCallSid?: st
 async function handOffToEvaluation(db: Db, tenantId: number, callId: number) {
   const call = (await db.select().from(dialerCalls).where(eq(dialerCalls.id, callId)).limit(1))[0]; if (!call || call.callRecordId || !call.recordingUrl || call.status !== "beendet") return call ?? null;
   const settings = await ensureTelephonySettings(db, tenantId);
-  const consent = settings.recordWithoutConsent ? true : settings.consentMode === "ansage" ? true : settings.consentMode === "agent_button" ? Boolean(call.consentAt) : false; // „ohne Abfrage“: Einwilligung liegt laut Einstellung bereits vor
+  const consent = settings.recordWithoutConsent ? true : settings.consentMode === "ansage" ? true : settings.consentMode === "agent_button" ? Boolean(call.consentAt) : false; // „ohne Abfrage“: Einwilligung liegt laut Einstellung bereits vor; „Opt-in aufnehmen“ setzt consentAt ebenfalls
   const agent = call.agentUserId ? (await db.select({ name: users.name }).from(users).where(eq(users.id, call.agentUserId)).limit(1))[0] : undefined;
   const campaign = call.campaignId ? (await db.select({ name: dialerCampaigns.name }).from(dialerCampaigns).where(eq(dialerCampaigns.id, call.campaignId)).limit(1))[0] : undefined;
   const result = await ingestInternalCall(db, tenantId, { externalCallId: `dialer-${call.id}`, leadId: call.leadId, rawContactId: call.rawContactId, phone: call.toNumber, agentName: agent?.name ?? null, campaign: campaign?.name ?? `Dialer ${call.mode}`, startedAt: call.startedAt, durationSeconds: call.talkSeconds ?? call.durationSeconds ?? null, recordingUrl: call.recordingUrl, consent, consentSource: consent ? (settings.recordWithoutConsent ? "Einstellung: Aufzeichnung ohne Abfrage (Einwilligung liegt vorab vor)" : settings.consentMode === "ansage" ? "Ansage zu Gesprächsbeginn" : "Agent hat Einwilligung bestätigt") : null, provider: "dialer" });
   if (result?.callId) await db.update(dialerCalls).set({ callRecordId: result.callId, ...(result.leadId && !call.leadId ? { leadId: result.leadId } : {}) }).where(eq(dialerCalls.id, call.id));
+  // Voice-Opt-in aus diesem Gespräch: Aufnahme und – wenn vorhanden – Abschrift anhängen und prüfen
+  try { const record = result?.callId ? (await db.select({ transcript: callRecords.transcript }).from(callRecords).where(eq(callRecords.id, result.callId)).limit(1))[0] : undefined; const { evaluateOptInsForDialerCall } = await import("./opt-in"); await evaluateOptInsForDialerCall(db, tenantId, call.id, result?.callId ?? null, record?.transcript ?? null, call.recordingUrl); } catch (error) { console.error("[Opt-in] Prüfung nach dem Gespräch fehlgeschlagen:", error instanceof Error ? error.message : error); }
   return call;
 }
 

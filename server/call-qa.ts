@@ -10,7 +10,7 @@
  */
 import { and, asc, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { callQaConfigs, callRecords, leadStatusEvents, leads, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
+import { callQaConfigs, callRecords, leadStatusEvents, leads, optIns, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
 import { convertRawContact } from "./raw-data";
 import { invokeLLM } from "./_core/llm";
 import { noteAfterEvaluation } from "./call-notes";
@@ -263,6 +263,8 @@ async function applyDecision(db: Db, config: CallQaConfig, callId: number, lead:
   const meta = current.metadata && typeof current.metadata === "object" && !Array.isArray(current.metadata) ? (current.metadata as Record<string, unknown>) : {};
   await db.update(leads).set({ status: nextStatus, metadata: { ...meta, callScore: evaluation.score, callVerdict: evaluation.verdict, callDecision: decision, callRecordId: callId } }).where(eq(leads.id, lead.id));
   await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: current.status, nextStatus, actorUserId, note: `${label}: ${decision === "freigegeben" ? "freigegeben" : decision === "pruefen" ? "zur Prüfung" : "zurückgewiesen"}${evaluation.summary ? ` – ${evaluation.summary.slice(0, 200)}` : ""}` });
+  // Freigabe = Opt-in-Nachweis: die Einwilligungsstelle aus der Abschrift herausgesucht (sofern es noch keine gültige für den Fachbetrieb gibt)
+  if (decision === "freigegeben") { try { const { optInFromCallRecord } = await import("./opt-in"); await optInFromCallRecord(db, config.tenantId, callId, actorUserId); } catch (error) { console.error("[Opt-in] aus Gesprächsfreigabe nicht angelegt:", error instanceof Error ? error.message : error); } }
   if (decision === "freigegeben" && config.autoDeliver && nextStatus !== current.status) await triggerLeadAutomations(db, { tenantId: config.tenantId, actorUserId, leadId: lead.id, triggerType: "status_geändert" });
 }
 
@@ -305,7 +307,12 @@ export async function listCalls(db: Db, tenantId: number, filter: { decision?: s
   if (filter.status) conditions.push(eq(callRecords.status, filter.status as CallRecord["status"]));
   if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign));
   const rows = await db.select({ call: callRecords, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).where(and(...conditions)).orderBy(desc(callRecords.createdAt)).limit(filter.limit ?? 200);
-  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany }) => ({ id: call.id, externalCallId: call.externalCallId, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
+  // Opt-in je Gespräch: der beste Nachweis für den Fachbetrieb zum Lead (gültig > unvollständig > offen)
+  const leadIds = Array.from(new Set(rows.map((row) => row.call.leadId).filter((id): id is number => typeof id === "number")));
+  const optInRows = leadIds.length ? await db.select({ id: optIns.id, leadId: optIns.leadId, status: optIns.status, kind: optIns.kind, number: optIns.number, buyerName: optIns.buyerName, missing: optIns.missing, callRecordId: optIns.callRecordId }).from(optIns).where(and(eq(optIns.tenantId, tenantId), inArray(optIns.leadId, leadIds), eq(optIns.grantedTo, "kaeufer"))).orderBy(desc(optIns.id)) : [];
+  const rank: Record<string, number> = { gueltig: 0, offen: 1, unvollstaendig: 2, abgelehnt: 3, widerrufen: 4 };
+  const optInOf = (leadId: number | null, callId: number) => { if (!leadId) return null; const own = optInRows.filter((row) => row.leadId === leadId).sort((a, b) => (a.callRecordId === callId ? -1 : 0) - (b.callRecordId === callId ? -1 : 0) || (rank[a.status] ?? 9) - (rank[b.status] ?? 9)); const best = own[0]; return best ? { id: best.id, status: best.status, kind: best.kind, number: best.number, buyerName: best.buyerName, missing: (best.missing as string[] | null) ?? [] } : null; };
+  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany }) => ({ id: call.id, optIn: optInOf(call.leadId, call.id), externalCallId: call.externalCallId, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
 }
 
 export async function getCall(db: Db, tenantId: number, callId: number) {
