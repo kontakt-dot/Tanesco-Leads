@@ -104,8 +104,16 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     const review = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
     expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); // wer noch keine E-Mail hat – und warum
     expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe3 Erst-E-Mails warten"); // alles, was auf Freigabe wartet, in einem Hinweis
-    const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe");
+    const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe · freier Vorschlag"); // Ansatz steht mit dabei
     expect(review.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); // aus dem Namen erkannt
+  });
+  it("Karte: beim KI-Feld steht, welcher Ansatz gewählt ist – Drittanbieter-Ansatz oder freier Vorschlag (auch bei „automatisch“)", async () => {
+    const row = getStore().tables.emailCampaigns.find((item) => item.name === "Solarteure Hessen – persönlich")!; Object.assign(row, { kiAnsatz: "drittanbieter", kiModus: "auto", reviewFirst: false });
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const { view } = mount(); await settle(300); await settle(300);
+    const card = () => Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
+    const ki = () => Array.from(card().querySelectorAll(".cl-spec")).find((node) => node.querySelector("dt")?.textContent?.includes("KI"))!;
+    expect(ki().querySelector("dd")?.textContent).toBe("schreibt einzelnautomatisch · Drittanbieter-Ansatz");
   });
   it("Versand: eine gespeicherte Tageszeit, die genau der normalen Zeit entspricht, steht nicht extra da – nur echte Abweichungen („freitags bis 13:00“)", async () => {
     const row = getStore().tables.emailCampaigns.find((item) => item.name === "Dachdecker Hessen – Erstkontakt")!;

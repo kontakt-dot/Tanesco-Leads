@@ -2719,7 +2719,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.saveEmailCampaign({ ...settings, kiAnsatz: "drittanbieter" } as never); kim = await row(); expect(kim.draftApproach).toBe("drittanbieter");
     await db.update(emailCampaignRecipients).set({ draftApproach: "drittanbieter", draftSource: "vorlage" }).where(eq(emailCampaignRecipients.id, kim.id)); kim = await row();
     // Entwurf-Regeln (auch ohne KI): förmliche Anrede, Pflichtinhalte, Schluss mit Kontaktweg und „Vielen Dank“, kein Gruß
-    expect(kim.draftText).toMatch(/^Sehr geehrte/); expect(kim.draftText).not.toMatch(/^(Hallo|Guten Tag)/); expect(kim.draftText).toContain("10 Test-Leads"); expect(kim.draftText).not.toContain("20 Test-Leads"); expect(kim.draftText).toContain("zehn Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
+    expect(kim.draftText).toMatch(/^Sehr geehrte/); expect(kim.draftText).not.toMatch(/^(Hallo|Guten Tag)/); expect(kim.draftText).toContain("20 Test-Leads"); expect(kim.draftText).not.toMatch(/\b10 Test-Leads/); /* ohne Sparte = PV & WP: 20 */ expect(kim.draftText).toContain("zehn Fragen"); expect(kim.draftText).toContain("antworten Sie einfach auf diese E-Mail"); expect(kim.draftText!.trim().endsWith("Vielen Dank")).toBe(true); expect(kim.draftText).not.toMatch(/Grüßen/);
     // „Alle neu schreiben“: verwirft die Entwürfe, die KI/Vorlage schreibt sie beim nächsten Lauf neu
     expect((await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id })).reset).toBeGreaterThanOrEqual(1);
     expect((await row()).draftState).toBeNull(); expect((await row()).draftText).toBeNull();
@@ -2810,7 +2810,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // KI-Antwortvorschlag: ohne KI-Schlüssel kommt die Vorlage – mit Anrede und Telefonat-Frage
     const message = await owner.leadops.storeInboxMessage({ fromEmail: "chef@antwort-vorschlag.example", fromName: "Carla Chef", subject: "Re: Hallo", bodyText: "Klingt interessant, was kostet das?" });
     const suggestion = await owner.leadops.suggestInboxReply({ messageId: message.id });
-    expect(suggestion.source).toBe("vorlage"); expect(suggestion.text).toMatch(/^Guten Tag,/); expect(suggestion.text).not.toContain("Carla Chef,"); /* kein „Guten Tag Vorname Nachname“ */ expect(suggestion.text).toContain("Telefonat"); expect(suggestion.text).toContain("10 Test-Leads"); expect(suggestion.text).not.toMatch(/Grüßen\s*$/);
+    expect(suggestion.source).toBe("vorlage"); expect(suggestion.text).toMatch(/^Guten Tag,/); expect(suggestion.text).not.toContain("Carla Chef,"); /* kein „Guten Tag Vorname Nachname“ */ expect(suggestion.text).toContain("Telefonat"); expect(suggestion.text).toContain("20 Test-Leads") /* ohne Kampagne = PV & WP */; expect(suggestion.text).not.toMatch(/Grüßen\s*$/);
     // KI-Schreibhilfe: der Nutzer sagt kurz, was er antworten will – ohne KI-Schlüssel kommt die Vorgabe als Rohtext (Anrede, Dank, Vorgabe als Satz); mit Entwurf wird angehängt; nichts wird gesendet
     const sentBefore = (await owner.leadops.listSent({ kind: "antwort" })).items.length;
     const briefed = await owner.leadops.suggestInboxReply({ messageId: message.id, brief: "termin nächste Woche anbieten, Dienstag oder Donnerstag" });
@@ -3432,7 +3432,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(safe.leadCategoryIds).toEqual([]); expect(safe.sparte.label).toBe("Hausnotruf");
   }, 40000);
 
-  it("63n. Versprechen halten: Follow-up nennt die Test-Leads der E-Mail davor (20 bleibt 20, neu 10), Vorlagen-Versand speichert den Text, Freigabe zeigt Erst-E-Mail/Follow-up, Posteingang zeigt unsere Mails davor, Interessent bekommt Kategorie und Stufe der Kampagne, Versendet nach Sparte", async () => {
+  it("63n. Versprechen halten: Wärmepumpe 20 Test-Leads (auch nach früher 10), andere Sparten 10, ein höheres Versprechen bleibt, eigener Text behält seine Zahl; Vorlagen-Versand speichert den Text, Freigabe zeigt Erst-E-Mail/Follow-up, Posteingang zeigt unsere Mails davor, Interessent bekommt Kategorie und Stufe der Kampagne, Versendet nach Sparte", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { TEST_OFFER_CHANGED_AT } = await import("../shared/email-campaigns");
     await owner.leadops.importColdList({ listName: "Versprechen-Test", toPipeline: false, rows: [{ firstName: "Vera", lastName: "Versprechen", company: "Versprechen Wärme GmbH", city: "Ulm", email: "vera@versprechen-e2e.example" }, { firstName: "Nils", lastName: "Neu", company: "Neu Solar", city: "Ulm", email: "nils@versprechen-e2e.example" }, { firstName: "Olga", lastName: "Alt", company: "Alt Heizung", city: "Ulm", email: "olga@versprechen-e2e.example" }] });
     const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 1, next: "m2" }, { id: "m2", type: "send" as const, label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
@@ -3441,13 +3441,13 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
     let [vera, nils, olga] = await rows();
-    // Erst-E-Mails: die Entwürfe nennen 10; in der Freigabe-Liste Schritt 1 ohne E-Mail davor
-    expect(vera.draftText).toContain("10 Test-Leads"); expect(nils.draftText).toContain("10 Test-Leads");
+    // Erst-E-Mails (Wärmepumpe): die Entwürfe nennen 20; in der Freigabe-Liste Schritt 1 ohne E-Mail davor
+    expect(vera.draftText).toContain("20 Test-Leads"); expect(nils.draftText).toContain("20 Test-Leads"); expect(`${vera.draftText}${nils.draftText}`).not.toMatch(/\b10 Test-Leads/);
     const queue1 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue1.counts).toMatchObject({ erste: 3, followUps: 0 });
-    expect(queue1.items.find((item) => item.id === vera.id)).toMatchObject({ step: 1, followUp: false, sentBefore: null, testLeads: 10 });
-    // Vera bekam eine persönliche erste Mail mit 20 Test-Leads (wie die schon verschickten); Nils die unveränderte Vorlage mit 10
+    expect(queue1.items.find((item) => item.id === vera.id)).toMatchObject({ step: 1, followUp: false, sentBefore: null, testLeads: 20 });
+    // Vera bekam eine persönliche erste Mail mit 20 Test-Leads; Nils einen eigenen Text mit 10 (wie in der 10er-Zeit) – eine selbst geschriebene Erst-E-Mail geht mit der Zahl raus, die dasteht
     await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: "Persönlich für Versprechen Wärme", text: "Sehr geehrte Frau Versprechen,\n\nzum Kennenlernen stellen wir Ihnen 20 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
-    await owner.leadops.saveCampaignDraft({ recipientId: nils.id, subject: nils.draftSubject!, text: nils.draftText!, approve: true });
+    await owner.leadops.saveCampaignDraft({ recipientId: nils.id, subject: "Persönlich für Neu Solar", text: "Sehr geehrter Herr Neu,\n\nzum Kennenlernen stellen wir Ihnen 10 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
     await owner.leadops.runEmailCampaigns(); [vera, nils, olga] = await rows(); expect(vera.sentCount).toBe(1); expect(nils.sentCount).toBe(1); expect(olga.sentCount).toBe(0);
     // Mit der ersten E-Mail kommt der Kontakt nach „Versendet“ – verknüpft mit der Kampagne und mit deren Lead-Kategorie (Wärmepumpe), nicht der ersten vom Hochladen
     expect((await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, "nils@versprechen-e2e.example"))))[0]).toMatchObject({ adPlatform: "email", adCampaignId: `email-${campaign.id}`, adCampaignName: "Versprechen-Test", categoryId: S.wp!.id });
@@ -3457,25 +3457,26 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const oldAt = new Date(TEST_OFFER_CHANGED_AT.getTime() - 3 * 86_400_000);
     await db.insert(emailCampaignEvents).values([{ tenantId: S.tenantId, campaignId: campaign.id, recipientId: olga.id, nodeId: "m1", kind: "gesendet", subject: "Erste an Alt Heizung", note: "E-Mail „Erste“ gesendet", createdAt: oldAt }, { tenantId: S.tenantId, campaignId: campaign.id, recipientId: olga.id, nodeId: "w1", kind: "gewartet", subject: null, note: "Wartet 1 Stunden", createdAt: new Date(oldAt.getTime() + 1000) }]);
     await db.update(emailCampaignRecipients).set({ sentCount: 1, nodeId: "w1", lastSentAt: oldAt, draftState: null, draftNodeId: null, draftSubject: null, draftText: null, draftOptions: null }).where(eq(emailCampaignRecipients.id, olga.id));
-    // Wartezeit um → Follow-up-Entwürfe: Vera und Olga wieder 20, Nils 10
+    // Wartezeit um → Follow-up-Entwürfe: Vera und Olga wieder 20, Nils jetzt auch 20 (Wärmepumpe: 20 – nach früher 10 die höhere Zahl)
     await db.update(emailCampaignRecipients).set({ nextActionAt: new Date(Date.now() - 60_000) }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
     await owner.leadops.runEmailCampaigns(); [vera, nils, olga] = await rows();
     expect(vera).toMatchObject({ sentCount: 1, nodeId: "m2", draftState: "entwurf", draftNodeId: "m2" });
     expect(vera.draftText).toContain("20 Test-Leads"); expect(vera.draftText).not.toMatch(/\b10 Test-Leads/); expect(vera.draftSubject).not.toMatch(/\b10 Test-Leads/);
     expect((vera.draftOptions as Array<{ text: string }>).every((item) => !/\b10 Test-Leads/.test(item.text))).toBe(true); // auch die Alternativen
-    expect(olga.draftText).toContain("20 Test-Leads"); expect(nils.draftText).toContain("10 Test-Leads"); expect(nils.draftText).not.toContain("20 Test-Leads");
+    expect(olga.draftText).toContain("20 Test-Leads"); expect(nils.draftText).toContain("20 Test-Leads"); expect(nils.draftText).not.toMatch(/\b10 Test-Leads/);
     const queue2 = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue2.counts).toMatchObject({ erste: 0, followUps: 3 });
     const veraItem = queue2.items.find((item) => item.id === vera.id)!; expect(veraItem).toMatchObject({ step: 2, followUp: true, nodeLabel: "Kurze Nachfrage", testLeads: 20 }); expect(veraItem.sentBefore).toMatchObject({ subject: "Persönlich für Versprechen Wärme", count: 1 }); expect(veraItem.sentBefore?.at).toBeTruthy();
-    expect(queue2.items.find((item) => item.id === nils.id)).toMatchObject({ step: 2, testLeads: 10 }); expect(queue2.items.find((item) => item.id === olga.id)).toMatchObject({ step: 2, testLeads: 20 });
-    // Beim Start werden offene Entwürfe geprüft: ein Follow-up, das jemand auf 10 gedreht hat, geht für Vera zurück auf 20 – bei Nils bleibt 10
+    expect(queue2.items.find((item) => item.id === nils.id)).toMatchObject({ step: 2, testLeads: 20, promisedBefore: 10 }); expect(queue2.items.find((item) => item.id === olga.id)).toMatchObject({ step: 2, testLeads: 20 });
+    // Beim Start werden offene Entwürfe geprüft: Follow-ups, die jemand auf 10 gedreht hat, gehen zurück auf 20 (Vera wie Nils)
     await db.update(emailCampaignRecipients).set({ draftText: vera.draftText!.replace(/20 Test-Leads/g, "10 Test-Leads") }).where(eq(emailCampaignRecipients.id, vera.id));
+    await db.update(emailCampaignRecipients).set({ draftText: nils.draftText!.replace(/20 Test-Leads/g, "10 Test-Leads") }).where(eq(emailCampaignRecipients.id, nils.id));
     const { fixQuestionCounts } = await import("./campaign-review"); await fixQuestionCounts(db);
-    expect((await rows())[0].draftText).toContain("20 Test-Leads"); expect((await rows())[1].draftText).toContain("10 Test-Leads");
-    // Freigeben und senden: Veras Follow-up geht mit 20 raus, Nils' Vorlagen-Follow-up mit 10 – beide Texte gespeichert
+    expect((await rows())[0].draftText).toContain("20 Test-Leads"); expect((await rows())[1].draftText).toContain("20 Test-Leads"); expect((await rows())[1].draftText).not.toMatch(/\b10 Test-Leads/);
+    // Freigeben und senden: beide Follow-ups gehen mit 20 raus – beide Texte gespeichert
     await owner.leadops.saveCampaignDraft({ recipientId: vera.id, subject: vera.draftSubject!, text: vera.draftText!, approve: true });
     await owner.leadops.saveCampaignDraft({ recipientId: nils.id, subject: nils.draftSubject!, text: nils.draftText!, approve: true });
     await owner.leadops.runEmailCampaigns(); [vera, nils] = await rows(); expect(vera.sentCount).toBe(2); expect(nils.sentCount).toBe(2);
-    const veraSent = await sentOf(vera.id); expect(veraSent[1].body).toContain("20 Test-Leads"); expect(veraSent[1].body).not.toMatch(/\b10 Test-Leads/); expect((await sentOf(nils.id))[1].body).toContain("10 Test-Leads");
+    const veraSent = await sentOf(vera.id); expect(veraSent[1].body).toContain("20 Test-Leads"); expect(veraSent[1].body).not.toMatch(/\b10 Test-Leads/); expect((await sentOf(nils.id))[1].body).toContain("20 Test-Leads"); expect((await sentOf(nils.id))[1].body).not.toMatch(/\b10 Test-Leads/);
     // Posteingang: Veras Antwort zeigt unsere beiden E-Mails davor (neueste zuerst) mit Auszug und der versprochenen Zahl; die Kategorie der Kampagne steht dabei
     const reply = await owner.leadops.storeInboxMessage({ fromEmail: "vera@versprechen-e2e.example", fromName: "Vera Versprechen", subject: "Re: Nachfrage Versprechen Wärme GmbH", bodyText: "Ja, gerne – die 20 Test-Leads nehmen wir. Rufen Sie an.", receivedAt: new Date() });
     const inboxItem = (await owner.leadops.listInbox({ filter: "alle" })).items.find((item) => item.id === reply.id)!;
@@ -3499,9 +3500,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Versendet: jede Kampagnen-Mail trägt ihre Sparte und Kategorie – damit sich die Kategorien trennen lassen
     const sentList = await owner.leadops.listSent({ campaignId: campaign.id }); expect(sentList.items.length).toBeGreaterThanOrEqual(4);
     expect(sentList.items.every((item) => (item as { sparte?: { sparte: string; categoryId: number | null; categoryName: string | null } }).sparte?.categoryId === S.wp!.id && (item as { sparte?: { categoryName: string | null } }).sparte?.categoryName === S.wp!.name)).toBe(true);
-    // Vorlagen-Versand ohne Freigabe: der Text wird jetzt gespeichert; eine alte Mail ohne Text von vor der Umstellung zeigt in der Vorschau 20 – und das Follow-up aus der Vorlage nennt wieder 20
+    // Vorlagen-Versand ohne Freigabe (Hausnotruf: 10): der Text wird jetzt gespeichert; eine alte Mail ohne Text von vor der Umstellung zeigt in der Vorschau 20 – und das Follow-up aus der Vorlage nennt wieder 20
     await owner.leadops.importColdList({ listName: "Vorlage-Versprechen", toPipeline: false, rows: [{ firstName: "Paul", lastName: "Pur", company: "Pur Dach", email: "paul@versprechen-e2e.example" }] });
-    const plain = await owner.leadops.saveEmailCampaign({ name: "Vorlage-Versprechen", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Vorlage-Versprechen" }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
+    const plain = await owner.leadops.saveEmailCampaign({ name: "Vorlage-Versprechen", leadSparte: "Hausnotruf", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Vorlage-Versprechen" }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
     await owner.leadops.startEmailCampaign({ id: plain.id }); await owner.leadops.runEmailCampaigns();
     let paul = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, plain.id)))[0]; expect(paul.sentCount).toBe(1);
     const paulFirst = (await sentOf(paul.id))[0]; expect(paulFirst.bodySource).toBe("vorlage"); expect(paulFirst.body).toContain("10 Test-Leads"); expect(paulFirst.body).toContain("Sehr geehrte");
@@ -3618,7 +3619,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.runEmailCampaigns();
     const after = await db.select().from(emailCampaignRecipients).where(inArray(emailCampaignRecipients.id, [bert, dora, carl]));
     for (const row of after) { expect(row).toMatchObject({ campaignId: target.id, nodeId: "m2", draftNodeId: "m2", draftState: "entwurf", draftApproach: "drittanbieter", sentCount: 1 }); }
-    expect(after.find((row) => row.id === bert)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === dora)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === carl)!.draftText).toContain("10 Test-Leads");
+    expect(after.find((row) => row.id === bert)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === dora)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === carl)!.draftText).toContain("20 Test-Leads"); expect(after.find((row) => row.id === carl)!.draftText).not.toMatch(/\b10 Test-Leads/); /* Ziel ohne Sparte = PV & WP: nach früher 10 jetzt 20 */
     const queue = await owner.leadops.campaignReviewQueue({ campaignId: target.id }); expect(queue.items.filter((item) => item.followUp && !item.dueAt)).toHaveLength(3); expect(queue.counts.followUps).toBe(3 + queue.counts.spaeter); // 3 fällig – dazu Follow-ups, die noch in der Wartezeit stecken (vorab freigebbar) expect(queue.items.find((item) => item.id === dora)).toMatchObject({ step: 2, followUp: true, testLeads: 20 }); expect(queue.items.find((item) => item.id === dora)?.sentBefore).toMatchObject({ subject: "Start für Wartet GmbH", count: 1 });
     // Freigeben → geht aus dem Ziel raus, als 2. E-Mail
     await owner.leadops.saveCampaignDraft({ recipientId: dora, subject: "Nachfrage Wartet GmbH", text: after.find((row) => row.id === dora)!.draftText!, approve: true }); await owner.leadops.runEmailCampaigns();

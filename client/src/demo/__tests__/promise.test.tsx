@@ -17,12 +17,12 @@ async function settle(ms: number) { await act(async () => { await new Promise((r
 describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der E-Mail davor, Posteingang zeigt unsere Mails, Interessent bekommt Kategorie und Stufe der Kampagne", () => {
   beforeAll(() => resetStore());
 
-  it("Follow-up: 20 bleibt 20 (gespeicherter Text oder alte Mail ohne Text), neue Kontakte 10; Freigabe-Liste mit Schritt und E-Mail davor", async () => {
+  it("Hausnotruf (alle Sparten außer PV & WP): Follow-up 20 bleibt 20 (gespeicherter Text oder alte Mail ohne Text), neue Kontakte 10; Freigabe-Liste mit Schritt und E-Mail davor", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design"); const { TEST_OFFER_CHANGED_AT } = await import("../../../../shared/email-campaigns");
     await call("leadops.importColdList", { listName: "Versprechen-Demo", rows: [{ firstName: "Vera", lastName: "Versprechen", company: "Versprechen Wärme", email: "vera@versprechen-demo.example" }, { firstName: "Nils", lastName: "Neu", company: "Neu Solar", email: "nils@versprechen-demo.example" }, { firstName: "Olga", lastName: "Alt", company: "Alt Heizung", email: "olga@versprechen-demo.example" }] });
     const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
     const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 };
-    const saved = await call("leadops.saveEmailCampaign", { ...base, name: "Versprechen-Demo", audience: { source: "liste", listName: "Versprechen-Demo" }, tree, kiModus: "freigabe", kiAnsatz: "frei" });
+    const saved = await call("leadops.saveEmailCampaign", { ...base, name: "Versprechen-Demo", leadSparte: "Hausnotruf", audience: { source: "liste", listName: "Versprechen-Demo" }, tree, kiModus: "freigabe", kiAnsatz: "frei" });
     await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
     const rows = () => getStore().tables.emailCampaignRecipients.filter((item) => item.campaignId === saved.id).sort((a, b) => a.id - b.id);
     const [vera, nils, olga] = rows(); expect(String(vera.draftText)).toContain("10 Test-Leads");
@@ -52,7 +52,7 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
     expect(String(sentOf(vera.id)[1].body)).toContain("20 Test-Leads"); expect(String(sentOf(nils.id)[1].body)).toContain("10 Test-Leads");
     // Vorlagen-Versand ohne Freigabe speichert den Text; das Follow-up aus der Vorlage nennt wieder die Zahl von davor
     await call("leadops.importColdList", { listName: "Vorlage-Demo", rows: [{ firstName: "Paul", lastName: "Pur", company: "Pur Dach", email: "paul@versprechen-demo.example" }] });
-    const plain = await call("leadops.saveEmailCampaign", { ...base, name: "Vorlage-Demo", audience: { source: "liste", listName: "Vorlage-Demo" }, tree });
+    const plain = await call("leadops.saveEmailCampaign", { ...base, name: "Vorlage-Demo", leadSparte: "Hausnotruf", audience: { source: "liste", listName: "Vorlage-Demo" }, tree });
     await call("leadops.startEmailCampaign", { id: plain.id }); await call("leadops.runEmailCampaigns");
     const paul = () => getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === plain.id)!; expect(paul().sentCount).toBe(1);
     const first = sentOf(paul().id)[0]; expect(first.bodySource).toBe("vorlage"); expect(String(first.body)).toContain("10 Test-Leads");
@@ -61,6 +61,49 @@ describe("Versprechen halten (Chat-Build): Follow-ups nennen die Test-Leads der 
     const oldPreview = await call("leadops.sentMailPreview", { id: `k${first.id}` }); expect(oldPreview.html).toContain("20 Test-Leads"); expect(oldPreview.html).not.toMatch(/\b10 Test-Leads/);
     paul().nextActionAt = new Date(Date.now() - 1000); await call("leadops.runEmailCampaigns"); expect(paul().sentCount).toBe(2);
     const second = sentOf(paul().id)[1]; expect(second.bodySource).toBe("vorlage"); expect(String(second.body)).toContain("20 Test-Leads"); expect(String(second.body)).not.toMatch(/\b10 Test-Leads/);
+  });
+
+  it("PV & WP: 20 Test-Leads in KI-Entwürfen, Vorlagen und Follow-ups – auch bei Kontakten, denen in der 10er-Zeit 10 genannt wurden; ein eigener Text behält seine Zahl, ein höheres Versprechen bleibt", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design"); const { TEST_OFFER_CHANGED_AT } = await import("../../../../shared/email-campaigns");
+    await call("leadops.importColdList", { listName: "Energie-Demo", rows: [{ firstName: "Erik", lastName: "Energie", company: "Energie Solar", email: "erik@energie-demo.example" }, { firstName: "Hanna", lastName: "Hand", company: "Hand Wärme", email: "hanna@energie-demo.example" }, { firstName: "Frida", lastName: "Früher", company: "Früher Solar", email: "frida@energie-demo.example" }] });
+    const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 1, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const base = { id: null, fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 };
+    const saved = await call("leadops.saveEmailCampaign", { ...base, name: "Energie-Demo", leadSparte: "Photovoltaik & Wärmepumpe", audience: { source: "liste", listName: "Energie-Demo" }, tree, kiModus: "freigabe", kiAnsatz: "frei" });
+    const stored = getStore().tables.emailCampaigns.find((row) => row.id === saved.id)!; const startText = JSON.stringify(stored.tree);
+    expect(startText).toContain("20 Test-Leads"); expect(startText).not.toMatch(/\b10 Test-Leads/); // Vorlage der Kampagne: 20
+    const rows = () => getStore().tables.emailCampaignRecipients.filter((item) => item.campaignId === saved.id).sort((a, b) => a.id - b.id);
+    // Frida: Erst-E-Mail aus der 10er-Zeit (29.10.–01.11.) – mit gespeichertem Text „10 Test-Leads“
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const frida = rows()[2]; const tenAt = new Date(TEST_OFFER_CHANGED_AT.getTime() + 86_400_000);
+    getStore().tables.emailCampaignEvents.push({ id: 99911, tenantId: frida.tenantId, campaignId: saved.id, recipientId: frida.id, nodeId: "m1", kind: "gesendet", subject: "Erste an Früher Solar", note: "E-Mail „Erste“ gesendet", body: "Sehr geehrte Frau Früher,\n\nzum Kennenlernen stellen wir Ihnen 10 Test-Leads kostenlos bereit.\n\nVielen Dank", bodySource: "ki", createdAt: tenAt } as never, { id: 99912, tenantId: frida.tenantId, campaignId: saved.id, recipientId: frida.id, nodeId: "w1", kind: "gewartet", subject: null, note: "Wartet 1 Stunden", body: null, bodySource: null, createdAt: new Date(tenAt.getTime() + 1000) } as never);
+    Object.assign(frida, { sentCount: 1, nodeId: "w1", lastSentAt: tenAt, nextActionAt: new Date(Date.now() - 1000), draftState: null, draftNodeId: null, draftSubject: null, draftText: null, draftOptions: null });
+    await call("leadops.runEmailCampaigns");
+    const [erik, hanna, frida1] = rows();
+    expect(String(erik.draftText)).toContain("20 Test-Leads"); expect(String(erik.draftText)).not.toMatch(/\b10 Test-Leads/); // KI-Entwurf: 20
+    expect(frida1).toMatchObject({ draftNodeId: "m2", draftState: "entwurf" }); expect(String(frida1.draftText)).toContain("20 Test-Leads"); expect(String(frida1.draftText)).not.toMatch(/\b10 Test-Leads/); // nach 10 jetzt 20
+    const queue = await call("leadops.campaignReviewQueue", { campaignId: saved.id });
+    expect(queue.items.find((item: any) => item.id === erik.id)).toMatchObject({ step: 1, followUp: false, testLeads: 20 });
+    expect(queue.items.find((item: any) => item.id === frida1.id)).toMatchObject({ step: 2, followUp: true, testLeads: 20, promisedBefore: 10 });
+    // Erik: KI-Entwurf freigeben → geht mit 20 raus; Hanna: eigener Text mit 30 → bleibt 30; Frida: Follow-up mit 20
+    await call("leadops.saveCampaignDraft", { recipientId: erik.id, subject: String(erik.draftSubject), text: String(erik.draftText), approve: true });
+    await call("leadops.saveCampaignDraft", { recipientId: hanna.id, subject: "Persönlich für Hand Wärme", text: "Sehr geehrte Frau Hand,\n\nzum Kennenlernen stellen wir Ihnen 30 Test-Leads kostenlos bereit.\n\nVielen Dank", approve: true });
+    await call("leadops.saveCampaignDraft", { recipientId: frida1.id, subject: String(frida1.draftSubject), text: String(frida1.draftText), approve: true });
+    await call("leadops.runEmailCampaigns");
+    const sentOf = (recipientId: number) => getStore().tables.emailCampaignEvents.filter((event) => event.recipientId === recipientId && event.kind === "gesendet").sort((a, b) => a.id - b.id);
+    expect(String(sentOf(erik.id)[0].body)).toContain("20 Test-Leads"); expect(String(sentOf(hanna.id)[0].body)).toContain("30 Test-Leads"); const fridaFollow = sentOf(frida1.id).find((event) => event.nodeId === "m2"); expect(String(fridaFollow?.body)).toContain("20 Test-Leads"); expect(String(fridaFollow?.body)).not.toMatch(/\b10 Test-Leads/);
+    // Follow-ups: Erik 20, Hanna behält ihre 30 (ein höheres Versprechen bleibt)
+    for (const row of rows()) row.nextActionAt = new Date(Date.now() - 1000);
+    await call("leadops.runEmailCampaigns");
+    const [erik2, hanna2] = rows();
+    expect(String(erik2.draftText)).toContain("20 Test-Leads"); expect(String(hanna2.draftText)).toContain("30 Test-Leads"); expect(String(hanna2.draftText)).not.toMatch(/\b(10|20) Test-Leads/);
+    const queue2 = await call("leadops.campaignReviewQueue", { campaignId: saved.id });
+    expect(queue2.items.find((item: any) => item.id === erik.id)).toMatchObject({ step: 2, testLeads: 20, promisedBefore: 20 }); expect(queue2.items.find((item: any) => item.id === hanna.id)).toMatchObject({ step: 2, testLeads: 30, promisedBefore: 30 });
+    // Vorlagen-Versand ohne KI: 20
+    await call("leadops.importColdList", { listName: "Energie-Vorlage", rows: [{ firstName: "Paula", lastName: "Plan", company: "Plan Solar", email: "paula@energie-demo.example" }] });
+    const plain = await call("leadops.saveEmailCampaign", { ...base, name: "Energie-Vorlage", leadSparte: "Photovoltaik", audience: { source: "liste", listName: "Energie-Vorlage" }, tree });
+    await call("leadops.startEmailCampaign", { id: plain.id }); await call("leadops.runEmailCampaigns");
+    const paula = getStore().tables.emailCampaignRecipients.find((item) => item.campaignId === plain.id)!; expect(paula.sentCount).toBe(1);
+    expect(String(sentOf(paula.id)[0].body)).toContain("20 Test-Leads"); expect(String(sentOf(paula.id)[0].body)).not.toMatch(/\b10 Test-Leads/);
   });
 
   it("Posteingang: zu jeder Antwort unsere E-Mails davor (Schritt, Auszug, versprochene Test-Leads), Kategorie der Kampagne; Antwort-Vorschlag nennt dieselbe Zahl", async () => {

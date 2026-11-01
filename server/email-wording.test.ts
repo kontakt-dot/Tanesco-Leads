@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanDraftText, dropAdPlatforms, fixTreeQuestions, modernizeTree, nodeWithTestOffer, promisedTestLeads, shortParagraphs, splitSentences, starterTree, TEST_LEADS, TEST_OFFER_CHANGED_AT, testLeadsIn, thirdPartyTemplate, withTestOffer, type EmailTree } from "../shared/email-campaigns";
+import { cleanDraftText, dropAdPlatforms, fixTreeQuestions, modernizeTree, nodeWithTestOffer, promisedTestLeads, shortParagraphs, splitSentences, starterTree, TEST_LEADS, TEST_LEADS_ENERGY, TEST_OFFER_CHANGED_AT, testLeadsFor, testLeadsIn, testOfferFor, thirdPartyTemplate, withTestOffer, type EmailTree } from "../shared/email-campaigns";
 import { starterBlocks } from "../shared/email-design";
 import { polishBlocks, sanitizeDraft, heuristicEmailDraft } from "../shared/email-ai";
 import { resolveSparte } from "../shared/lead-sparte";
@@ -55,10 +55,20 @@ describe("E-Mail-Texte: online statt Meta, kurze Absätze", () => {
     const text = send.blocks.find((block) => block.type === "text") as { text: string }; expect(text.text.split("\n\n").length).toBeGreaterThan(2);
     expect(modernizeTree(fresh)).toBeNull(); // nichts mehr zu ändern
   });
-  it("Test-Angebot: 10 statt 20 Test-Leads – in festen Vorlagen, gespeicherten Abläufen (auch Betreff), Entwürfen; andere Zahlen bleiben", () => {
-    expect(TEST_LEADS).toBe(10);
-    expect(JSON.stringify(starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") }))).not.toMatch(/\b20\b/); // feste Vorlagen nennen nur noch 10
+  it("Test-Angebot je Leadsparte: PV & WP 20, alle anderen 10 – in festen Vorlagen, gespeicherten Abläufen (auch Betreff), Entwürfen; andere Zahlen bleiben", () => {
+    expect(TEST_LEADS).toBe(10); expect(TEST_LEADS_ENERGY).toBe(20);
+    for (const [name, count] of [["Photovoltaik & Wärmepumpe", 20], ["Photovoltaik", 20], ["Wärmepumpe", 20], ["Hausnotruf", 10], ["Treppenlift", 10], ["Alarmanlage", 10], ["Hörgeräte", 10]] as const) expect(testLeadsFor(resolveSparte(name))).toBe(count);
+    expect(testLeadsFor(null)).toBe(20); // ohne Sparte = Standard Photovoltaik & Wärmepumpe
+    // ein höheres Versprechen von früher bleibt, ein niedrigeres wird auf die Zahl der Sparte angehoben
+    expect(testOfferFor(resolveSparte("Hausnotruf"), 20)).toBe(20); expect(testOfferFor(resolveSparte("Hausnotruf"), null)).toBe(10); expect(testOfferFor(resolveSparte("Photovoltaik"), 10)).toBe(20); expect(testOfferFor(resolveSparte("Wärmepumpe"), 30)).toBe(30);
+    const starter = JSON.stringify(starterTree({ first: starterBlocks("kaltakquise"), followUp: starterBlocks("nachfassen") })); expect(starter).toContain("20 Test-Leads"); expect(starter).not.toMatch(/\b10 Test-Leads/); // feste Vorlagen (Standard PV & WP): 20
     expect(thirdPartyTemplate({ firma: "Muster GmbH" }, resolveSparte("Hausnotruf")!).text).toContain("10 Test-Leads kostenlos");
+    expect(thirdPartyTemplate({ firma: "Muster GmbH" }, resolveSparte("Photovoltaik & Wärmepumpe")!).text).toContain("20 Test-Leads kostenlos"); expect(thirdPartyTemplate({ firma: "Muster GmbH" }).text).toContain("20 Test-Leads kostenlos");
+    // Ablauf aus der 10er-Zeit in einer PV-&-WP-Kampagne → wieder 20 (Betreff, Text, Aufzählung, Nachfass-Mail)
+    const ten = starterTree({ first: [{ id: "t", type: "text", text: "{{begruessung}},\n\nZum Kennenlernen: 10 Test-Leads kostenlos." }, { id: "b", type: "bullets", items: ["10 Test-Leads kostenlos – individuell für Ihren Betrieb"] }], followUp: [{ id: "f", type: "text", text: "Das Angebot steht weiterhin: 10 Test-Leads kostenlos." }] }) as EmailTree;
+    const tenFirst = ten.nodes[0]; if (tenFirst.type === "send") tenFirst.subject = "10 Test-Leads kostenlos für {{firma}}";
+    const energy = JSON.stringify(modernizeTree(ten, 20)); expect(energy).not.toMatch(/\b10 Test-Leads/); expect(energy.match(/20 Test-Leads/g)).toHaveLength(5);
+    const saved = JSON.stringify(fixTreeQuestions(ten, resolveSparte("Photovoltaik")!)); expect(saved).not.toMatch(/\b10 Test-Leads/); expect(saved).toContain("20 Test-Leads"); // auch beim Speichern über die Sparten-Anpassung
     for (const [input, output] of [
       ["Zum Kennenlernen: 20 Test-Leads kostenlos, individuell für Ihren Betrieb.", "Zum Kennenlernen: 10 Test-Leads kostenlos, individuell für Ihren Betrieb."],
       ["Wir bieten Ihnen 20 kostenlose Test-Leads an.", "Wir bieten Ihnen 10 kostenlose Test-Leads an."],

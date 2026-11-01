@@ -28,7 +28,7 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(blocks.map((block) => block.type)).toEqual(["text", "signature"]); expect((blocks[0] as { text: string }).text).toBe("Hallo,\n\npersönlicher Text.");
   });
   it("Entwurf-Regeln: nie „Hallo“, Pflichtinhalte, Schluss mit Kontaktweg + Telefon und „Vielen Dank“", async () => {
-    const { fixGreeting, finishDraft } = await import("./campaign-review"); const { DEFAULT_SPARTE } = await import("../shared/lead-sparte");
+    const { fixGreeting, finishDraft } = await import("./campaign-review"); const { DEFAULT_SPARTE, resolveSparte } = await import("../shared/lead-sparte");
     const greeting = "Sehr geehrte Damen und Herren";
     expect(fixGreeting("Hallo Herr Wiebe,\n\nText.", greeting)).toBe("Sehr geehrter Herr Wiebe,\n\nText.");
     expect(fixGreeting("Hallo Frau Kurz,\nText.", greeting)).toBe("Sehr geehrte Frau Kurz,\n\nText.");
@@ -41,16 +41,18 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(fixGreeting("Text ohne Anrede.", "Sehr geehrter Herr Muster")).toBe("Sehr geehrter Herr Muster,\n\nText ohne Anrede.");
     const thin = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Webseite steht etwas Konkretes.\n\nHätten Sie diese Woche 15 Minuten für ein Gespräch?";
     const done = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false, sparte: DEFAULT_SPARTE });
-    expect(done).toContain("10 Test-Leads kostenlos"); expect(done).not.toMatch(/\b20\b/); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt – ohne Firmennamen-Behauptung
+    expect(done).toContain("20 Test-Leads kostenlos"); expect(done).not.toMatch(/\b10 Test-Leads/); expect(done).not.toMatch(/Firmenname/); // Pflichtinhalte ergänzt (PV & WP: 20 Test-Leads) – ohne Firmennamen-Behauptung
     expect(done).toContain("in der Regel anhand von zehn Fragen telefonisch vorqualifiziert. Abgefragt werden beispielsweise die Eigentumsverhältnisse, der Zustand von Dach und Heizung, der aktuelle Stromverbrauch usw.\n\n"); // Beispiele ohne Klammern, im selben Absatz
     expect(done).toContain("\n\nDer Interessent weiß danach, dass sich ein Fachbetrieb bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf Ihren Anruf.\n\n"); expect(done).not.toMatch(/\(z\. ?B\./); // Logik-Kette als eigener Absatz
     expect(done).toMatch(/0611 123456/); expect(done.trim().endsWith("Vielen Dank")).toBe(true); expect(done).not.toMatch(/Grüßen/);
-    expect(done.indexOf("10 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
+    expect(done.indexOf("20 Test-Leads")).toBeLessThan(done.indexOf("15 Minuten")); // Fakten vor dem Schluss
+    const care = finishDraft(thin, { greeting, phone: "0611 123456", followUp: false, sparte: resolveSparte("Hausnotruf")! }); expect(care).toContain("10 Test-Leads kostenlos"); expect(care).not.toMatch(/\b20 Test-Leads/); // andere Sparten: 10
     // Schon vollständig → bleibt bis auf den Schluss unverändert; keine doppelte Nummer, kein doppeltes „Vielen Dank“
     const full = "Sehr geehrte Frau Kurz,\n\nText mit 20 Test-Leads kostenlos, telefonisch qualifiziert über 10 Fragen. Auf Wunsch nennen wir dabei Ihren Firmennamen, sodass der Interessent weiß, dass Sie sich melden.\n\nWenn das für Sie interessant ist, antworten Sie einfach auf diese E-Mail oder rufen Sie mich gerne an unter 0611 123456.\n\nVielen Dank\n\nMit freundlichen Grüßen\nMax";
     const kept = finishDraft(full, { greeting, phone: "0611 123456", followUp: false });
     expect(kept.match(/0611 123456/g)).toHaveLength(1); expect(kept.match(/Vielen Dank/g)).toHaveLength(1); expect(kept).not.toContain("Max"); expect(kept.trim().endsWith("Vielen Dank")).toBe(true);
-    expect(kept).toContain("Text mit 10 Test-Leads kostenlos"); expect(kept.match(/Test-Leads/g)).toHaveLength(1); // alte 20 aus dem KI-Text → 10, kein zweites Angebot dazu
+    expect(kept).toContain("Text mit 20 Test-Leads kostenlos"); expect(kept.match(/Test-Leads/g)).toHaveLength(1); // ohne Sparte = PV & WP: 20, kein zweites Angebot dazu
+    const keptCare = finishDraft(full, { greeting, phone: "0611 123456", followUp: false, sparte: resolveSparte("Treppenlift")! }); expect(keptCare).toContain("Text mit 10 Test-Leads kostenlos"); expect(keptCare.match(/Test-Leads/g)).toHaveLength(1); // 20 aus dem KI-Text → 10 bei anderen Sparten
     // Follow-up an einen Kontakt, dem 20 versprochen wurden: der Entwurf nennt wieder 20 – auch wenn die KI 10 schreibt oder das Angebot fehlt
     const promised = finishDraft("Sehr geehrte Frau Kurz,\n\nkurz nachgefragt: 10 Test-Leads kostenlos stehen weiter für Sie bereit.", { greeting, phone: "", followUp: true, sparte: DEFAULT_SPARTE, testLeads: 20 });
     expect(promised).toContain("20 Test-Leads kostenlos"); expect(promised).not.toMatch(/\b10 Test-Leads/);
@@ -59,10 +61,10 @@ describe("Erst-E-Mail einzeln freigeben – Helfer", () => {
     expect(kept).not.toMatch(/Firmenname/); expect(kept).toContain("anhand von zehn Fragen telefonisch vorqualifiziert."); // Firmennamen-Satz entfernt, Rest bleibt sauber
     // Ohne Telefon: nur „antworten Sie einfach auf diese E-Mail“; Nachfass-Mail braucht nur das Test-Angebot
     const noPhone = finishDraft("Hallo,\n\nkurzer Nachfass ohne Angebot.", { greeting, phone: "", followUp: true });
-    expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("10 Test-Leads"); expect(noPhone).not.toContain("zehn Fragen");
+    expect(noPhone).toContain("antworten Sie einfach auf diese E-Mail"); expect(noPhone).not.toContain("rufen Sie"); expect(noPhone).toContain("20 Test-Leads"); /* ohne Sparte = PV & WP */ expect(noPhone).not.toContain("zehn Fragen");
     // Die KI schreibt „Vielen Dank“ schon selbst: das ergänzte Test-Angebot kommt VOR den Schluss, „Vielen Dank“ steht genau einmal ganz unten
     const ki = "Sehr geehrte Damen und Herren,\n\nSie planen Alarmanlagen nach DIN EN 50131. Wir qualifizieren jeden Kontakt in der Regel anhand von acht Fragen telefonisch vor.\n\nWenn Sie das testen möchten, antworten Sie einfach auf diese E-Mail oder rufen Sie mich an unter 0611 123456.\n\nVielen Dank";
-    const ordered = finishDraft(ki, { greeting, phone: "0611 123456", followUp: false });
+    const ordered = finishDraft(ki, { greeting, phone: "0611 123456", followUp: false, sparte: resolveSparte("Alarmanlage")! }); expect(ordered).toContain("10 Test-Leads"); // Alarmanlage: 10
     expect(ordered.indexOf("10 Test-Leads")).toBeLessThan(ordered.indexOf("Wenn Sie das testen möchten")); expect(ordered.match(/Vielen Dank/g)).toHaveLength(1); expect(ordered.trim().endsWith("Vielen Dank")).toBe(true);
   });
   it("Tagesbeginn in Berlin (Sommer- und Winterzeit)", () => {

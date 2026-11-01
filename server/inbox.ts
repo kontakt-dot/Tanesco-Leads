@@ -19,7 +19,7 @@ import { ensureSettings, signatureFor } from "./mail-settings";
 import { checkAttachments, type MailAttachmentInput } from "../shared/email-signature";
 import { logActivity } from "./activity";
 import { messageIdsIn, normalizeMessageId } from "../shared/message-id";
-import { audienceLists, kiModusOf, promisedTestLeads, sentSourceOf, testLeadsOfSent, TEST_LEADS, withTestOffer, type SentSource } from "../shared/email-campaigns";
+import { audienceLists, kiModusOf, promisedTestLeads, sentSourceOf, testLeadsOfSent, testOfferFor, withTestOffer, type SentSource } from "../shared/email-campaigns";
 import { applyPayFit, categoriesForSparte, combinedEnergyCategory, DEFAULT_SPARTE, fixQuestionCount, isEnergySparte, isSingleEnergyCategory, paysOnlyFitting, qualifyBy, questionCount, sparteOf, vertriebCategory, withQuestionTopics } from "../shared/lead-sparte";
 import { createCategoryForSparte, ensureCombinedEnergyCategory, loadCategories, toVertriebCategory, vertriebCategoryId } from "./vertrieb-category";
 
@@ -416,12 +416,12 @@ export async function suggestReply(db: Db, tenantId: number, messageId: number, 
   const recipient = message.campaignRecipientId ? (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, message.campaignRecipientId)).limit(1))[0] ?? null : null;
   const sentMails = recipient ? await db.select({ subject: emailCampaignEvents.subject, body: emailCampaignEvents.body, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, recipient.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(desc(emailCampaignEvents.id)).limit(5) : [];
   const lastSent = sentMails[0]?.subject ?? null;
-  const testLeads = (sentMails.length ? promisedTestLeads(sentMails) : null) ?? TEST_LEADS; // was wir diesem Kontakt versprochen haben (z. B. noch 20 Test-Leads) – dabei bleibt es in der Antwort
   const name = (message.fromName ?? "").trim();
   const lead = recipient?.leadId ? (await db.select({ lastName: leads.lastName, metadata: leads.metadata, listName: leads.listName }).from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] ?? null : null;
   // Leadsparte der Kampagne, auf die geantwortet wurde: Hausnotruf-Firmen bekommen eine Antwort zu Hausnotruf-Leads (mit sechs Fragen), nie zu Wärmepumpen
   const campaign = recipient ? (await db.select({ leadSparte: emailCampaigns.leadSparte, name: emailCampaigns.name, audience: emailCampaigns.audience }).from(emailCampaigns).where(eq(emailCampaigns.id, recipient.campaignId)).limit(1))[0] ?? null : null;
   const sparte = campaign ? sparteOf(campaign, [...audienceLists((campaign.audience ?? null) as never), lead?.listName ?? ""].filter(Boolean)) : DEFAULT_SPARTE;
+  const testLeads = testOfferFor(sparte, sentMails.length ? promisedTestLeads(sentMails) : null); // Test-Angebot der Sparte (PV & WP 20, sonst 10) – ein höheres Versprechen von früher bleibt
   const questions = questionCount(sparte); const qualifiedBy = qualifyBy(sparte); // „anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.“
   const salutation = String((lead?.metadata as { salutation?: string } | null)?.salutation ?? "").toLowerCase(); const lastName = (lead?.lastName ?? "").trim();
   const anrede = lastName && (salutation === "herr" || salutation === "frau") ? `Sehr geehrte${salutation === "frau" ? "" : "r"} ${salutation === "frau" ? "Frau" : "Herr"} ${lastName},` : "Guten Tag,"; // nie „Guten Tag Vorname Nachname“ – ohne sichere Anrede neutral; `name` nur fürs Protokoll
