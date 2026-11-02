@@ -1,4 +1,5 @@
 import { undoIdOf, withUndo } from "@/components/UndoPanel";
+import { websiteHref, websiteLabel } from "../../../shared/website";
 import { Button } from "@/components/ui/button";
 import { CallAttemptsSection } from "@/components/CallLog";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,7 @@ import { catPill } from "@/lib/colors";
 import { trpc } from "@/lib/trpc";
 import { embedded } from "@/lib/voice";
 import type { inferRouterOutputs } from "@trpc/server";
-import { ArrowLeft, Ban, Bell, CalendarDays, Check, Euro, ExternalLink, Mail, MessageSquare, Phone, Trash2, X } from "lucide-react";
+import { ArrowLeft, Ban, Bell, CalendarDays, Check, Euro, ExternalLink, Globe, Mail, MessageSquare, Phone, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { AppRouter } from "../../../server/routers";
@@ -93,6 +94,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
       <div className="lead-window-controls">
         <label className="lead-action-field">Stufe<select className="lead-action-select" value={stage} onChange={(event) => move.mutate({ publicId: lead.publicId, stage: event.target.value, note: "Auf der Lead-Seite gesetzt" })}>{stageDefs.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
         <label className="lead-action-field">Vertriebler<select className="lead-action-select" value={lead.ownerUserId ?? ""} onChange={(event) => assign.mutate({ publicIds: [lead.publicId], ownerUserId: event.target.value ? Number(event.target.value) : null })}><option value="">– nicht zugeteilt –</option>{owners.map((owner) => <option key={owner.userId} value={owner.userId}>{owner.name}</option>)}</select></label>
+        {websiteHref(lead.website ?? null) && <a className="lead-page-newtab lead-page-website" href={websiteHref(lead.website ?? null)!} target="_blank" rel="noopener noreferrer" title={`Webseite der Firma öffnen: ${websiteLabel(websiteHref(lead.website ?? null)!)} (neues Fenster)`}><Globe className="h-3.5 w-3.5" aria-hidden="true" /> Webseite</a>}
         {newTabUrl && <a className="lead-page-newtab" href={newTabUrl} target="_blank" rel="noreferrer" title="Diese Lead-Seite in einem neuen Browser-Tab öffnen"><ExternalLink className="h-3.5 w-3.5" /> Neuer Tab</a>}
         <button type="button" className="lead-window-close" aria-label="Lead-Seite schließen" title="Schließen (Esc)" onClick={onClose}><X className="h-4 w-4" /></button>
       </div>

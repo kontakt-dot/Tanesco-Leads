@@ -3600,6 +3600,19 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(await fixCampaignLeadCategories(db)).toBe(0); expect((await db.select().from(leads).where(eq(leads.id, fresh.id)))[0].categoryId).toBe(thirdCategory.id); // zweites Mal: nichts zu tun
   }, 60000);
 
+  it("63y. Pipeline-Karte und Lead-Seite: Webseite der Firma als sicherer Link (Liste vor Firmen-Adresse, Freemail und javascript: = keiner)", async () => {
+    await owner.leadops.importColdList({ pipeline: "kaltakquise", listName: "Webseiten-Test", rows: [
+      { company: "Netz Solar GmbH", email: "kontakt-netz@gmx.de", extra: { Webseite: "www.netz-solar.example" } },
+      { company: "Domain Dach", email: "info@domain-dach.example" },
+      { company: "Frei Mail", email: "frei-mail@gmx.de" },
+      { company: "Böse Daten", email: "boese-daten@gmx.de", extra: { URL: "javascript:alert(document.cookie)" } },
+    ] });
+    const board = await owner.leadops.pipelineOverview({ source: "kaltakquise", limitPerStage: 1000 });
+    const cards = board.stages.flatMap((stage) => stage.leads) as Array<{ company: string | null; publicId: string; website?: string | null }>; const site = (company: string) => cards.find((card) => card.company === company)?.website;
+    expect(site("Netz Solar GmbH")).toBe("https://www.netz-solar.example/"); expect(site("Domain Dach")).toBe("https://domain-dach.example/"); expect(site("Frei Mail")).toBeNull(); expect(site("Böse Daten")).toBeNull();
+    const netz = cards.find((card) => card.company === "Netz Solar GmbH")!; expect((await owner.leadops.pipelineLeadDetail({ publicId: netz.publicId })).website).toBe("https://www.netz-solar.example/");
+  });
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

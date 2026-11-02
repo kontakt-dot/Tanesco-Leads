@@ -558,6 +558,44 @@ describe("Vertriebspipeline: Zeitraum „Heute“ zählt Bewegung – Lead-Kateg
   });
 });
 
+describe("Pipeline-Karte: Webseite öffnen in einem neuen Fenster (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  /** Zwei Karten: eine mit Webseite aus der Liste, eine nur mit Freemail-Adresse (keine Webseite bekannt). */
+  async function prepare() {
+    const cards = (await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads);
+    const store = getStore(); const [withSite, without] = cards.slice(0, 2).map((card: any) => store.tables.leads.find((row) => row.id === card.id)!);
+    withSite.metadata = { ...((withSite.metadata ?? {}) as Record<string, unknown>), felder: { ...(((withSite.metadata ?? {}) as { felder?: Record<string, string> }).felder ?? {}), Webseite: "www.beispiel-solar.de" } };
+    Object.assign(without, { email: "frei-karte@gmx.de", metadata: { ...((without.metadata ?? {}) as Record<string, unknown>), felder: {} } });
+    return { withSite, without };
+  }
+  it("Daten: Karte und Lead-Seite bringen die Webseite als Link mit (Liste vor Firmen-Adresse, Freemail = keine)", async () => {
+    const { withSite, without } = await prepare();
+    const cards = (await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads);
+    expect(cards.find((card: any) => card.id === withSite.id).website).toBe("https://www.beispiel-solar.de/"); expect(cards.find((card: any) => card.id === without.id).website).toBeNull();
+    expect((await call("leadops.pipelineLeadDetail", { publicId: withSite.publicId })).website).toBe("https://www.beispiel-solar.de/");
+    const store = getStore(); const third = store.tables.leads.find((row) => row.id === cards[2].id)!; Object.assign(third, { email: "info@dritte-firma.de", metadata: { felder: {} } });
+    expect((await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads).find((card: any) => card.id === third.id).website).toBe("https://dritte-firma.de/"); // aus der Firmen-Adresse
+  });
+  it("Oberfläche: Globus-Knopf neben dem Telefon öffnet die Webseite in einem neuen Fenster – die Karte klappt dabei nicht auf; ohne Webseite kein Knopf; auf der Lead-Seite „Webseite“", async () => {
+    const { withSite, without } = await prepare();
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const view = mount(); await settle(400); await settle(400);
+    const cardOf = (name: string) => Array.from(view.container.querySelectorAll<HTMLElement>(".pipeline-card")).find((card) => card.querySelector(".pipeline-card-name")?.textContent === name)!;
+    const nameOf = (lead: any) => `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() || lead.publicId;
+    const card = cardOf(nameOf(withSite)); expect(card).toBeTruthy();
+    const link = card.querySelector<HTMLAnchorElement>("a.pipeline-card-web")!; expect(link).toBeTruthy();
+    expect(link.getAttribute("href")).toBe("https://www.beispiel-solar.de/"); expect(link.getAttribute("target")).toBe("_blank"); expect(link.getAttribute("rel")).toContain("noopener");
+    expect(link.title).toBe("Webseite öffnen: beispiel-solar.de (neues Fenster)");
+    expect(link.parentElement?.className).toContain("pipeline-card-owner"); expect(link.nextElementSibling?.className ?? "").toContain("pipeline-card-phone"); // links neben dem Telefon
+    await act(async () => { fireEvent.click(link); }); await settle(100); expect(card.className).not.toContain("is-open");
+    expect(cardOf(nameOf(without)).querySelector("a.pipeline-card-web")).toBeNull();
+    cleanup(); window.history.replaceState(null, "", `/?page=Vertriebspipeline&quelle=email&lead=${withSite.publicId}`);
+    const page = mount(); await settle(400); await settle(400);
+    const pageLink = page.container.querySelector<HTMLAnchorElement>("a.lead-page-website")!; expect(pageLink).toBeTruthy(); expect(pageLink.getAttribute("href")).toBe("https://www.beispiel-solar.de/"); expect(pageLink.getAttribute("target")).toBe("_blank"); expect(pageLink.textContent).toContain("Webseite");
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });

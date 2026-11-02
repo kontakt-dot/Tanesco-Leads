@@ -2645,6 +2645,18 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .pipeline-page .pipeline-card.is-open .pipeline-card-phone svg{width:16px;height:16px}
 .pipeline-page .pipeline-card.is-open .pipeline-card-phone.is-missing{background:#f59e0b;border-color:#f59e0b}
 .pipeline-page .pipeline-card.is-open .pipeline-card-phone-label{display:inline}
+/* Webseite der Firma: runder Knopf neben dem Telefon – öffnet in einem neuen Fenster. Offene Karte: Knopf mit „Webseite“. */
+.pipeline-card-web{display:inline-grid;place-items:center;flex:0 0 auto;width:30px;height:30px;border:1px solid rgba(96,165,250,.4);border-radius:999px;background:rgba(96,165,250,.12);color:#93c5fd;text-decoration:none;cursor:pointer;transition:background-color .15s ease,border-color .15s ease,transform .15s ease}
+.pipeline-card-web:hover{background:rgba(96,165,250,.26);border-color:rgba(96,165,250,.7);color:#fff;transform:scale(1.06)}
+.pipeline-card-web:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
+.pipeline-card-web-label{display:none}
+.pipeline-page .pipeline-card-web{width:32px;height:32px}
+.pipeline-page .pipeline-card.is-open .pipeline-card-web{width:auto;height:36px;padding:0 14px;gap:7px;display:inline-flex;align-items:center;border-radius:10px;font-size:13px;font-weight:700}
+.pipeline-page .pipeline-card.is-open .pipeline-card-web svg{width:16px;height:16px}
+.pipeline-page .pipeline-card.is-open .pipeline-card-web-label{display:inline}
+.pipeline-board.is-compact .pipeline-card:not(.is-open) .pipeline-card-owner .pipeline-card-web{width:26px;height:26px;flex:none}
+.lead-page-website svg{color:#93c5fd}
+@media (prefers-reduced-motion:reduce){.pipeline-card-web{transition:none}.pipeline-card-web:hover{transform:none}}
 /* Verschiebe-Knöpfe schlicht wie „+ Anruf“: weiß/dezent, feiner grauer Rahmen, kein Fokus-Rahmen */
 .pipeline-page .card-move-row .card-move-pill{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);color:#c9c6ee;box-shadow:none;border-radius:999px;outline:none;font-weight:600;filter:none}
 .pipeline-page .card-move-row .card-move-pill:hover,.pipeline-page .card-move-row .card-move-pill:focus-within{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);outline:none;filter:none}

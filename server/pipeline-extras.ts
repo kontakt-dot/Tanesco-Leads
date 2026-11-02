@@ -14,6 +14,7 @@ import { pipelineStageConfigs, dialerCalls, dialerQueueItems, emailCampaignEvent
 import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
 import { recipientValues, renderNode, SUPPRESSION_LABELS, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
+import { websiteLinkOf } from "../shared/website";
 import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
 import { newCustomSourceKey, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
 import { contactedStage, entryStage, isStage, lostStage, matchStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
@@ -546,7 +547,7 @@ export async function leadDetail(db: Db, tenantId: number, publicId: string, now
   ]);
   const meta = metaOf(lead); const suppression = await suppressionOf(db, tenantId, lead.email);
   return {
-    suppression, publicId: lead.publicId, id: lead.id, name: leadName(lead), firstName: lead.firstName, lastName: lead.lastName, company: lead.company, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, salutation: typeof meta.salutation === "string" ? meta.salutation : null, notesFromImport: typeof meta.notes === "string" ? meta.notes : null,
+    suppression, publicId: lead.publicId, id: lead.id, name: leadName(lead), firstName: lead.firstName, lastName: lead.lastName, company: lead.company, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, salutation: typeof meta.salutation === "string" ? meta.salutation : null, notesFromImport: typeof meta.notes === "string" ? meta.notes : null, website: websiteLinkOf(lead.metadata, lead.email),
     categoryId: lead.categoryId, categoryName: category?.name ?? null, categoryEmoji: category?.emoji ?? null, categoryColor: category?.color ?? null, categoryShortcode: category?.shortcode ?? null,
     source: pipelineSourceOf(lead.adPlatform), stages, adPlatform: lead.adPlatform, adCampaignId: lead.adCampaignId, adCampaignName: lead.adCampaignName, adsetName: lead.adsetName, adName: lead.adName, adFormName: lead.adFormName, listName: lead.listName, supplierName: lead.supplierName,
     pipelineStage: lead.pipelineStage, pipelineUpdatedAt: lead.pipelineUpdatedAt, ownerUserId: lead.ownerUserId, ownerName: owner, dealValue: lead.dealValue, followUpAt: lead.followUpAt, appointmentAt: lead.appointmentAt, appointment: meta.appointment ?? null, createdAt: lead.createdAt, updatedAt: lead.updatedAt, lastCallDisposition: typeof meta.lastCallDisposition === "string" ? meta.lastCallDisposition : null,

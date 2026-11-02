@@ -2,6 +2,7 @@
  * Posteingang: Mails per IMAP abholen (Antworten auf Kampagnen und alles andere), lesen, beantworten und als Lead
  * in die Vertriebspipeline übernehmen (Meta-Ads- oder Kaltakquise-Pipeline).
  */
+import { FREEMAIL_DOMAINS } from "../shared/website";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, like, lt, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { inboxDeletedMessages, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSuppressions, inboxMessages, leadCategories, leadStatusEvents, leads, mailSettings, outboundMessages, pipelineEvents, pipelineNotes, users } from "../drizzle/schema";
@@ -29,7 +30,7 @@ export function replyExcerpt(text: string) { const lines = text.split("\n"); con
 
 /** IMAP-Abholung: neue Mails der letzten 14 Tage in den Posteingang, Antworten auf Serien markieren, Leads per E-Mail verknüpfen. */
 /* ---------- Absender-Abgleich ---------- */
-const FREEMAIL = new Set(["gmail.com", "googlemail.com", "gmx.de", "gmx.net", "gmx.at", "gmx.ch", "web.de", "t-online.de", "outlook.com", "outlook.de", "hotmail.com", "hotmail.de", "live.com", "live.de", "msn.com", "yahoo.com", "yahoo.de", "icloud.com", "me.com", "mac.com", "aol.com", "aol.de", "posteo.de", "mailbox.org", "freenet.de", "arcor.de", "online.de", "1und1.de", "ionos.de", "proton.me", "protonmail.com", "vodafone.de", "kabelmail.de", "email.de"]);
+const FREEMAIL = FREEMAIL_DOMAINS; // eine Liste für alles (shared/website.ts)
 export const normalizeEmail = (value: string) => value.trim().toLowerCase();
 export const domainOf = (email: string) => { const at = email.lastIndexOf("@"); return at > 0 ? email.slice(at + 1).trim().toLowerCase() : null; };
 export const isFreemailDomain = (domain: string) => FREEMAIL.has(domain.toLowerCase());

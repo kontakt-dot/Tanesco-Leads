@@ -1424,6 +1424,9 @@ html:not(.dark) .stage-editor-color:hover, html:not(.dark) .stage-editor-color:f
 html:not(.dark) .pipeline-category-filter { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone { color: #0f172a !important; box-shadow: 0 6px 16px -8px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .pipeline-page .pipeline-card.is-open .pipeline-card-phone:hover { background: #127336 !important; }
+html:not(.dark) .pipeline-card-web { color: #506c8b !important; }
+html:not(.dark) .pipeline-card-web:hover { color: #0f172a !important; }
+html:not(.dark) .lead-page-website svg { color: #506c8b !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill { background: #f8fafb !important; border: 1px solid #e8ecf1 !important; color: #111318 !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill:hover, html:not(.dark) .pipeline-page .card-move-row .card-move-pill:focus-within { background: #f8fafb !important; border-color: #e8ecf1 !important; }
 html:not(.dark) .pipeline-page .card-move-row .card-move-pill svg { color: #111318 !important; }
@@ -2943,6 +2946,10 @@ html:not(.dark) .pipeline-dialer-mode span { color: #6a7282 !important; }
 html:not(.dark) .pipeline-dialer-mode.active { border-color: #bc001d !important; background: rgba(188, 0, 29, .06) !important; }
 html:not(.dark) .pipeline-card-phone { border-color: #86efac !important; background: #f0fdf4 !important; color: #15803d !important; }
 html:not(.dark) .pipeline-card-phone:hover { background: #dcfce7 !important; border-color: #4ade80 !important; color: #166534 !important; }
+html:not(.dark) .pipeline-card-web { border-color: #93c5fd !important; background: #eff6ff !important; color: #1d4ed8 !important; }
+html:not(.dark) .pipeline-card-web:hover { background: #dbeafe !important; border-color: #60a5fa !important; color: #1e40af !important; }
+html:not(.dark) .pipeline-card-web:focus-visible { outline-color: #2563eb !important; }
+html:not(.dark) .lead-page-website svg { color: #1d4ed8 !important; }
 
 /* Pipeline-Erweiterungen (Heute, Kalender, Team, Karten-Aktionen, E-Mail A/B & Sperrliste) */
 html:not(.dark) .pipeline-search { background: #ffffff !important; border-color: #e8ecf1 !important; color: #64748b !important; }

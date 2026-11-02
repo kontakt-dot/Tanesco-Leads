@@ -15,7 +15,6 @@ import { cleanDraftText, dropAdPlatforms, giftFollowUp, mentionsBinding, shortPa
 import { extraFieldsOf } from "../shared/cold-list";
 import { invokeLLM } from "./_core/llm";
 import { readWebsiteText } from "./lead-finder";
-import { domainOf, isFreemailDomain } from "./inbox";
 import { signatureFor } from "./mail-settings";
 import type { Db } from "./lead-pipeline";
 
@@ -99,14 +98,9 @@ function templateDraft(node: NonNullable<ReturnType<typeof firstSendNode>>, valu
   return { subject: fillPlaceholdersSafe(node.subject, values).slice(0, 300), text: blocksToPlainText(node.blocks, values) };
 }
 
-/** Webseite eines Kontakts: aus den Daten (Feld „Webseite“, „Homepage“, „URL“ …) – sonst aus der Firmen-Adresse (info@firma.de → firma.de; nicht Gmail, GMX usw.). */
-export function websiteOf(metadata: unknown, email: string | null | undefined): string | null {
-  const meta = (metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {}) as Record<string, unknown>;
-  const direct = [meta.website, meta.webseite, meta.homepage].find((value) => typeof value === "string" && value.trim()) as string | undefined;
-  const fromFields = Object.entries(extraFieldsOf(metadata)).find(([key, value]) => /^(web ?(site|seite)?|homepage|internet(seite)?|url|domain)$/i.test(key.trim()) && value.trim())?.[1];
-  const value = (direct ?? fromFields ?? "").trim(); if (value && /[a-z0-9-]+\.[a-z]{2,}/i.test(value)) return value.replace(/\s+/g, "");
-  const domain = email ? domainOf(email) : null; return domain && !isFreemailDomain(domain) ? domain : null;
-}
+/** Webseite eines Kontakts – Regel liegt in shared/website.ts (auch für die Karte „Webseite öffnen“). */
+export { websiteOf } from "../shared/website";
+import { websiteOf } from "../shared/website";
 
 /** Anweisungen an die KI – auf die Leadsparte der Kampagne zugeschnitten (Hausnotruf-Firmen bekommen Hausnotruf-Texte, nie Wärmepumpen). */
 function systemFor(sparte: Sparte, testLeads: number = testLeadsFor(sparte)): string {

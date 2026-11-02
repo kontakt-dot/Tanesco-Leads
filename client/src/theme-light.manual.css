@@ -644,6 +644,10 @@ html:not(.dark) .pipeline-dialer-mode span { color: #6a7282 !important; }
 html:not(.dark) .pipeline-dialer-mode.active { border-color: #bc001d !important; background: rgba(188, 0, 29, .06) !important; }
 html:not(.dark) .pipeline-card-phone { border-color: #86efac !important; background: #f0fdf4 !important; color: #15803d !important; }
 html:not(.dark) .pipeline-card-phone:hover { background: #dcfce7 !important; border-color: #4ade80 !important; color: #166534 !important; }
+html:not(.dark) .pipeline-card-web { border-color: #93c5fd !important; background: #eff6ff !important; color: #1d4ed8 !important; }
+html:not(.dark) .pipeline-card-web:hover { background: #dbeafe !important; border-color: #60a5fa !important; color: #1e40af !important; }
+html:not(.dark) .pipeline-card-web:focus-visible { outline-color: #2563eb !important; }
+html:not(.dark) .lead-page-website svg { color: #1d4ed8 !important; }
 
 /* Pipeline-Erweiterungen (Heute, Kalender, Team, Karten-Aktionen, E-Mail A/B & Sperrliste) */
 html:not(.dark) .pipeline-search { background: #ffffff !important; border-color: #e8ecf1 !important; color: #64748b !important; }
