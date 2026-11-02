@@ -98,6 +98,8 @@ export const lostStage = (stages: StageDef[] = PIPELINE_STAGES) => stages.find((
 /** Stufe „In Bearbeitung“ (wird gerade angerufen) – per Schlüssel oder, bei eigenen Stufen, am Namen erkannt. */
 export const workingStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "in_bearbeitung") ?? stages.find((stage) => /bearbeitung|wird angerufen|anrufen/i.test(stage.label) && !stage.fixed))?.key ?? null;
 /** Stufe „Kontaktiert“ (erreicht) – per Schlüssel oder am Namen. */
+/** Spalte für Antworten mit Interesse: die Stufe mit „Interesse“ im Namen (z. B. „Hat Interesse“) – nie „Kein Interesse“, nie Kunde/Verloren. */
+export const interestStage = (stages: StageDef[] = PIPELINE_STAGES): string | null => stages.find((stage) => stage.fixed !== "won" && stage.fixed !== "lost" && /interess/i.test(stage.label) && !/\b(kein|keine|keinen|nicht|ohne|kaum)\b/i.test(stage.label))?.key ?? null;
 export const contactedStage = (stages: StageDef[] = PIPELINE_STAGES) => (stages.find((stage) => stage.key === "kontaktiert") ?? stages.find((stage) => /kontaktiert|in kontakt|^kontakt$|erreicht|gesprochen/i.test(stage.label.trim()) && !stage.fixed) ?? stages.find((stage) => /kontakt/i.test(stage.key) && !stage.fixed))?.key ?? null;
 /** Stufe „Versendet“ der Pipeline „E-Mail-Kampagne“: Kampagnen-E-Mail ist raus. Per Schlüssel oder – bei eigenen Stufen – am Namen erkannt. */
 export const SENT_STAGE: StageDef = { key: "versendet", label: "Versendet", hint: "E-Mail aus einer Kampagne ist raus – neue Kontakte kommen automatisch hierher" };

@@ -85,3 +85,12 @@ export function extraFieldsOf(metadata: unknown): Record<string, string> {
   if (!felder || typeof felder !== "object" || Array.isArray(felder)) return {};
   const out: Record<string, string> = {}; for (const [key, value] of Object.entries(felder as Record<string, unknown>)) if (typeof value === "string" && value) out[key] = value; return out;
 }
+/** CSV einer Liste (auch für die Chat-Demo): Kopfzeile wie beim Hochladen, Firmen ohne Ansprechpartner ohne doppelten Nachnamen. */
+export function coldListCsv(rows: Array<{ firstName: string | null; lastName: string | null; company: string | null; phone: string | null; email: string | null; postcode: string | null; city: string | null; metadata: unknown }>): string {
+  const extraKeys: string[] = []; for (const row of rows) for (const key of Object.keys(extraFieldsOf(row.metadata))) if (!extraKeys.includes(key)) extraKeys.push(key);
+  const header = ["Anrede", "Vorname", "Nachname", "Firma", "Telefon", "E-Mail", "PLZ", "Ort", ...extraKeys.map((key) => { const label = key.replace(/_/g, " "); return `${label.charAt(0).toUpperCase()}${label.slice(1)}`; })]; // „anzahl_bewertungen“ → „Anzahl bewertungen“ – beim Hochladen wird daraus wieder derselbe Platzhalter
+  const cell = (value: unknown, phone = false) => { let text = String(value ?? "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim(); if (!phone && /^[=+\-@]/.test(text)) text = `'${text}`; return /[;"]/.test(text) ? `"${text.replace(/"/g, "'")}"` : text; };
+  const salutation = (meta: Record<string, unknown>) => { const value = String(meta.salutation ?? "").trim(); return /^herr$/i.test(value) ? "Herr" : /^frau$/i.test(value) ? "Frau" : value; };
+  const lines = rows.map((row) => { const meta = (row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {}) as Record<string, unknown>; const felder = extraFieldsOf(row.metadata); const onlyCompany = !row.firstName && row.lastName && row.company && row.lastName === row.company; return [cell(salutation(meta)), cell(row.firstName), cell(onlyCompany ? "" : row.lastName), cell(row.company), cell(row.phone, true), cell(row.email), cell(row.postcode), cell(row.city), ...extraKeys.map((key) => cell(felder[key]))].join(";"); });
+  return [header.map((name) => cell(name)).join(";"), ...lines].join("\r\n");
+}

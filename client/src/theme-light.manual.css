@@ -1828,3 +1828,22 @@ html:not(.dark) .opt-in-link { color: #6d28d9 !important; }
 html:not(.dark) .opt-in-rec { background: #eef0f4 !important; color: #344054 !important; } html:not(.dark) .opt-in-rec.is-live { background: #dc2626 !important; color: #fff !important; }
 html:not(.dark) .dialer-optin { border-color: #86efac !important; color: #166534 !important; }
 html:not(.dark) .dialer-optin-state { color: #344054 !important; } html:not(.dark) .dialer-optin-state small { color: #667085 !important; }
+/* Liste aktualisieren (hell) */
+html:not(.dark) .list-update { border-color: #d0d5dd !important; background: #fcfcfd !important; }
+html:not(.dark) .list-update.is-dragging { border-color: #7c3aed !important; background: #f5f3ff !important; }
+html:not(.dark) .list-update-head strong { color: #101828 !important; }
+html:not(.dark) .list-update-hint, html:not(.dark) .list-update-file { color: #475467 !important; }
+html:not(.dark) .list-update-close { color: #667085 !important; }
+html:not(.dark) .list-update-close:hover { background: #f2f4f7 !important; color: #101828 !important; }
+html:not(.dark) .list-update-plan .is-new { background: #f0fdfa !important; border-color: #99f6e4 !important; color: #0f766e !important; }
+html:not(.dark) .list-update-plan .is-stay { background: #f2f4f7 !important; border-color: #d0d5dd !important; color: #344054 !important; }
+html:not(.dark) .list-update-plan .is-gone { background: #fef3f2 !important; border-color: #fecdca !important; color: #b42318 !important; }
+html:not(.dark) .list-update-plan .is-keep { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #6d28d9 !important; }
+html:not(.dark) .list-update-warn { color: #b54708 !important; }
+html:not(.dark) .list-update-gone summary { color: #b42318 !important; }
+html:not(.dark) .list-update-gone li { color: #101828 !important; }
+html:not(.dark) .list-update-gone li small, html:not(.dark) .list-update-gone > small { color: #667085 !important; }
+html:not(.dark) .list-update-steps p { color: #344054 !important; }
+html:not(.dark) .list-update-step { background: #ede9fe !important; color: #6d28d9 !important; }
+html:not(.dark) .list-update-mapping { color: #6d28d9 !important; }
+html:not(.dark) .list-update-mapping:hover { color: #4c1d95 !important; }

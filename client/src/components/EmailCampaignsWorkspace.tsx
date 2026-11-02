@@ -1,4 +1,5 @@
 import { withUndo } from "@/components/UndoPanel";
+import ListUpdateBox from "@/components/ListUpdateBox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -636,7 +637,7 @@ function AddListsDialog({ campaign, onClose }: { campaign: { id: number; name: s
 function ListPicker({ selected, onChange, running = false }: { selected: string[]; onChange: (listNames: string[]) => void; running?: boolean }) {
   const utils = trpc.useUtils();
   const lists = trpc.leadops.listColdLists.useQuery(undefined, { retry: false });
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null); const [updating, setUpdating] = useState<string | null>(null); // „Liste aktualisieren“ (neue Fassung hochladen)
   const enrich = trpc.leadops.enrichListContacts.useMutation({ onSuccess: (result) => { toast.success(result.found ? `${result.found} Ansprechpartner ergänzt (bei ${result.checked} Kontakten nachgesehen${result.remaining ? `, ${result.remaining} weitere offen – einfach noch einmal drücken` : ""}).` : `Bei ${result.checked} Kontakten nachgesehen – kein Name gefunden${result.remaining ? `, ${result.remaining} weitere offen` : ""}.`, { duration: 7000 }); utils.leadops.listColdLists.invalidate(); utils.leadops.emailLeads.invalidate(); utils.leadops.campaignReviewQueue.invalidate(); }, onError: (error) => toast.error(error.message) });
   const remove = trpc.leadops.deleteColdList.useMutation({ onSuccess: (result) => {
     toast.success(`Liste „${result.listName}“ gelöscht: ${result.deleted} Kontakte entfernt${result.keptCustomers ? `, ${result.keptCustomers} Kunden behalten` : ""}.`);
@@ -657,9 +658,11 @@ function ListPicker({ selected, onChange, running = false }: { selected: string[
       <div className="list-picker-tools">
         {active ? <><span className="list-picker-in"><Check className="h-3.5 w-3.5" /> In der Kampagne</span><button type="button" onClick={() => onChange(selected.filter((name) => name !== list.listName))}>Entfernen</button></> : <button type="button" className="list-picker-add" onClick={() => onChange([...selected, list.listName])}><Plus className="h-3.5 w-3.5" /> Zur Kampagne hinzufügen</button>}
         <button type="button" onClick={() => setOpen(open === list.listName ? null : list.listName)}>{open === list.listName ? "Schließen" : "Ansehen"}</button>{Boolean(list.withEmail) && <button type="button" disabled={enrich.isPending} title="Kontakte ohne Ansprechpartner ergänzen: Name aus der E-Mail-Adresse oder dem Impressum der Webseite – in kleinen Paketen" onClick={() => enrich.mutate({ listName: list.listName })}>{enrich.isPending ? "Ergänzt …" : "Fehlende Daten ergänzen"}</button>}
+        <button type="button" title="Neue Fassung der Liste hochladen (z. B. in Excel bereinigt) – wer nicht mehr drinsteht, wird gelöscht, Kunden bleiben" onClick={() => { setUpdating(updating === list.listName ? null : list.listName); setOpen(null); }}>{updating === list.listName ? "Aktualisieren schließen" : "Aktualisieren"}</button>
         <button type="button" className="is-danger" disabled={remove.isPending} onClick={async () => { if (await confirmAction(`Liste „${list.listName}“ mit ${list.contacts} Kontakten löschen? Kunden bleiben erhalten. Das lässt sich nicht rückgängig machen.`)) remove.mutate({ listName: list.listName }); }}>Löschen</button>
       </div>
       {open === list.listName && <div className="list-picker-preview"><ListPreview listName={list.listName} onClose={() => setOpen(null)} /></div>}
+      {updating === list.listName && <div className="list-picker-preview"><ListUpdateBox listName={list.listName} onClose={() => setUpdating(null)} /></div>}
     </div>; };
   return <div className="list-picker">
     <div className={`list-picker-summary ${selected.length ? "is-set" : ""}`}>{selected.length ? <><strong>In dieser Kampagne: {selected.length} Liste{selected.length === 1 ? "" : "n"}</strong><span>{selected.map((name) => `„${name}“`).join(", ")}</span></> : <><strong>Noch keine Liste in der Kampagne</strong><span>Klicke bei einer Liste auf „Zur Kampagne hinzufügen“.</span></>}<small>{running ? "Die Kampagne läuft: Mit „Speichern“ kommen Kontakte hinzugefügter Listen sofort rein – Empfänger entfernter Listen kommen raus." : "Danach oben rechts auf „Speichern“ klicken."}</small></div>

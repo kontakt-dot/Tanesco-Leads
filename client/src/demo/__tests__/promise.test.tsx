@@ -596,6 +596,65 @@ describe("Pipeline-Karte: Webseite öffnen in einem neuen Fenster (Chat-Build)",
   });
 });
 
+describe("Posteingang: Antwort mit Interesse → Karte nach „Hat Interesse“ (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Daten und Oberfläche: interessierte Antwort schiebt die Karte nach „Hat Interesse“ (nicht „Kontaktiert“); der Posteingang zeigt Pipeline und Stufe mit Namen", async () => {
+    const stages = await call("leadops.pipelineStages", { source: "email" });
+    await call("leadops.savePipelineStages", { source: "email", stages: [stages[0], { key: "hat_interesse", label: "Hat Interesse", hint: "Positive Antwort" }, ...stages.slice(1)] });
+    const store = getStore(); const recipients = store.tables.emailCampaignRecipients.filter((row) => row.sentCount > 0 && row.leadId && store.tables.leads.some((lead) => lead.id === row.leadId && lead.kind === "vertrieb"));
+    expect(recipients.length).toBeGreaterThan(1); const [hot, cold] = recipients;
+    for (const row of [hot, cold]) { Object.assign(row, { repliedAt: null, status: "laeuft" }); Object.assign(store.tables.leads.find((lead) => lead.id === row.leadId)!, { inPipeline: true, adPlatform: "email", pipelineStage: stages[0].key }); }
+    const lead = (row: any) => store.tables.leads.find((item) => item.id === row.leadId)!;
+    const hotReply = await call("leadops.storeInboxMessage", { fromEmail: hot.email, fromName: "Heiß", subject: "AW: Anfragen", bodyText: "Klingt gut, schicken Sie mir bitte ein Angebot." });
+    expect(hotReply.ai).toMatchObject({ kind: "interessiert", action: "markiert" }); expect(lead(hot).pipelineStage).toBe("hat_interesse");
+    await call("leadops.storeInboxMessage", { fromEmail: cold.email, fromName: "Kühl", subject: "AW: Anfragen", bodyText: "Danke für die Info, wir melden uns bei Bedarf." });
+    expect(lead(cold).pipelineStage).toBe("kontaktiert"); // andere Antwort: wie bisher
+    const item = (await call("leadops.listInbox", { filter: "alle" })).items.find((row: any) => row.id === hotReply.id);
+    expect(item.lead).toMatchObject({ stage: "hat_interesse", stageName: "Hat Interesse", pipelineName: "E-Mail-Kampagne", inPipeline: true });
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=posteingang");
+    const view = mount(); await settle(400); await settle(300);
+    const entry = Array.from(view.container.querySelectorAll<HTMLButtonElement>("button.inbox-item")).find((button) => (button.textContent ?? "").includes("Heiß"))!; expect(entry).toBeTruthy();
+    expect(entry.textContent).toContain("Hat Interesse");
+    await act(async () => { fireEvent.click(entry); }); await settle(300);
+    const chip = view.container.querySelector<HTMLElement>(".inbox-read-context .inbox-note.is-lead")!; expect(chip.textContent).toContain("In der Pipeline „E-Mail-Kampagne“: Hat Interesse");
+    expect(Array.from(view.container.querySelectorAll(".inbox-read-actions button")).some((button) => (button.textContent ?? "").trim() === "In Vertriebspipeline anlegen")).toBe(true); // Knopf bleibt gleich (Formular sagt, wo er steht)
+  });
+});
+
+describe("Liste aktualisieren: neue Fassung hochladen (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  const person = (first: string) => ({ firstName: first, lastName: "Demo", company: `${first} Wärme GmbH`, email: `${first.toLowerCase()}@liste-demo.example`, phone: null });
+  it("Daten: Vorschau zählt neu / bleiben / werden gelöscht; Übernehmen löscht, wer fehlt (Kunden bleiben), und nimmt Neue auf", async () => {
+    await call("leadops.importColdList", { listName: "Demo-Update", rows: [person("Anna"), person("Bert"), person("Cleo")] });
+    const store = getStore(); Object.assign(store.tables.leads.find((row) => row.email === "cleo@liste-demo.example")!, { pipelineStage: "kunde" });
+    const rows = [person("Anna"), person("Dirk")];
+    expect(await call("leadops.previewListUpdate", { listName: "Demo-Update", rows })).toMatchObject({ before: 3, neu: 1, bleiben: 1, entfernen: 1, kundenBleiben: 1 });
+    const result = await call("leadops.updateColdList", { listName: "Demo-Update", rows }); expect(result).toMatchObject({ created: 1, removed: 1, keptCustomers: 1 });
+    const emails = getStore().tables.leads.filter((row) => row.listName === "Demo-Update").map((row) => row.email).sort();
+    expect(emails).toEqual(["anna@liste-demo.example", "cleo@liste-demo.example", "dirk@liste-demo.example"]); // Bert gelöscht, Kundin Cleo bleibt, Dirk neu
+  });
+  it("Oberfläche (Pipeline Kaltakquise → Listen): „Aktualisieren“ → Datei wählen → Vorschau → „Liste aktualisieren“ mit Rückfrage", async () => {
+    await call("leadops.importColdList", { listName: "Demo-Update", rows: [{ ...person("Anna"), phone: "0170 1111111" }, { ...person("Bert"), phone: "0170 2222222" }, { ...person("Cleo"), phone: "0170 3333333" }] });
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=kaltakquise&ansicht=listen");
+    const view = mount(); await settle(400); await settle(300);
+    const row = Array.from(view.container.querySelectorAll<HTMLElement>("div")).find((node) => node.querySelector("strong")?.textContent === "Demo-Update" && Array.from(node.querySelectorAll("button")).some((button) => button.textContent?.includes("Aktualisieren")))!; expect(row).toBeTruthy();
+    await act(async () => { fireEvent.click(Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("Aktualisieren"))!); }); await settle(200);
+    const box = view.container.querySelector<HTMLElement>(".list-update")!; expect(box).toBeTruthy(); expect(box.textContent).toContain("Liste „Demo-Update“ aktualisieren");
+    const file = new File(["Vorname;Nachname;Firma;Telefon;E-Mail\nAnna;Demo;Anna Wärme GmbH;0170 1111111;anna@liste-demo.example\nDirk;Demo;Dirk Wärme GmbH;0170 4444444;dirk@liste-demo.example\n"], "Demo-Update neu.csv", { type: "text/csv" });
+    await act(async () => { fireEvent.change(box.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [file] } }); }); await settle(500); await settle(400);
+    const plan = Array.from(view.container.querySelectorAll(".list-update-plan span")).map((node) => node.textContent?.replace(/\s+/g, " ").trim());
+    expect(plan).toEqual(["1 neu", "1 bleiben", "2 werden gelöscht"]);
+    expect(view.container.querySelector(".list-update-gone summary")?.textContent).toBe("Diese 2 Firmen werden gelöscht");
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".list-update-actions button")).find((button) => button.textContent?.includes("Liste aktualisieren"))!); }); await settle(200);
+    expect(document.querySelector(".app-confirm-text")?.textContent).toContain("2 Kontakte aus „Demo-Update“ löschen");
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400); await settle(300);
+    expect(getStore().tables.leads.filter((lead) => lead.listName === "Demo-Update").map((lead) => lead.email).sort()).toEqual(["anna@liste-demo.example", "dirk@liste-demo.example"]);
+    expect(view.container.querySelector(".list-update")).toBeNull(); // nach dem Übernehmen zu
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });

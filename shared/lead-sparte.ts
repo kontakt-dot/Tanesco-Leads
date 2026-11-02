@@ -149,7 +149,7 @@ export function withSparte<T extends Record<string, string>>(values: T, sparte: 
  * Seit 01.11.2026 steht in keiner E-Mail mehr, dass der Betrieb nur für passende Leads zahlt – die Testphase ist kostenlos, der Satz
  * passt nicht dazu. Früher stand er bei Photovoltaik und Wärmepumpe im freien Vorschlag und in der Drittanbieter-Vorlage.
  */
-const PAY_FIT_RE = /\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*\b[^.!?\n]{0,60}\b(?:nur|ausschließlich)\b[^.!?\n]{0,60}\bpass\w*|\b(?:nur|ausschließlich)\b[^.!?\n]{0,40}\bpass\w*[^.!?\n]{0,40}\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*/i;
+const PAY_FIT_RE = /\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*\b[^.!?\n]{0,60}\b(?:nur|ausschließlich)\b[^.!?\n]{0,60}\bpass\w*|\b(?:nur|ausschließlich)\b[^.!?\n]{0,40}\bpass\w*[^.!?\n]{0,40}\b(?:zahl|bezahl|berechn|abrechn|abgerechnet)\w*|\b(?:zahl|bezahl)\w*\b[^.!?\n]{0,30}\b(?:nur|ausschließlich)\b[^.!?\n]{0,25}\b(?:für|bei)\b[^.!?\n]{0,40}\b(?:leads?|anfragen?|kontakte?|interessenten|termine?)\b/i; // auch die alte Vorlage: „Sie zahlen nur für Anfragen, die Sie erreichen“
 /** Steht im Text, dass nur passende Leads bezahlt werden? */
 export const mentionsPayFit = (text: string) => PAY_FIT_RE.test(text);
 const CLAUSE_SEP = /(,\s+und\s+|\s+[–—-]\s+|;\s+)/;

@@ -3259,12 +3259,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       const waiting = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, broken.id));
       expect(waiting.every((row) => row.status === "wartet" && row.sentCount === 0)).toBe(true);
       await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, broken.id));
-      // Mit Freigabe und gestörter KI: nur „Ersatz aus der Vorlage“ – nach dem nächsten Start verworfen, damit die KI sie individuell neu schreibt (freigegebene bleiben)
+      // Mit Freigabe und gestörter KI: KEIN „Ersatz aus der Vorlage“ mehr – der Entwurf bleibt offen, die KI versucht es später noch einmal
       const review2 = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Freigabe gestört", kiModus: "freigabe", kiAnsatz: "frei" } as never);
       plan.__draftPlan = ["kaputt", "kaputt", "kaputt", "kaputt"];
       await owner.leadops.startEmailCampaign({ id: review2.id }); await owner.leadops.runEmailCampaigns();
       const fallbacks = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, review2.id));
-      expect(fallbacks.every((row) => row.draftState === "entwurf" && row.draftSource === "vorlage")).toBe(true);
+      expect(fallbacks.every((row) => row.draftState === null && row.draftText === null && row.sentCount === 0)).toBe(true); // nichts aus der Vorlage
+      plan.__draftPlan = ["kaputt", "kaputt"]; const tried = await owner.leadops.generateCampaignDrafts({ campaignId: review2.id, recipientIds: [fallbacks[0].id] }); expect(tried).toMatchObject({ failed: 1 }); expect(tried.drafts).toHaveLength(0); // „Neu schreiben“: auch dann keine Vorlage
+      plan.__draftPlan = []; const again = await owner.leadops.generateCampaignDrafts({ campaignId: review2.id, recipientIds: [fallbacks[0].id] }); expect(again.drafts[0]).toMatchObject({ source: "ki" }); // KI wieder da → KI-Entwurf
+      // Ersatz-Entwürfe aus der Vorlage von früher: beim nächsten Start verworfen, damit die KI sie individuell neu schreibt (bewusst freigegebene bleiben)
+      await db.update(emailCampaignRecipients).set({ draftState: "entwurf", draftSource: "vorlage", draftSubject: "Mehr Anfragen – ohne Risiko", draftText: "Alte Vorlage", draftNodeId: "a1" }).where(eq(emailCampaignRecipients.campaignId, review2.id));
       await db.update(emailCampaignRecipients).set({ draftState: "freigegeben" }).where(eq(emailCampaignRecipients.id, fallbacks[0].id)); // bewusst freigegeben → bleibt
       const { clearTemplateFallbackDrafts } = await import("./campaign-review");
       expect(await clearTemplateFallbackDrafts(db)).toBeGreaterThanOrEqual(1);
@@ -3612,6 +3616,83 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(site("Netz Solar GmbH")).toBe("https://www.netz-solar.example/"); expect(site("Domain Dach")).toBe("https://domain-dach.example/"); expect(site("Frei Mail")).toBeNull(); expect(site("Böse Daten")).toBeNull();
     const netz = cards.find((card) => card.company === "Netz Solar GmbH")!; expect((await owner.leadops.pipelineLeadDetail({ publicId: netz.publicId })).website).toBe("https://www.netz-solar.example/");
   });
+
+  it("63z. Antwort mit Interesse (KI): Karte automatisch nach „Hat Interesse“ der Pipeline „E-Mail-Kampagne“ – nur vorwärts, andere Pipelines bleiben, andere Antworten nach „Kontaktiert“; Einmal-Korrektur für alte Fälle", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const pipelineExtras = await import("./pipeline-extras");
+    const emailStagesBefore = await owner.leadops.pipelineStages({ source: "email" });
+    await owner.leadops.savePipelineStages({ source: "email", stages: [emailStagesBefore[0], { key: "hat_interesse", label: "Hat Interesse", hint: "Positive Antwort" }, ...emailStagesBefore.slice(1)] as never });
+    try {
+      const people = [["Ina", "Interesse"], ["Fritz", "Frage"], ["Anja", "Angebot"], ["Kurt", "Kalt"], ["Paula", "Postfach"]] as const;
+      await owner.leadops.importColdList({ listName: "Interesse-Test", toPipeline: false, rows: people.map(([firstName, lastName]) => ({ firstName, lastName, company: `${lastName} Solar GmbH`, email: `${firstName.toLowerCase()}@interesse-e2e.example` })) });
+      const starter = await owner.leadops.emailCampaignStarter();
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Interesse-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Interesse-Test" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+      const card = async (first: string) => (await db.select().from(leads).where(eq(leads.email, `${first.toLowerCase()}@interesse-e2e.example`)))[0];
+      expect((await card("Ina")).pipelineStage).toBe("versendet"); // mit der ersten Mail in „Versendet“
+      await db.update(leads).set({ pipelineStage: "termin" }).where(eq(leads.id, (await card("Anja")).id)); // schon weiter
+      await db.update(leads).set({ adPlatform: "kaltakquise", pipelineStage: "neu" }).where(eq(leads.id, (await card("Kurt")).id)); // steht in der Kaltakquise
+      await db.update(leads).set({ inPipeline: false }).where(eq(leads.id, (await card("Paula")).id)); // nur in der E-Mail-Akquise
+      const reply = (first: string, bodyText: string) => owner.leadops.storeInboxMessage({ fromEmail: `${first.toLowerCase()}@interesse-e2e.example`, fromName: first, subject: `AW: Anfragen für ${first}`, bodyText, receivedAt: new Date() });
+      const interested = "Klingt gut, schicken Sie mir bitte ein Angebot.";
+      const ina = await reply("Ina", interested); expect(ina.ai).toMatchObject({ kind: "interessiert", action: "markiert" });
+      expect(await card("Ina")).toMatchObject({ adPlatform: "email", pipelineStage: "hat_interesse" }); // nicht mehr nach „Kontaktiert“
+      expect((await owner.leadops.pipelineHistory({ publicId: (await card("Ina")).publicId }))[0].note).toMatch(/^Antwort zeigt Interesse \(KI\)/);
+      await reply("Fritz", "Danke für die Info, wir melden uns bei Bedarf."); expect((await card("Fritz")).pipelineStage).toBe("kontaktiert"); // andere Antwort: wie bisher
+      await reply("Fritz", interested); expect((await card("Fritz")).pipelineStage).toBe("hat_interesse"); // „Kontaktiert“ kam nur von der Antwort-Regel, seitdem nichts passiert → jetzt „Hat Interesse“
+      await reply("Anja", interested); expect((await card("Anja")).pipelineStage).toBe("termin"); // nur vorwärts
+      await reply("Kurt", interested); expect(await card("Kurt")).toMatchObject({ adPlatform: "kaltakquise", pipelineStage: "kontaktiert" }); // andere Pipeline ohne „Interesse“-Spalte: bleibt dort, normale Antwort-Regel
+      await reply("Paula", interested); expect(await card("Paula")).toMatchObject({ inPipeline: true, adPlatform: "email", pipelineStage: "hat_interesse", adCampaignId: `email-${campaign.id}` }); // aus der E-Mail-Akquise direkt nach „Hat Interesse“
+      // Posteingang: Pipeline und Stufe mit Namen (auch die eigene Stufe „Hat Interesse“)
+      const inbox = await owner.leadops.listInbox({ filter: "alle" }); const inaItem = inbox.items.find((item) => item.fromEmail === "ina@interesse-e2e.example")!;
+      expect(inaItem.lead).toMatchObject({ stage: "hat_interesse", stageName: "Hat Interesse", pipelineName: "E-Mail-Kampagne", inPipeline: true });
+      // Einmal-Korrektur: früher schob die allgemeine Antwort-Regel auch Interessenten nach „Kontaktiert“ – ohne Handarbeit seitdem → „Hat Interesse“
+      await owner.leadops.importColdList({ listName: "Interesse-Alt", toPipeline: false, rows: [["Rita", "Regel"], ["Hans", "Hand"], ["Carla", "Call"]].map(([firstName, lastName]) => ({ firstName, lastName, company: `${lastName} Dach`, email: `${firstName.toLowerCase()}@interesse-alt-e2e.example` })) });
+      const old = await db.select().from(leads).where(like(leads.email, "%@interesse-alt-e2e.example")); expect(old).toHaveLength(3);
+      const moveAt = new Date(Date.now() - 2 * 86_400_000);
+      for (const row of old) {
+        await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: "kontaktiert", adCampaignId: `email-${campaign.id}`, adCampaignName: "Interesse-Test" }).where(eq(leads.id, row.id));
+        await db.insert(pipelineEvents).values({ tenantId: S.tenantId, leadId: row.id, fromStage: "versendet", toStage: "kontaktiert", actorUserId: null, note: "Antwort auf E-Mail-Serie: „AW: Anfragen“", createdAt: moveAt });
+        await db.insert(inboxMessages).values({ tenantId: S.tenantId, messageId: `<alt-${row.id}-${Date.now()}@interesse-alt-e2e.example>`, fromEmail: row.email!, fromName: row.firstName, subject: "AW: Anfragen", bodyText: interested, receivedAt: moveAt, leadId: row.id, aiKind: "interessiert", aiConfidence: 90, aiAction: "markiert" });
+      }
+      const hans = old.find((row) => row.firstName === "Hans")!; const carla = old.find((row) => row.firstName === "Carla")!; const rita = old.find((row) => row.firstName === "Rita")!;
+      await db.insert(pipelineEvents).values({ tenantId: S.tenantId, leadId: hans.id, fromStage: "kontaktiert", toStage: "kontaktiert", actorUserId: ownerUserId, note: "Von Hand bestätigt", createdAt: new Date(Date.now() - 86_400_000) }); // danach von Hand
+      await db.insert(leadCallAttempts).values({ tenantId: S.tenantId, leadId: carla.id, userId: ownerUserId, result: "erreicht", at: new Date(Date.now() - 86_400_000) }); // danach angerufen
+      expect(await pipelineExtras.moveInterestedRepliesToInterestStage(db)).toBeGreaterThanOrEqual(1);
+      const after = async (id: number) => (await db.select().from(leads).where(eq(leads.id, id)))[0].pipelineStage;
+      expect(await after(rita.id)).toBe("hat_interesse"); expect(await after(hans.id)).toBe("kontaktiert"); expect(await after(carla.id)).toBe("kontaktiert");
+      expect((await owner.leadops.pipelineHistory({ publicId: rita.publicId }))[0].note).toMatch(/Antwort zeigt Interesse \(KI\) – automatisch nach „Hat Interesse“ \(vorher „Kontaktiert“/);
+      expect(await pipelineExtras.moveInterestedRepliesToInterestStage(db)).toBe(0); // zweites Mal: nichts mehr zu tun
+      expect((await card("Ina")).pipelineStage).toBe("hat_interesse"); expect((await card("Anja")).pipelineStage).toBe("termin"); expect((await card("Kurt")).pipelineStage).toBe("kontaktiert"); // Termin und Kaltakquise bleiben unangetastet
+    } finally { await owner.leadops.savePipelineStages({ source: "email", stages: emailStagesBefore as never }); }
+  }, 60000);
+
+  it("63za. Liste aktualisieren: neue Fassung ersetzt den Inhalt – wer fehlt, wird gelöscht (auch aus der laufenden Kampagne, Papierkorb), Kunden bleiben, neue kommen dazu und in die Kampagne", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    const person = (first: string, extra?: Record<string, string>) => ({ firstName: first, lastName: "Liste", company: `${first} Wärmepumpen GmbH`, email: `${first.toLowerCase()}@liste-update-e2e.example`, ...(extra ? { extra } : {}) });
+    await owner.leadops.importColdList({ listName: "Update-Test", toPipeline: false, rows: [person("Anton"), person("Berta"), person("Carl"), person("Dora")] });
+    const lead = async (first: string) => (await db.select().from(leads).where(eq(leads.email, `${first.toLowerCase()}@liste-update-e2e.example`)))[0];
+    await db.update(leads).set({ pipelineStage: "kunde", inPipeline: true }).where(eq(leads.id, (await lead("Carl")).id)); // Kunde
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Update-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Update-Test" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 48, next: "m2" }, { id: "m2", type: "send" as const, label: "Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id });
+    const recipients = async () => (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).map((row) => row.email).sort();
+    expect(await recipients()).toEqual(expect.arrayContaining(["anton@liste-update-e2e.example", "dora@liste-update-e2e.example"]));
+    const file = await owner.leadops.exportColdList({ listName: "Update-Test" }); expect(file).toMatchObject({ fileName: "Update-Test.csv", rows: 4 }); expect(file.csv.split("\r\n")[0]).toBe("Anrede;Vorname;Nachname;Firma;Telefon;E-Mail;PLZ;Ort"); expect(file.csv).toContain("dora@liste-update-e2e.example"); // zum Bearbeiten in Excel
+    // neue Fassung: Dora fliegt raus (keine Wärmepumpen-Firma), Carl (Kunde) fehlt auch, Emil kommt dazu, Anton bringt eine neue Spalte mit
+    const rows = [person("Anton", { Branche: "Wärmepumpen" }), person("Berta"), person("Emil")];
+    const preview = await owner.leadops.previewListUpdate({ listName: "Update-Test", rows });
+    expect(preview).toMatchObject({ before: 4, neu: 1, bleiben: 2, entfernen: 1, kundenBleiben: 1 }); expect(preview.removeSample.map((row) => row.name)).toEqual(["Dora Wärmepumpen GmbH (Dora Liste)"]);
+    expect(await lead("Dora")).toBeTruthy(); // Vorschau ändert nichts
+    const result = await owner.leadops.updateColdList({ listName: "Update-Test", rows });
+    expect(result).toMatchObject({ listName: "Update-Test", created: 1, removed: 1, keptCustomers: 1 }); expect(result.undoId).toBeGreaterThan(0);
+    expect(await lead("Dora")).toBeUndefined(); expect((await lead("Carl")).listName).toBe("Update-Test"); expect((await lead("Emil")).listName).toBe("Update-Test");
+    expect(((await lead("Anton")).metadata as { felder?: Record<string, string> }).felder).toMatchObject({ Branche: "Wärmepumpen" });
+    const after = await recipients(); expect(after).not.toContain("dora@liste-update-e2e.example"); expect(after).toContain("emil@liste-update-e2e.example"); // raus aus der Kampagne, der Neue ist drin
+    const entries = await owner.leadops.listImportHistory({ limit: 20 });
+    expect(entries.some((entry) => entry.listName === "Update-Test" && /^Liste aktualisiert – 1 nicht mehr in der Datei/.test(entry.note ?? ""))).toBe(true);
+    await expect(owner.leadops.updateColdList({ listName: "Gibt-es-nicht", rows })).rejects.toThrow(/keine Kontakte/);
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+  }, 60000);
 
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");

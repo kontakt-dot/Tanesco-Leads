@@ -41,3 +41,13 @@ describe("Stufen nach Umbenennen wiederfinden (matchStage)", () => {
     expect(matchStage(null, OWN)).toBeNull(); expect(matchStage("", OWN)).toBeNull();
   });
 });
+
+describe("Spalte für Antworten mit Interesse („Hat Interesse“)", () => {
+  it("findet die Stufe mit „Interesse“ im Namen – nie „Kein Interesse“, nie Kunde/Verloren; ohne solche Stufe: keine", async () => {
+    const { interestStage } = await import("../shared/sales-pipeline");
+    expect(interestStage(OWN)).toBe("stufe_x9y8z");
+    expect(interestStage([{ key: "versendet", label: "Versendet", hint: "", fixed: "entry" }, { key: "kein", label: "Kein Interesse", hint: "" }, { key: "hi", label: "Hat Interesse", hint: "Positive Antwort" }, { key: "verloren", label: "Verloren", hint: "", fixed: "lost" }])).toBe("hi");
+    expect(interestStage([{ key: "neu", label: "Neu", hint: "", fixed: "entry" }, { key: "x", label: "Nicht interessiert", hint: "" }, { key: "verloren", label: "Interesse verloren", hint: "", fixed: "lost" }])).toBeNull();
+    expect(interestStage(PIPELINE_STAGES)).toBeNull(); // Standard-Stufen haben keine eigene Interesse-Spalte – dann gilt die normale Antwort-Regel
+  });
+});

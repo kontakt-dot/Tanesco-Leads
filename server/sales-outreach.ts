@@ -31,7 +31,7 @@ import type { Db } from "./lead-pipeline";
 import type { OwnerShare, ShareMode } from "../shared/pipeline-extras";
 
 /* ---------- Kaltakquise-Listen ---------- */
-import { extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
+import { coldListCsv, extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
 import { lostStage, PIPELINE_SOURCE_LABEL, pipelineSourceOf, stagesForLead, wonStage } from "../shared/sales-pipeline";
 import { requireVertriebCategoryId } from "./vertrieb-category";
 export { parseColdList };
@@ -45,7 +45,7 @@ async function tagByName(db: Db, tenantId: number, name: string, color: string) 
 /** Nur setzen, was wirklich dazukommt – vorhandene Angaben am Kontakt werden nie mit leeren Werten überschrieben. */
 const fillIfEmpty = <T>(current: T | null | undefined, next: T | null | undefined) => (current ?? null) || (next ?? null);
 
-export async function importColdList(db: Db, tenantId: number, input: { pipeline?: PipelineSource | null; listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; ownerShares?: OwnerShare[] | null; shareMode?: ShareMode | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null; toPipeline?: boolean }) {
+export async function importColdList(db: Db, tenantId: number, input: { pipeline?: PipelineSource | null; listName: string; categoryId?: number | null; rows: ColdRow[]; ownerUserIds?: number[] | null; ownerShares?: OwnerShare[] | null; shareMode?: ShareMode | null; actorUserId?: number | null; tagNames?: string[] | null; duplicateMode?: "aktualisieren" | "ueberspringen" | null; toPipeline?: boolean; note?: string | null }) {
   const listName = tidyListName(input.listName); if (!listName) throw new Error("Bitte einen Listennamen angeben."); // „PV_WP_…_neu.xlsx“ → lesbarer Name
   const coldPlatform = input.pipeline && isColdLike(input.pipeline) ? platformForSource(input.pipeline) : "kaltakquise"; // eigene Pipeline: Kontakte landen dort if (!input.rows.length) throw new Error("Die Liste enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig).");
   // Kategorie ist freiwillig: ohne Angabe die erste aktive nehmen, sonst ohne Kategorie anlegen.
@@ -98,7 +98,7 @@ export async function importColdList(db: Db, tenantId: number, input: { pipeline
     else for (const leadId of leadIds) await autoAssign(db, tenantId, leadId); // Verteilregeln, wenn eingeschaltet
   }
   // Upload-Verlauf festhalten – damit man später sieht, was wann hochgeladen wurde, und es rückgängig machen kann.
-  await db.insert(listImports).values({ tenantId, listName, source: toPipeline ? "kaltakquise" : "kampagne", rowCount: input.rows.length, created, updated, duplicates, toPipeline, leadIds, actorUserId: input.actorUserId ?? null });
+  await db.insert(listImports).values({ tenantId, listName, source: toPipeline ? "kaltakquise" : "kampagne", note: input.note?.slice(0, 240) ?? null, rowCount: input.rows.length, created, updated, duplicates, toPipeline, leadIds, actorUserId: input.actorUserId ?? null });
   if (created || updated) await logActivity(db, tenantId, { kind: "kontakt_neu", title: `Liste „${listName}“ hochgeladen: ${created} neue Kontakte${updated ? `, ${updated} aktualisiert` : ""}${duplicates ? `, ${duplicates} doppelt` : ""}`, detail: toPipeline ? "Kaltakquise – Kontakte stehen in der Vertriebspipeline" : "E-Mail-Kampagnen – Kontakte nur für den E-Mail-Versand", count: Math.max(1, created), actorUserId: input.actorUserId ?? null, refType: "listImport" });
   const campaigns = created || updated ? await enrollListIntoRunningCampaigns(db, tenantId, listName, process.env.APP_URL ?? "").catch((error) => { console.error("[E-Mail-Kampagnen] Nachaufnahme nach Upload:", error instanceof Error ? error.message : error); return [] as Array<{ id: number; name: string; added: number }>; }) : [];
   return { created, duplicates, updated, tagId: tag.id, listName, leadIds, toPipeline, campaigns };
@@ -1092,6 +1092,56 @@ export async function deleteColdList(db: Db, tenantId: number, input: { listName
   const tag = (await db.select().from(tags).where(and(eq(tags.tenantId, tenantId), eq(tags.name, `Liste: ${listName}`.slice(0, 80)))).limit(1))[0];
   if (tag) { const used = (await db.select({ leadId: leadTagAssignments.leadId }).from(leadTagAssignments).where(eq(leadTagAssignments.tagId, tag.id)).limit(1))[0]; if (!used) await db.delete(tags).where(eq(tags.id, tag.id)); }
   return { deleted: remove.length, keptCustomers: keep.length, listName, undoId };
+}
+
+/* ---------- Liste aktualisieren ---------- */
+/** Schlüssel eines Kontakts für den Abgleich mit der neuen Datei: E-Mail-Adresse, dazu die Telefonnummer (nur Ziffern). */
+const listKeys = (row: { email?: string | null; phone?: string | null }) => { const keys: string[] = []; const email = (row.email ?? "").trim().toLowerCase(); const phone = (row.phone ?? "").replace(/\D/g, ""); if (email) keys.push(`e:${email}`); if (phone.length >= 6) keys.push(`t:${phone}`); return keys; };
+const leadLabel = (row: { firstName: string | null; lastName: string | null; company: string | null; email: string | null; publicId: string }) => { const person = [row.firstName, row.lastName].filter(Boolean).join(" "); return row.company && person && row.company !== row.lastName ? `${row.company} (${person})` : row.company || person || row.email || row.publicId; };
+/** Was die neue Datei an einer Liste ändert: wer bleibt, wer neu dazukommt, wer nicht mehr drinsteht (Kunden bleiben immer). */
+async function listUpdatePlan(db: Db, tenantId: number, listName: string, rows: ColdRow[]) {
+  const name = listName.trim(); if (!name) throw new Error("Bitte eine Liste angeben.");
+  const current = await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company, email: leads.email, phone: leads.phone, stage: leads.pipelineStage, categoryId: leads.categoryId, adPlatform: leads.adPlatform, inPipeline: leads.inPipeline }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.listName, name)));
+  if (!current.length) throw new Error(`Zur Liste „${name}“ gibt es keine Kontakte – lade die Datei als neue Liste hoch.`);
+  const fileKeys = new Set(rows.flatMap(listKeys)); const inFile = (row: { email: string | null; phone: string | null }) => listKeys(row).some((key) => fileKeys.has(key));
+  const missing = current.filter((row) => !inFile(row));
+  const knownKeys = new Set(current.flatMap(listKeys));
+  return { listName: name, current, staying: current.filter(inFile), remove: missing.filter((row) => row.stage !== "kunde"), customers: missing.filter((row) => row.stage === "kunde"), fresh: rows.filter((row) => !listKeys(row).some((key) => knownKeys.has(key))) };
+}
+/**
+ * Liste als Datei zum Bearbeiten (CSV für Excel: Semikolon, UTF-8): genau die Spalten, die das Hochladen wieder erkennt – Anrede, Vorname,
+ * Nachname, Firma, Telefon, E-Mail, PLZ, Ort – plus die Zusatzspalten der Liste. Bereinigt zurück über „Liste aktualisieren“.
+ * Zellen, die mit = + - @ beginnen (außer Telefon), bekommen ein ' davor, damit Excel daraus keine Formel macht.
+ */
+export async function exportColdList(db: Db, tenantId: number, input: { listName: string }) {
+  const name = input.listName.trim(); if (!name) throw new Error("Bitte eine Liste angeben.");
+  const rows = await db.select({ firstName: leads.firstName, lastName: leads.lastName, company: leads.company, phone: leads.phone, email: leads.email, postcode: leads.postcode, city: leads.city, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.listName, name))).orderBy(asc(leads.id));
+  if (!rows.length) throw new Error(`Zur Liste „${name}“ gibt es keine Kontakte.`);
+  return { fileName: `${name.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Liste"}.csv`, csv: coldListCsv(rows), rows: rows.length };
+}
+/** Vorschau „Liste aktualisieren“: so ändert die neue Datei die Liste – noch ohne etwas zu ändern. */
+export async function previewListUpdate(db: Db, tenantId: number, input: { listName: string; rows: ColdRow[] }) {
+  const plan = await listUpdatePlan(db, tenantId, input.listName, input.rows);
+  return { listName: plan.listName, before: plan.current.length, rows: input.rows.length, neu: plan.fresh.length, bleiben: plan.staying.length, entfernen: plan.remove.length, kundenBleiben: plan.customers.length, removeSample: plan.remove.slice(0, 40).map((row) => ({ id: row.id, name: leadLabel(row), email: row.email })) };
+}
+/**
+ * Liste aktualisieren: die neue Datei (z. B. in Excel bereinigt) ersetzt den Inhalt der Liste. Kontakte, die nicht mehr in der Datei stehen,
+ * werden gelöscht – samt ihren Kampagnen-Plätzen (Papierkorb: wiederherstellbar); Kunden bleiben immer. Wer drinbleibt, wird ergänzt (leere Felder,
+ * Zusatzspalten), neue Zeilen kommen dazu – wie beim normalen Hochladen, auch in laufende Kampagnen dieser Liste. Pipeline und Lead-Kategorie wie bisher.
+ */
+export async function updateColdList(db: Db, tenantId: number, input: { listName: string; rows: ColdRow[]; actorUserId?: number | null }) {
+  if (!input.rows.length) throw new Error("Die Datei enthält keine verwertbaren Zeilen (Telefon oder E-Mail nötig) – die Liste bleibt, wie sie ist.");
+  const plan = await listUpdatePlan(db, tenantId, input.listName, input.rows);
+  const last = (await db.select({ toPipeline: listImports.toPipeline }).from(listImports).where(and(eq(listImports.tenantId, tenantId), eq(listImports.listName, plan.listName), eq(listImports.kind, "upload"))).orderBy(desc(listImports.createdAt), desc(listImports.id)).limit(1))[0];
+  const toPipeline = last ? last.toPipeline : plan.current.some((row) => row.inPipeline !== false && isColdLike(row.adPlatform));
+  const coldPlatform = plan.current.map((row) => row.adPlatform).find((platform) => isColdLike(platform)) ?? null;
+  const categoryCounts = new Map<number, number>(); for (const row of plan.current) if (row.categoryId) categoryCounts.set(row.categoryId, (categoryCounts.get(row.categoryId) ?? 0) + 1);
+  const categoryId = Array.from(categoryCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  let undoId = 0;
+  if (plan.remove.length) undoId = await removeLeadsCascade(db, tenantId, plan.remove.map((row) => row.id), { actorUserId: input.actorUserId ?? null, reason: `Liste „${plan.listName}“ aktualisiert: ${plan.remove.length} ${plan.remove.length === 1 ? "Kontakt" : "Kontakte"} nicht mehr in der Datei` });
+  const imported = await importColdList(db, tenantId, { listName: plan.listName, pipeline: coldPlatform && isColdLike(coldPlatform) ? coldPlatform as PipelineSource : null, categoryId, rows: input.rows, toPipeline, actorUserId: input.actorUserId ?? null, duplicateMode: "aktualisieren", note: `Liste aktualisiert${plan.remove.length ? ` – ${plan.remove.length} nicht mehr in der Datei, gelöscht` : ""}` });
+  await logActivity(db, tenantId, { kind: "kontakt_neu", title: `Liste „${plan.listName}“ aktualisiert: ${imported.created} neu, ${plan.remove.length} gelöscht${plan.customers.length ? `, ${plan.customers.length} Kunden behalten` : ""}`, count: Math.max(1, imported.created + plan.remove.length), actorUserId: input.actorUserId ?? null, refType: "listImport" }).catch(() => null);
+  return { listName: plan.listName, created: imported.created, updated: imported.updated, removed: plan.remove.length, keptCustomers: plan.customers.length, undoId, campaigns: imported.campaigns };
 }
 
 /* ---------- Kontakte der E-Mail-Akquise ---------- */

@@ -298,6 +298,8 @@ export async function withCategoryHints<T extends Sparte>(db: Db, tenantId: numb
 export function draftFitsNode(recipient: Pick<Recipient, "draftNodeId" | "sentCount">, nodeId: string): boolean {
   return recipient.draftNodeId ? recipient.draftNodeId === nodeId : recipient.sentCount === 0;
 }
+/** Hinweis, wenn die KI einen Entwurf gerade nicht schreiben konnte – es kommt keine Vorlage als Ersatz. */
+export const KI_NOT_NOW = "Die KI konnte diesen Entwurf gerade nicht schreiben – sie versucht es in ein paar Minuten noch einmal (keine Vorlage als Ersatz).";
 /**
  * Entwurf für einen Empfänger schreiben (KI, sonst Vorlage) und speichern – Zustand „entwurf“.
  * `nodeId` = der Schritt (die E-Mail im Ablauf), für den geschrieben wird; ohne Angabe der aktuelle bzw. erste Schritt.
@@ -343,6 +345,9 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   // Der Ansatz der Kampagne ist der Haupt-Vorschlag – die anderen bleiben als Alternativen wählbar. Hat die KI ihn nicht geschrieben, steht die Vorlage dieses Ansatzes vorn (als „Ersatz aus Vorlage“ – geht im Auto-Modus nie raus).
   const candidates: DraftOption[] = ai?.length ? (ai.some((item) => item.key === ansatz) ? ai : [...fallback.filter((item) => item.key === ansatz), ...ai]) : fallback;
   const chosen = candidates.find((item) => item.key === ansatz) ?? fallback[0]; const source = chosen.source === "ki" && (ai as DraftOption[] | null)?.includes(chosen) ? (site ? "kiweb" : "ki") : "vorlage";
+  // Nie die Vorlage als Entwurf, wenn die KI eingerichtet ist: hat sie den Entwurf gerade nicht geschrieben (z. B. überlastet), bleibt er offen –
+  // das Vorschreiben versucht es nach ein paar Minuten noch einmal. Nur ganz ohne KI (kein Schlüssel) kommt der Text aus der Vorlage.
+  if (source === "vorlage" && process.env.ANTHROPIC_API_KEY) throw new Error(KI_NOT_NOW);
   const stored = (item: DraftOption): DraftOption => { const { issues: _issues, ...rest } = item as AiOption; void _issues; return rest; }; // Schwächen nur intern
   const first = stored(chosen); const list = (candidates.includes(chosen) ? candidates : [chosen, ...candidates]).map(stored); // der Haupt-Entwurf steht immer auch unter den Vorschlägen
   await db.update(emailCampaignRecipients).set({ draftSubject: first.subject, draftText: first.text, draftOptions: list, draftApproach: first.key, draftNodeId: node.id, draftState: "entwurf", draftSource: source, draftAt: new Date() }).where(eq(emailCampaignRecipients.id, recipient.id));
@@ -603,8 +608,8 @@ export async function generateDrafts(db: Db, tenantId: number, input: { campaign
 
 /* ---------------------------------------------------------------- Entwürfe vorschreiben (auch nachts) */
 const draftingNow = new Set<number>(); // Empfänger, für die gerade ein Entwurf entsteht (Versandlauf oder Vorschreiben) – nie zweimal gleichzeitig
-const prewriteFailedAt = new Map<number, number>(); // Entwurf ging schief → diesen Empfänger 30 Minuten in Ruhe lassen (keine Endlosschleife)
-const PREWRITE_RETRY_MS = 30 * 60_000;
+const prewriteFailedAt = new Map<number, number>(); // Entwurf ging schief (z. B. KI überlastet) → diesen Empfänger 10 Minuten in Ruhe lassen (keine Endlosschleife), dann neuer Versuch
+const PREWRITE_RETRY_MS = 10 * 60_000;
 export const isDrafting = (recipientId: number) => draftingNow.has(recipientId);
 /** Entwurf schreiben, aber nie zweimal gleichzeitig für denselben Empfänger – null, wenn gerade schon einer entsteht. */
 export async function withDraftLock<T>(recipientId: number, run: () => Promise<T>): Promise<T | null> {

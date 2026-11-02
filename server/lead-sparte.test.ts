@@ -62,6 +62,9 @@ describe("Leadsparte: die KI schreibt passend zur Sparte – nie Wärmepumpen an
     // eigener Absatz und Aufzählungspunkt: ganz weg, ohne Lücke
     expect(dropPayFit("Absatz eins.\n\nSie zahlen dabei nur für Leads, die wirklich zu Ihnen passen.\n\nVielen Dank")).toBe("Absatz eins.\n\nVielen Dank");
     expect(dropPayFit("• Keine Vorkasse\n• Sie zahlen nur für Leads, die zu Ihnen passen\n• Keine Bindung")).toBe("• Keine Vorkasse\n• Keine Bindung");
+    // die alte Vorlage: „Kein Risiko: Sie zahlen nur für Anfragen, die Sie erreichen.“ – fliegt genauso raus
+    expect(dropPayFit("wir liefern geprüfte Kundenanfragen aus Ihrer Region – exklusiv. Kein Risiko: Sie zahlen nur für Anfragen, die Sie erreichen.")).toBe("wir liefern geprüfte Kundenanfragen aus Ihrer Region – exklusiv.");
+    expect(mentionsPayFit("Bezahlt wird nur für erreichbare Anfragen.")).toBe(true); expect(mentionsPayFit("Die Zahl der Anfragen steigt.")).toBe(false); expect(mentionsPayFit("Sie bekommen 20 Test-Leads kostenlos – ohne Vorkasse.")).toBe(false);
     const clean = "Sehr geehrter Herr Wiebe,\n\nkurzer Text.\n\nVielen Dank"; expect(dropPayFit(clean)).toBe(clean); expect(dropPayFit(dropPayFit(wrong))).toBe(dropPayFit(wrong));
     // ganze Entwürfe: nie mit dem Satz – auch wenn die KI ihn schreibt
     for (const sparte of [pv, hausnotruf]) for (const approach of ["frei", "drittanbieter"]) {

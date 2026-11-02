@@ -17,7 +17,7 @@ import { extraFieldsOf } from "../shared/cold-list";
 import { websiteLinkOf } from "../shared/website";
 import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
 import { newCustomSourceKey, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
-import { contactedStage, entryStage, isStage, lostStage, matchStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
+import { contactedStage, entryStage, interestStage, isStage, lostStage, matchStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import { logActivity } from "./activity";
 import { normalizeMessageId } from "../shared/message-id";
@@ -384,6 +384,88 @@ export async function onInboxReply(db: Db, tenantId: number, input: { leadId: nu
   if (current === wonStage(stages) || current === lostStage(stages) || order.indexOf(settings.replyStage) <= order.indexOf(current)) return null;
   const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: settings.replyStage, note: `Antwort auf E-Mail-Serie: „${(input.subject ?? "").slice(0, 120)}“`, actorUserId: null });
   return settings.replyStage;
+}
+/**
+ * Hat nur die allgemeine Antwort-Regel („Antwort im Posteingang schiebt die Karte auf …“) die Karte auf ihre jetzige Stufe gesetzt – und seitdem
+ * hat niemand sie von Hand bewegt, angerufen, eine Notiz geschrieben oder eine Aufgabe erledigt? Dann darf eine Antwort mit Interesse sie nach „Hat Interesse“ holen.
+ */
+async function onlyReplyRuleSince(db: Db, tenantId: number, leadId: number, stage: string): Promise<boolean> {
+  const events = await db.select({ toStage: pipelineEvents.toStage, actor: pipelineEvents.actorUserId, note: pipelineEvents.note, createdAt: pipelineEvents.createdAt, id: pipelineEvents.id }).from(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), eq(pipelineEvents.leadId, leadId))).orderBy(desc(pipelineEvents.createdAt), desc(pipelineEvents.id));
+  const lastMove = events.find((event) => event.toStage === stage); if (!lastMove || lastMove.actor != null || !(lastMove.note ?? "").startsWith("Antwort auf E-Mail-Serie:")) return false; // nur, was die Antwort-Regel selbst dorthin geschoben hat
+  if (events.some((event) => event.createdAt > lastMove.createdAt && event.actor != null)) return false; // danach von Hand etwas geändert
+  const since = lastMove.createdAt;
+  if ((await db.select({ id: leadCallAttempts.id }).from(leadCallAttempts).where(and(eq(leadCallAttempts.leadId, leadId), gte(leadCallAttempts.at, since))).limit(1)).length) return false; // danach angerufen
+  if ((await db.select({ author: pipelineNotes.authorUserId }).from(pipelineNotes).where(and(eq(pipelineNotes.leadId, leadId), gte(pipelineNotes.createdAt, since)))).some((row) => row.author != null)) return false; // danach eine Notiz von Hand
+  if ((await db.select({ id: pipelineTasks.id }).from(pipelineTasks).where(and(eq(pipelineTasks.leadId, leadId), gte(pipelineTasks.doneAt, since))).limit(1)).length) return false; // danach eine Aufgabe erledigt
+  return true;
+}
+/** Vermerk im Verlauf, wenn eine Antwort mit Interesse die Karte verschiebt (auch für die Einmal-Korrektur). */
+export const INTEREST_MOVE_NOTE = "Antwort zeigt Interesse (KI)";
+/**
+ * Antwort mit Interesse (KI „Interessiert“): die Karte kommt in die Spalte für Interessenten („Hat Interesse“ – die Stufe mit
+ * „Interesse“ im Namen) statt nach „In Kontakt“ wie jede andere Antwort.
+ *  - Antwort auf eine E-Mail-Kampagne, Kontakt noch in keiner Pipeline oder in „E-Mail-Kampagne“ → dort nach „Hat Interesse“.
+ *    Neu in der Pipeline: gehört zur Kampagne, bekommt ihre Lead-Kategorie und einen Vertriebler (Verteilregeln) – wie beim Versand.
+ *  - Karte in einer anderen Pipeline (Kaltakquise, Meta Ads, eigene): bleibt dort, rückt aber in deren „Interesse“-Spalte, falls es eine gibt.
+ *  - Nur vorwärts: steht die Karte schon weiter (z. B. Anrufversuche, Angebot, Termin) oder auf Kunde/Verloren, bleibt sie.
+ * Rückgabe: die Zielstufe bzw. "bleibt" (Antwort erledigt) – oder null, wenn es keine „Interesse“-Spalte gibt (dann gilt die normale Antwort-Regel).
+ */
+export async function onInterestedReply(db: Db, tenantId: number, input: { leadId: number; campaignId?: number | null; subject?: string | null }): Promise<string | null> {
+  const lead = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.id, input.leadId))).limit(1))[0];
+  if (!lead || lead.kind !== "vertrieb") return null;
+  const sets = await stageSetsOf(db, tenantId);
+  const onBoard = lead.inPipeline !== false && Boolean(lead.adCampaignId || lead.adPlatform || lead.pipelineStage);
+  const inOther = onBoard && pipelineSourceOf(lead.adPlatform) !== "email";
+  const stages = inOther ? stagesForLead(sets, lead) : stagesOfSets(sets, "email");
+  const target = interestStage(stages);
+  if (!target) { if (!onBoard) await db.update(leads).set({ inPipeline: true, adPlatform: lead.adPlatform || "email", pipelineStage: lead.pipelineStage || "neu", pipelineUpdatedAt: new Date() }).where(eq(leads.id, lead.id)); return null; } // keine Spalte „Interesse“: wie bisher in die Pipeline, Stufe macht die Antwort-Regel
+  const note = `${INTEREST_MOVE_NOTE}: „${(input.subject ?? "").slice(0, 120)}“`;
+  if (onBoard) {
+    const current = isStage(lead.pipelineStage, stages) ? lead.pipelineStage! : entryStage(stages); const order = stages.map((stage) => stage.key);
+    if (current === wonStage(stages) || current === lostStage(stages) || order.indexOf(target) === order.indexOf(current)) return "bleibt"; // schon dort, Kunde oder Verloren
+    if (order.indexOf(target) < order.indexOf(current) && !(await onlyReplyRuleSince(db, tenantId, lead.id, current))) return "bleibt"; // schon weiter – außer die allgemeine Antwort-Regel hat sie dorthin geschoben und seitdem hat niemand etwas gemacht
+    const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: target, note, actorUserId: null });
+    return target;
+  }
+  // Neu in der Pipeline „E-Mail-Kampagne“ – über die Kampagne, auf die geantwortet wurde
+  const campaign = input.campaignId ? (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.id, input.campaignId))).limit(1))[0] ?? null : null;
+  let categoryId: number | null = null; if (campaign) { try { const { campaignCategoryFor } = await import("./inbox"); categoryId = await campaignCategoryFor(db, tenantId, campaign, { create: true }); } catch { categoryId = null; } }
+  await db.update(leads).set({ inPipeline: true, adPlatform: "email", ...(campaign ? { adCampaignId: `email-${campaign.id}`, adCampaignName: campaign.name.slice(0, 160) } : lead.adCampaignId ? {} : { adCampaignId: "email-posteingang", adCampaignName: "Posteingang" }), ...(categoryId && categoryId !== lead.categoryId ? { categoryId } : {}) }).where(eq(leads.id, lead.id));
+  const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: target, note: `${note} – aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen`, actorUserId: null });
+  await autoAssign(db, tenantId, lead.id); // Verteilung wie beim Übernehmen von Hand
+  return target;
+}
+/**
+ * Einmal-Korrektur (mehrfach ausführbar): Karten in der Pipeline „E-Mail-Kampagne“, die nach einer Antwort mit Interesse nur durch die
+ * allgemeine Antwort-Regel in „In Kontakt“/„Kontaktiert“ gelandet sind, kommen nach „Hat Interesse“ – aber nur, wenn seitdem niemand
+ * die Karte bewegt, angerufen, notiert oder eine Aufgabe erledigt hat. Ohne Serien-Automatik; mit Rückgängig-Eintrag je Mandant.
+ */
+export async function moveInterestedRepliesToInterestStage(db: Db): Promise<number> {
+  const interested = await db.select({ tenantId: inboxMessages.tenantId, leadId: inboxMessages.leadId, recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.aiKind, "interessiert"), eq(inboxMessages.aiAction, "markiert"), eq(inboxMessages.blocked, false)));
+  if (!interested.length) return 0;
+  const recipientIds = Array.from(new Set(interested.map((row) => row.recipientId).filter((id): id is number => typeof id === "number")));
+  const leadOfRecipient = new Map<number, number | null>(); if (recipientIds.length) for (const row of await db.select({ id: emailCampaignRecipients.id, leadId: emailCampaignRecipients.leadId }).from(emailCampaignRecipients).where(inArray(emailCampaignRecipients.id, recipientIds))) leadOfRecipient.set(row.id, row.leadId);
+  const byTenant = new Map<number, Set<number>>();
+  for (const row of interested) { const leadId = row.leadId ?? (row.recipientId != null ? leadOfRecipient.get(row.recipientId) ?? null : null); if (!leadId) continue; const set = byTenant.get(row.tenantId) ?? new Set<number>(); set.add(leadId); byTenant.set(row.tenantId, set); }
+  let moved = 0;
+  for (const [tenantId, ids] of Array.from(byTenant.entries())) {
+    const stages = stagesOfSets(await stageSetsOf(db, tenantId), "email"); const target = interestStage(stages); if (!target) continue;
+    const order = stages.map((stage) => stage.key); const targetIndex = order.indexOf(target);
+    const cards = await db.select({ id: leads.id, stage: leads.pipelineStage, inPipeline: leads.inPipeline, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.id, Array.from(ids))));
+    const candidates = cards.filter((card) => card.inPipeline !== false && card.adPlatform === "email" && card.stage && order.indexOf(card.stage) > targetIndex && card.stage !== wonStage(stages) && card.stage !== lostStage(stages));
+    const chosen: Array<{ id: number; stage: string }> = [];
+    for (const card of candidates) if (await onlyReplyRuleSince(db, tenantId, card.id, card.stage!)) chosen.push({ id: card.id, stage: card.stage! });
+    if (!chosen.length) continue;
+    const { captureLeads, recordUndo } = await import("./undo"); const startedAt = new Date(); const before = await captureLeads(db, tenantId, { leadIds: chosen.map((item) => item.id) });
+    for (const item of chosen) {
+      await db.update(leads).set({ pipelineStage: target, pipelineUpdatedAt: new Date() }).where(eq(leads.id, item.id));
+      await db.insert(pipelineEvents).values({ tenantId, leadId: item.id, fromStage: item.stage, toStage: target, actorUserId: null, note: `${INTEREST_MOVE_NOTE} – automatisch nach „${stageLabel(target, stages)}“ (vorher „${stageLabel(item.stage, stages)}“ durch die allgemeine Antwort-Regel)` });
+    }
+    await recordUndo(db, tenantId, { kind: "pipeline", title: `${chosen.length} ${chosen.length === 1 ? "Interessent" : "Interessenten"} aus „${stageLabel(chosen[0].stage, stages)}“ nach „${stageLabel(target, stages)}“ geholt`, count: chosen.length, actorUserId: null, payload: { startedAt: startedAt.toISOString(), items: before.map((row) => ({ leadId: row.id, adPlatform: row.adPlatform, pipelineStage: row.pipelineStage, inPipeline: row.inPipeline, ownerUserId: row.ownerUserId })) } });
+    await logActivity(db, tenantId, { kind: "pipeline_stufe", title: `${chosen.length} ${chosen.length === 1 ? "Kontakt" : "Kontakte"} mit interessierter Antwort nach „${stageLabel(target, stages)}“ (Pipeline „E-Mail-Kampagne“)`, count: chosen.length, actorUserId: null }).catch(() => null);
+    moved += chosen.length;
+  }
+  return moved;
 }
 /** Letzte Aktivität je Karte (Stufenwechsel, Notiz, erledigte Aufgabe, Nachricht). */
 export async function lastActivityMap(db: Db, tenantId: number, leadIds: number[]) {
