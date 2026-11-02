@@ -496,6 +496,68 @@ describe("Vertriebspipeline „E-Mail-Kampagne“: nach E-Mail-Kampagne filtern 
   });
 });
 
+describe("Vertriebspipeline: Zeitraum „Heute“ zählt Bewegung – Lead-Kategorie und E-Mail-Kampagne bleiben wählbar (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  const today = () => { const now = new Date(); return { from: new Date(now.getFullYear(), now.getMonth(), now.getDate()), until: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999) }; };
+  /** Alles „alt“ machen: Karten vor 40 Tagen angelegt und zuletzt bewegt, Mails/Antworten/Anrufe/Notizen ebenfalls – heute ist noch nichts passiert. (Erst einmal laden: die einmalige Spalten-Umstellung „Neu“ → „Versendet“ läuft beim ersten Aufruf.) */
+  async function quietBoard() {
+    await call("leadops.pipelineOverview", { source: "email" }); await call("leadops.pipelineOverview", { source: "ads" });
+    const store = getStore(); const old = new Date(Date.now() - 40 * 86_400_000);
+    for (const lead of store.tables.leads) Object.assign(lead, { createdAt: old, pipelineUpdatedAt: old });
+    for (const name of ["pipelineEvents", "pipelineNotes", "outboundMessages", "emailCampaignEvents"] as const) for (const row of store.tables[name]) row.createdAt = old;
+    for (const row of store.tables.leadCallAttempts) row.at = old; for (const row of store.tables.inboxMessages) row.receivedAt = old; for (const row of store.tables.pipelineTasks) if (row.doneAt) row.doneAt = old;
+  }
+  async function mailToday(leadId: number) {
+    const { insert } = await import("../store"); const store = getStore(); const lead = store.tables.leads.find((row) => row.id === leadId)!;
+    const campaignId = Number(String(lead.adCampaignId ?? "").replace("email-", "")) || store.tables.emailCampaigns[0].id;
+    const recipient = store.tables.emailCampaignRecipients.find((row) => row.leadId === leadId) ?? insert(store, "emailCampaignRecipients", { tenantId: lead.tenantId, campaignId, leadId, email: lead.email ?? `karte-${leadId}@heute-demo.example`, status: "aktiv", sentCount: 0, createdAt: new Date() } as never);
+    insert(store, "emailCampaignEvents", { tenantId: lead.tenantId, campaignId: recipient.campaignId, recipientId: recipient.id, nodeId: "m1", kind: "gesendet", subject: "Heute gesendet", note: "E-Mail gesendet", createdAt: new Date() } as never);
+  }
+  it("Daten: „Heute“ zeigt Karten mit heutiger Kampagnen-Mail, Antwort oder Anruf – auch wenn sie früher angelegt wurden; Kategorien und Kampagnen bleiben (mit 0) in der Auswahl", async () => {
+    await quietBoard();
+    const cards = (await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads); expect(cards.length).toBeGreaterThan(3);
+    const empty = await call("leadops.pipelineOverview", { source: "email", ...today() }); expect(empty.totals.leads).toBe(0);
+    expect(empty.categories.length).toBeGreaterThan(0); expect(empty.categories.every((item: any) => item.count === 0)).toBe(true);
+    expect(empty.campaignOptions.length).toBeGreaterThan(0); expect(empty.campaignOptions.every((item: any) => item.count === 0)).toBe(true);
+    const [mailed, replied, called] = cards; const { insert } = await import("../store"); const store = getStore();
+    await mailToday(mailed.id);
+    insert(store, "inboxMessages", { tenantId: 1, messageId: "<heute-antwort@demo>", fromEmail: replied.email ?? "antwort@heute-demo.example", fromName: "Antwort", subject: "Re: Test-Leads", bodyText: "Gern mehr Infos.", receivedAt: new Date(), isRead: false, campaignRecipientId: null, leadId: replied.id, archived: false, blocked: false, optOut: false } as never);
+    insert(store, "leadCallAttempts", { tenantId: 1, leadId: called.id, userId: null, dialerCallId: null, result: "nicht_erreicht", note: null, at: new Date() } as never);
+    const board = await call("leadops.pipelineOverview", { source: "email", ...today() }); const ids = board.stages.flatMap((stage: any) => stage.leads).map((lead: any) => lead.id).sort();
+    expect(ids).toEqual([mailed.id, replied.id, called.id].sort()); expect(board.totals.leads).toBe(3);
+    expect(board.campaignOptions.reduce((sum: number, item: any) => sum + item.count, 0)).toBe(3); expect(board.campaignOptions.length).toBe(empty.campaignOptions.length); // alle Kampagnen weiter wählbar
+    expect(board.categories.length).toBe(empty.categories.length); expect(board.categories.reduce((sum: number, item: any) => sum + item.count, 0)).toBe(board.stages.flatMap((stage: any) => stage.leads).filter((lead: any) => lead.categoryId != null).length);
+    expect((await call("leadops.pipelineOverview", { source: "email", from: new Date(Date.now() - 45 * 86_400_000), until: new Date(Date.now() - 35 * 86_400_000) })).totals.leads).toBe(cards.length); // vor 40 Tagen: alle angelegt
+  });
+  it("Daten: Meta Ads zählt weiter nach Eingang des Leads (Kosten je Lead) – nur verschoben heute zählt dort nicht", async () => {
+    await quietBoard(); const store = getStore();
+    const ads = (await call("leadops.pipelineOverview", { source: "ads" })).stages.flatMap((stage: any) => stage.leads); expect(ads.length).toBeGreaterThan(1);
+    Object.assign(store.tables.leads.find((row) => row.id === ads[0].id)!, { pipelineUpdatedAt: new Date() });
+    expect((await call("leadops.pipelineOverview", { source: "ads", ...today() })).totals.leads).toBe(0);
+    Object.assign(store.tables.leads.find((row) => row.id === ads[1].id)!, { createdAt: new Date() });
+    const board = await call("leadops.pipelineOverview", { source: "ads", ...today() }); expect(board.stages.flatMap((stage: any) => stage.leads).map((lead: any) => lead.id)).toEqual([ads[1].id]);
+  });
+  it("Oberfläche: „Heute“ zeigt die Karte mit heutiger Mail; die Auswahl „Lead-Kategorie“ und „E-Mail-Kampagne“ bleibt da – auch wenn heute nichts los ist", async () => {
+    await quietBoard();
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const view = mount(); await settle(400); await settle(400);
+    const heute = () => Array.from(view.container.querySelectorAll<HTMLButtonElement>(".dashboard-segments button")).find((button) => button.textContent === "Heute")!;
+    expect(heute().title).toContain("etwas passiert");
+    await act(async () => { fireEvent.click(heute()); }); await settle(400); await settle(300);
+    expect(view.container.querySelectorAll(".pipeline-card").length).toBe(0);
+    const category = () => view.container.querySelector<HTMLSelectElement>("select[aria-label='Nach Lead-Kategorie filtern']");
+    const campaign = () => view.container.querySelector<HTMLSelectElement>("select.pipeline-mail-campaign-filter");
+    expect(category()).toBeTruthy(); expect(Array.from(category()!.options).slice(1).every((option) => / \(0\)$/.test(option.textContent ?? ""))).toBe(true); expect(category()!.options.length).toBeGreaterThan(1);
+    expect(campaign()).toBeTruthy(); expect(campaign()!.options.length).toBeGreaterThan(1);
+    const first = (await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads)[0]; await mailToday(first.id);
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".dashboard-segments button")).find((button) => button.textContent === "7 Tage")!); }); await settle(300);
+    await act(async () => { fireEvent.click(heute()); }); await settle(400); await settle(300);
+    expect(view.container.querySelectorAll(".pipeline-card").length).toBe(1); expect(category()).toBeTruthy(); expect(campaign()).toBeTruthy();
+    expect(Array.from(campaign()!.options).some((option) => / \(1\)$/.test(option.textContent ?? ""))).toBe(true);
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });

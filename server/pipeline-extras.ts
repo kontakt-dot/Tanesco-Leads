@@ -394,6 +394,31 @@ export async function lastActivityMap(db: Db, tenantId: number, leadIds: number[
   for (const row of await db.select({ leadId: leadCallAttempts.leadId, at: leadCallAttempts.at }).from(leadCallAttempts).where(and(eq(leadCallAttempts.tenantId, tenantId), inArray(leadCallAttempts.leadId, leadIds)))) bump(row.leadId, row.at);
   return map;
 }
+/**
+ * Zeitraum der Vertriebspipeline (Heute, 7 Tage …): Welche Karten hatten darin Bewegung? Neu angelegt oder in die Pipeline
+ * gekommen bzw. verschoben, eine Kampagnen-E-Mail bekommen, geöffnet oder geklickt, eine Antwort geschickt, angerufen,
+ * eine Notiz, Nachricht oder erledigte Aufgabe bekommen. Ohne Zeitraum: null (alle Karten zählen).
+ */
+export async function activeInPeriod(db: Db, tenantId: number, cards: Array<{ id: number; createdAt: Date; pipelineUpdatedAt: Date | null }>, from: Date | null, until: Date | null): Promise<Set<number> | null> {
+  if (!from && !until) return null;
+  const inRange = (value: Date | null | undefined) => Boolean(value) && (!from || value! >= from) && (!until || value! <= until);
+  const wanted = new Set(cards.map((card) => card.id)); const active = new Set<number>();
+  if (!wanted.size) return active;
+  const add = (id: number | null | undefined) => { if (id != null && wanted.has(id)) active.add(id); };
+  for (const card of cards) if (inRange(card.createdAt) || inRange(card.pipelineUpdatedAt)) active.add(card.id);
+  const span = (column: MySqlColumn) => [...(from ? [gte(column, from)] : []), ...(until ? [lte(column, until)] : [])];
+  for (const row of await db.selectDistinct({ leadId: pipelineEvents.leadId }).from(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), ...span(pipelineEvents.createdAt)))) add(row.leadId);
+  for (const row of await db.selectDistinct({ leadId: pipelineNotes.leadId }).from(pipelineNotes).where(and(eq(pipelineNotes.tenantId, tenantId), ...span(pipelineNotes.createdAt)))) add(row.leadId);
+  for (const row of await db.selectDistinct({ leadId: pipelineTasks.leadId }).from(pipelineTasks).where(and(eq(pipelineTasks.tenantId, tenantId), ...span(pipelineTasks.doneAt)))) add(row.leadId);
+  for (const row of await db.selectDistinct({ leadId: outboundMessages.leadId }).from(outboundMessages).where(and(eq(outboundMessages.tenantId, tenantId), ...span(outboundMessages.createdAt)))) add(row.leadId);
+  for (const row of await db.selectDistinct({ leadId: leadCallAttempts.leadId }).from(leadCallAttempts).where(and(eq(leadCallAttempts.tenantId, tenantId), ...span(leadCallAttempts.at)))) add(row.leadId);
+  for (const row of await db.selectDistinct({ leadId: emailCampaignRecipients.leadId }).from(emailCampaignEvents).innerJoin(emailCampaignRecipients, eq(emailCampaignRecipients.id, emailCampaignEvents.recipientId)).where(and(eq(emailCampaignEvents.tenantId, tenantId), inArray(emailCampaignEvents.kind, ["gesendet", "geoeffnet", "geklickt"]), ...span(emailCampaignEvents.createdAt)))) add(row.leadId);
+  const replies = await db.select({ leadId: inboxMessages.leadId, recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), ...span(inboxMessages.receivedAt)));
+  const recipientIds = Array.from(new Set(replies.flatMap((row) => (row.leadId == null && row.recipientId != null ? [row.recipientId] : []))));
+  const leadOfRecipient = new Map<number, number | null>(); if (recipientIds.length) for (const row of await db.select({ id: emailCampaignRecipients.id, leadId: emailCampaignRecipients.leadId }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.id, recipientIds)))) leadOfRecipient.set(row.id, row.leadId);
+  for (const row of replies) add(row.leadId ?? (row.recipientId != null ? leadOfRecipient.get(row.recipientId) : null));
+  return active;
+}
 /* ---------------------------------------------------------------- Anrufzähler (Anrufversuche je Karte) */
 export type CallCounter = { count: number; reached: number; lastAt: Date | null; lastResult: string | null; lastBy: string | null };
 const EMPTY_CALLS: CallCounter = { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null };
