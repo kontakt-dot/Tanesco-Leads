@@ -9,7 +9,7 @@ import { extraFieldsOf } from "../shared/cold-list";
 import { websiteLinkOf } from "../shared/website";
 import { and, desc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import crypto from "node:crypto";
-import { adInsights, emailCampaignRecipients, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
+import { adInsights, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCategories, leadStatusEvents, leadTagAssignments, leads, memberships, metaConnections, pipelineEvents, pipelineNotes, tags, teams, users, type MetaConnection, pipelineStageConfigs } from "../drizzle/schema";
 import { buildStageSets, stagesOf, entryStage, funnel, isStage, mapMetaFieldData, matchStage, normalizeStages, pipelineSourceOf, stageLabel, stageNameKey, stagesForLead, summarizeCampaigns, unionStages, wonStage, type PipelineSource, type PipelineStage, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import type { Db } from "./lead-pipeline";
 import { triggerLeadAutomations } from "./lead-pipeline";
@@ -154,6 +154,24 @@ export async function syncInsights(db: Db, tenantId: number, options: { days?: n
 }
 
 /* ---------- Pipeline ---------- */
+/**
+ * Pipeline „E-Mail-Kampagne“: die E-Mail-Kampagnen je Karte – alle Kampagnen, in denen der Kontakt Empfänger ist, dazu die verknüpfte
+ * („email-…“ an der Karte). Schlüssel wie an der Karte: „email-<Kampagne>“. Namen auch für archivierte Kampagnen.
+ */
+async function emailCampaignMemberships(db: Db, tenantId: number, cards: Array<{ id: number; adCampaignId: string | null; adCampaignName: string | null }>) {
+  const byLead = new Map<number, Set<string>>(); const names = new Map<string, string>();
+  for (const card of cards) if (card.adCampaignId?.startsWith("email-") && /^email-\d+$/.test(card.adCampaignId)) { byLead.set(card.id, new Set([card.adCampaignId])); if (card.adCampaignName) names.set(card.adCampaignId, card.adCampaignName); }
+  const ids = cards.map((card) => card.id);
+  for (let at = 0; at < ids.length; at += 2000) {
+    const chunk = ids.slice(at, at + 2000);
+    for (const row of await db.select({ leadId: emailCampaignRecipients.leadId, campaignId: emailCampaignRecipients.campaignId }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, chunk)))) {
+      if (!row.leadId) continue; const set = byLead.get(row.leadId) ?? new Set<string>(); set.add(`email-${row.campaignId}`); byLead.set(row.leadId, set);
+    }
+  }
+  const campaignIds = Array.from(new Set(Array.from(byLead.values()).flatMap((set) => Array.from(set)).map((key) => Number(key.slice(6))).filter((id) => Number.isInteger(id) && id > 0)));
+  if (campaignIds.length) for (const row of await db.select({ id: emailCampaigns.id, name: emailCampaigns.name }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, campaignIds)))) names.set(`email-${row.id}`, row.name);
+  return { byLead, names };
+}
 export type PipelineOverviewOptions = { from?: Date; until?: Date; campaignId?: string | null; smartList?: string | null; source?: PipelineSource | "alle"; ownerUserId?: number | "ohne" | null; tagId?: number | null; listName?: string | null; categoryId?: number | null; limitPerStage?: number };
 export async function pipelineOverview(db: Db, tenantId: number, options: PipelineOverviewOptions = {}) {
   // Pipeline „E-Mail-Kampagne“: Spalte „Versendet“ einmal anlegen, falls es sie noch nicht gibt (neue Kontakte kommen beim Versand automatisch dorthin)
@@ -184,7 +202,10 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   // Gewählte Kampagne (z. B. eine E-Mail-Kampagne) und smarte Liste lassen sich kombinieren: „Interesse“ nur aus Kampagne X. Früher kam die smarte Liste über campaignId – das geht weiter.
   const smart = options.smartList ?? (options.campaignId?.startsWith("__") ? options.campaignId : null);
   const concrete = options.campaignId && !options.campaignId.startsWith("__") ? options.campaignId : null;
-  const inCampaign = concrete ? pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === concrete) : pipelineLeads;
+  // Pipeline „E-Mail-Kampagne“: zu welchen E-Mail-Kampagnen gehört eine Karte? Die Kampagnen, die den Kontakt angeschrieben haben bzw. in denen er steht
+  // (nicht die Liste, aus der er kam) – „Kampagne X“ zeigt genau deren Kontakte, auch wenn einer in mehreren Kampagnen steckt.
+  const mailCampaignsOf = source === "email" ? await emailCampaignMemberships(db, tenantId, boardAll) : null;
+  const inCampaign = !concrete ? pipelineLeads : mailCampaignsOf ? pipelineLeads.filter((lead) => { const own = mailCampaignsOf.byLead.get(lead.id); return concrete === "ohne-kampagne" ? !own?.size : Boolean(own?.has(concrete)); }) : pipelineLeads.filter((lead) => (lead.adCampaignId ?? "ohne-kampagne") === concrete);
   const smartLists = { interesse: inCampaign.filter((lead) => interestIds.has(lead.id)).length, geoeffnet: inCampaign.filter((lead) => openedIds.has(lead.id)).length, geklickt: inCampaign.filter((lead) => clickedIds.has(lead.id)).length };
   const byCampaign = smart === "__interesse" ? inCampaign.filter((lead) => interestIds.has(lead.id)) : smart === "__geoeffnet" ? inCampaign.filter((lead) => openedIds.has(lead.id)) : smart === "__geklickt" ? inCampaign.filter((lead) => clickedIds.has(lead.id)) : inCampaign;
   const byOwner = options.ownerUserId === "ohne" ? byCampaign.filter((lead) => !lead.ownerUserId) : options.ownerUserId ? byCampaign.filter((lead) => lead.ownerUserId === options.ownerUserId) : byCampaign;
@@ -214,8 +235,13 @@ export async function pipelineOverview(db: Db, tenantId: number, options: Pipeli
   const campaigns = summarizeCampaigns(pipelineLeads, source === "ads" || source === "alle" ? insights : [], stagesDef);
   // Auswahl „E-Mail-Kampagne“ (bzw. Kampagne/Liste): alle Kampagnen mit Karten in dieser Pipeline – Anzahl im Zeitraum, auch 0
   const optionCounts = new Map<string, { campaignId: string; campaignName: string; count: number }>();
-  for (const lead of boardAll) { const id = lead.adCampaignId ?? "ohne-kampagne"; if (!optionCounts.has(id)) optionCounts.set(id, { campaignId: id, campaignName: lead.adCampaignName ?? (id === "ohne-kampagne" ? "Ohne Kampagne" : id), count: 0 }); }
-  for (const lead of pipelineLeads) { const entry = optionCounts.get(lead.adCampaignId ?? "ohne-kampagne"); if (entry) entry.count += 1; }
+  if (mailCampaignsOf) { // E-Mail-Kampagnen statt Listen: jede Kampagne mit ihren Kontakten (ein Kontakt kann in mehreren stehen), „Ohne Kampagne“ für den Rest
+    for (const lead of boardAll) { const own = mailCampaignsOf.byLead.get(lead.id); if (!own?.size) { if (!optionCounts.has("ohne-kampagne")) optionCounts.set("ohne-kampagne", { campaignId: "ohne-kampagne", campaignName: "Ohne Kampagne", count: 0 }); continue; } for (const key of Array.from(own)) if (!optionCounts.has(key)) optionCounts.set(key, { campaignId: key, campaignName: mailCampaignsOf.names.get(key) ?? lead.adCampaignName ?? key, count: 0 }); }
+    for (const lead of pipelineLeads) { const own = mailCampaignsOf.byLead.get(lead.id); if (!own?.size) { const entry = optionCounts.get("ohne-kampagne"); if (entry) entry.count += 1; continue; } for (const key of Array.from(own)) { const entry = optionCounts.get(key); if (entry) entry.count += 1; } }
+  } else {
+    for (const lead of boardAll) { const id = lead.adCampaignId ?? "ohne-kampagne"; if (!optionCounts.has(id)) optionCounts.set(id, { campaignId: id, campaignName: lead.adCampaignName ?? (id === "ohne-kampagne" ? "Ohne Kampagne" : id), count: 0 }); }
+    for (const lead of pipelineLeads) { const entry = optionCounts.get(lead.adCampaignId ?? "ohne-kampagne"); if (entry) entry.count += 1; }
+  }
   const campaignOptions = Array.from(optionCounts.values()).sort((a, b) => b.count - a.count || a.campaignName.localeCompare(b.campaignName, "de"));
   const notes = await noteCounts(db, tenantId, scoped.map((lead) => lead.id));
   const { extras, settings } = await cardExtras(db, tenantId, scoped.map((lead) => ({ ...lead, noteCount: notes.get(lead.id)?.count ?? 0 })), stagesDef);

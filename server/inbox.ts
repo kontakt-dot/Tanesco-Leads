@@ -21,7 +21,7 @@ import { checkAttachments, type MailAttachmentInput } from "../shared/email-sign
 import { logActivity } from "./activity";
 import { messageIdsIn, normalizeMessageId } from "../shared/message-id";
 import { audienceLists, kiModusOf, promisedTestLeads, sentSourceOf, testLeadsOfSent, testOfferFor, withTestOffer, type SentSource } from "../shared/email-campaigns";
-import { categoriesForSparte, combinedEnergyCategory, DEFAULT_SPARTE, dropPayFit, fixQuestionCount, isEnergySparte, isSingleEnergyCategory, qualifyBy, questionCount, sparteOf, vertriebCategory, withQuestionTopics } from "../shared/lead-sparte";
+import { categoriesForSparte, combinedEnergyCategory, DEFAULT_SPARTE, dropPayFit, fixQuestionCount, isEnergySparte, isSingleEnergyCategory, qualifyBy, questionCount, SINGLE_ENERGY_CATEGORY, singleEnergyCategory, singleEnergyKey, sparteOf, vertriebCategory, withQuestionTopics } from "../shared/lead-sparte";
 import { createCategoryForSparte, ensureCombinedEnergyCategory, loadCategories, toVertriebCategory, vertriebCategoryId } from "./vertrieb-category";
 
 const stripHtml = (html: string) => html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
@@ -231,7 +231,7 @@ export async function listInbox(db: Db, tenantId: number, options: { filter?: In
   const categoryRows = recipients.length ? await db.select({ id: leadCategories.id, name: leadCategories.name, emoji: leadCategories.emoji }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false))) : [];
   const tagByCampaign = new Map<number, CampaignTag>(); for (const recipient of recipients) if (!tagByCampaign.has(recipient.campaignId)) tagByCampaign.set(recipient.campaignId, campaignTag({ name: recipient.campaignName, leadSparte: recipient.leadSparte, leadCategoryIds: recipient.leadCategoryIds, audience: recipient.audience }, categoryRows)); // Kategorie-Schild je Kampagne (Filter-Liste)
   const categoryByCampaign = new Map<number, { id: number; name: string } | null>();
-  for (const recipient of recipients) { if (categoryByCampaign.has(recipient.campaignId)) continue; const id = await campaignCategoryFor(db, tenantId, recipient); categoryByCampaign.set(recipient.campaignId, id ? categoryRows.find((row) => row.id === id) ?? null : null); }
+  for (const recipient of recipients) { if (categoryByCampaign.has(recipient.campaignId)) continue; const id = await campaignCategoryFor(db, tenantId, recipient, { separateEnergy: true }); categoryByCampaign.set(recipient.campaignId, id ? categoryRows.find((row) => row.id === id) ?? null : null); }
   // Welche E-Mails wir diesem Kontakt davor geschickt haben – zum Nachlesen neben der Antwort (neueste zuerst, höchstens fünf)
   const sentRows = campaignIds.length ? await db.select({ id: emailCampaignEvents.id, recipientId: emailCampaignEvents.recipientId, nodeId: emailCampaignEvents.nodeId, subject: emailCampaignEvents.subject, body: emailCampaignEvents.body, bodySource: emailCampaignEvents.bodySource, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), inArray(emailCampaignEvents.recipientId, campaignIds))).orderBy(desc(emailCampaignEvents.id)) : [];
   const sentBeforeOf = (recipientId: number) => { const own = sentRows.filter((row) => row.recipientId === recipientId); const total = own.length; const recipient = recipients.find((item) => item.id === recipientId); return own.slice(0, 5).map((row, index) => ({ id: `k${row.id}`, step: total - index, subject: row.subject ?? "", at: row.createdAt, excerpt: row.body ? row.body.replace(/\s+/g, " ").trim().slice(0, 600) : null, source: row.bodySource ?? null, testLeads: testLeadsOfSent(row), fromName: recipient?.campaignFromName ?? null, fromEmail: recipient?.campaignFromEmail ?? null })); };
@@ -306,11 +306,16 @@ export async function archive(db: Db, tenantId: number, id: number, archived: bo
  */
 type CategoryRow = { id: number; name: string; status?: string | null };
 type CampaignLike = { leadCategoryIds?: unknown; leadSparte?: string | null; name?: string | null; audience?: unknown };
-export function campaignCategoryFrom(rows: CategoryRow[], campaign: CampaignLike): CategoryRow | null {
+/**
+ * Lead-Kategorie einer Kampagne aus den vorhandenen Kategorien. `separateEnergy` (Pipeline „E-Mail-Kampagne“): Photovoltaik und
+ * Wärmepumpe bleiben getrennt – wie die Leadsparte der Kampagne. Sonst (Kaltakquise, Meta Ads) gilt die gemeinsame „Photovoltaik & Wärmepumpe“.
+ */
+export function campaignCategoryFrom(rows: CategoryRow[], campaign: CampaignLike, options: { separateEnergy?: boolean } = {}): CategoryRow | null {
   const active = rows.filter((row) => row.status !== "inaktiv");
   const ids = Array.isArray(campaign.leadCategoryIds) ? (campaign.leadCategoryIds as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0) : [];
-  const chosen = ids.map((id) => rows.find((row) => row.id === id)).find(Boolean); if (chosen) return vertriebCategory(active, chosen);
+  const chosen = ids.map((id) => rows.find((row) => row.id === id)).find(Boolean); if (chosen) return options.separateEnergy ? chosen : vertriebCategory(active, chosen);
   const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); if (sparte.source === "standard") return combinedEnergyCategory(active);
+  const single = options.separateEnergy ? singleEnergyKey(sparte) : null; if (single) return singleEnergyCategory(active, single);
   return vertriebCategory(active, categoriesForSparte(active, sparte)[0] ?? null);
 }
 /**
@@ -318,11 +323,13 @@ export function campaignCategoryFrom(rows: CategoryRow[], campaign: CampaignLike
  * „Hausnotruf“), wird sie angelegt – Kontakte aus der Kampagne sollen in der Pipeline immer ihre Kategorie tragen. Für
  * Photovoltaik, Wärmepumpe und die Standard-Sparte ist das die gemeinsame Kategorie „Photovoltaik & Wärmepumpe“.
  */
-export async function campaignCategoryFor(db: Db, tenantId: number, campaign: CampaignLike, options: { create?: boolean } = {}): Promise<number | null> {
+export async function campaignCategoryFor(db: Db, tenantId: number, campaign: CampaignLike, options: { create?: boolean; separateEnergy?: boolean } = {}): Promise<number | null> {
   const rows = await loadCategories(db, tenantId);
-  const found = campaignCategoryFrom(rows, campaign); if (!options.create) return found?.id ?? null;
+  const found = campaignCategoryFrom(rows, campaign, { separateEnergy: options.separateEnergy }); if (!options.create) return found?.id ?? null;
   const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []);
-  if (found) return (isSingleEnergyCategory(found.name) ? (await toVertriebCategory(db, tenantId, rows, found))?.id : found.id) ?? null;
+  if (found) return (options.separateEnergy ? found.id : isSingleEnergyCategory(found.name) ? (await toVertriebCategory(db, tenantId, rows, found))?.id : found.id) ?? null;
+  const single = options.separateEnergy ? singleEnergyKey(sparte) : null; // Pipeline „E-Mail-Kampagne“: eigene Kategorie „Photovoltaik“ bzw. „Wärmepumpe“ (wird angelegt)
+  if (single) { const spec = SINGLE_ENERGY_CATEGORY[single]; return (await createCategoryForSparte(db, tenantId, spec.name, { shortcode: spec.shortcode, emoji: spec.emoji, color: spec.color, detail: "Automatisch: In der Pipeline „E-Mail-Kampagne“ stehen Photovoltaik und Wärmepumpe getrennt – wie die Leadsparte der Kampagne." })).id; }
   if (sparte.source === "standard") return (await ensureCombinedEnergyCategory(db, tenantId, rows))?.id ?? null; // Standard-Sparte: nur, wenn der Mandant mit PV/WP arbeitet
   if (isEnergySparte(sparte)) return (await ensureCombinedEnergyCategory(db, tenantId, rows, { force: true }))?.id ?? null;
   return (await createCategoryForSparte(db, tenantId, sparte.label)).id;
@@ -336,7 +343,7 @@ const CATEGORY_FIX_NOTE = "Kategorie an die Kampagne";
  * danach von Hand geänderte Kategorien bleiben.
  */
 export async function fixCampaignLeadCategories(db: Db): Promise<number> {
-  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, categoryId: leads.categoryId, adCampaignId: leads.adCampaignId }).from(leads).where(and(eq(leads.kind, "vertrieb"), or(like(leads.adCampaignId, "email-%"), eq(leads.adPlatform, "email"))));
+  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, categoryId: leads.categoryId, adCampaignId: leads.adCampaignId, adPlatform: leads.adPlatform }).from(leads).where(and(eq(leads.kind, "vertrieb"), or(like(leads.adCampaignId, "email-%"), eq(leads.adPlatform, "email"))));
   if (!rows.length) return 0;
   const done = new Set((await db.select({ leadId: pipelineEvents.leadId }).from(pipelineEvents).where(like(pipelineEvents.note, `${CATEGORY_FIX_NOTE}%`))).map((row) => row.leadId));
   let fixed = 0;
@@ -352,7 +359,10 @@ export async function fixCampaignLeadCategories(db: Db): Promise<number> {
     for (const campaign of campaigns) { const sparte = sparteOf(campaign, campaign.audience ? audienceLists(campaign.audience as never) : []); const energy = sparte.source === "standard" || isEnergySparte(sparte) || isSingleEnergyCategory(campaignCategoryFrom(categoryRows, campaign)?.name); if (energy) { await ensureCombinedEnergyCategory(db, tenantId, categoryRows, { force: sparte.source !== "standard" }); continue; } if (campaignCategoryFrom(categoryRows, campaign)) continue; const created = await createCategoryForSparte(db, tenantId, sparte.label); if (!categoryRows.some((row) => row.id === created.id)) categoryRows.push({ id: created.id, name: created.name, status: "aktiv" }); }
     for (const lead of own) {
       const campaign = campaigns.find((row) => row.id === campaignOf(lead)); if (!campaign) continue;
-      const wanted = campaignCategoryFrom(categoryRows, campaign); if (!wanted || wanted.id === lead.categoryId) continue;
+      const separate = lead.adPlatform === "email"; // Pipeline „E-Mail-Kampagne“: Photovoltaik und Wärmepumpe getrennt – wie die Leadsparte der Kampagne
+      let wanted = campaignCategoryFrom(categoryRows, campaign, { separateEnergy: separate });
+      if (!wanted && separate) { const id = await campaignCategoryFor(db, tenantId, campaign, { create: true, separateEnergy: true }); if (id && !categoryRows.some((row) => row.id === id)) for (const row of await loadCategories(db, tenantId)) if (row.id === id) categoryRows.push({ id: row.id, name: row.name, status: row.status === "inaktiv" ? "inaktiv" : "aktiv" }); wanted = categoryRows.find((row) => row.id === id) ?? null; }
+      if (!wanted || wanted.id === lead.categoryId) continue;
       const before = categoryRows.find((row) => row.id === lead.categoryId);
       await db.update(leads).set({ categoryId: wanted.id }).where(eq(leads.id, lead.id));
       await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "kategorie", actorUserId: null, note: `${CATEGORY_FIX_NOTE} „${campaign.name}“ angepasst: „${wanted.name}“${before ? ` (vorher „${before.name}“)` : ""}` });
@@ -360,6 +370,42 @@ export async function fixCampaignLeadCategories(db: Db): Promise<number> {
     }
   }
   return fixed;
+}
+export const ENERGY_SPLIT_NOTE = "Kategorie getrennt";
+/**
+ * Einmal je Karte: In der Pipeline „E-Mail-Kampagne“ stehen Photovoltaik und Wärmepumpe wieder getrennt – Karten mit der gemeinsamen
+ * Kategorie „Photovoltaik & Wärmepumpe“ (oder der falschen der beiden) bekommen die Kategorie ihrer Kampagne: Kampagne „Wärmepumpe“ →
+ * „Wärmepumpe“, „Photovoltaik“ → „Photovoltaik“ (wird bei Bedarf angelegt); Kampagnen für beides behalten die gemeinsame. Welche Kampagne:
+ * die verknüpfte, sonst die zuletzt angeschriebene. Von Hand gewählte Kategorien bleiben. Mit Vermerk im Verlauf (nur einmal je Karte).
+ */
+export async function splitEnergyCategoriesInEmailPipeline(db: Db): Promise<number> {
+  const cards = await db.select({ id: leads.id, tenantId: leads.tenantId, categoryId: leads.categoryId, adCampaignId: leads.adCampaignId }).from(leads).where(and(eq(leads.kind, "vertrieb"), eq(leads.adPlatform, "email")));
+  if (!cards.length) return 0;
+  let changed = 0;
+  for (const tenantId of Array.from(new Set(cards.map((row) => row.tenantId)))) {
+    let categoryRows = await loadCategories(db, tenantId);
+    const energyIds = new Set(categoryRows.filter((row) => isSingleEnergyCategory(row.name) || combinedEnergyCategory([row])).map((row) => row.id));
+    const own = cards.filter((row) => row.tenantId === tenantId && row.categoryId != null && energyIds.has(row.categoryId)); if (!own.length) continue;
+    const events = await db.select({ leadId: pipelineEvents.leadId, actor: pipelineEvents.actorUserId, note: pipelineEvents.note }).from(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), eq(pipelineEvents.toStage, "kategorie"), inArray(pipelineEvents.leadId, own.map((row) => row.id))));
+    const skip = new Set(events.filter((event) => event.actor != null || (event.note ?? "").startsWith(ENERGY_SPLIT_NOTE)).map((event) => event.leadId)); // von Hand gewählt oder schon getrennt
+    const todo = own.filter((row) => !skip.has(row.id)); if (!todo.length) continue;
+    const recipientRows = await db.select({ leadId: emailCampaignRecipients.leadId, campaignId: emailCampaignRecipients.campaignId, id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.leadId, todo.map((row) => row.id))));
+    const latestCampaign = new Map<number, number>(); for (const row of recipientRows.sort((a, b) => a.id - b.id)) if (row.leadId) latestCampaign.set(row.leadId, row.campaignId);
+    const campaignOf = (lead: { id: number; adCampaignId: string | null }) => { const linked = Number(String(lead.adCampaignId ?? "").startsWith("email-") ? String(lead.adCampaignId).slice(6) : ""); return Number.isInteger(linked) && linked > 0 ? linked : latestCampaign.get(lead.id) ?? null; };
+    const campaignIds = Array.from(new Set(todo.map(campaignOf).filter((id): id is number => typeof id === "number"))); if (!campaignIds.length) continue;
+    const campaigns = await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, campaignIds)));
+    const wantedOf = new Map<number, number | null>(); for (const campaign of campaigns) wantedOf.set(campaign.id, await campaignCategoryFor(db, tenantId, campaign, { create: true, separateEnergy: true }));
+    categoryRows = await loadCategories(db, tenantId); // neu angelegte („Wärmepumpe“) mit
+    for (const lead of todo) {
+      const campaign = campaigns.find((row) => row.id === campaignOf(lead)); if (!campaign) continue;
+      const wantedId = wantedOf.get(campaign.id) ?? null; const wanted = categoryRows.find((row) => row.id === wantedId); if (!wanted || wanted.id === lead.categoryId) continue;
+      const before = categoryRows.find((row) => row.id === lead.categoryId);
+      await db.update(leads).set({ categoryId: wanted.id }).where(eq(leads.id, lead.id));
+      await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: null, toStage: "kategorie", actorUserId: null, note: `${ENERGY_SPLIT_NOTE}: „${wanted.name}“${before ? ` (vorher „${before.name}“)` : ""} – wie die Leadsparte der Kampagne „${campaign.name}“` });
+      changed += 1;
+    }
+  }
+  return changed;
 }
 export async function createLeadFromMessage(db: Db, tenantId: number, input: { messageId: number; pipeline: "ads" | "kaltakquise" | "email"; stage: string; ownerUserId?: number | null; categoryId?: number | null; firstName?: string | null; lastName?: string | null; company?: string | null; phone?: string | null; actorUserId: number | null }) {
   const message = (await db.select().from(inboxMessages).where(and(eq(inboxMessages.id, input.messageId), eq(inboxMessages.tenantId, tenantId))).limit(1))[0]; if (!message) throw new Error("Nachricht nicht gefunden.");
@@ -369,7 +415,7 @@ export async function createLeadFromMessage(db: Db, tenantId: number, input: { m
   if (message.blocked) throw new Error("Dieser Absender ist gesperrt – erst die Sperre aufheben.");
   // Lead-Kategorie: gewählt → die der E-Mail-Kampagne (ihre Lead-Kategorien bzw. die zur Leadsparte passende) → sonst die erste aktive
   const campaignOf = message.campaignRecipientId ? (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte }).from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaigns.id, emailCampaignRecipients.campaignId)).where(eq(emailCampaignRecipients.id, message.campaignRecipientId)).limit(1))[0] ?? null : null;
-  const campaignCategoryId = campaignOf ? await campaignCategoryFor(db, tenantId, campaignOf, { create: true }) : null;
+  const campaignCategoryId = campaignOf ? await campaignCategoryFor(db, tenantId, campaignOf, { create: true, separateEnergy: input.pipeline === "email" }) : null; // E-Mail-Pipeline: PV und WP getrennt
   const existing = message.leadId ? (await db.select().from(leads).where(and(eq(leads.id, message.leadId), eq(leads.kind, "vertrieb"))).limit(1))[0] : (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.email, message.fromEmail))).limit(1))[0];
   if (existing) {
     const newCategory = input.categoryId ?? campaignCategoryId; // Kategorie der Kampagne übernehmen (bzw. die gewählte)
@@ -518,7 +564,7 @@ export async function listSent(db: Db, tenantId: number, options: { search?: str
   const trees = campaignIds.length ? await db.select({ id: emailCampaigns.id, tree: emailCampaigns.tree, kiModus: emailCampaigns.kiModus, reviewFirst: emailCampaigns.reviewFirst, name: emailCampaigns.name, leadSparte: emailCampaigns.leadSparte, leadCategoryIds: emailCampaigns.leadCategoryIds, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), inArray(emailCampaigns.id, campaignIds))) : [];
   // Leadsparte und Lead-Kategorie je Kampagne – damit sich die gesendeten E-Mails danach trennen lassen
   const categoryRows = campaignIds.length ? await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false))) : [];
-  const sparteOfCampaign = (campaignId: number) => { const row = trees.find((item) => item.id === campaignId); if (!row) return null; const sparte = sparteOf(row, audienceLists((row.audience ?? null) as never)); const category = campaignCategoryFrom(categoryRows, row); return { sparte: sparte.label, categoryId: category?.id ?? null, categoryName: category?.name ?? null }; };
+  const sparteOfCampaign = (campaignId: number) => { const row = trees.find((item) => item.id === campaignId); if (!row) return null; const sparte = sparteOf(row, audienceLists((row.audience ?? null) as never)); const category = campaignCategoryFrom(categoryRows, row, { separateEnergy: true }); return { sparte: sparte.label, categoryId: category?.id ?? null, categoryName: category?.name ?? null }; };
   const templateSubjects = (campaignId: number, nodeId: string | null) => { const tree = trees.find((row) => row.id === campaignId)?.tree as { nodes?: Array<{ id: string; type: string; subject?: string; subjectB?: string | null }> } | null; const node = tree?.nodes?.find((item) => item.id === nodeId && item.type === "send"); return node ? [node.subject, node.subjectB] : []; };
   const kiOnFor = (campaignId: number) => { const row = trees.find((item) => item.id === campaignId); return row ? kiModusOf(row) !== "aus" : undefined; };
   const items = [

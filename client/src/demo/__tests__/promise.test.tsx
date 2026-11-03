@@ -442,7 +442,9 @@ describe("Vertriebspipeline: Lead-Kategorien (Chat-Build)", () => {
   it("liefert alle Kategorien im Ausschnitt mit Anzahl und filtert auf dem Server – unabhängig von der Kartenzahl je Spalte", async () => {
     const board = await call("leadops.pipelineOverview", { source: "alle" });
     expect(board.categories.length).toBeGreaterThanOrEqual(2); const pv = board.categories.find((item: any) => item.name === "Photovoltaik & Wärmepumpe"); expect(pv).toBeTruthy(); expect(pv.count).toBeGreaterThan(0); // PV und WP zusammen
-    expect(board.categories.some((item: any) => item.name === "Photovoltaik" || item.name === "Wärmepumpe")).toBe(false); // in der Vertriebspipeline gibt es die beiden einzeln nicht mehr
+    const single = (item: any) => item.name === "Photovoltaik" || item.name === "Wärmepumpe";
+    for (const source of ["kaltakquise", "ads"]) expect((await call("leadops.pipelineOverview", { source })).categories.filter((item: any) => item.count > 0).some(single)).toBe(false); // Kaltakquise und Meta Ads: PV und WP zusammen
+    expect((await call("leadops.pipelineOverview", { source: "email" })).categories.some((item: any) => item.name === "Photovoltaik" && item.count > 0)).toBe(true); // E-Mail-Kampagne: getrennt wie die Kampagne („PV-Betriebe Bayern“)
     const other = board.categories.find((item: any) => item.name !== "Photovoltaik & Wärmepumpe"); expect(other.count).toBeGreaterThan(0);
     const only = await call("leadops.pipelineOverview", { source: "alle", categoryId: other.id, limitPerStage: 1 });
     expect(only.totals.leads).toBe(other.count); expect(only.stages.flatMap((stage: any) => stage.leads).every((lead: any) => lead.categoryId === other.id)).toBe(true);
@@ -655,6 +657,40 @@ describe("Liste aktualisieren: neue Fassung hochladen (Chat-Build)", () => {
   });
 });
 
+describe("Pipeline „E-Mail-Kampagne“: PV und WP getrennt, Filter nach Kampagnen (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  async function wpCampaign() {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Trenn-Demo", toPipeline: false, rows: [{ firstName: "Wanda", lastName: "Wärme", company: "Wärme Wanda GmbH", email: "wanda@trenn-demo.example" }] });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Heizungsbauer Nord", leadSparte: "Wärmepumpe", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Trenn-Demo" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    return saved;
+  }
+  it("Daten: Karte aus einer Wärmepumpen-Kampagne trägt „Wärmepumpe“ (nicht die gemeinsame); „PV-Betriebe Bayern“ bleibt „Photovoltaik“; Filter zeigt Kampagnen, auch für Kontakte in mehreren", async () => {
+    const saved = await wpCampaign(); const store = getStore();
+    const wanda = store.tables.leads.find((row) => row.email === "wanda@trenn-demo.example")!; const categoryName = (id: unknown) => store.tables.leadCategories.find((row) => row.id === id)?.name;
+    expect(wanda.adPlatform).toBe("email"); expect(categoryName(wanda.categoryId)).toBe("Wärmepumpe");
+    const board = await call("leadops.pipelineOverview", { source: "email" }); const names = board.categories.map((item: any) => item.name);
+    expect(names).toEqual(expect.arrayContaining(["Photovoltaik", "Wärmepumpe"])); expect(names).not.toContain("Photovoltaik & Wärmepumpe"); // getrennt
+    const bayern = store.tables.emailCampaigns.find((row) => row.name === "PV-Betriebe Bayern")!;
+    const { insert } = await import("../store"); insert(store, "emailCampaignRecipients", { tenantId: wanda.tenantId, campaignId: bayern.id, leadId: wanda.id, email: wanda.email, name: "Wanda Wärme", status: "fertig", sentCount: 1, createdAt: new Date() } as never);
+    const options = (await call("leadops.pipelineOverview", { source: "email" })).campaignOptions; expect(options.map((item: any) => item.campaignName)).toEqual(expect.arrayContaining(["PV-Betriebe Bayern", "Heizungsbauer Nord"])); expect(options.some((item: any) => /^Liste/.test(item.campaignName))).toBe(false);
+    const inBayern = (await call("leadops.pipelineOverview", { source: "email", campaignId: `email-${bayern.id}` })).stages.flatMap((stage: any) => stage.leads).map((lead: any) => lead.id); expect(inBayern).toContain(wanda.id); // steckt in beiden Kampagnen
+    const inNord = (await call("leadops.pipelineOverview", { source: "email", campaignId: `email-${saved.id}` })).stages.flatMap((stage: any) => stage.leads).map((lead: any) => lead.id); expect(inNord).toEqual([wanda.id]);
+  });
+  it("Oberfläche: „E-Mail-Kampagne“ und „Lead-Kategorie“ stehen als Paar nebeneinander – erst die Kampagne", async () => {
+    await wpCampaign();
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const view = mount(); await settle(400); await settle(400);
+    const pair = view.container.querySelector<HTMLElement>(".pipeline-filter-pair")!; expect(pair).toBeTruthy();
+    const labels = Array.from(pair.querySelectorAll(".eyebrow")).map((node) => node.textContent); expect(labels).toEqual(["E-MAIL-KAMPAGNE", "LEAD-KATEGORIE"]);
+    expect(pair.querySelector("select.pipeline-mail-campaign-filter")).toBeTruthy(); expect(pair.querySelector("select[aria-label='Nach Lead-Kategorie filtern']")).toBeTruthy();
+    const categoryTexts = Array.from(pair.querySelector<HTMLSelectElement>("select[aria-label='Nach Lead-Kategorie filtern']")!.options).map((option) => option.textContent ?? "");
+    expect(categoryTexts.some((text) => text.includes("Wärmepumpe") && !text.includes("Photovoltaik"))).toBe(true);
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
@@ -669,7 +705,7 @@ describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
     const target = items.find((item) => item.textContent?.includes("Alarmanlagen"))!; expect(target).toBeTruthy();
     await act(async () => { fireEvent.click(target); }); await settle(400); await settle(300);
     const publicId = (await call("leadops.pipelineOverview", { source: "email" })).stages.flatMap((stage: any) => stage.leads).find((lead: any) => lead.categoryName === "Alarmanlagen")?.publicId; expect(publicId).toBeTruthy();
-    const history = await call("leadops.pipelineHistory", { publicId }); expect(history.some((event: any) => /Kategorie geändert: „Alarmanlagen“ \(vorher „Photovoltaik & Wärmepumpe“\)/.test(event.note ?? ""))).toBe(true);
+    const history = await call("leadops.pipelineHistory", { publicId }); expect(history.some((event: any) => /Kategorie geändert: „Alarmanlagen“ \(vorher „Photovoltaik“\)/.test(event.note ?? ""))).toBe(true);
     expect(Array.from(view.container.querySelectorAll(".cat-pick-trigger")).some((node) => node.textContent?.includes("Alarmanlagen"))).toBe(true); // Karte zeigt die neue Kategorie
   });
 });

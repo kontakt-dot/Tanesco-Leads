@@ -429,7 +429,7 @@ export async function onInterestedReply(db: Db, tenantId: number, input: { leadI
   }
   // Neu in der Pipeline „E-Mail-Kampagne“ – über die Kampagne, auf die geantwortet wurde
   const campaign = input.campaignId ? (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, leadCategoryIds: emailCampaigns.leadCategoryIds, leadSparte: emailCampaigns.leadSparte, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.id, input.campaignId))).limit(1))[0] ?? null : null;
-  let categoryId: number | null = null; if (campaign) { try { const { campaignCategoryFor } = await import("./inbox"); categoryId = await campaignCategoryFor(db, tenantId, campaign, { create: true }); } catch { categoryId = null; } }
+  let categoryId: number | null = null; if (campaign) { try { const { campaignCategoryFor } = await import("./inbox"); categoryId = await campaignCategoryFor(db, tenantId, campaign, { create: true, separateEnergy: true }); } catch { categoryId = null; } }
   await db.update(leads).set({ inPipeline: true, adPlatform: "email", ...(campaign ? { adCampaignId: `email-${campaign.id}`, adCampaignName: campaign.name.slice(0, 160) } : lead.adCampaignId ? {} : { adCampaignId: "email-posteingang", adCampaignName: "Posteingang" }), ...(categoryId && categoryId !== lead.categoryId ? { categoryId } : {}) }).where(eq(leads.id, lead.id));
   const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: target, note: `${note} – aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen`, actorUserId: null });
   await autoAssign(db, tenantId, lead.id); // Verteilung wie beim Übernehmen von Hand

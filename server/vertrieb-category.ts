@@ -1,12 +1,12 @@
 /**
  * Lead-Kategorie der Kontakte in der Vertriebspipeline: Photovoltaik und Wärmepumpe laufen dort als EINE Kategorie
- * „Photovoltaik & Wärmepumpe“ (☀️♨️) – wie die Leadsparte der E-Mail-Kampagnen. Das gilt in allen Pipelines (Kaltakquise,
- * E-Mail-Kampagne, Meta Ads): als Vorgabe beim Hochladen von Listen, beim Anlegen von Hand, aus dem Lead-Finder und dem
+ * „Photovoltaik & Wärmepumpe“ (☀️♨️). Das gilt in den Pipelines Kaltakquise und Meta Ads – in der Pipeline „E-Mail-Kampagne“
+ * stehen sie seit 03.11.2026 getrennt, so wie die Leadsparte der Kampagne (siehe inbox.splitEnergyCategoriesInEmailPipeline): als Vorgabe beim Hochladen von Listen, beim Anlegen von Hand, aus dem Lead-Finder und dem
  * Posteingang, bei der Kategorie einer Kampagne – und einmal beim Start für alle Karten, die noch „Photovoltaik“ oder
  * „Wärmepumpe“ tragen. Eine Kategorie, die jemand ausdrücklich wählt (Upload, Karte, Posteingang), bleibt so gewählt.
  * Verkaufs-Leads (kind „verkauf“) bleiben bei Photovoltaik bzw. Wärmepumpe – dort sind es zwei Produkte.
  */
-import { and, desc, eq, inArray, like } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, or } from "drizzle-orm";
 import { leadCategories, leads, pipelineEvents } from "../drizzle/schema";
 import { COMBINED_ENERGY_CATEGORY, combinedEnergyCategory, isSingleEnergyCategory, vertriebCategory } from "../shared/lead-sparte";
 import type { Db } from "./lead-pipeline";
@@ -76,7 +76,7 @@ export async function toVertriebCategory(db: Db, tenantId: number, rows: Categor
 export async function mergeEnergyCategories(db: Db): Promise<number> {
   const allCategories = await db.select({ id: leadCategories.id, tenantId: leadCategories.tenantId, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(eq(leadCategories.isTemplate, false));
   const singles = allCategories.filter((row) => isSingleEnergyCategory(row.name)); if (!singles.length) return 0;
-  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, categoryId: leads.categoryId }).from(leads).where(and(eq(leads.kind, "vertrieb"), inArray(leads.categoryId, singles.map((row) => row.id))));
+  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, categoryId: leads.categoryId }).from(leads).where(and(eq(leads.kind, "vertrieb"), inArray(leads.categoryId, singles.map((row) => row.id)), or(isNull(leads.adPlatform), ne(leads.adPlatform, "email")))); // Pipeline „E-Mail-Kampagne“ bleibt getrennt (wie die Leadsparte der Kampagne)
   if (!rows.length) return 0;
   const done = new Set((await db.select({ leadId: pipelineEvents.leadId }).from(pipelineEvents).where(and(inArray(pipelineEvents.leadId, rows.map((row) => row.id)), like(pipelineEvents.note, `${ENERGY_MERGE_NOTE}%`)))).map((row) => row.leadId));
   let merged = 0;

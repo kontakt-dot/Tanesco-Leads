@@ -3838,3 +3838,8 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .list-update-mapping{justify-self:start;padding:0;border:0;background:transparent;color:#b4adff;font-size:12px;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .list-update-mapping:hover{color:#fff}
 .list-update-mapping:focus-visible{outline:2px solid #9b93ff;outline-offset:2px;border-radius:4px}
+/* Filter „E-Mail-Kampagne“ und „Lead-Kategorie“ als Paar – immer nebeneinander (auf dem Handy untereinander) */
+.pipeline-filter-pair{display:flex;flex-wrap:nowrap;align-items:center;gap:10px 22px;min-width:0}
+.pipeline-filter-pair .dashboard-filter-group{flex:0 1 auto;flex-wrap:nowrap;min-width:0}
+.pipeline-filter-pair .pipeline-category-filter{min-width:150px;max-width:280px}
+@media (max-width:760px){.pipeline-filter-pair{flex-wrap:wrap;width:100%}.pipeline-filter-pair .dashboard-filter-group{width:100%}.pipeline-filter-pair .pipeline-category-filter{max-width:none;flex:1 1 auto}}

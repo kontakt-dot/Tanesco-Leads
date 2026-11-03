@@ -715,8 +715,9 @@ export function buildSeed(): Store {
   const quiet = sentRows.filter((row) => !reacted.has(Number(row.recipientId))); const blockedRow = quiet[1] ?? null; const delayedRow = quiet[3] ?? null;
   sentRows.forEach((row, index) => { const sentAt = new Date(row.createdAt as Date); Object.assign(row, row === blockedRow ? { delivery: "blockiert", deliveryNote: "Adresse steht auf der Sperrliste des Versanddienstes", deliveryAt: new Date(sentAt.getTime() + 60_000) } : row === delayedRow ? { delivery: "verzoegert", deliveryNote: "Postfach voll – neuer Versuch läuft", deliveryAt: new Date(sentAt.getTime() + 5 * 60_000) } : index % 9 === 8 && !reacted.has(Number(row.recipientId)) ? {} : { delivery: "zugestellt", deliveryNote: null, deliveryAt: new Date(sentAt.getTime() + 60_000) }); });
 
-  // Vertriebspipeline: Karten mit „Photovoltaik“ oder „Wärmepumpe“ tragen die gemeinsame Kategorie (wie die Korrektur beim Start der echten App)
-  for (const row of store.tables.leads ?? []) if (row.kind === "vertrieb" && (row.categoryId === pv.id || row.categoryId === wp.id)) row.categoryId = pvwp.id;
+  // Vertriebspipeline: Karten mit „Photovoltaik“ oder „Wärmepumpe“ tragen die gemeinsame Kategorie (wie die Korrektur beim Start der echten App) –
+  // außer in der Pipeline „E-Mail-Kampagne“: dort stehen sie getrennt, so wie die Leadsparte der Kampagne („PV-Betriebe Bayern“ → Photovoltaik)
+  for (const row of store.tables.leads ?? []) if (row.kind === "vertrieb" && row.adPlatform !== "email" && (row.categoryId === pv.id || row.categoryId === wp.id)) row.categoryId = pvwp.id;
 
   return store;
 }

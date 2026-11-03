@@ -117,6 +117,15 @@ const isEnergy = isEnergySparte;
  * „Photovoltaik & Wärmepumpe“ (☀️♨️) – so wie die Leadsparte der E-Mail-Kampagnen. Verkaufs-Leads bleiben bei Photovoltaik bzw. Wärmepumpe.
  */
 export const COMBINED_ENERGY_CATEGORY = { name: DEFAULT_SPARTE.label, shortcode: "PVWP", emoji: "☀️♨️", color: "#f59e0b" };
+/**
+ * Pipeline „E-Mail-Kampagne“: Photovoltaik und Wärmepumpe als EIGENE Kategorien – so wie die Leadsparte der Kampagne
+ * (Kampagne „Wärmepumpe“ → Kategorie „Wärmepumpe“, „Photovoltaik“ → „Photovoltaik“, beides → „Photovoltaik & Wärmepumpe“).
+ */
+export const SINGLE_ENERGY_CATEGORY = { photovoltaik: { name: "Photovoltaik", shortcode: "PV", emoji: "☀️", color: "#f59e0b" }, waermepumpe: { name: "Wärmepumpe", shortcode: "WP", emoji: "♨️", color: "#ef4444" } } as const;
+/** „photovoltaik“ bzw. „waermepumpe“, wenn die Sparte genau eine der beiden ist – sonst null (auch bei „Photovoltaik & Wärmepumpe“). */
+export const singleEnergyKey = (sparte: Pick<Sparte, "key"> | null | undefined): "photovoltaik" | "waermepumpe" | null => (sparte?.key === "photovoltaik" || sparte?.key === "waermepumpe" ? sparte.key : null);
+/** Die eigene Kategorie „Photovoltaik“ bzw. „Wärmepumpe“ eines Mandanten – genau dieser Name zuerst, sonst eine mit demselben Stichwort. */
+export function singleEnergyCategory<T extends { name: string }>(categories: T[], key: "photovoltaik" | "waermepumpe"): T | null { const exact = categories.find((category) => category.name.trim().toLowerCase() === SINGLE_ENERGY_CATEGORY[key].name.toLowerCase()); return exact ?? categories.find((category) => resolveSparte(category.name)?.key === key) ?? null; }
 /** Heißt die Kategorie genau „Photovoltaik“ oder „Wärmepumpe“ (auch „PV“, „Solar“, „Wärmepumpen“)? Genauere wie „Photovoltaik Gewerbe“ oder „Wärmepumpe Endkunde“ bleiben eigenständig. */
 export function isSingleEnergyCategory(name: string | null | undefined): boolean { const key = resolveSparte(name)?.key; return key === "photovoltaik" || key === "waermepumpe"; }
 /** Die gemeinsame Kategorie „Photovoltaik & Wärmepumpe“ eines Mandanten – falls es sie schon gibt. */

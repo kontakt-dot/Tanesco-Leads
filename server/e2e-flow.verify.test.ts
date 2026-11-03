@@ -3694,6 +3694,40 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
   }, 60000);
 
+  it("63zb. Pipeline „E-Mail-Kampagne“: Photovoltaik und Wärmepumpe getrennt wie die Leadsparte der Kampagne (auch Einmal-Korrektur); Filter „E-Mail-Kampagne“ nach den Kampagnen, nicht nach Listen", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { splitEnergyCategoriesInEmailPipeline, ENERGY_SPLIT_NOTE } = await import("./inbox"); const { mergeEnergyCategories } = await import("./vertrieb-category");
+    const categories = await owner.leadops.listCategories(); const combined = categories.find((row) => row.name === "Photovoltaik & Wärmepumpe")!; expect(combined).toBeTruthy();
+    const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+    const tree = (subject: string) => ({ start: "t1", nodes: [{ id: "t1", type: "send" as const, label: "Erste", subject, blocks: starterBlocks("kaltakquise"), next: null }] });
+    await owner.leadops.importColdList({ listName: "Trenn-WP", toPipeline: false, rows: [{ firstName: "Wanda", lastName: "Wärme", company: "Wärme Wanda GmbH", email: "wanda@trenn-e2e.example" }, { firstName: "Willi", lastName: "Wärme", company: "Wärme Willi GmbH", email: "willi@trenn-e2e.example" }] });
+    await owner.leadops.importColdList({ listName: "Trenn-PV", toPipeline: false, rows: [{ firstName: "Paul", lastName: "Paneel", company: "Paneel Solar", email: "paul@trenn-e2e.example" }] });
+    const wpCampaign = await owner.leadops.saveEmailCampaign({ name: "Trenn-Test Kampagne A", leadSparte: "Wärmepumpe", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Trenn-WP" }, tree: tree("WP für {{firma}}"), design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
+    const pvCampaign = await owner.leadops.saveEmailCampaign({ name: "Trenn-Test Kampagne B", leadSparte: "Photovoltaik", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Trenn-PV" }, tree: tree("PV für {{firma}}"), design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
+    await owner.leadops.startEmailCampaign({ id: wpCampaign.id }); await owner.leadops.startEmailCampaign({ id: pvCampaign.id }); await owner.leadops.runEmailCampaigns();
+    const card = async (email: string) => (await db.select().from(leads).where(eq(leads.email, email)))[0];
+    const wp = (await owner.leadops.listCategories()).find((row) => row.name === "Wärmepumpe")!; const pv = (await owner.leadops.listCategories()).find((row) => row.name === "Photovoltaik")!;
+    expect(await card("wanda@trenn-e2e.example")).toMatchObject({ adPlatform: "email", categoryId: wp.id }); expect(await card("paul@trenn-e2e.example")).toMatchObject({ adPlatform: "email", categoryId: pv.id }); // wie die Kampagne
+    // Einmal-Korrektur: früher zusammengeführte Karten (gemeinsame Kategorie) bekommen die Kategorie ihrer Kampagne zurück – von Hand gewählte bleiben
+    expect((await card("willi@trenn-e2e.example")).categoryId).toBe(wp.id); await owner.leadops.setPipelineCategory({ publicId: (await card("willi@trenn-e2e.example")).publicId, categoryId: combined.id }); // Willi: bewusst gemeinsam (von Hand)
+    await db.update(leads).set({ categoryId: combined.id }).where(inArray(leads.email, ["wanda@trenn-e2e.example", "paul@trenn-e2e.example"])); // so sahen sie nach dem früheren Zusammenführen aus
+    expect(await splitEnergyCategoriesInEmailPipeline(db)).toBeGreaterThanOrEqual(2);
+    expect((await card("wanda@trenn-e2e.example")).categoryId).toBe(wp.id); expect((await card("paul@trenn-e2e.example")).categoryId).toBe(pv.id); expect((await card("willi@trenn-e2e.example")).categoryId).toBe(combined.id);
+    expect((await owner.leadops.pipelineHistory({ publicId: (await card("wanda@trenn-e2e.example")).publicId })).some((event) => (event.note ?? "").startsWith(`${ENERGY_SPLIT_NOTE}: „Wärmepumpe“ (vorher „Photovoltaik & Wärmepumpe“)`))).toBe(true);
+    expect(await splitEnergyCategoriesInEmailPipeline(db)).toBe(0); await mergeEnergyCategories(db); expect((await card("wanda@trenn-e2e.example")).categoryId).toBe(wp.id); // bleibt getrennt, auch nach dem Zusammenführen der anderen Pipelines
+    // Filter „E-Mail-Kampagne“: Paul steckt auch in Kampagne A (eine Liste ist keine Kampagne) → erscheint unter beiden; die Auswahl zeigt Kampagnen-Namen, keine Listen
+    const paul = await card("paul@trenn-e2e.example");
+    await db.insert(emailCampaignRecipients).values({ tenantId: S.tenantId, campaignId: wpCampaign.id, leadId: paul.id, email: paul.email!, name: "Paul Paneel", token: `tr${Date.now().toString(36)}x`.slice(0, 40), status: "fertig", sentCount: 1 });
+    await db.update(leads).set({ adCampaignId: "liste-trenn-pv", adCampaignName: "Liste: Trenn-PV" }).where(eq(leads.id, paul.id)); // Karte zeigt auf die Liste
+    const board = await owner.leadops.pipelineOverview({ source: "email", limitPerStage: 1000 }) as { campaignOptions: Array<{ campaignId: string; campaignName: string; count: number }>; stages: Array<{ leads: Array<{ id: number }> }> };
+    const option = (key: string) => board.campaignOptions.find((item) => item.campaignId === key);
+    expect(option(`email-${wpCampaign.id}`)).toMatchObject({ campaignName: "Trenn-Test Kampagne A" }); expect(option(`email-${pvCampaign.id}`)).toMatchObject({ campaignName: "Trenn-Test Kampagne B" });
+    expect(board.campaignOptions.some((item) => item.campaignId === "liste-trenn-pv" || /^Liste:/.test(item.campaignName))).toBe(false); // keine Listen in der Auswahl
+    const idsOf = async (campaignId: string) => ((await owner.leadops.pipelineOverview({ source: "email", campaignId, limitPerStage: 1000 })) as typeof board).stages.flatMap((stage) => stage.leads).map((lead) => lead.id);
+    const inA = await idsOf(`email-${wpCampaign.id}`); const inB = await idsOf(`email-${pvCampaign.id}`);
+    expect(inA).toEqual(expect.arrayContaining([(await card("wanda@trenn-e2e.example")).id, (await card("willi@trenn-e2e.example")).id, paul.id])); expect(inB).toEqual([paul.id]);
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(inArray(emailCampaignRecipients.campaignId, [wpCampaign.id, pvCampaign.id]));
+  }, 60000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
@@ -3807,7 +3841,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.setPipelineCategory({ publicId: nora.publicId, categoryId: S.wp!.id }); expect(await fixCampaignLeadCategories(db)).toBe(0); expect((await db.select().from(leads).where(eq(leads.id, nora.id)))[0].categoryId).toBe(S.wp!.id);
   }, 40000);
 
-  it("63s. Vertriebspipeline: Photovoltaik und Wärmepumpe laufen als eine Kategorie „Photovoltaik & Wärmepumpe“ – Vorgabe beim Upload, Kategorie der Kampagne, einmalige Zusammenführung beim Start; Verkaufs-Leads und bewusst gewählte Kategorien bleiben", async () => {
+  it("63s. Vertriebspipeline (Kaltakquise, Meta Ads): Photovoltaik und Wärmepumpe laufen als eine Kategorie „Photovoltaik & Wärmepumpe“ – E-Mail-Kampagne getrennt – Vorgabe beim Upload, Kategorie der Kampagne, einmalige Zusammenführung beim Start; Verkaufs-Leads und bewusst gewählte Kategorien bleiben", async () => {
     const { mergeEnergyCategories, ENERGY_MERGE_NOTE } = await import("./vertrieb-category"); const { COMBINED_ENERGY_CATEGORY } = await import("../shared/lead-sparte"); const { starterBlocks } = await import("../shared/email-design"); const starter = await owner.leadops.emailCampaignStarter();
     expect(S.pv!.name).toBe("Photovoltaik"); const byEmail = (email: string) => db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, email))).then((rows) => rows[0]);
     // 1) Upload ohne Kategorie → „Photovoltaik & Wärmepumpe“ (wird angelegt: Kürzel PVWP, Emoji ☀️♨️)
@@ -3822,12 +3856,13 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await byEmail("ida@pvwp-e2e.example")).categoryId).toBe(S.pv!.id);
     const campaign = await owner.leadops.saveEmailCampaign({ name: "PV-Kampagne gemeinsam", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "PVWP-Kampagne" }, leadCategoryIds: [S.pv!.id], tree: { start: "p1", nodes: [{ id: "p1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
     await owner.leadops.startEmailCampaign({ id: campaign.id });
-    expect(await byEmail("ida@pvwp-e2e.example")).toMatchObject({ categoryId: combined!.id, adCampaignId: `email-${campaign.id}` });
+    expect(await byEmail("ida@pvwp-e2e.example")).toMatchObject({ categoryId: S.pv!.id, adCampaignId: `email-${campaign.id}`, adPlatform: "email" }); // Pipeline „E-Mail-Kampagne“: PV bleibt PV – wie die Kampagne (seit 03.11.2026 getrennt)
     expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)?.sparte?.label).toBe("Photovoltaik"); // die Sparte der Kampagne bleibt genau (für die KI-Texte)
     // 4) Verkaufs-Lead mit Photovoltaik bleibt; Zusammenführung beim Start: Vertriebskarten mit „Photovoltaik“ → gemeinsame Kategorie mit Vermerk, danach nie wieder
     await db.insert(leads).values({ tenantId: S.tenantId, publicId: "VK-PVWP-E2E", categoryId: S.pv!.id, kind: "verkauf", firstName: "Verkauf", lastName: "Bleibt", email: "verkauf@pvwp-e2e.example", country: "DE", status: "neu", cost: "0.00" });
     expect(await mergeEnergyCategories(db)).toBeGreaterThanOrEqual(2); // Gustav und Hanna
     expect((await byEmail("gustav@pvwp-e2e.example")).categoryId).toBe(combined!.id); expect((await byEmail("hanna@pvwp-e2e.example")).categoryId).toBe(combined!.id); expect((await byEmail("verkauf@pvwp-e2e.example")).categoryId).toBe(S.pv!.id);
+    expect((await byEmail("ida@pvwp-e2e.example")).categoryId).toBe(S.pv!.id); // Karte der Pipeline „E-Mail-Kampagne“ wird nicht zusammengeführt
     const gustav = await byEmail("gustav@pvwp-e2e.example"); expect((await owner.leadops.pipelineHistory({ publicId: gustav.publicId })).some((event) => (event.note ?? "").startsWith(`${ENERGY_MERGE_NOTE}: „${COMBINED_ENERGY_CATEGORY.name}“ (vorher „Photovoltaik“)`))).toBe(true);
     expect(await mergeEnergyCategories(db)).toBe(0);
     await owner.leadops.setPipelineCategory({ publicId: gustav.publicId, categoryId: S.pv!.id }); expect(await mergeEnergyCategories(db)).toBe(0); expect((await byEmail("gustav@pvwp-e2e.example")).categoryId).toBe(S.pv!.id); // bewusst zurück auf Photovoltaik → bleibt
