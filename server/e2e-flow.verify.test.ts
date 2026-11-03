@@ -45,6 +45,7 @@ vi.mock("./_core/llm", () => ({
     const evaluation = { criteria: ["bedarf", "entscheider", "zeitrahmen", "budget", "kontaktdaten", "einwilligung"].map((key) => ({ key, score, evidence: `Beleg ${key}` })), summary: bad ? "Kunde lehnt Kontakt ab." : good ? "Klarer Bedarf, Weitergabe erlaubt." : "Offene Punkte.", redFlags: bad ? ["Kunde möchte nicht kontaktiert werden"] : [], nextStep: good ? "Übergeben" : "Rückruf", verdict: bad ? "nicht_verkaufbar" : good ? "verkaufbar" : "nachfassen" };
     return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(evaluation) }, finish_reason: "stop" }] };
   }),
+  aiHealthView: () => ({ calls: 0, errors: 0, busy: 0, timeouts: 0, avgSeconds: null, lastError: null }),
 }));
 process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "test-openai-key";
 process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://flux:flux@127.0.0.1:3308/fluxora_e2e";
@@ -2543,7 +2544,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
     expect(recipients.every((row) => row.sentCount === 0)).toBe(true); // ohne Freigabe geht nichts raus
-    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0, ohneEntwurf: recipients.filter((row) => !row.draftState).length, vorschreiben: false }); /* ohne KI-Schlüssel schreibt die KI nichts vor */
+    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0, ohneEntwurf: recipients.filter((row) => !row.draftState).length, vorschreiben: false, tempo: null }); /* ohne KI-Schlüssel schreibt die KI nichts vor */
     const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 }); // der Versand-Lauf hat die Entwürfe schon geschrieben (Vorlage, ohne KI-Schlüssel) und wartet auf Freigabe
     const rita = queue.items.find((item) => item.email === "rita@review-e2e.example")!; expect(rita.city).toBe("Kassel");
     const drafts = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [rita.id] }); // ohne KI-Schlüssel: Vorlage mit den Daten des Kontakts
@@ -4302,9 +4303,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect(await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")))).toHaveLength(0); // ohne Freigabe geht nichts raus
       expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }) as { prewriting?: boolean; counts: { offen: number } })).toMatchObject({ prewriting: true, counts: { offen: 0 } });
       expect(await prewriteDrafts(db, { campaignId: campaign.id })).toEqual({ written: 0, failed: 0, open: 0 }); // nichts mehr zu tun
-      // pausiert oder ohne KI-Schlüssel: kein Vorschreiben
+      // pausiert: es geht nichts raus, aber die KI schreibt weiter vor (laufende Kampagnen zuerst) – ohne KI-Schlüssel: kein Vorschreiben
       await owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "pausiert" });
-      expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: false });
+      expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: true });
       await owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "aktiv" }); delete process.env.ANTHROPIC_API_KEY;
       expect(await prewriteDrafts(db, { campaignId: campaign.id })).toEqual({ written: 0, failed: 0, open: 0 });
       expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: false });

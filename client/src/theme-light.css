@@ -2097,6 +2097,7 @@ html:not(.dark) .cl-f small.cl-today.is-zero { background: #f8fafb !important; c
 html:not(.dark) .cl-f small.cl-why.is-gone { color: #8a6913 !important; }
 html:not(.dark) .undo-list li.is-empfaenger_weg .undo-icon, html:not(.dark) .undo-list li.is-kampagne_weg .undo-icon { color: #8b5a60 !important; }
 html:not(.dark) .undo-list li.is-doppelt .undo-icon { color: #338074 !important; }
+html:not(.dark) .rv-approaches button.is-missing small { color: #111318 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -4221,3 +4222,6 @@ html:not(.dark) .cl-f small.cl-today.is-zero { background: #f2f4f7 !important; c
 html:not(.dark) .cl-f small.cl-why.is-gone { color: #b45309 !important; }
 html:not(.dark) .undo-list li.is-empfaenger_weg .undo-icon, html:not(.dark) .undo-list li.is-kampagne_weg .undo-icon { background: #ffe4e6 !important; color: #be123c !important; }
 html:not(.dark) .undo-list li.is-doppelt .undo-icon { background: #ccfbf1 !important; color: #0f766e !important; }
+
+/* v284: zweite Fassung auf Klick, KI-Hinweis auf der Karte */
+html:not(.dark) .rv-approaches button.is-missing small { color: #7c3aed !important; }

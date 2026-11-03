@@ -312,7 +312,19 @@ export const KI_NOT_NOW = "Die KI konnte diesen Entwurf gerade nicht schreiben �
  * `nodeId` = der Schritt (die E-Mail im Ablauf), für den geschrieben wird; ohne Angabe der aktuelle bzw. erste Schritt.
  * Nachfass-Mails bekommen den Kontext, was schon gesendet wurde. `onlyApproach` (Auto-Modus): nur der Ansatz der Kampagne.
  */
-export async function draftForRecipient(db: Db, tenantId: number, recipientId: number, options: { nodeId?: string | null; onlyApproach?: DraftApproach | null } = {}) {
+/** Webseiten-Text je Adresse 30 Minuten merken – „KI neu schreiben“, die zweite Fassung und Nachfass-Entwürfe lesen die Seite nicht jedes Mal neu. */
+const siteCache = new Map<string, { at: number; value: Awaited<ReturnType<typeof readWebsiteText>> }>();
+async function readWebsiteCached(website: string) {
+  const key = website.trim().toLowerCase(); const hit = siteCache.get(key); if (hit && Date.now() - hit.at < 30 * 60_000) return hit.value;
+  const value = await readWebsiteText(website).catch(() => null);
+  siteCache.set(key, { at: Date.now(), value }); if (siteCache.size > 400) { const oldest = siteCache.keys().next().value; if (oldest !== undefined) siteCache.delete(oldest); }
+  return value;
+}
+/**
+ * Entwurf für einen Empfänger. `onlyApproach`: nur diese Fassung schreiben (schneller – so schreibt die KI im Hintergrund und beim Freigeben).
+ * `alternative`: nur die zweite Fassung zum bestehenden Entwurf dazuschreiben (Klick in der Freigabe) – der Haupt-Entwurf bleibt, wie er ist.
+ */
+export async function draftForRecipient(db: Db, tenantId: number, recipientId: number, options: { nodeId?: string | null; onlyApproach?: DraftApproach | null; alternative?: DraftApproach | null } = {}) {
   const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.id, recipientId), eq(emailCampaignRecipients.tenantId, tenantId))).limit(1))[0];
   if (!recipient) throw new Error("Empfänger nicht gefunden.");
   const context = await loadContext(db, tenantId, recipient, options.nodeId); const { campaign, lead, node, phone } = context;
@@ -326,7 +338,7 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const website = websiteOf(lead?.metadata, recipient.email);
   const info: Record<string, string> = { Firma: values.firma, Ansprechpartner: [values.anrede, values.vorname, values.nachname].filter(Boolean).join(" "), Ort: values.stadt, "PLZ": String(lead?.postcode ?? ""), Webseite: website ?? String(meta.website ?? meta.webseite ?? ""), Liste: String(lead?.listName ?? ""), ...Object.fromEntries(Object.entries(extraFieldsOf(lead?.metadata)).filter(([key, value]) => !PORTAL_RE.test(key) && !PORTAL_RE.test(String(value))).map(([key, value]) => [key, String(value)])) }; // Portal-Daten (Aroundhome) gehen nie an die KI
   // Webseite lesen (Startseite + Impressum + Leistungen/Über uns) – die KI greift daraus konkrete Punkte auf
-  const rawSite = process.env.ANTHROPIC_API_KEY && website ? await readWebsiteText(website).catch(() => null) : null;
+  const rawSite = process.env.ANTHROPIC_API_KEY && website ? await readWebsiteCached(website) : null;
   const site = rawSite ? { ...rawSite, text: rawSite.text.split(/\n+/).filter((line) => !PORTAL_RE.test(line)).join("\n") } : null; // Portal-Hinweise der Webseite (z. B. Aroundhome-Siegel) nicht an die KI
   // Was auf Webseite und Impressum steht, ausdrücklich mitgeben: Geschäftsführung (für die Anrede), Leistungen, Gebiet, Gründung, Größe
   if (site) { const profile = extractProfile([{ url: site.url, text: site.text }]); const add = (key: string, value: string | null | undefined) => { if (value && value.trim() && !PORTAL_RE.test(value) && !info[key]) info[key] = value.trim(); }; if (!info.Ansprechpartner) add("Geschäftsführung laut Impressum", profile.management); add("Leistungen laut Webseite", profile.services.join(", ")); add("Einsatzgebiet laut Webseite", profile.serviceArea); add("Gegründet", profile.founded); add("Mitarbeiter", profile.employees); }
@@ -335,6 +347,16 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const finish = (text: string, approach: DraftApproach) => finishDraft(text, { greeting: values.begruessung, phone, followUp: sentEvents.length > 0, partner: sparte.partner, sparte, approach, testLeads });
   const polish = (items: AiOption[] | null): AiOption[] | null => items?.map((item) => ({ ...item, source: "ki" as const, subject: PORTAL_RE.test(item.subject) ? base.subject : dropAdPlatforms(item.subject), text: finish(item.text, item.key) })) ?? null; // nie Aroundhome – auch nicht im Betreff; nie Meta & Co.
   const aiOptions = { followUp, stepLabel: node.label ?? node.subject, phone, sparte, testLeads };
+  // Zweite Fassung auf Klick: nur sie schreiben und zum Entwurf dazulegen – Text, Betreff und Freigabe des Haupt-Entwurfs bleiben
+  if (options.alternative && recipient.draftState && draftFitsNode(recipient, node.id)) {
+    const alt = polish(await aiDrafts(base, info, site, { ...aiOptions, approaches: [options.alternative] }))?.find((item) => item.key === options.alternative) ?? null;
+    if (!alt) throw new Error("Die KI konnte die zweite Fassung gerade nicht schreiben – bitte gleich noch einmal klicken.");
+    const { issues: _issues, ...option } = alt as AiOption; void _issues;
+    const existing = (Array.isArray(recipient.draftOptions) ? recipient.draftOptions : []) as DraftOption[];
+    const list = [...existing.filter((item) => item.key !== option.key), option as DraftOption];
+    await db.update(emailCampaignRecipients).set({ draftOptions: list }).where(eq(emailCampaignRecipients.id, recipient.id));
+    return { id: recipient.id, subject: recipient.draftSubject ?? option.subject, text: recipient.draftText ?? option.text, options: list, approach: (recipient.draftApproach ?? kiAnsatzOf(campaign)) as DraftApproach, source: recipient.draftSource ?? "ki", website: site?.url ?? website, nodeId: node.id, nodeLabel: node.label?.trim() || node.subject };
+  }
   let ai = polish(await aiDrafts(base, info, site, { ...aiOptions, approaches: options.onlyApproach ? [options.onlyApproach] : undefined }));
   // Fehlt der gewählte Ansatz oder ist er schwach (zu wenig Bezug auf die Firma, zu nah an der Vorlage): noch einmal NUR diesen schreiben lassen, mit genauem Hinweis.
   // Danach gilt der bessere KI-Text – ein KI-Text wird nie durch die Vorlage ersetzt (nur wenn die KI gar nichts Brauchbares liefert).
@@ -612,8 +634,13 @@ export async function generateDrafts(db: Db, tenantId: number, input: { campaign
     const open = rows.filter((row) => { const node = nodeOf(row); return node && (!row.draftState || !draftFitsNode(row, node.id)); });
     ids = [...open.filter((row) => row.nodeId === nodeOf(row)?.id), ...open.filter((row) => row.nodeId !== nodeOf(row)?.id)].slice(0, limit).map((row) => row.id); // erst die fälligen (am E-Mail-Schritt), dann Erst-E-Mails und Follow-ups, die noch in der Wartezeit stecken
   }
-  const drafts = []; let failed = 0;
-  for (const id of ids) { try { drafts.push(await draftForRecipient(db, tenantId, id)); } catch { failed += 1; } }
+  // Nur die Fassung der Kampagne (die zweite gibt es in der Freigabe auf Klick) und bis zu 3 gleichzeitig – der ausgewählte Kontakt ist so schnell fertig
+  const owner = (await db.select({ id: emailCampaigns.id, kiAnsatz: emailCampaigns.kiAnsatz }).from(emailCampaigns).where(and(eq(emailCampaigns.id, input.campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0];
+  const onlyApproach = owner ? kiAnsatzOf(owner) : null;
+  const drafts: Array<Awaited<ReturnType<typeof draftForRecipient>>> = []; let failed = 0; let next = 0;
+  const worker = async () => { while (next < ids.length) { const id = ids[next++]; const started = Date.now(); try { const made = await withDraftLock(id, () => draftForRecipient(db, tenantId, id, { onlyApproach })); if (made) { drafts.push(made); noteDraftWritten(Date.now() - started); } else failed += 1; } catch { failed += 1; } } };
+  await Promise.all(Array.from({ length: Math.min(3, ids.length) }, worker));
+  drafts.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
   return { drafts, failed, ai: drafts.some((draft) => draft.source === "ki" || draft.source === "kiweb") };
 }
 
@@ -622,15 +649,51 @@ const draftingNow = new Set<number>(); // Empfänger, für die gerade ein Entwur
 const prewriteFailedAt = new Map<number, number>(); // Entwurf ging schief (z. B. KI überlastet) → diesen Empfänger 10 Minuten in Ruhe lassen (keine Endlosschleife), dann neuer Versuch
 const PREWRITE_RETRY_MS = 10 * 60_000;
 export const isDrafting = (recipientId: number) => draftingNow.has(recipientId);
+/** Tempo der KI beim Schreiben (letzte 15 Minuten) – für „KI schreibt noch X · ca. Y Min.“ auf der Karte. */
+const draftsWritten: Array<{ at: number; ms: number }> = [];
+export function noteDraftWritten(ms: number) { draftsWritten.push({ at: Date.now(), ms }); if (draftsWritten.length > 600) draftsWritten.splice(0, draftsWritten.length - 600); }
+let prewriteOpen = new Map<number, number>(); // offene Entwürfe je Kampagne beim letzten Durchgang
+export function writingPace(now = Date.now()) {
+  const recent = draftsWritten.filter((item) => now - item.at < 15 * 60_000);
+  const span = recent.length ? Math.max(5, (now - Math.min(...recent.map((item) => item.at))) / 60_000) : 0;
+  const perMinute = recent.length >= 2 ? Math.round((recent.length / span) * 10) / 10 : null;
+  return { perMinute, avgSeconds: recent.length ? Math.round(recent.reduce((sum, item) => sum + item.ms, 0) / recent.length / 1000) : null, open: new Map(prewriteOpen) };
+}
+/**
+ * Wie läuft das Schreiben gerade? Tempo (Entwürfe pro Minute), Dauer je Entwurf, voraussichtlich fertig in … Minuten (diese Kampagne) – und
+ * ein Hinweis in einfachen Worten, wenn der KI-Anbieter bremst oder ungewöhnlich lange braucht.
+ */
+export async function writingStatus(campaignId: number) {
+  const pace = writingPace(); const { aiHealthView } = await import("./_core/llm"); const health = aiHealthView();
+  const status = health.lastError?.status ?? null;
+  const hint = status === 401 || status === 403 ? "Der KI-Schlüssel wird gerade abgelehnt – bitte in Railway prüfen (ANTHROPIC_API_KEY)." : health.busy ? "Der KI-Anbieter ist gerade überlastet oder bremst (zu viele Anfragen) – die App versucht es automatisch weiter." : health.timeouts ? "Die KI antwortet gerade sehr langsam – die App versucht es automatisch weiter." : pace.avgSeconds && pace.avgSeconds > 75 ? `Die KI braucht gerade länger als sonst (ca. ${pace.avgSeconds} Sekunden je Entwurf).` : null;
+  return { perMinute: pace.perMinute, avgSeconds: pace.avgSeconds, etaMinutes: writingEtaMinutes(campaignId), hint };
+}
+/**
+ * Wann ist die KI mit einer Kampagne fertig? Sie schreibt reihum aus allen Kampagnen – fertig ist diese, wenn je Kampagne höchstens so viele
+ * geschrieben sind, wie hier offen sind. null = noch kein Tempo bekannt.
+ */
+export function writingEtaMinutes(campaignId: number, now = Date.now()): number | null {
+  const pace = writingPace(now); return roundRobinEta(Array.from(pace.open.values()), pace.open.get(campaignId) ?? 0, pace.perMinute);
+}
+/** Reihum geschrieben: fertig ist eine Kampagne mit `mine` offenen, wenn aus jeder Kampagne höchstens so viele geschrieben sind. */
+export function roundRobinEta(open: number[], mine: number, perMinute: number | null): number | null {
+  if (!mine || !perMinute) return null;
+  let before = 0; for (const count of open) before += Math.min(count, mine);
+  return Math.max(1, Math.round(before / perMinute));
+}
 /** Entwurf schreiben, aber nie zweimal gleichzeitig für denselben Empfänger – null, wenn gerade schon einer entsteht. */
 export async function withDraftLock<T>(recipientId: number, run: () => Promise<T>): Promise<T | null> {
   if (draftingNow.has(recipientId)) return null;
   draftingNow.add(recipientId);
   try { return await run(); } finally { draftingNow.delete(recipientId); }
 }
-/** Schreibt die KI für diese Kampagne die Entwürfe von selbst vor? Gestartet (aktiv), „KI mit Freigabe“, KI eingerichtet. */
+/**
+ * Schreibt die KI für diese Kampagne die Entwürfe von selbst vor? Gestartet (aktiv oder pausiert – pausiert geht nichts raus, aber die Entwürfe
+ * liegen bereit, wenn es weitergeht), „KI mit Freigabe“, KI eingerichtet. Laufende Kampagnen kommen zuerst dran.
+ */
 export function prewritesDrafts(campaign: { status: string; kiModus?: string | null; reviewFirst?: boolean | null; isTemplate?: boolean | null; archivedAt?: Date | null }): boolean {
-  return campaign.status === "aktiv" && !campaign.isTemplate && !campaign.archivedAt && kiModusOf(campaign) === "freigabe" && Boolean(process.env.ANTHROPIC_API_KEY);
+  return (campaign.status === "aktiv" || campaign.status === "pausiert") && !campaign.isTemplate && !campaign.archivedAt && kiModusOf(campaign) === "freigabe" && Boolean(process.env.ANTHROPIC_API_KEY);
 }
 /** Wer braucht noch einen Entwurf? Offene Empfänger, deren nächster Schritt eine E-Mail ist und die noch keinen passenden Entwurf haben – erst die fälligen, dann die in der Wartezeit (je nach Reihenfolge der Aufnahme). */
 async function openDraftIds(db: Db, campaign: { id: number; tenantId: number; tree: unknown }): Promise<number[]> {
@@ -655,23 +718,26 @@ export async function prewriteTick(db: Db, options: { campaignId?: number | null
 }
 export async function prewriteDrafts(db: Db, options: { campaignId?: number | null; max?: number; parallel?: number; budgetMs?: number } = {}): Promise<{ written: number; failed: number; open: number }> {
   if (!process.env.ANTHROPIC_API_KEY) return { written: 0, failed: 0, open: 0 };
-  const started = Date.now(); const max = Math.max(1, options.max ?? 12); const parallel = Math.max(1, Math.min(4, options.parallel ?? 3)); const budgetMs = options.budgetMs ?? 50_000;
-  const conditions = [eq(emailCampaigns.status, "aktiv"), isNull(emailCampaigns.archivedAt)]; if (options.campaignId) conditions.push(eq(emailCampaigns.id, options.campaignId));
-  const campaigns = (await db.select({ id: emailCampaigns.id, tenantId: emailCampaigns.tenantId, tree: emailCampaigns.tree, status: emailCampaigns.status, kiModus: emailCampaigns.kiModus, reviewFirst: emailCampaigns.reviewFirst, isTemplate: emailCampaigns.isTemplate, archivedAt: emailCampaigns.archivedAt }).from(emailCampaigns).where(and(...conditions))).filter((row) => prewritesDrafts(row));
+  const started = Date.now(); const max = Math.max(1, options.max ?? 16); const parallel = Math.max(1, Math.min(4, options.parallel ?? 4)); const budgetMs = options.budgetMs ?? 50_000;
+  const conditions = [inArray(emailCampaigns.status, ["aktiv", "pausiert"]), isNull(emailCampaigns.archivedAt)]; if (options.campaignId) conditions.push(eq(emailCampaigns.id, options.campaignId));
+  const campaigns = (await db.select({ id: emailCampaigns.id, tenantId: emailCampaigns.tenantId, tree: emailCampaigns.tree, status: emailCampaigns.status, kiModus: emailCampaigns.kiModus, kiAnsatz: emailCampaigns.kiAnsatz, reviewFirst: emailCampaigns.reviewFirst, isTemplate: emailCampaigns.isTemplate, archivedAt: emailCampaigns.archivedAt }).from(emailCampaigns).where(and(...conditions))).filter((row) => prewritesDrafts(row));
   const now = Date.now(); let open = 0;
-  const queues: Array<Array<{ tenantId: number; id: number }>> = [];
+  const queues: Array<Array<{ tenantId: number; id: number; approach: DraftApproach }>> = []; const openNow = new Map<number, number>();
   for (const campaign of campaigns) {
-    const ids = await openDraftIds(db, campaign); open += ids.length;
-    queues.push(ids.filter((id) => !draftingNow.has(id) && now - (prewriteFailedAt.get(id) ?? 0) >= PREWRITE_RETRY_MS).map((id) => ({ tenantId: campaign.tenantId, id })));
+    const ids = await openDraftIds(db, campaign); open += ids.length; openNow.set(campaign.id, ids.length);
+    const approach = kiAnsatzOf(campaign); // im Hintergrund nur die Fassung, die wirklich rausgeht – doppelt so schnell; die zweite gibt es in der Freigabe auf Klick
+    queues.push(ids.filter((id) => !draftingNow.has(id) && now - (prewriteFailedAt.get(id) ?? 0) >= PREWRITE_RETRY_MS).map((id) => ({ tenantId: campaign.tenantId, id, approach })));
   }
-  const order: Array<{ tenantId: number; id: number }> = []; // reihum aus allen Kampagnen
-  for (let index = 0; order.length < max && queues.some((queue) => index < queue.length); index += 1) for (const queue of queues) if (index < queue.length && order.length < max) order.push(queue[index]);
+  prewriteOpen = openNow;
+  const order: Array<{ tenantId: number; id: number; approach: DraftApproach }> = []; // reihum aus allen Kampagnen – erst die laufenden, dann die pausierten
+  const roundRobin = (list: typeof queues) => { for (let index = 0; order.length < max && list.some((queue) => index < queue.length); index += 1) for (const queue of list) if (index < queue.length && order.length < max) order.push(queue[index]); };
+  roundRobin(queues.filter((_, at) => campaigns[at].status === "aktiv")); roundRobin(queues.filter((_, at) => campaigns[at].status !== "aktiv"));
   let written = 0; let failed = 0; let next = 0;
   const worker = async () => {
     while (next < order.length && Date.now() - started < budgetMs) {
-      const item = order[next++];
-      const result = await withDraftLock(item.id, () => draftForRecipient(db, item.tenantId, item.id)).catch(() => { prewriteFailedAt.set(item.id, Date.now()); failed += 1; return null; });
-      if (result) { written += 1; prewriteFailedAt.delete(item.id); }
+      const item = order[next++]; const begun = Date.now();
+      const result = await withDraftLock(item.id, () => draftForRecipient(db, item.tenantId, item.id, { onlyApproach: item.approach })).catch(() => { prewriteFailedAt.set(item.id, Date.now()); failed += 1; return null; });
+      if (result) { written += 1; prewriteFailedAt.delete(item.id); noteDraftWritten(Date.now() - begun); }
     }
   };
   await Promise.all(Array.from({ length: Math.min(parallel, order.length) }, worker));

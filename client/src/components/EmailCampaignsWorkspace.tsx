@@ -223,7 +223,9 @@ function CampaignCardMain({ row, onOpen, onReview, folderName = null }: { row: C
   const status: ReactElement[] = [];
   if (row.archivedAt) status.push(<span key="archived" className="cl-archived-note">Archiviert am {new Date(row.archivedAt).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })}</span>);
   const writing = row.review?.vorschreiben ? row.review.ohneEntwurf ?? 0 : 0; // die KI schreibt diese Entwürfe noch vor – sie zählen nicht als „wartet auf dich“
-  if (live) status.push(<ApprovalPill key="approval" firstMails={Math.max(0, (row.review?.zurFreigabe ?? 0) - writing)} writing={writing} plan={plan} onClick={onReview ? () => onReview("alle") : onOpen} onReview={onReview} />, <FollowUpLine key="follow" plan={plan} sentAny={row.stats.sent > 0} withApproval={false} />);
+  const tempo = (row.review as { tempo?: WritingTempo | null } | null | undefined)?.tempo ?? null; // wie schnell die KI gerade schreibt
+  if (live) status.push(<ApprovalPill key="approval" firstMails={Math.max(0, (row.review?.zurFreigabe ?? 0) - writing)} writing={writing} tempo={tempo} plan={plan} onClick={onReview ? () => onReview("alle") : onOpen} onReview={onReview} />, <FollowUpLine key="follow" plan={plan} sentAny={row.stats.sent > 0} withApproval={false} />);
+  if (live && tempo?.hint) status.push(<span key="ki-hint" className="dash-pill is-amber cl-ki-hint" title="Die App versucht es automatisch weiter – du musst nichts tun.">{tempo.hint}</span>);
   if (!row.isTemplate && origins && origins.template > 0) status.push(<span key="template" className="dash-pill is-amber cl-origin" title="So viele E-Mails gingen nur als Vorlage raus, weil die KI für diese Kontakte keinen eigenen Text geschrieben hatte. Unter „Gesendet“ steht bei jeder E-Mail, wie sie rausging.">{origins.template} als Vorlage</span>);
   if (row.stats.failed > 0) status.push(<span key="failed" className="dash-pill is-red" title="E-Mails konnten nicht gesendet werden – Lead-Log des Empfängers zeigt den Grund">⚠ {row.stats.failed} Fehler</span>);
   if (row.stats.bounced > 0) status.push(<span key="bounced" className="dash-pill is-rejected" title="Adressen, an die nichts mehr geht (unzustellbar) – sie sind gesperrt">{row.stats.bounced} unzustellbar</span>);
@@ -301,14 +303,17 @@ function CampaignFacts({ data, inline = false }: { data: FactSource; inline?: bo
  * Alles, was auf deine Freigabe wartet, in EINEM Hinweis: „Zur Freigabe · 77 Erst-E-Mails warten · 2 Follow-ups ab Mo 02.11., 09:03 Uhr“.
  * Klick öffnet die Kampagne (bzw. dort das Freigabe-Fenster).
  */
-function ApprovalPill({ firstMails, writing = 0, plan, onClick, onReview }: { firstMails: number; writing?: number; plan: FollowUpView | null | undefined; onClick?: () => void; onReview?: (kind: ReviewKind) => void }) {
+type WritingTempo = { perMinute: number | null; avgSeconds: number | null; etaMinutes: number | null; hint: string | null };
+/** „ca. 25 Min.“ / „ca. 1 Std. 20 Min.“ */
+const etaText = (minutes: number) => minutes < 60 ? `ca. ${minutes} Min.` : `ca. ${Math.floor(minutes / 60)} Std.${minutes % 60 ? ` ${minutes % 60} Min.` : ""}`;
+function ApprovalPill({ firstMails, writing = 0, tempo = null, plan, onClick, onReview }: { firstMails: number; writing?: number; tempo?: WritingTempo | null; plan: FollowUpView | null | undefined; onClick?: () => void; onReview?: (kind: ReviewKind) => void }) {
   const follow = plan && !plan.paused && plan.approval && plan.approval.count > 0 ? plan.approval : null;
   if (!firstMails && !follow && !writing) return null;
   const now = new Date(); const later = Boolean(follow?.first && new Date(follow.first).getTime() > now.getTime() + 60_000);
   const parts: Array<{ kind: ReviewKind; text: string; title: string }> = [
     ...(firstMails ? [{ kind: "erste" as const, text: `${plural(firstMails, "Erst-E-Mail", "Erst-E-Mails")} ${firstMails === 1 ? "wartet" : "warten"}`, title: "Nur die Erst-E-Mails prüfen und freigeben" }] : []),
     ...(follow ? [{ kind: "followup" as const, text: later ? `${plural(follow.count, "Follow-up", "Follow-ups")} ab ${dayWord(follow.first!, now)}, ${clock(follow.first!)} Uhr` : `${plural(follow.count, "Follow-up", "Follow-ups")} ${follow.count === 1 ? "wartet" : "warten"}`, title: "Nur die Follow-ups prüfen und freigeben" }] : []),
-    ...(writing ? [{ kind: "erste" as const, text: `KI schreibt noch ${writing}`, title: `Die KI schreibt noch ${plural(writing, "Entwurf", "Entwürfe")} von selbst vor – auch nachts, am Wochenende und außerhalb der Versandzeiten. Fertige Entwürfe kannst du jederzeit freigeben.` }] : []),
+    ...(writing ? [{ kind: "erste" as const, text: `KI schreibt noch ${writing}${tempo?.etaMinutes ? ` · ${etaText(tempo.etaMinutes)}` : ""}`, title: `Die KI schreibt noch ${plural(writing, "Entwurf", "Entwürfe")} von selbst vor – auch nachts, am Wochenende und außerhalb der Versandzeiten. Fertige Entwürfe kannst du jederzeit freigeben.${tempo?.perMinute ? ` Gerade schafft sie etwa ${String(tempo.perMinute).replace(".", ",")} Entwürfe pro Minute${tempo.avgSeconds ? ` (ca. ${tempo.avgSeconds} Sekunden je Entwurf – sie liest dafür die Webseite der Firma)` : ""}.` : ""}${tempo?.etaMinutes ? ` Voraussichtlich fertig in ${etaText(tempo.etaMinutes)}` : ""}` }] : []),
   ];
   const hint = `${firstMails ? `Die KI hat ${plural(firstMails, "Erst-E-Mail", "Erst-E-Mails")} geschrieben – du prüfst und schickst los. ` : ""}${follow ? (later ? `Die Follow-ups erscheinen ab ${dayWord(follow.first!, now)}, ${clock(follow.first!)} Uhr zur Freigabe. ` : "Follow-ups warten auf deine Freigabe. ") : ""}${writing ? `Die übrigen ${writing} schreibt die KI von selbst vor – auch nachts.` : ""}`.trim();
   // Erst-E-Mails und Follow-ups einzeln anklickbar: öffnet die Freigabe nur für diese Art – „Zur Freigabe“ für beides

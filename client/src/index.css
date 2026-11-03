@@ -3900,3 +3900,9 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .undo-list li.is-empfaenger_weg .undo-icon,.undo-list li.is-kampagne_weg .undo-icon{background:rgba(251,113,133,.14);color:#fda4af}
 .undo-list li.is-doppelt .undo-icon{background:rgba(45,212,191,.14);color:#5eead4}
 .undo-panel.is-email .xl-head p{max-width:86ch}
+
+/* v284: zweite Fassung auf Klick, KI-Hinweis auf der Karte */
+.rv-approaches button.is-missing{border-style:dashed;opacity:.85}
+.rv-approaches button.is-missing small{color:#c4b5fd}
+.rv-approaches button:disabled{cursor:progress;opacity:.7}
+.cl-ki-hint{max-width:100%;white-space:normal;line-height:1.35}

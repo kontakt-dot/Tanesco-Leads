@@ -159,13 +159,16 @@ let prewriteTimer: ReturnType<typeof setInterval> | undefined;
  */
 export function startDraftPrewriter(intervalSeconds = Number(process.env.EMAIL_PREWRITE_TICK_SECONDS ?? 60)) {
   if (prewriteTimer || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return undefined;
-  const tick = async () => {
-    try { const db = await getDb(); if (!db) return; const { prewriteTick } = await import("./campaign-review"); const result = await prewriteTick(db);
-      if (result && (result.written || result.failed)) console.log(`[E-Mail-Kampagnen] Entwürfe vorgeschrieben: ${result.written}${result.failed ? ` (${result.failed} nicht geklappt – neuer Versuch in 30 Minuten)` : ""} – noch ${result.open} offen`); }
-    catch (error) { console.error("[E-Mail-Kampagnen] Entwürfe vorschreiben:", error instanceof Error ? error.message : error); }
+  // Ohne Leerlauf: Gibt es noch offene Entwürfe, geht der nächste Durchgang 3 Sekunden nach dem letzten los (statt bis zu einer Minute zu warten).
+  // Ist nichts mehr offen (oder ging alles schief), wird wieder im normalen Takt nachgesehen.
+  const tick = async (): Promise<boolean> => {
+    try { const db = await getDb(); if (!db) return false; const { prewriteTick } = await import("./campaign-review"); const result = await prewriteTick(db);
+      if (result && (result.written || result.failed)) console.log(`[E-Mail-Kampagnen] Entwürfe vorgeschrieben: ${result.written}${result.failed ? ` (${result.failed} nicht geklappt – neuer Versuch in 10 Minuten)` : ""} – noch ${result.open} offen`);
+      return Boolean(result && result.written > 0 && result.open > 0); }
+    catch (error) { console.error("[E-Mail-Kampagnen] Entwürfe vorschreiben:", error instanceof Error ? error.message : error); return false; }
   };
-  prewriteTimer = setInterval(tick, intervalSeconds * 1000); prewriteTimer.unref?.();
-  setTimeout(() => void tick(), 40_000).unref?.(); // kurz nach dem Serverstart einmal
+  const loop = async () => { const more = await tick(); prewriteTimer = setTimeout(() => void loop(), more ? 3000 : intervalSeconds * 1000); prewriteTimer.unref?.(); };
+  prewriteTimer = setTimeout(() => void loop(), 40_000); prewriteTimer.unref?.(); // kurz nach dem Serverstart los
   return prewriteTimer;
 }
 export function stopDeliveryScheduler() { if (timer) clearInterval(timer); timer = undefined; }
