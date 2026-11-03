@@ -5,6 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import DemoApp from "../App.demo";
 import { callProcedure, getStore, resetStore } from "../backend";
 import { localDemoLink } from "../link";
+import type { TRPCLink } from "@trpc/client";
 
 const call = (path: string, input?: unknown) => callProcedure(path, input) as Promise<any>;
 function mount() {
@@ -1030,5 +1031,45 @@ describe("Freigabe: Kontakte direkt löschen und „KI schreibt vor“ ausschalt
     const again = mount(); await settle(300); await settle(300);
     const cardAgain = Array.from(again.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Lösch-Demo"))!;
     expect(cardAgain.querySelector(".cl-approval-part.is-off")?.textContent).toBe("KI-Vorschreiben aus");
+  });
+});
+
+describe("Freigabe: keine Endlosschleife, wenn die KI einen Entwurf nicht schreiben kann (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("versucht es beim Durchklicken nur einmal von selbst – ohne Meldung oben rechts, mit ruhigem Hinweis im Entwurf; auf Klick genau eine Meldung; die grüne „Geprüft“-Zeile ist weg", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Schleifen-Demo", rows: ["anna", "bert", "cora"].map((name) => ({ firstName: name, lastName: "Schleife", company: `${name} Solar`, email: `${name}@schleife-demo.example` })) });
+    const day = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" })).getDay();
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Schleifen-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: true, weekdays: [(day + 3) % 7], from: "07:30", to: "08:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["Schleifen-Demo"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const rows = getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === saved.id).sort((a, b) => a.id - b.id); expect(rows).toHaveLength(3);
+    // Anna: kein Entwurf, und die KI kann ihn nicht schreiben (jeder Versuch schlägt fehl)
+    const anna = rows.find((row) => String(row.email).startsWith("anna"))!;
+    Object.assign(anna, { status: "wartet", nodeId: "m1", sentCount: 0, draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null, draftApproach: null, draftSource: null });
+    getStore().tables.emailCampaignEvents.push({ id: 990001, tenantId: anna.tenantId, campaignId: saved.id, recipientId: anna.id, nodeId: "m1", kind: "gesendet", subject: "Test", note: null, createdAt: new Date() } as never);
+    let generateCalls = 0;
+    const counting: TRPCLink<any> = () => ({ op, next }) => { if (op.path === "leadops.generateCampaignDrafts") generateCalls += 1; return next(op); }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }); const client = trpc.createClient({ links: [counting, localDemoLink()] });
+    const view = render(<trpc.Provider client={client} queryClient={queryClient}><QueryClientProvider client={queryClient}><DemoApp /></QueryClientProvider></trpc.Provider>);
+    await settle(300); await settle(300);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Schleifen-Demo"))!;
+    await act(async () => { fireEvent.click(card.querySelector<HTMLButtonElement>(".cl-approval-main")!); }); await settle(400);
+    const row = Array.from(document.querySelectorAll<HTMLButtonElement>(".rv-item")).find((node) => node.textContent?.includes("anna Schleife"))!; expect(row).toBeTruthy();
+    await act(async () => { fireEvent.click(row); });
+    for (let round = 0; round < 8; round += 1) await settle(300); // früher: bei jedem Neuladen ein neuer Versuch und eine neue Meldung
+    expect(generateCalls).toBe(1);
+    const toasts = () => Array.from(document.querySelectorAll("[data-sonner-toast]")).filter((node) => node.textContent?.includes("konnte die KI gerade nicht schreiben"));
+    expect(toasts()).toHaveLength(0); // automatischer Versuch: keine Meldung oben rechts
+    expect(document.querySelector(".rv-note.is-template")?.textContent).toContain("Die KI konnte diesen Entwurf gerade nicht schreiben");
+    expect(document.querySelector(".rv-portal")).toBeNull(); // „Geprüft: keiner der … erwähnt Aroundhome“ ist raus
+    // auf Klick: neuer Versuch, genau eine Meldung – auch beim zweiten Klick keine zweite
+    const retry = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".rv-editor-tools button")).find((node) => node.textContent?.includes("KI-Entwurf"))!;
+    await act(async () => { fireEvent.click(retry()); }); await settle(400); await settle(300);
+    await act(async () => { fireEvent.click(retry()); }); await settle(400); await settle(300);
+    expect(generateCalls).toBe(3); expect(toasts()).toHaveLength(1);
+    for (let round = 0; round < 4; round += 1) await settle(300);
+    expect(generateCalls).toBe(3); // kein Nachlaufen
   });
 });

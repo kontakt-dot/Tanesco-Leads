@@ -21,4 +21,11 @@ describe("Mandanten-Navigationspräferenzen", () => {
     await caller.leadops.updateNavigationPreferences({ hiddenPages: ["Statistik", "E-Mails"] });
     expect(state.updateCalls[0]).toMatchObject({ navigationHiddenPages: ["Statistik", "E-Mails"] });
   });
+  it("speichert auch, wenn fast alles ausgeblendet ist (21 von 23 Menüpunkten – früher still abgelehnt, „Gespräche“ kam wieder)", async () => {
+    const caller = appRouter.createCaller({ user: { id: 7 } } as never);
+    const all = ["Dashboard", "Leads", "Gebietskarte", "Lead-Kategorien", "Bestellungen", "Lieferkette", "Rohdaten", "Telefonie", "Gespräche", "Haustür-Erfassung", "Vertriebspipeline", "E-Mail-Kampagnen", "Verträge", "Automatisierung", "Kooperationen", "Teams", "Benutzer", "Integrationen", "Tags", "Reklamationen", "E-Mails", "Support", "Rechnungen"] as const;
+    const hidden = all.filter((page) => page !== "Vertriebspipeline" && page !== "E-Mail-Kampagnen"); expect(hidden).toHaveLength(21);
+    await caller.leadops.updateNavigationPreferences({ hiddenPages: [...hidden, "Gespräche"] }); // doppelt geschickt → einmal gespeichert
+    expect(state.updateCalls[0]).toEqual({ navigationHiddenPages: hidden });
+  });
 });

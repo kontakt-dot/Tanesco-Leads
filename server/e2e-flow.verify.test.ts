@@ -3917,6 +3917,13 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       // auf Klick schreibt sie trotzdem (Freigabe → Kontakt anklicken)
       const [first] = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
       expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [first.id] })).drafts).toHaveLength(1);
+      // schreibt die KI einen Entwurf gerade schon (Vorschreiben/Versandlauf): die Freigabe sieht „KI schreibt …“, ein zweiter Versuch ist „busy“ statt „fehlgeschlagen“ (keine falsche Meldung, keine Schleife)
+      const { withDraftLock } = await import("./campaign-review"); const busyRow = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id)))[1];
+      await withDraftLock(busyRow.id, async () => {
+        expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).items.find((item) => item.id === busyRow.id)).toMatchObject({ writing: true });
+        expect(await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [busyRow.id] })).toMatchObject({ drafts: [], failed: 0, busy: 1, busyIds: [busyRow.id], failedIds: [] });
+      });
+      expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).items.find((item) => item.id === busyRow.id)).toMatchObject({ writing: false });
       // wieder einschalten: schreibt die übrigen
       await owner.leadops.setEmailCampaignPrewrite({ id: campaign.id, enabled: true }); expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 2, open: 0 });
       // Kontakte direkt aus der Freigabe löschen: ganz weg, Papierkorb, Kunde bleibt
