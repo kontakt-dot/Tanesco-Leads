@@ -1073,3 +1073,48 @@ describe("Freigabe: keine Endlosschleife, wenn die KI einen Entwurf nicht schrei
     expect(generateCalls).toBe(3); // kein Nachlaufen
   });
 });
+
+describe("Freigabe: KI je Liste an/aus und Markierung „Passt nicht?“ (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Karte zeigt „1 passt nicht?“ und öffnet die Freigabe gefiltert; „Passt doch“ hebt die Markierung auf; „Je Liste“ schaltet die KI für eine Liste aus – die Karte zeigt „KI aus für …“", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Solar Liste A", rows: ["anke", "bodo", "clara"].map((name) => ({ firstName: name, lastName: "Prüf", company: name === "bodo" ? "Bodo Großhandel GmbH" : `${name} Solar`, email: `${name}@pruef-demo.example` })) });
+    await call("leadops.importColdList", { listName: "Solar Liste B", rows: ["dora", "emil"].map((name) => ({ firstName: name, lastName: "Prüf", company: `${name} Solar`, email: `${name}@pruef-demo.example` })) });
+    const day = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" })).getDay();
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Photovoltaik Prüf-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: true, weekdays: [(day + 3) % 7], from: "07:30", to: "08:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["Solar Liste A", "Solar Liste B"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const recipients = () => getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === saved.id).sort((a, b) => a.id - b.id);
+    expect(recipients()).toHaveLength(5); expect(recipients().every((row) => row.draftState === "entwurf")).toBe(true);
+    const bodo = recipients().find((row) => String(row.email).startsWith("bodo"))!; Object.assign(bodo, { fitState: "passt_nicht", fitNote: "Laut Webseite reiner Großhandel – keine Montage" });
+    expect(await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true, recipientIds: [bodo.id] })).toMatchObject({ approved: 0, notFitting: 1 }); // Markierte nie per Sammel-Freigabe
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const card = () => Array.from(document.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Photovoltaik Prüf-Demo"))!;
+    const unfit = card().querySelector<HTMLButtonElement>(".cl-approval-part.is-unfit")!; expect(unfit).toBeTruthy(); expect(unfit.textContent).toBe("1 passt nicht?");
+    await act(async () => { fireEvent.click(unfit); }); await settle(400); await settle(300);
+    // Freigabe: nur der markierte Kontakt, mit Grund und „Passt doch“
+    expect(document.querySelector(".rv-fit-filter.is-active")?.textContent).toContain("Passt nicht?1");
+    const rows = Array.from(document.querySelectorAll(".rv-item")); expect(rows).toHaveLength(1); expect(rows[0].textContent).toContain("bodo Prüf"); expect(rows[0].querySelector("em.is-unfit")).toBeTruthy();
+    await act(async () => { fireEvent.click(rows[0]); }); await settle(300);
+    const note = document.querySelector<HTMLElement>(".rv-note.is-unfit")!; expect(note.textContent).toContain("reiner Großhandel"); expect(note.textContent).toContain("„Alle freigeben“ lässt sie aus");
+    await act(async () => { fireEvent.click(Array.from(note.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.includes("Passt doch"))!); }); await settle(400); await settle(300);
+    expect(getStore().tables.emailCampaignRecipients.find((row) => row.id === bodo.id)).toMatchObject({ fitState: "geprueft" });
+    expect(document.querySelector(".rv-fit-filter")).toBeNull(); expect(document.querySelectorAll(".rv-item")).toHaveLength(5); // Filter weg, alle wieder da
+    // „Je Liste“: KI für „Solar Liste B“ aus
+    const listsButton = document.querySelector<HTMLButtonElement>(".rv-prewrite-lists")!; expect(listsButton.textContent).toContain("Je Liste");
+    await act(async () => { fireEvent.keyDown(listsButton, { key: "ArrowDown" }); }); await settle(300);
+    const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')); expect(items.map((node) => node.querySelector(".rv-lists-name")?.textContent)).toEqual(["Solar Liste A", "Solar Liste B"]); expect(items.every((node) => node.getAttribute("aria-checked") === "true")).toBe(true);
+    await act(async () => { fireEvent.click(items[1]); }); await settle(400); await settle(300);
+    expect(getStore().tables.emailCampaigns.find((row) => row.id === saved.id)).toMatchObject({ prewriteOffLists: ["Solar Liste B"] });
+    expect(document.querySelector(".rv-prewrite-lists")?.textContent).toContain("Listen: 1 aus"); expect(document.querySelector(".rv-prewrite")?.textContent).toContain("Für die Liste „Solar Liste B“ schreibt sie nichts von selbst.");
+    // fehlt ein Entwurf in Liste B, schreibt die KI ihn nicht von selbst
+    const dora = recipients().find((row) => String(row.email).startsWith("dora"))!; Object.assign(dora, { draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null, draftApproach: null });
+    await call("leadops.runEmailCampaigns"); expect(getStore().tables.emailCampaignRecipients.find((row) => row.id === dora.id)?.draftState ?? null).toBeNull();
+    // Karte: „KI aus für „Solar Liste B““
+    cleanup(); window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    mount(); await settle(300); await settle(300);
+    expect(card().querySelector(".cl-approval-part.is-off")?.textContent).toBe("KI aus für „Solar Liste B“"); expect(card().querySelector(".cl-approval-part.is-unfit")).toBeNull();
+    void view;
+  });
+});

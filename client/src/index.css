@@ -3923,3 +3923,25 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .rv-prewrite-toggle:disabled{opacity:.6;cursor:progress}
 .cl-approval-part.is-off{color:#9d99b8;font-weight:600}
 @media (prefers-reduced-motion: reduce){.rv-prewrite-toggle i,.rv-prewrite-toggle i::after{transition:none}}
+
+/* v287: KI je Liste an/aus, Markierung „Passt nicht?“ (Kategorie-Prüfung der KI) */
+.rv-prewrite-lists{flex:none;display:inline-flex;align-items:center;gap:6px;margin-left:6px;padding:5px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:#e8e6ff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.rv-prewrite-lists.has-off{border-color:rgba(251,191,36,.45);background:rgba(251,191,36,.08);color:#fde68a}
+.rv-prewrite-lists:focus-visible{outline:2px solid #a5a0ff;outline-offset:2px}
+.rv-lists-menu{min-width:260px;max-width:min(380px,92vw);max-height:340px;overflow:auto}
+.rv-lists-menu [role="menuitemcheckbox"]{display:flex;align-items:center;gap:8px}
+.rv-lists-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rv-lists-menu small{flex:none;font-size:11px;color:#8a87a8;font-weight:600}
+.rv-fit-filter{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.08);color:#fca5a5;font-size:12px;font-weight:700;cursor:pointer}
+.rv-fit-filter i{font-style:normal;font-size:11px;opacity:.85}
+.rv-fit-filter.is-active{background:#ef4444;border-color:#ef4444;color:#fff}
+.rv-fit-filter:focus-visible{outline:2px solid #fca5a5;outline-offset:2px}
+.rv-state em.is-unfit{color:#fca5a5;background:rgba(248,113,113,.14)}
+.rv-note.is-unfit{align-items:center;color:#fecaca;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.28)}
+.rv-note.is-unfit > svg{flex:none;color:#f87171}
+.rv-note.is-unfit > span{flex:1;min-width:0}
+.rv-note.is-unfit > button{flex:none}
+.cl-approval-part.is-unfit{display:inline-flex;align-items:center;gap:4px;color:#fca5a5;font-weight:700}
+.cl-approval-part.is-unfit svg{width:12px;height:12px;flex:none}
+.cl-list-off{font-style:normal;margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.08);color:#9d99b8;font-size:10px;font-weight:700;line-height:1.6;white-space:nowrap}
+@media (max-width: 760px){.rv-prewrite{flex-wrap:wrap}.rv-prewrite-lists{margin-left:0}}

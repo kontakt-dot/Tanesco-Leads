@@ -7,7 +7,7 @@
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leads, mailSettings } from "../drizzle/schema";
-import { audienceLists, kiModusOf, stopsOnReply } from "../shared/email-campaigns";
+import { audienceLists, kiModusOf, prewriteOffListsOf, stopsOnReply } from "../shared/email-campaigns";
 import { nextEmailOf } from "../shared/follow-up-plan";
 import { DEFAULT_SPARTE, dropPayFit, fitsSparte, fixQuestionCount, isEnergySparte, mentionsPayFit, mentionsQuestions, numberWord, offerChain, offersForeignLeads, qualifyPhrase, questionCount, questionTopics, resolveSparte, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
 import { extractProfile } from "../shared/lead-finder";
@@ -242,8 +242,10 @@ export function finishDraft(text: string, options: { greeting: string; phone: st
 }
 type FollowUpInfo = { index: number; sentSubjects: string[] } | null; // Nr. der E-Mail im Ablauf (0 = Erst-E-Mail) und was schon raus ist
 /** Ein KI-Vorschlag samt Schwächen („bezuege“ = zu wenig Bezug auf die Firma, „vorlage“ = zu nah an der Vorlage) – Schwächen führen zu einem zweiten Versuch, nie zum Wegwerfen. */
-export type AiOption = DraftOption & { issues: Array<"bezuege" | "vorlage"> };
-export async function aiDrafts(base: { subject: string; text: string }, info: Record<string, string>, site: { url: string; text: string } | null = null, options: { approaches?: DraftApproach[]; followUp?: FollowUpInfo; stepLabel?: string | null; phone?: string | null; sparte?: Sparte; retryNote?: string | null; testLeads?: number | null } = {}): Promise<AiOption[] | null> {
+export type AiOption = DraftOption & { issues: Array<"bezuege" | "vorlage">; fit?: DraftFit | null };
+/** Passt die Firma zur Lead-Kategorie der Kampagne? Prüft die KI beim Schreiben – „passt_nicht“ markiert den Kontakt in der Freigabe. */
+export type DraftFit = { state: "passt" | "unklar" | "passt_nicht"; note: string };
+export async function aiDrafts(base: { subject: string; text: string }, info: Record<string, string>, site: { url: string; text: string } | null = null, options: { approaches?: DraftApproach[]; followUp?: FollowUpInfo; stepLabel?: string | null; phone?: string | null; sparte?: Sparte; retryNote?: string | null; testLeads?: number | null; categoryCheck?: string | null } = {}): Promise<AiOption[] | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   try {
     const wanted = options.approaches?.length ? DRAFT_APPROACHES.filter((approach) => options.approaches!.includes(approach.key)) : DRAFT_APPROACHES;
@@ -252,9 +254,13 @@ export async function aiDrafts(base: { subject: string; text: string }, info: Re
     // „bezuege“: welche konkreten Punkte dieser Firma der Text aufgreift – so schreibt die KI wirklich auf die Firma zu, und man sieht es unter „Freigeben“
     const option = { type: "object", additionalProperties: false, required: ["subject", "text", "bezuege"], properties: { subject: { type: "string" }, text: { type: "string" }, bezuege: { type: "array", items: { type: "string" }, description: "Die konkreten Punkte genau dieser Firma, die der Text aufgreift (z. B. eine Leistung, ein Zitat oder eine Zahl von der Webseite, Region, Spezialisierung, Geschäftsführer aus dem Impressum)" } } };
     const followUp = options.followUp && options.followUp.index > 0 ? `\n\nDies ist eine NACHFASS-MAIL (E-Mail Nr. ${options.followUp.index + 1} der Serie${options.stepLabel ? `, Schritt „${options.stepLabel}“` : ""}). Schon gesendet: ${options.followUp.sentSubjects.length ? options.followUp.sentSubjects.map((subject) => `„${subject}“`).join(", ") : "die Erst-E-Mail"}.${options.testLeads && options.testLeads !== testLeadsFor(sparte) ? ` Darin wurden ${options.testLeads} Test-Leads versprochen – nenne wieder genau ${options.testLeads}.` : ""} Halte dich an die Nachfass-Regeln.` : "";
-    const task = (wanted.length === DRAFT_APPROACHES.length ? "Schreibe beide Vorschläge für diesen Empfänger – deutlich verschieden." : `Schreibe NUR diese${wanted.length === 1 ? "n" : ""} Vorschl${wanted.length === 1 ? "ag" : "äge"} für diesen Empfänger: ${wanted.map((approach) => `"${approach.key}"`).join(", ")}.`) + " Nenne bei jedem Vorschlag unter „bezuege“ die konkreten Punkte dieser Firma, die du aufgreifst." + (options.retryNote ? `\n\n${options.retryNote}` : "");
-    const response = await invokeLLM({ maxTokens: wanted.length === 1 ? 1500 : 3800, temperature: 0.8, messages: [{ role: "system", content: systemFor(sparte, options.testLeads ?? testLeadsFor(sparte)) }, { role: "user", content: `Leadsparte: ${sparte.label}\nEmpfänger:\n${facts}${site ? `\n\nWebseite (${site.url}), Auszug:\n${site.text.slice(0, 9000)}` : "\n\n(Keine Webseite verfügbar – nur die Angaben oben nutzen.)"}\n\nVorlage dieses Schritts (nur Thema und Ton – keine Sätze übernehmen) – Betreff: ${base.subject}\n\n${base.text}${followUp}\n\n${task}` }], outputSchema: { name: "vorschlaege", schema: { type: "object", additionalProperties: false, required: wanted.map((approach) => approach.key), properties: Object.fromEntries(wanted.map((approach) => [approach.key, option])) } } });
+    const check = options.categoryCheck?.trim() || null; // Lead-Kategorie, zu der die Firma passen soll
+    const task = (wanted.length === DRAFT_APPROACHES.length ? "Schreibe beide Vorschläge für diesen Empfänger – deutlich verschieden." : `Schreibe NUR diese${wanted.length === 1 ? "n" : ""} Vorschl${wanted.length === 1 ? "ag" : "äge"} für diesen Empfänger: ${wanted.map((approach) => `"${approach.key}"`).join(", ")}.`) + " Nenne bei jedem Vorschlag unter „bezuege“ die konkreten Punkte dieser Firma, die du aufgreifst." + (check ? `\n\nPrüfe außerdem unter „kategorie“, ob diese Firma wirklich zur Lead-Kategorie „${check}“ passt: Ist sie ein Fachbetrieb, der solche Aufträge selbst bei Kunden ausführt (z. B. Montage, Installation, Einbau, Wartung) und deshalb Interessenten-Anfragen dieser Kategorie kaufen würde? „nein“ nur bei klaren Hinweisen aus Webseite oder Angaben – z. B. ganz andere Branche, reiner Händler oder Großhandel ohne Montage, Hersteller, Planungsbüro ohne Ausführung, Portal oder Vergleichsseite, Verband, Behörde, Privatperson. „unklar“, wenn die Angaben nicht reichen. Unter „grund“ ein kurzer Satz (höchstens 20 Wörter), woran du das siehst.` : "") + (options.retryNote ? `\n\n${options.retryNote}` : "");
+    const kategorie = { type: "object", additionalProperties: false, required: ["passt", "grund"], properties: { passt: { type: "string", enum: ["ja", "nein", "unklar"] }, grund: { type: "string" } } };
+    const response = await invokeLLM({ maxTokens: wanted.length === 1 ? 1500 : 3800, temperature: 0.8, messages: [{ role: "system", content: systemFor(sparte, options.testLeads ?? testLeadsFor(sparte)) }, { role: "user", content: `Leadsparte: ${sparte.label}\nEmpfänger:\n${facts}${site ? `\n\nWebseite (${site.url}), Auszug:\n${site.text.slice(0, 9000)}` : "\n\n(Keine Webseite verfügbar – nur die Angaben oben nutzen.)"}\n\nVorlage dieses Schritts (nur Thema und Ton – keine Sätze übernehmen) – Betreff: ${base.subject}\n\n${base.text}${followUp}\n\n${task}` }], outputSchema: { name: "vorschlaege", schema: { type: "object", additionalProperties: false, required: [...wanted.map((approach) => approach.key), ...(check ? ["kategorie"] : [])], properties: { ...Object.fromEntries(wanted.map((approach) => [approach.key, option])), ...(check ? { kategorie } : {}) } } } });
     const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as Record<string, { subject?: unknown; text?: unknown; bezuege?: unknown } | undefined>;
+    const verdict = check ? (parsed as Record<string, unknown>).kategorie as { passt?: unknown; grund?: unknown } | undefined : undefined;
+    const fit: DraftFit | null = verdict && typeof verdict.passt === "string" ? { state: verdict.passt === "nein" ? "passt_nicht" : verdict.passt === "ja" ? "passt" : "unklar", note: String(verdict.grund ?? "").replace(/\s+/g, " ").trim().slice(0, 280) } : null;
     const firstMail = !(options.followUp && options.followUp.index > 0);
     const list = wanted.map((approach): AiOption | null => {
       const raw = parsed[approach.key]; const subject = String(raw?.subject ?? "").trim().slice(0, 300); let text = stripClosing(String(raw?.text ?? "").trim());
@@ -265,7 +271,7 @@ export async function aiDrafts(base: { subject: string; text: string }, info: Re
       const issues: AiOption["issues"] = [];
       if (approach.key === "frei" && firstMail && refs.length < (site ? 2 : 1)) issues.push("bezuege"); // der freie Vorschlag muss wirklich auf die Firma geschrieben sein
       if (approach.key !== "drittanbieter" && copiesTemplate(text, base.text)) issues.push("vorlage");
-      return { key: approach.key, label: approach.label, subject, text, refs, issues };
+      return { key: approach.key, label: approach.label, subject, text, refs, issues, fit };
     }).filter((item): item is AiOption => Boolean(item));
     return list.length ? list : null;
   } catch (error) { console.error("[KI-Entwurf]", error instanceof Error ? error.message.slice(0, 300) : error); return null; }
@@ -346,12 +352,14 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const followUp: FollowUpInfo = { index: sentEvents.length, sentSubjects: sentEvents.map((event) => event.subject ?? "").filter(Boolean).slice(-4) };
   const finish = (text: string, approach: DraftApproach) => finishDraft(text, { greeting: values.begruessung, phone, followUp: sentEvents.length > 0, partner: sparte.partner, sparte, approach, testLeads });
   const polish = (items: AiOption[] | null): AiOption[] | null => items?.map((item) => ({ ...item, source: "ki" as const, subject: PORTAL_RE.test(item.subject) ? base.subject : dropAdPlatforms(item.subject), text: finish(item.text, item.key) })) ?? null; // nie Aroundhome – auch nicht im Betreff; nie Meta & Co.
-  const aiOptions = { followUp, stepLabel: node.label ?? node.subject, phone, sparte, testLeads };
+  // Lead-Kategorie der Kampagne (genauer: ihre gewählten Kategorien) – bei „Standard“ (nichts bekannt) keine Prüfung
+  const categoryCheck = (sparte as { source?: string }).source === "standard" ? null : ((sparte as { categories?: string[] }).categories?.length ? (sparte as { categories?: string[] }).categories!.join(", ") : sparte.label);
+  const aiOptions = { followUp, stepLabel: node.label ?? node.subject, phone, sparte, testLeads, categoryCheck };
   // Zweite Fassung auf Klick: nur sie schreiben und zum Entwurf dazulegen – Text, Betreff und Freigabe des Haupt-Entwurfs bleiben
   if (options.alternative && recipient.draftState && draftFitsNode(recipient, node.id)) {
-    const alt = polish(await aiDrafts(base, info, site, { ...aiOptions, approaches: [options.alternative] }))?.find((item) => item.key === options.alternative) ?? null;
+    const alt = polish(await aiDrafts(base, info, site, { ...aiOptions, categoryCheck: null, approaches: [options.alternative] }))?.find((item) => item.key === options.alternative) ?? null; // zweite Fassung: keine neue Prüfung
     if (!alt) throw new Error("Die KI konnte die zweite Fassung gerade nicht schreiben – bitte gleich noch einmal klicken.");
-    const { issues: _issues, ...option } = alt as AiOption; void _issues;
+    const { issues: _issues, fit: _fit, ...option } = alt as AiOption; void _issues; void _fit;
     const existing = (Array.isArray(recipient.draftOptions) ? recipient.draftOptions : []) as DraftOption[];
     const list = [...existing.filter((item) => item.key !== option.key), option as DraftOption];
     await db.update(emailCampaignRecipients).set({ draftOptions: list }).where(eq(emailCampaignRecipients.id, recipient.id));
@@ -377,10 +385,13 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   // Nie die Vorlage als Entwurf, wenn die KI eingerichtet ist: hat sie den Entwurf gerade nicht geschrieben (z. B. überlastet), bleibt er offen –
   // das Vorschreiben versucht es nach ein paar Minuten noch einmal. Nur ganz ohne KI (kein Schlüssel) kommt der Text aus der Vorlage.
   if (source === "vorlage" && process.env.ANTHROPIC_API_KEY) throw new Error(KI_NOT_NOW);
-  const stored = (item: DraftOption): DraftOption => { const { issues: _issues, ...rest } = item as AiOption; void _issues; return rest; }; // Schwächen nur intern
+  const stored = (item: DraftOption): DraftOption => { const { issues: _issues, fit: _fit, ...rest } = item as AiOption; void _issues; void _fit; return rest; }; // Schwächen und Prüfung nur intern
+  // Passt die Firma zur Lead-Kategorie? Ergebnis der KI – hast du „Passt doch“ geklickt („geprueft“), bleibt deine Entscheidung
+  const fit = (ai as AiOption[] | null)?.find((item) => item.key === ansatz)?.fit ?? (ai as AiOption[] | null)?.find((item) => item.fit)?.fit ?? null;
+  const fitUpdate = fit && recipient.fitState !== "geprueft" ? { fitState: fit.state, fitNote: fit.note || null } : {};
   const first = stored(chosen); const list = (candidates.includes(chosen) ? candidates : [chosen, ...candidates]).map(stored); // der Haupt-Entwurf steht immer auch unter den Vorschlägen
-  await db.update(emailCampaignRecipients).set({ draftSubject: first.subject, draftText: first.text, draftOptions: list, draftApproach: first.key, draftNodeId: node.id, draftState: "entwurf", draftSource: source, draftAt: new Date() }).where(eq(emailCampaignRecipients.id, recipient.id));
-  return { id: recipient.id, subject: first.subject, text: first.text, options: list, approach: first.key, source, website: site?.url ?? website, nodeId: node.id, nodeLabel: node.label?.trim() || node.subject };
+  await db.update(emailCampaignRecipients).set({ draftSubject: first.subject, draftText: first.text, draftOptions: list, draftApproach: first.key, draftNodeId: node.id, draftState: "entwurf", draftSource: source, draftAt: new Date(), ...fitUpdate }).where(eq(emailCampaignRecipients.id, recipient.id));
+  return { id: recipient.id, subject: first.subject, text: first.text, options: list, approach: first.key, source, website: site?.url ?? website, nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, fit: recipient.fitState === "geprueft" ? "geprueft" : fit?.state ?? recipient.fitState ?? null };
 }
 
 /**
@@ -396,7 +407,7 @@ export async function approveAllDrafts(db: Db, tenantId: number, campaignId: num
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
   const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
   const sentNodes = await sentNodeMap(db, tenantId, rows.filter((row) => row.sentCount > 0).map((row) => row.id));
-  let changed = 0; let withoutDraft = 0; let templateOnly = 0;
+  let changed = 0; let withoutDraft = 0; let templateOnly = 0; let notFitting = 0;
   const only = recipientIds ? new Set(recipientIds) : null; // leere Auswahl = niemand (nie „alle“)
   for (const row of rows) {
     if (only && !only.has(row.id)) continue; // Auswahl in der Freigabe
@@ -407,12 +418,13 @@ export async function approveAllDrafts(db: Db, tenantId: number, campaignId: num
       if (!fits) { withoutDraft += 1; continue; }
       if (row.draftState === "freigegeben") continue;
       if (row.draftSource === "vorlage") { templateOnly += 1; continue; } // Ersatz aus der Vorlage (KI hat nicht geschrieben) – nie per „Alle freigeben“, nur bewusst einzeln
+      if (row.fitState === "passt_nicht") { notFitting += 1; continue; } // passt laut KI vielleicht nicht zur Lead-Kategorie – erst prüfen, dann einzeln freigeben oder löschen
       await db.update(emailCampaignRecipients).set({ draftState: "freigegeben", draftNodeId: node.id, draftAt: new Date(), ...(row.nodeId === node.id ? { nextActionAt: new Date(Date.now() - 2000) } : {}) }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
     } else if (row.draftState === "freigegeben" && fits) {
       await db.update(emailCampaignRecipients).set({ draftState: "entwurf", draftAt: new Date() }).where(eq(emailCampaignRecipients.id, row.id)); changed += 1;
     }
   }
-  return approve ? { approved: changed, withoutDraft, templateOnly } : { reverted: changed, withoutDraft: 0, templateOnly: 0 };
+  return approve ? { approved: changed, withoutDraft, templateOnly, notFitting } : { reverted: changed, withoutDraft: 0, templateOnly: 0, notFitting: 0 };
 }
 /** Je E-Mail-Schritt das jüngste echte Beispiel: so hat die KI die E-Mail für einen Kontakt tatsächlich geschrieben (für die Vorschau im Builder). */
 export async function draftSamples(db: Db, tenantId: number, campaignId: number) {
@@ -697,10 +709,12 @@ export function prewritesDrafts(campaign: { status: string; kiModus?: string | n
   return campaign.status === "aktiv" && campaign.prewrite !== false && !campaign.isTemplate && !campaign.archivedAt && kiModusOf(campaign) === "freigabe" && Boolean(process.env.ANTHROPIC_API_KEY);
 }
 /** Wer braucht noch einen Entwurf? Offene Empfänger, deren nächster Schritt eine E-Mail ist und die noch keinen passenden Entwurf haben – erst die fälligen, dann die in der Wartezeit (je nach Reihenfolge der Aufnahme). */
-async function openDraftIds(db: Db, campaign: { id: number; tenantId: number; tree: unknown }): Promise<number[]> {
+async function openDraftIds(db: Db, campaign: { id: number; tenantId: number; tree: unknown; prewriteOffLists?: unknown }): Promise<number[]> {
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
-  const rows = await db.select({ id: emailCampaignRecipients.id, nodeId: emailCampaignRecipients.nodeId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, nextActionAt: emailCampaignRecipients.nextActionAt, lastSentAt: emailCampaignRecipients.lastSentAt, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, clickedUrls: emailCampaignRecipients.clickedUrls, draftState: emailCampaignRecipients.draftState, draftNodeId: emailCampaignRecipients.draftNodeId })
+  const rows = await db.select({ id: emailCampaignRecipients.id, nodeId: emailCampaignRecipients.nodeId, status: emailCampaignRecipients.status, sentCount: emailCampaignRecipients.sentCount, nextActionAt: emailCampaignRecipients.nextActionAt, lastSentAt: emailCampaignRecipients.lastSentAt, openedAt: emailCampaignRecipients.openedAt, clickedAt: emailCampaignRecipients.clickedAt, clickedUrls: emailCampaignRecipients.clickedUrls, draftState: emailCampaignRecipients.draftState, draftNodeId: emailCampaignRecipients.draftNodeId, leadId: emailCampaignRecipients.leadId })
     .from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, campaign.tenantId), eq(emailCampaignRecipients.campaignId, campaign.id), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]))).orderBy(asc(emailCampaignRecipients.id));
+  const off = prewriteOffListsOf(campaign); // Schalter je Liste: für diese Listen schreibt die KI nichts von selbst
+  if (off.length) { const leadIds = Array.from(new Set(rows.map((row) => row.leadId).filter((id): id is number => typeof id === "number"))); const lists = leadIds.length ? await db.select({ id: leads.id, listName: leads.listName }).from(leads).where(inArray(leads.id, leadIds)) : []; const offLeads = new Set(lists.filter((lead) => lead.listName && off.includes(lead.listName.trim())).map((lead) => lead.id)); rows.splice(0, rows.length, ...rows.filter((row) => !row.leadId || !offLeads.has(row.leadId))); }
   const sentNodes = await sentNodeMap(db, campaign.tenantId, rows.filter((row) => row.sentCount > 0).map((row) => row.id));
   const withNode = rows.map((row) => ({ row, node: dueSendNode(tree, { ...row, sentNodeIds: sentNodes.get(row.id) ?? [] }) })).filter((item) => item.node && (!item.row.draftState || !draftFitsNode(item.row, item.node.id)));
   return [...withNode.filter((item) => item.row.nodeId === item.node!.id), ...withNode.filter((item) => item.row.nodeId !== item.node!.id)].map((item) => item.row.id);
@@ -721,7 +735,7 @@ export async function prewriteDrafts(db: Db, options: { campaignId?: number | nu
   if (!process.env.ANTHROPIC_API_KEY) return { written: 0, failed: 0, open: 0 };
   const started = Date.now(); const max = Math.max(1, options.max ?? 16); const parallel = Math.max(1, Math.min(4, options.parallel ?? 4)); const budgetMs = options.budgetMs ?? 50_000;
   const conditions = [eq(emailCampaigns.status, "aktiv"), isNull(emailCampaigns.archivedAt)]; if (options.campaignId) conditions.push(eq(emailCampaigns.id, options.campaignId)); // pausierte: nichts vorschreiben
-  const campaigns = (await db.select({ id: emailCampaigns.id, tenantId: emailCampaigns.tenantId, tree: emailCampaigns.tree, status: emailCampaigns.status, kiModus: emailCampaigns.kiModus, kiAnsatz: emailCampaigns.kiAnsatz, reviewFirst: emailCampaigns.reviewFirst, isTemplate: emailCampaigns.isTemplate, archivedAt: emailCampaigns.archivedAt, prewrite: emailCampaigns.prewrite }).from(emailCampaigns).where(and(...conditions))).filter((row) => prewritesDrafts(row));
+  const campaigns = (await db.select({ id: emailCampaigns.id, tenantId: emailCampaigns.tenantId, tree: emailCampaigns.tree, status: emailCampaigns.status, kiModus: emailCampaigns.kiModus, kiAnsatz: emailCampaigns.kiAnsatz, reviewFirst: emailCampaigns.reviewFirst, isTemplate: emailCampaigns.isTemplate, archivedAt: emailCampaigns.archivedAt, prewrite: emailCampaigns.prewrite, prewriteOffLists: emailCampaigns.prewriteOffLists }).from(emailCampaigns).where(and(...conditions))).filter((row) => prewritesDrafts(row));
   const now = Date.now(); let open = 0;
   const queues: Array<Array<{ tenantId: number; id: number; approach: DraftApproach }>> = []; const openNow = new Map<number, number>();
   for (const campaign of campaigns) {
@@ -785,9 +799,9 @@ export async function reviewQueue(db: Db, tenantId: number, campaignId: number) 
   }).filter((item): item is { row: Recipient; node: Extract<EmailNode, { type: "send" }>; dueAt: Date | null } => Boolean(item));
   const leadIds = Array.from(new Set(rows.map(({ row }) => row.leadId).filter((id): id is number => typeof id === "number")));
   const leadRows = leadIds.length ? await db.select({ id: leads.id, publicId: leads.publicId, city: leads.city, listName: leads.listName, company: leads.company, firstName: leads.firstName, lastName: leads.lastName, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, leadIds))) : [];
-  const items = rows.map(({ row, node, dueAt }) => { const lead = leadRows.find((item) => item.id === row.leadId) ?? null; const fits = draftFitsNode(row, node.id); const sent = row.sentCount > 0 ? sentOf(row.id) : []; const last = sent[sent.length - 1] ?? null; const promised = sent.length ? promisedTestLeads(sent) : null; const offer = testOfferFor(sparteOfCampaign(campaign, lead?.listName), promised); return { id: row.id, writing: draftingNow.has(row.id) /* die KI schreibt diesen Entwurf gerade (im Hintergrund) */, email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, step: row.sentCount + 1, dueAt, sentBefore: last ? { subject: last.subject ?? "", at: last.createdAt, count: sent.length } : null, testLeads: offer, promisedBefore: promised, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits ? withoutLegacyOptions(row.draftOptions) ?? [] : []) as DraftOption[], draftApproach: fits ? approachOf(row.draftApproach) : null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
+  const items = rows.map(({ row, node, dueAt }) => { const lead = leadRows.find((item) => item.id === row.leadId) ?? null; const fits = draftFitsNode(row, node.id); const sent = row.sentCount > 0 ? sentOf(row.id) : []; const last = sent[sent.length - 1] ?? null; const promised = sent.length ? promisedTestLeads(sent) : null; const offer = testOfferFor(sparteOfCampaign(campaign, lead?.listName), promised); return { id: row.id, writing: draftingNow.has(row.id) /* die KI schreibt diesen Entwurf gerade (im Hintergrund) */, fitState: row.fitState ?? null, fitNote: row.fitNote ?? null, /* passt laut KI vielleicht nicht zur Lead-Kategorie */ email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, step: row.sentCount + 1, dueAt, sentBefore: last ? { subject: last.subject ?? "", at: last.createdAt, count: sent.length } : null, testLeads: offer, promisedBefore: promised, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits ? withoutLegacyOptions(row.draftOptions) ?? [] : []) as DraftOption[], draftApproach: fits ? approachOf(row.draftApproach) : null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
   const withDraft = items.filter((item) => item.draftText);
-  return { items, prewriting: prewritesDrafts(campaign), prewrite: campaign.prewrite !== false, /* Schalter „KI schreibt vor“ dieser Kampagne */ counts: { offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length, erste: items.filter((item) => !item.followUp).length, followUps: items.filter((item) => item.followUp).length, faellig: items.filter((item) => !item.dueAt).length, spaeter: items.filter((item) => item.dueAt).length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } }; // prewriting: die KI schreibt die fehlenden Entwürfe im Hintergrund vor (auch nachts)
+  return { items, prewriting: prewritesDrafts(campaign), prewrite: campaign.prewrite !== false, /* Schalter „KI schreibt vor“ dieser Kampagne */ prewriteOffLists: prewriteOffListsOf(campaign), /* Listen ohne Vorschreiben */ counts: { passtNicht: items.filter((item) => item.fitState === "passt_nicht" && item.draftState !== "freigegeben").length, offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length, erste: items.filter((item) => !item.followUp).length, followUps: items.filter((item) => item.followUp).length, faellig: items.filter((item) => !item.dueAt).length, spaeter: items.filter((item) => item.dueAt).length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } }; // prewriting: die KI schreibt die fehlenden Entwürfe im Hintergrund vor (auch nachts)
 }
 
 /** Entwurf speichern, freigeben oder Freigabe zurücknehmen – gilt für den aktuellen Schritt des Empfängers. Freigegeben = geht beim nächsten Lauf raus. */

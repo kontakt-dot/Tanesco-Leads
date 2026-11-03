@@ -35,9 +35,10 @@ vi.mock("./_core/llm", () => ({
       const own = (key: string) => key === "drittanbieter"
         ? `Sehr geehrte Damen und Herren,\n\n${firma} in ${ort} ist uns aufgefallen. Über unsere Quellen haben wir mitbekommen, dass bei Ihnen sehr wahrscheinlich Leads ankommen, die ohnehin von uns stammen – nur über Zwischenhändler weitergereicht. Deshalb möchten wir direkt mit Ihnen zusammenarbeiten.\n\nZum Kennenlernen: 20 Test-Leads kostenlos.\n\nVielen Dank`
         : `Sehr geehrte Damen und Herren,\n\nals ${firma} betreuen Sie Familien in ${ort}, die schnell eine verlässliche Lösung brauchen – genau diese Menschen melden sich bei uns. Für einen Betrieb wie ${firma} mit festem Einzugsgebiet rund um ${ort} passt jede Anfrage, die direkt aus der Region kommt.\n\nZum Kennenlernen: 20 Test-Leads kostenlos.\n\nVielen Dank`;
-      const keys = Object.keys(params.outputSchema.schema?.properties ?? {});
+      const keys = Object.keys(params.outputSchema.schema?.properties ?? {}).filter((key) => key !== "kategorie"); // „kategorie“ = Prüfung, ob die Firma zur Lead-Kategorie passt – kein Ansatz
       const answer = Object.fromEntries(keys.map((key) => [key, mode === "kopie" && key !== "drittanbieter" ? { subject: `Anfragen für ${firma}`, text: template, bezuege: ["Firma", "Ort"] } : { subject: `${key === "drittanbieter" ? "Direkt statt über Zwischenhändler" : "Anfragen aus"} ${ort} für ${firma}`, text: own(key), bezuege: [`Firma ${firma}`, `Region ${ort}`] }]));
-      return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(answer) }, finish_reason: "stop" }] };
+      const verdict = params.outputSchema.schema?.properties?.kategorie ? { kategorie: /großhandel/i.test(firma) ? { passt: "nein", grund: "Laut Webseite reiner Großhandel – keine Montage beim Kunden" } : { passt: "ja", grund: "Fachbetrieb mit Montage laut Webseite" } } : {};
+      return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ ...answer, ...verdict }) }, finish_reason: "stop" }] };
     }
     const text = String(params.messages.find((message) => message.role === "user")?.content ?? "").toLowerCase();
     const good = /gerne|einverstanden|eigentümer/.test(text); const bad = /nicht angerufen|löschen/.test(text);
@@ -2544,7 +2545,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
     expect(recipients.every((row) => row.sentCount === 0)).toBe(true); // ohne Freigabe geht nichts raus
-    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0, ohneEntwurf: recipients.filter((row) => !row.draftState).length, freigegebenFollowUps: 0, vorschreiben: false, tempo: null }); /* ohne KI-Schlüssel schreibt die KI nichts vor */
+    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0, ohneEntwurf: recipients.filter((row) => !row.draftState).length, passtNicht: 0, freigegebenFollowUps: 0, vorschreiben: false, tempo: null }); /* ohne KI-Schlüssel schreibt die KI nichts vor */
     const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 }); // der Versand-Lauf hat die Entwürfe schon geschrieben (Vorlage, ohne KI-Schlüssel) und wartet auf Freigabe
     const rita = queue.items.find((item) => item.email === "rita@review-e2e.example")!; expect(rita.city).toBe("Kassel");
     const drafts = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [rita.id] }); // ohne KI-Schlüssel: Vorlage mit den Daten des Kontakts
@@ -3939,6 +3940,48 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await owner.leadops.undoOperation({ id: deleted.undoId });
       expect((await db.select().from(leads).where(eq(leads.email, "bo@schalter-e2e.example")))).toHaveLength(1);
       expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).map((row) => row.email).sort()).toEqual(["ada@schalter-e2e.example", "bo@schalter-e2e.example"]);
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+    } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
+  }, 60000);
+
+  it("63zi. KI je Liste an/aus und Kategorie-Prüfung: ausgeschaltete Listen schreibt die KI nicht vor; Firmen, die nicht zur Lead-Kategorie passen, sind markiert – „Alle freigeben“ lässt sie aus, „Passt doch“ hebt die Markierung dauerhaft auf", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { prewriteDrafts } = await import("./campaign-review");
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key"; (globalThis as { __draftPlan?: string[] }).__draftPlan = [];
+    try {
+      const starter = await owner.leadops.emailCampaignStarter();
+      await owner.leadops.importColdList({ listName: "PV Fit-Liste", toPipeline: false, rows: [["Sonnen Solar GmbH", "sonne@fit-e2e.example"], ["Elektro Großhandel Nord GmbH", "handel@fit-e2e.example"], ["Dach Solar GmbH", "dach@fit-e2e.example"]].map(([company, email]) => ({ firstName: "Fit", lastName: "Test", company, city: "Kassel", email })) });
+      await owner.leadops.importColdList({ listName: "PV Aus-Liste", toPipeline: false, rows: [["Aus Eins Solar GmbH", "aus1@fit-e2e.example"], ["Aus Zwei Solar GmbH", "aus2@fit-e2e.example"]].map(([company, email]) => ({ firstName: "Aus", lastName: "Test", company, city: "Fulda", email })) });
+      const day = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" })).getDay();
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Photovoltaik Fit-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listNames: ["PV Fit-Liste", "PV Aus-Liste"] }, tree: { start: "s1", nodes: [{ id: "s1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: true, weekdays: [(day + 3) % 7], from: "07:30", to: "08:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: campaign.id });
+      const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+      expect(await rows()).toHaveLength(5);
+      // Liste „PV Aus-Liste“ ausschalten: dafür schreibt die KI nichts von selbst
+      expect(await owner.leadops.setEmailCampaignListPrewrite({ id: campaign.id, listName: "PV Aus-Liste", enabled: false })).toMatchObject({ prewrite: false, prewriteOffLists: ["PV Aus-Liste"] });
+      await db.update(emailCampaignRecipients).set({ draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null, draftSource: null, fitState: null, fitNote: null }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 3, open: 0 });
+      const after = await rows(); const byEmail = (email: string) => after.find((row) => row.email === email)!;
+      expect(after.filter((row) => row.email.startsWith("aus")).every((row) => !row.draftState)).toBe(true);
+      expect(byEmail("handel@fit-e2e.example")).toMatchObject({ draftState: "entwurf", fitState: "passt_nicht" }); expect(byEmail("handel@fit-e2e.example").fitNote).toContain("Großhandel");
+      expect(byEmail("sonne@fit-e2e.example")).toMatchObject({ fitState: "passt" });
+      // Karte und Freigabe zeigen beides
+      const card = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+      expect(card).toMatchObject({ prewriteOffLists: ["PV Aus-Liste"], review: { ohneEntwurf: 0, passtNicht: 1 } });
+      const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id });
+      expect(queue.prewriteOffLists).toEqual(["PV Aus-Liste"]); expect(queue.counts.passtNicht).toBe(1); expect(queue.items.find((item) => item.email === "handel@fit-e2e.example")).toMatchObject({ fitState: "passt_nicht" });
+      // „Alle freigeben“: der Großhandel bleibt offen
+      expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true })).toMatchObject({ approved: 2, notFitting: 1 });
+      expect((await rows()).find((row) => row.email === "handel@fit-e2e.example")).toMatchObject({ draftState: "entwurf" });
+      // „Passt doch“: Markierung weg – auch nach „KI neu schreiben“ bleibt sie weg
+      const handel = byEmail("handel@fit-e2e.example");
+      expect(await owner.leadops.setRecipientFit({ recipientId: handel.id, fits: true })).toMatchObject({ fitState: "geprueft" });
+      expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).counts.passtNicht).toBe(0);
+      expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [handel.id] })).drafts).toHaveLength(1);
+      expect((await rows()).find((row) => row.id === handel.id)).toMatchObject({ fitState: "geprueft", draftState: "entwurf" });
+      expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true })).toMatchObject({ approved: 1, notFitting: 0 });
+      // Liste wieder einschalten: jetzt schreibt die KI auch dort vor
+      expect(await owner.leadops.setEmailCampaignListPrewrite({ id: campaign.id, listName: "PV Aus-Liste", enabled: true })).toMatchObject({ prewriteOffLists: [] });
+      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 2, open: 0 });
       await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
     } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
   }, 60000);

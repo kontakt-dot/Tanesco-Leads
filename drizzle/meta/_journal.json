@@ -701,6 +701,13 @@
       "when": 1794500000000,
       "tag": "0099_ki_vorschreiben_schalter",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "5",
+      "when": 1794600000000,
+      "tag": "0100_ki_listen_und_kategorie",
+      "breakpoints": true
     }
   ]
 }

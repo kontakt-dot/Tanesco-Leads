@@ -1889,3 +1889,16 @@ html:not(.dark) .rv-prewrite-toggle i { background: #d0d5dd !important; }
 html:not(.dark) .rv-prewrite-toggle.is-on i { background: #bc001d !important; }
 html:not(.dark) .rv-prewrite-toggle:focus-visible { outline-color: #bc001d !important; }
 html:not(.dark) .cl-approval-part.is-off { color: #667085 !important; }
+/* v287: KI je Liste an/aus, Markierung „Passt nicht?“ */
+html:not(.dark) .rv-prewrite-lists { background: #ffffff !important; border-color: #d0d5dd !important; color: #1d2939 !important; }
+html:not(.dark) .rv-prewrite-lists.has-off { background: #fffbeb !important; border-color: #fcd34d !important; color: #b45309 !important; }
+html:not(.dark) .rv-prewrite-lists:focus-visible { outline-color: #bc001d !important; }
+html:not(.dark) .rv-lists-menu small { color: #667085 !important; }
+html:not(.dark) .rv-fit-filter { background: #fef2f2 !important; border-color: #fecaca !important; color: #b42318 !important; }
+html:not(.dark) .rv-fit-filter.is-active { background: #d92d20 !important; border-color: #d92d20 !important; color: #ffffff !important; }
+html:not(.dark) .rv-fit-filter:focus-visible { outline-color: #d92d20 !important; }
+html:not(.dark) .rv-state em.is-unfit { background: #fef2f2 !important; color: #b42318 !important; }
+html:not(.dark) .rv-note.is-unfit { background: #fef2f2 !important; border-color: #fecaca !important; color: #912018 !important; }
+html:not(.dark) .rv-note.is-unfit > svg { color: #d92d20 !important; }
+html:not(.dark) .cl-approval-part.is-unfit { color: #b42318 !important; }
+html:not(.dark) .cl-list-off { background: #f2f4f7 !important; color: #475467 !important; }

@@ -74,4 +74,19 @@ describe("Freier Vorschlag: wirklich auf die Firma geschrieben – schwache Text
     invoke.mockResolvedValueOnce(answer({ frei: { subject: "Unsere Leads", text: "Sehr geehrte Damen und Herren,\n\nSehr wahrscheinlich stammen Ihre Anfragen ohnehin von uns – nur über Zwischenhändler. Darüber sollten wir sprechen, finden Sie nicht?", bezuege: ["Webseite", "Region"] } }));
     expect(await aiDrafts(template, info, site, { approaches: ["frei"], sparte })).toBeNull(); // fast nur die Kernbotschaft – dann lieber neu schreiben
   });
+  it("Kategorie-Prüfung im selben Aufruf: „nein“ markiert die Firma (mit Grund), „unklar“ bleibt unklar – ohne Prüfung bleibt die Anfrage wie bisher", async () => {
+    const { aiDrafts } = await import("./campaign-review"); const { resolveSparte } = await import("../shared/lead-sparte"); const sparte = resolveSparte("Hausnotruf")!;
+    invoke.mockResolvedValueOnce(answer({ frei: { subject: "Installation am Tag nach der Bestellung", text: own, bezuege: ["Installation am Tag nach der Bestellung", "Nordhessen"] }, kategorie: { passt: "nein", grund: "Laut Webseite reiner  Großhandel für Notrufgeräte – keine Montage" } }));
+    const checked = await aiDrafts(template, info, site, { approaches: ["frei"], sparte, categoryCheck: "Hausnotruf" });
+    expect(checked?.[0].fit).toEqual({ state: "passt_nicht", note: "Laut Webseite reiner Großhandel für Notrufgeräte – keine Montage" });
+    const call = invoke.mock.calls[0][0] as { messages: Array<{ content: string }>; outputSchema: { schema: { required: string[]; properties: Record<string, unknown> } } };
+    expect(call.outputSchema.schema.required).toEqual(["frei", "kategorie"]); expect(Object.keys(call.outputSchema.schema.properties)).toEqual(["frei", "kategorie"]);
+    expect(call.messages[1].content).toContain("zur Lead-Kategorie „Hausnotruf“ passt"); expect(call.messages[1].content).toContain("„nein“ nur bei klaren Hinweisen");
+    invoke.mockResolvedValueOnce(answer({ frei: { subject: "Installation am Tag nach der Bestellung", text: own, bezuege: ["Installation am Tag nach der Bestellung", "Nordhessen"] }, kategorie: { passt: "unklar", grund: "Keine Webseite" } }));
+    expect((await aiDrafts(template, info, site, { approaches: ["frei"], sparte, categoryCheck: "Hausnotruf" }))?.[0].fit).toEqual({ state: "unklar", note: "Keine Webseite" });
+    invoke.mockResolvedValueOnce(answer({ frei: { subject: "Installation am Tag nach der Bestellung", text: own, bezuege: ["Installation am Tag nach der Bestellung", "Nordhessen"] } }));
+    expect((await aiDrafts(template, info, site, { approaches: ["frei"], sparte }))?.[0].fit).toBeNull(); // ohne Prüfung
+    const plain = invoke.mock.calls[2][0] as { messages: Array<{ content: string }>; outputSchema: { schema: { required: string[] } } };
+    expect(plain.outputSchema.schema.required).toEqual(["frei"]); expect(plain.messages[1].content).not.toContain("Lead-Kategorie");
+  });
 });

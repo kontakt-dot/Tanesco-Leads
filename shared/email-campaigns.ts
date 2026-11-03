@@ -798,6 +798,13 @@ export const KI_ANSATZ_OPTIONS: Array<{ key: KiAnsatz; label: string; hint: stri
   { key: "frei", label: "Freier Vorschlag", hint: "Eigene, kreative Idee der KI für jede Firma – persönlich aus Webseite und Impressum (mit Anrede des Geschäftsführers), ohne die Drittanbieter-Botschaft." },
 ];
 /** Betriebsart einer Kampagne – alte Kampagnen mit „Erst-E-Mail einzeln freigeben“ zählen als „freigabe“. */
+/** Listen einer Kampagne, für die die KI nicht vorschreibt (Schalter je Liste in der Freigabe). */
+export function prewriteOffListsOf(campaign: { prewriteOffLists?: unknown } | null | undefined): string[] {
+  const raw = campaign?.prewriteOffLists;
+  return Array.isArray(raw) ? Array.from(new Set(raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()))).slice(0, 200) : [];
+}
+/** Schreibt die KI für Kontakte dieser Liste nichts von selbst vor? */
+export const listPrewriteOff = (campaign: { prewriteOffLists?: unknown } | null | undefined, listName: string | null | undefined): boolean => Boolean(listName && listName.trim()) && prewriteOffListsOf(campaign).includes(String(listName).trim());
 export function kiModusOf(campaign: { kiModus?: string | null; reviewFirst?: boolean | null }): KiModus {
   return campaign.kiModus === "auto" || campaign.kiModus === "freigabe" || campaign.kiModus === "aus" ? campaign.kiModus : campaign.reviewFirst ? "freigabe" : "aus";
 }
