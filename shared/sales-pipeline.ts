@@ -147,10 +147,30 @@ export function summarizeCampaigns(leads: PipelineLead[], insights: InsightRow[]
   return Array.from(map.values()).map((entry) => { const customers = entry.stages[won] ?? 0; const active = entry.leads - (entry.stages[lost] ?? 0); return { ...entry, adsets: Array.from(entry.adsets), ads: Array.from(entry.ads), forms: Array.from(entry.forms), customers, activeLeads: active, costPerLead: entry.leads && entry.spend ? entry.spend / entry.leads : null, costPerCustomer: customers && entry.spend ? entry.spend / customers : null, conversion: entry.leads ? Math.round((customers / entry.leads) * 100) : 0, ctr: entry.impressions ? Math.round((entry.clicks / entry.impressions) * 10000) / 100 : 0 }; }).sort((a, b) => b.leads - a.leads || b.spend - a.spend);
 }
 
-/** Funnel über alle (gefilterten) Leads: wie viele haben jede Stufe mindestens erreicht. */
-export function funnel(leads: PipelineLead[], stages: StageDef[] = PIPELINE_STAGES) {
+/**
+ * Gleich heißende E-Mail-Kampagnen unterscheidbar machen (Auswahl, Statistik): „Über 100 Bewerungen · Photovoltaik“ und
+ * „Über 100 Bewerungen · Wärmepumpe“ – heißen sie auch mit Sparte gleich, mit Nummer („… (2)“). Einzelne Namen bleiben, wie sie sind.
+ */
+export function distinctCampaignNames(rows: Array<{ key: string; name: string; sparte?: string | null; order?: number }>): Map<string, string> {
+  const out = new Map<string, string>(); const groups = new Map<string, typeof rows>();
+  for (const row of rows) { const norm = row.name.trim().toLowerCase(); groups.set(norm, [...(groups.get(norm) ?? []), row]); }
+  for (const group of Array.from(groups.values())) {
+    if (group.length === 1) { out.set(group[0].key, group[0].name); continue; }
+    const sorted = [...group].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.key.localeCompare(b.key));
+    const labels = sorted.map((row) => (row.sparte && row.sparte.trim() ? `${row.name} · ${row.sparte.trim()}` : row.name));
+    labels.forEach((label, index) => { const same = labels.filter((other) => other.toLowerCase() === label.toLowerCase()).length; const nth = labels.slice(0, index + 1).filter((other) => other.toLowerCase() === label.toLowerCase()).length; out.set(sorted[index].key, same > 1 ? `${label} (${nth})` : label); });
+  }
+  return out;
+}
+/**
+ * Funnel über alle (gefilterten) Leads: wie viele haben jede Stufe mindestens erreicht. Mit `history` (Karte → Stufen, in denen sie schon
+ * einmal stand) zählt die am weitesten erreichte Stufe – auch bei Karten, die später zurückgeschoben wurden oder auf „Verloren“ stehen.
+ */
+export function funnel(leads: PipelineLead[], stages: StageDef[] = PIPELINE_STAGES, history?: Map<number, string[]>) {
   const order = stages.filter((stage) => stage.fixed !== "lost").map((stage) => stage.key); const lost = lostStage(stages);
-  const reached = (stage: string) => leads.filter((lead) => { const current = stageOf(lead.pipelineStage, stages); if (current === lost) return stage === order[0]; return order.indexOf(current) >= order.indexOf(stage); }).length;
+  const furthest = (lead: PipelineLead) => { const current = stageOf(lead.pipelineStage, stages); let best = current === lost ? 0 : Math.max(0, order.indexOf(current)); for (const key of history?.get(lead.id) ?? []) { const index = order.indexOf(key); if (index > best) best = index; } return best; };
+  const reach = leads.map(furthest);
+  const reached = (stage: string) => { const index = order.indexOf(stage); return reach.filter((value) => value >= index).length; };
   const steps = order.map((stage) => ({ stage, label: stageLabel(stage, stages), count: reached(stage) }));
   return { steps: steps.map((step, index) => ({ ...step, share: steps[0].count ? Math.round((step.count / steps[0].count) * 100) : 0, dropFromPrevious: index ? steps[index - 1].count - step.count : 0 })), lost: leads.filter((lead) => lead.pipelineStage === lost).length };
 }

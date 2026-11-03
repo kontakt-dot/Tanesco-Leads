@@ -3757,6 +3757,36 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
   }, 60000);
 
+  it("63zd. Statistik der Pipeline „E-Mail-Kampagne“: Je Kampagne = echte Kampagnen (gleiche Namen mit Sparte), Geantwortet = echte Antworten, Termine = Karten mit Termin, Funnel nach Verlauf, Spalten-Zahlen vollständig", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { moveStage } = await import("./meta-ads");
+    const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+    await owner.leadops.importColdList({ listName: "Statistik-PV", toPipeline: false, rows: [["Anna", "anna@statistik-e2e.example"], ["Bert", "bert@statistik-e2e.example"], ["Cleo", "cleo@statistik-e2e.example"]].map(([firstName, email]) => ({ firstName, lastName: "Statistik", company: `${firstName} Solar GmbH`, email })) });
+    await owner.leadops.importColdList({ listName: "Statistik-WP", toPipeline: false, rows: [{ firstName: "Dora", lastName: "Statistik", company: "Dora Wärmepumpen", email: "dora@statistik-e2e.example" }] });
+    const make = (leadSparte: string, listName: string) => owner.leadops.saveEmailCampaign({ name: "Statistik Doppelname", leadSparte, fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName }, tree: { start: "s1", nodes: [{ id: "s1", type: "send" as const, label: "Erste", subject: "Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
+    const pv = await make("Photovoltaik", "Statistik-PV"); const wp = await make("Wärmepumpe", "Statistik-WP");
+    await owner.leadops.startEmailCampaign({ id: pv.id }); await owner.leadops.startEmailCampaign({ id: wp.id }); await owner.leadops.runEmailCampaigns();
+    const card = async (email: string) => (await db.select().from(leads).where(eq(leads.email, email)))[0];
+    // Anna antwortet (echte Antwort), Bert bekommt einen Termin, Cleo war im Angebot und ging verloren
+    await db.update(emailCampaignRecipients).set({ repliedAt: new Date() }).where(and(eq(emailCampaignRecipients.campaignId, pv.id), eq(emailCampaignRecipients.email, "anna@statistik-e2e.example")));
+    await db.update(leads).set({ appointmentAt: new Date(Date.now() + 86_400_000) }).where(eq(leads.email, "bert@statistik-e2e.example"));
+    const emailStages = (await owner.leadops.pipelineStages({ source: "email" })) as Array<{ key: string; label: string; fixed?: string | null }>;
+    const offer = emailStages.find((stage) => /angebot/i.test(stage.label))!; const lost = emailStages.find((stage) => stage.fixed === "lost")!; expect(offer && lost).toBeTruthy();
+    const cleo = await card("cleo@statistik-e2e.example"); await moveStage(db, S.tenantId, { publicId: cleo.publicId, stage: offer.key, note: "Test", actorUserId: null }); await moveStage(db, S.tenantId, { publicId: cleo.publicId, stage: lost.key, note: "Test", actorUserId: null });
+    type Board = { campaignOptions: Array<{ campaignId: string; campaignName: string }>; campaigns: Array<{ campaignId: string; campaignName: string; leads: number }>; totals: { leads: number; replied: number; appointments: number }; funnel: { steps: Array<{ stage: string; count: number }>; lost: number }; stages: Array<{ key: string; total: number; leads: unknown[] }> };
+    const all = await owner.leadops.pipelineOverview({ source: "email" }) as unknown as Board;
+    const pvName = all.campaignOptions.find((item) => item.campaignId === `email-${pv.id}`)?.campaignName; const wpName = all.campaignOptions.find((item) => item.campaignId === `email-${wp.id}`)?.campaignName;
+    expect(pvName).toBe("Statistik Doppelname · Photovoltaik"); expect(wpName).toBe("Statistik Doppelname · Wärmepumpe");
+    expect(all.campaigns.some((item) => /^liste-/.test(item.campaignId) || /^Liste:/.test(item.campaignName))).toBe(false); // keine Listen unter „Je Kampagne“
+    const board = await owner.leadops.pipelineOverview({ source: "email", campaignId: `email-${pv.id}` }) as unknown as Board;
+    expect(board.totals.leads).toBe(3); expect(board.totals.replied).toBe(1); expect(board.totals.appointments).toBe(2); // Bert (Termin eingetragen) und Cleo (war schon im Angebot – nach der Stufe „Termin“)
+    expect(all.campaigns.find((item) => item.campaignId === `email-${pv.id}`)).toMatchObject({ campaignName: "Statistik Doppelname · Photovoltaik", leads: 3 }); expect(all.campaigns.find((item) => item.campaignId === `email-${wp.id}`)).toMatchObject({ campaignName: "Statistik Doppelname · Wärmepumpe", leads: 1 });
+    expect(board.campaigns.length).toBe(all.campaigns.length); // „Je Kampagne“ bleibt vollständig, auch mit gewählter Kampagne
+    expect(board.funnel.steps.find((step) => step.stage === offer.key)?.count).toBe(1); expect(board.funnel.lost).toBe(1); // Cleo zählt im Angebot, obwohl sie jetzt verloren ist
+    const small = await owner.leadops.pipelineOverview({ source: "email", campaignId: `email-${pv.id}`, limitPerStage: 1 }) as unknown as Board;
+    const first = small.stages.find((stage) => stage.total > 1); expect(first).toBeTruthy(); expect(first!.leads.length).toBe(1); // Spalte zählt alle Karten, auch wenn weniger geladen sind
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(inArray(emailCampaignRecipients.campaignId, [pv.id, wp.id]));
+  }, 60000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

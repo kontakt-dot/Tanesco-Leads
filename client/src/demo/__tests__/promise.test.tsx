@@ -729,6 +729,38 @@ describe("Pipeline „E-Mail-Kampagne“ ohne „Photovoltaik & Wärmepumpe“ u
   });
 });
 
+describe("Statistik der Pipeline „E-Mail-Kampagne“ (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Daten: Je Kampagne = echte Kampagnen (gleiche Namen mit Sparte), Geantwortet = echte Antworten, Termine = Karten mit Termin", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Stat-PV", toPipeline: false, rows: [{ firstName: "Anna", lastName: "Stat", company: "Anna Solar", email: "anna@stat-demo.example" }, { firstName: "Bert", lastName: "Stat", company: "Bert Solar", email: "bert@stat-demo.example" }] });
+    await call("leadops.importColdList", { listName: "Stat-WP", toPipeline: false, rows: [{ firstName: "Dora", lastName: "Stat", company: "Dora Wärme", email: "dora@stat-demo.example" }] });
+    const make = async (leadSparte: string, listName: string) => { const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Stat Doppelname", leadSparte, fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 }); await call("leadops.startEmailCampaign", { id: saved.id }); return saved; };
+    const pv = await make("Photovoltaik", "Stat-PV"); const wp = await make("Wärmepumpe", "Stat-WP"); await call("leadops.runEmailCampaigns");
+    const store = getStore(); const anna = store.tables.emailCampaignRecipients.find((row) => row.email === "anna@stat-demo.example")!; anna.repliedAt = new Date();
+    const bert = store.tables.leads.find((row) => row.email === "bert@stat-demo.example")!; bert.appointmentAt = new Date(Date.now() + 86_400_000);
+    const all = await call("leadops.pipelineOverview", { source: "email" });
+    const name = (id: number) => all.campaignOptions.find((item: any) => item.campaignId === `email-${id}`)?.campaignName;
+    expect(name(pv.id)).toBe("Stat Doppelname · Photovoltaik"); expect(name(wp.id)).toBe("Stat Doppelname · Wärmepumpe");
+    expect(all.campaigns.some((item: any) => /^liste-/.test(item.campaignId) || /^Liste:/.test(item.campaignName))).toBe(false);
+    const board = await call("leadops.pipelineOverview", { source: "email", campaignId: `email-${pv.id}` });
+    expect(board.totals).toMatchObject({ leads: 2, replied: 1, appointments: 1 }); expect(all.campaigns.find((item: any) => item.campaignId === `email-${pv.id}`)).toMatchObject({ campaignName: "Stat Doppelname · Photovoltaik", leads: 2 });
+    expect(board.campaigns.length).toBe(all.campaigns.length); // vollständig, auch mit gewählter Kampagne
+  });
+  it("Oberfläche: „Aktuelle Verteilung“ zählt alle Karten der Spalte (nicht nur die ersten 60); Kampagnen-Kachel ohne Listen", async () => {
+    await call("leadops.pipelineOverview", { source: "email" }); // Spalte „Versendet“ anlegen
+    for (let n = 0; n < 63; n += 1) await call("leadops.createPipelineContact", { source: "email", firstName: `Viel${n}`, lastName: "Versendet", company: `Viel ${n} GmbH`, email: `viel${n}@verteilung-demo.example` });
+    const board = await call("leadops.pipelineOverview", { source: "email" }); const sent = board.stages.find((stage: any) => /versendet/i.test(stage.label)); expect(sent.total).toBeGreaterThan(62);
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email&ansicht=stats");
+    const view = mount(); await settle(400); await settle(400);
+    const section = Array.from(view.container.querySelectorAll<HTMLElement>("section")).find((node) => node.textContent?.includes("AKTUELLE VERTEILUNG"))!; expect(section).toBeTruthy();
+    const row = Array.from(section.querySelectorAll<HTMLElement>(".qa-summary-row")).find((node) => node.querySelector("span")?.textContent === sent.label)!;
+    expect(row.querySelector("b")?.textContent).toBe(String(sent.total));
+    const tile = Array.from(view.container.querySelectorAll<HTMLElement>(".metric-card")).find((node) => node.textContent?.startsWith("Kampagnen"))!; expect(tile.querySelector("strong")?.textContent).toBe(String(board.campaigns.filter((item: any) => item.campaignId !== "ohne-kampagne").length));
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });

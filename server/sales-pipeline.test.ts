@@ -26,3 +26,23 @@ describe("Vertriebspipeline (Meta Ads)", () => {
     expect(mapped.answers).toEqual({ "hausbesitzer?": "Ja" });
   });
 });
+
+describe("Statistik der Pipeline: Funnel nach Verlauf, Kampagnen-Namen eindeutig", () => {
+  const card = (id: number, pipelineStage: string) => ({ id, publicId: `K${id}`, name: `K${id}`, createdAt: new Date("2026-10-01"), pipelineStage, adCampaignId: null, adCampaignName: null, adsetName: null, adName: null, adFormName: null, adPlatform: "email", categoryId: 1 });
+  it("Funnel „mindestens erreicht“: zählt die am weitesten erreichte Stufe – auch bei Karten auf „Verloren“ oder zurückgeschoben", async () => {
+    const { funnel } = await import("../shared/sales-pipeline");
+    const leads = [card(1, "neu"), card(2, "kontaktiert"), card(3, "verloren"), card(4, "neu")];
+    const without = funnel(leads); const count = (result: typeof without, stage: string) => result.steps.find((step) => step.stage === stage)?.count;
+    expect(count(without, "neu")).toBe(4); expect(count(without, "kontaktiert")).toBe(1); expect(count(without, "angebot")).toBe(0);
+    const history = new Map<number, string[]>([[3, ["neu", "kontaktiert", "angebot"]], [4, ["neu", "qualifiziert"]]]); // 3 stand im Angebot und ging verloren, 4 wurde zurückgeschoben
+    const withHistory = funnel(leads, undefined, history);
+    expect(count(withHistory, "neu")).toBe(4); expect(count(withHistory, "kontaktiert")).toBe(3); expect(count(withHistory, "qualifiziert")).toBe(2); expect(count(withHistory, "angebot")).toBe(1);
+    expect(withHistory.lost).toBe(1);
+  });
+  it("gleich heißende Kampagnen bekommen ihre Sparte, sonst eine Nummer – einzelne Namen bleiben", async () => {
+    const { distinctCampaignNames } = await import("../shared/sales-pipeline");
+    const names = distinctCampaignNames([{ key: "email-1", name: "Über 100 Bewerungen", sparte: "Photovoltaik", order: 1 }, { key: "email-2", name: "Über 100 Bewerungen", sparte: "Wärmepumpe", order: 2 }, { key: "email-3", name: "Leads Alarmanlagen", sparte: "Alarmanlage", order: 3 }, { key: "email-4", name: "Test", sparte: "Hausnotruf", order: 4 }, { key: "email-5", name: "test", sparte: "Hausnotruf", order: 5 }]);
+    expect(names.get("email-1")).toBe("Über 100 Bewerungen · Photovoltaik"); expect(names.get("email-2")).toBe("Über 100 Bewerungen · Wärmepumpe");
+    expect(names.get("email-3")).toBe("Leads Alarmanlagen"); expect(names.get("email-4")).toBe("Test · Hausnotruf (1)"); expect(names.get("email-5")).toBe("test · Hausnotruf (2)");
+  });
+});
