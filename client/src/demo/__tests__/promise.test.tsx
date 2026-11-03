@@ -868,6 +868,38 @@ describe("Freigabe: nach Liste filtern und mehrere auf einmal bearbeiten (Chat-B
   });
 });
 
+describe("Versand-Protokoll, heute gesendet und Papierkorb der E-Mail-Kampagnen (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Karte zeigt „heute X“; Entfernen legt in den Papierkorb, Gesendet und Tageslimit zählen weiter; wer wieder dazukommt, bekommt nichts doppelt; Wiederherstellen unter Verlauf → Papierkorb", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Protokoll-Demo", rows: [{ firstName: "Ina", lastName: "Protokoll", company: "Ina Solar", email: "ina@protokoll-demo.example" }, { firstName: "Jan", lastName: "Protokoll", company: "Jan Solar", email: "jan@protokoll-demo.example" }] });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Protokoll-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["Protokoll-Demo"] }, tree: { start: "p1", nodes: [{ id: "p1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: "pw" }, { id: "pw", type: "wait", hours: 72, next: "p2" }, { id: "p2", type: "send", label: "Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] } });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns", {});
+    const card = async () => (await call("leadops.listEmailCampaigns", undefined)).find((row: any) => row.id === saved.id);
+    expect((await card()).stats).toMatchObject({ sentToday: 2, sentGone: 0 }); const dailyBefore = (await call("leadops.campaignDailyStatus", undefined)).sent;
+    const ina = getStore().tables.emailCampaignRecipients.find((row) => row.campaignId === saved.id && row.email === "ina@protokoll-demo.example")!;
+    const removed = await call("leadops.removeEmailRecipients", { campaignId: saved.id, recipientIds: [ina.id] }); expect(removed.removed).toBe(1); expect(removed.undoId).toBeGreaterThan(0);
+    expect((await card()).stats).toMatchObject({ sentToday: 2, sentGone: 1 }); expect((await card()).stats.mails.sent).toBe(1); expect((await call("leadops.campaignDailyStatus", undefined)).sent).toBe(dailyBefore); // Löschen gibt kein Tageslimit frei
+    // Ina kommt wieder dazu → keine zweite Erst-E-Mail, sie wartet auf die Nachfrage
+    const inaLead = getStore().tables.leads.find((row) => row.email === "ina@protokoll-demo.example")!;
+    expect(await call("leadops.addLeadsToEmailCampaign", { id: saved.id, leadIds: [inaLead.id] })).toMatchObject({ added: 1 });
+    const back = getStore().tables.emailCampaignRecipients.find((row) => row.campaignId === saved.id && row.email === "ina@protokoll-demo.example")!; expect(back).toMatchObject({ sentCount: 1, status: "wartet", nodeId: "pw" });
+    await call("leadops.runEmailCampaigns", {}); expect(getStore().tables.emailSendLog.filter((row) => row.campaignId === saved.id)).toHaveLength(2);
+    // Karte: „heute 2“ unter „Gesendet“; Verlauf → Papierkorb zeigt den Eintrag und holt ihn zurück
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const ours = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Protokoll-Demo"))!; expect(ours.querySelector(".cl-f.is-sent .cl-today")?.textContent).toBe("heute 2");
+    cleanup(); window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=verlauf");
+    const history = mount(); await settle(300); await settle(300);
+    const entry = Array.from(history.container.querySelectorAll<HTMLElement>(".undo-list li")).find((node) => node.textContent?.includes("Empfänger von Hand entfernt"))!; expect(entry).toBeTruthy(); expect(entry.textContent).toContain("Aus Kampagne entfernt");
+    await act(async () => { fireEvent.click(entry.querySelector<HTMLButtonElement>("button")!); }); await settle(200);
+    expect(document.querySelector(".app-confirm")?.textContent ?? document.body.textContent).toContain("Niemand bekommt eine E-Mail doppelt");
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400);
+    expect(getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === saved.id && row.email === "ina@protokoll-demo.example").map((row) => row.id)).toEqual([ina.id]);
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
@@ -890,14 +922,15 @@ describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
 describe("Reiter „Verlauf“ (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
-  it("heißt „Verlauf“ und hat darin „Upload“ und „Früheren Stand wiederherstellen“; im Kontakte-Reiter gibt es den Knopf nicht mehr", async () => {
+  it("heißt „Verlauf“ und hat darin „Papierkorb“ (zuerst), „Upload“ und „Früheren Stand wiederherstellen“; im Kontakte-Reiter gibt es den Knopf nicht mehr", async () => {
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=verlauf");
     const view = mount(); await settle(300); await settle(300);
     const tabs = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".email-tabs button")).map((node) => node.textContent?.trim() ?? "");
     expect(tabs.some((text) => text.startsWith("Verlauf"))).toBe(true); expect(tabs.some((text) => text.startsWith("Upload-Verlauf"))).toBe(false);
     const parts = view.container.querySelector(".history-parts"); expect(parts).toBeTruthy();
-    const buttons = Array.from(parts!.querySelectorAll<HTMLButtonElement>("button")); expect(buttons.map((node) => node.textContent?.trim())).toEqual(["Upload", "Früheren Stand wiederherstellen"]); expect(buttons[0].getAttribute("aria-selected")).toBe("true");
-    await act(async () => { fireEvent.click(buttons[1]); }); await settle(300);
+    const buttons = Array.from(parts!.querySelectorAll<HTMLButtonElement>("button")); expect(buttons.map((node) => node.textContent?.trim().replace(/\d+$/, ""))).toEqual(["Papierkorb", "Upload", "Früheren Stand wiederherstellen"]); expect(buttons[0].getAttribute("aria-selected")).toBe("true");
+    expect(view.container.querySelector(".undo-panel.is-email")).toBeTruthy(); expect(view.container.textContent).toContain("Papierkorb");
+    await act(async () => { fireEvent.click(buttons[2]); }); await settle(300);
     expect(view.container.querySelector(".restore-inline")).toBeTruthy(); expect(view.container.querySelector(".restore-when input")).toBeTruthy(); expect(view.container.textContent).toContain("Stand von");
     expect(document.querySelector('[role="dialog"]')).toBeNull(); // direkt auf der Seite, kein Fenster
     cleanup();

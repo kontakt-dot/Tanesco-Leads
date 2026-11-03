@@ -46,6 +46,8 @@ export async function mergeEmailCampaigns(db: Db, tenantId: number, input: { tar
     const events = await db.select({ id: emailCampaignEvents.id, nodeId: emailCampaignEvents.nodeId }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.recipientId, fromRecipientId)));
     const groups = new Map<string, number[]>(); for (const event of events) { const mapped = event.nodeId ? map(event.nodeId) ?? event.nodeId : null; const key = mapped ?? ""; const list = groups.get(key) ?? []; list.push(event.id); groups.set(key, list); }
     for (const [nodeId, ids] of Array.from(groups.entries())) for (let i = 0; i < ids.length; i += 500) await db.update(emailCampaignEvents).set({ campaignId: target.id, recipientId: toRecipientId, nodeId: nodeId || null }).where(inArray(emailCampaignEvents.id, ids.slice(i, i + 500)));
+    // Versand-Protokoll zieht mit: die E-Mails zählen danach beim Ziel (heute gesendet, Doppelt-Schutz)
+    if (events.length) { const { moveSendLog } = await import("./send-log"); await moveSendLog(db, tenantId, events.map((event) => event.id), { campaignId: target.id, recipientId: toRecipientId }); }
   };
   /** Einen Eintrag der Quelle ins Ziel holen – am passenden Schritt, mit Entwurf, Verlauf und Posteingang-Verknüpfung. */
   const moveRecipient = async (row: Recipient, map: (id: string | null | undefined) => string | null, targetName: string): Promise<boolean> => {

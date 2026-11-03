@@ -11,15 +11,21 @@
  *  - notiz_neu / notiz_text / notiz_weg                            → Notiz löschen / alten Text / Notiz wiederherstellen
  *  - kontakt_neu Kontakt von Hand angelegt                         → Kontakt wieder löschen
  *  - loeschen    Kontakte/Listen gelöscht (auch Upload rückgängig) → kompletter Schnappschuss aller Daten (Papierkorb)
+ *  - empfaenger_weg  Empfänger aus einer E-Mail-Kampagne genommen („Entfernen“, Liste entfernt, Auswahl) → Empfänger mit Verlauf (Papierkorb)
+ *  - kampagne_weg    E-Mail-Kampagne oder Vorlage gelöscht           → Kampagne mit allen Empfängern und Verlauf (Papierkorb)
+ *  - doppelt     Doppelt-Schutz der Kampagnen (send-log.ts)        → Einträge wie vorher, nachgetragener Verlauf wieder weg
  * Zurücknehmen markiert den Eintrag als erledigt; gelöschte Kontakte kommen mit ihren alten IDs zurück,
  * damit Verlauf, Anrufe, Kampagnen und Posteingang wieder dranhängen.
  */
 import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
-import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignRecipients, inboxMessages, leadCallAttempts, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, pipelineNotes, pipelineTasks, outboundMessages, undoLog, users } from "../drizzle/schema";
+import { dialerCalls, dialerQueueItems, emailCampaignEvents, emailCampaignFolders, emailCampaignRecipients, emailCampaigns, inboxMessages, leadCallAttempts, leadStatusEvents, leadTagAssignments, leads, pipelineEvents, pipelineNotes, pipelineTasks, outboundMessages, undoLog, users } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
+import { audienceLists, listAudience } from "../shared/email-campaigns";
 
-export type UndoKind = "stufe" | "zuteilung" | "pipeline" | "anruf" | "anruf_weg" | "notiz_neu" | "notiz_text" | "notiz_weg" | "kontakt_neu" | "loeschen" | "serie";
-export const UNDO_LABEL: Record<UndoKind, string> = { stufe: "Stufe", zuteilung: "Zuteilung", pipeline: "Pipeline", anruf: "Anruf", anruf_weg: "Anruf gelöscht", notiz_neu: "Notiz", notiz_text: "Notiz geändert", notiz_weg: "Notiz gelöscht", kontakt_neu: "Kontakt angelegt", loeschen: "Gelöscht", serie: "E-Mail-Funnel" };
+export type UndoKind = "stufe" | "zuteilung" | "pipeline" | "anruf" | "anruf_weg" | "notiz_neu" | "notiz_text" | "notiz_weg" | "kontakt_neu" | "loeschen" | "serie" | "empfaenger_weg" | "kampagne_weg" | "doppelt";
+export const UNDO_LABEL: Record<UndoKind, string> = { stufe: "Stufe", zuteilung: "Zuteilung", pipeline: "Pipeline", anruf: "Anruf", anruf_weg: "Anruf gelöscht", notiz_neu: "Notiz", notiz_text: "Notiz geändert", notiz_weg: "Notiz gelöscht", kontakt_neu: "Kontakt angelegt", loeschen: "Gelöscht", serie: "E-Mail-Funnel", empfaenger_weg: "Aus Kampagne entfernt", kampagne_weg: "Kampagne gelöscht", doppelt: "Nicht doppelt" };
+/** Arten, die in den Papierkorb gehören (Filter „Gelöscht“) – und die bei den E-Mail-Kampagnen unter „Verlauf → Papierkorb“ stehen. */
+export const TRASH_KINDS: UndoKind[] = ["loeschen", "empfaenger_weg", "kampagne_weg"];
 type Row = Record<string, unknown>;
 export type LeadSnapshot = { leads: Row[]; pipelineTasks: Row[]; pipelineEvents: Row[]; pipelineNotes: Row[]; outboundMessages: Row[]; emailCampaignRecipients: Row[]; emailCampaignEvents: Row[]; dialerQueueItems: Row[]; leadStatusEvents: Row[]; leadTagAssignments: Row[]; leadCallAttempts: Row[]; inboxLinks: Array<{ id: number; leadId: number | null; campaignRecipientId: number | null }>; dialerLinks: Array<{ id: number; leadId: number | null }> };
 
@@ -54,6 +60,32 @@ export async function snapshotLeads(db: Db, tenantId: number, ids: number[]): Pr
     ],
     dialerLinks: await db.select({ id: dialerCalls.id, leadId: dialerCalls.leadId }).from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), inArray(dialerCalls.leadId, ids))),
   };
+}
+
+/** Empfänger einer Kampagne mit allem, was an ihnen hängt – vor dem Herausnehmen (Papierkorb). */
+export type RecipientSnapshot = { emailCampaignRecipients: Row[]; emailCampaignEvents: Row[]; inboxLinks: Array<{ id: number; campaignRecipientId: number | null }> };
+export async function snapshotRecipients(db: Db, tenantId: number, campaignId: number, ids: number[]): Promise<RecipientSnapshot> {
+  if (!ids.length) return { emailCampaignRecipients: [], emailCampaignEvents: [], inboxLinks: [] };
+  return {
+    emailCampaignRecipients: await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.id, ids))),
+    emailCampaignEvents: await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.campaignId, campaignId), inArray(emailCampaignEvents.recipientId, ids))),
+    inboxLinks: await db.select({ id: inboxMessages.id, campaignRecipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.tenantId, tenantId), inArray(inboxMessages.campaignRecipientId, ids))),
+  };
+}
+/** Empfänger (mit Verlauf und Antworten) zurückspielen – gleiche IDs. Danach: Protokoll nachtragen und doppelte neuere Einträge aufräumen. */
+async function restoreRecipients(db: Db, tenantId: number, snapshot: Partial<RecipientSnapshot>) {
+  const rows = snapshot.emailCampaignRecipients ?? []; const existing = new Set(rows.length ? (await db.select({ id: emailCampaignRecipients.id }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), inArray(emailCampaignRecipients.id, rows.map((row) => Number(row.id)).concat([0]))))).map((row) => row.id) : []);
+  await insertMissing(db, emailCampaignRecipients, rows);
+  await insertMissing(db, emailCampaignEvents, snapshot.emailCampaignEvents ?? []);
+  for (const link of snapshot.inboxLinks ?? []) await db.update(inboxMessages).set({ campaignRecipientId: link.campaignRecipientId }).where(and(eq(inboxMessages.tenantId, tenantId), eq(inboxMessages.id, link.id), isNull(inboxMessages.campaignRecipientId))).catch(() => null);
+  const restoredIds = rows.map((row) => Number(row.id)).filter((id) => id && !existing.has(id));
+  await afterRestore(db, tenantId, restoredIds, Array.from(new Set(rows.map((row) => Number(row.campaignId)).filter(Boolean))));
+  return restoredIds.length;
+}
+/** Nach jedem Wiederherstellen: Versand-Protokoll vervollständigen, neuere doppelte Einträge raus, Doppelt-Schutz für die Kampagnen. */
+async function afterRestore(db: Db, tenantId: number, restoredIds: number[], campaignIds: number[]) {
+  try { const { backfillSendLog, dropRecreatedTwins, reconcileAllCampaigns } = await import("./send-log"); await dropRecreatedTwins(db, tenantId, restoredIds); await backfillSendLog(db, tenantId); if (campaignIds.length) await reconcileAllCampaigns(db, tenantId, campaignIds); }
+  catch (error) { console.error("[Papierkorb] Nacharbeit:", error instanceof Error ? error.message : error); }
 }
 
 /** JSON hat aus Datumswerten Texte gemacht – vor dem Einfügen wieder in Datumswerte verwandeln. */
@@ -140,7 +172,24 @@ export async function undoOperation(db: Db, tenantId: number, id: number, actorU
       for (const item of items) { await db.update(emailCampaignRecipients).set({ status: item.status as "wartet", nodeId: item.nodeId, nextActionAt: item.nextActionAt ? new Date(item.nextActionAt) : null }).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.id, item.recipientId), eq(emailCampaignRecipients.status, "fertig"))); if (item.eventId) await db.delete(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.id, item.eventId))); done += 1; }
       message = `${done === 1 ? "Der Kontakt ist" : `${done} Einträge sind`} wieder im E-Mail-Funnel.`; break;
     }
-    case "loeschen": { const result = await restoreSnapshot(db, tenantId, payload as unknown as LeadSnapshot); message = `${result.restored} ${result.restored === 1 ? "Kontakt" : "Kontakte"} wiederhergestellt – mit Verlauf, Notizen, Anrufen und Kampagnen.`; break; }
+    case "loeschen": { const snapshot = payload as unknown as LeadSnapshot; const result = await restoreSnapshot(db, tenantId, snapshot); await afterRestore(db, tenantId, (snapshot.emailCampaignRecipients ?? []).map((row) => Number(row.id)), Array.from(new Set((snapshot.emailCampaignRecipients ?? []).map((row) => Number(row.campaignId)).filter(Boolean)))); message = `${result.restored} ${result.restored === 1 ? "Kontakt" : "Kontakte"} wiederhergestellt – mit Verlauf, Notizen, Anrufen und Kampagnen.`; break; }
+    case "empfaenger_weg": {
+      const snap = payload as Partial<RecipientSnapshot> & { campaignId?: number; listNames?: string[]; audienceChanged?: boolean };
+      const campaign = (await db.select({ id: emailCampaigns.id, name: emailCampaigns.name, audience: emailCampaigns.audience }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.id, Number(snap.campaignId) || 0))).limit(1))[0];
+      if (!campaign) throw new Error("Die Kampagne gibt es nicht mehr – bitte zuerst die Kampagne aus dem Papierkorb wiederherstellen.");
+      if (snap.audienceChanged && snap.listNames?.length) { const audience = (campaign.audience ?? null) as Parameters<typeof audienceLists>[0]; if ((audience as { source?: string } | null)?.source === "liste") await db.update(emailCampaigns).set({ audience: listAudience(Array.from(new Set([...audienceLists(audience), ...snap.listNames]))) }).where(eq(emailCampaigns.id, campaign.id)); } // die entfernte Liste gehört wieder zur Kampagne
+      const restored = await restoreRecipients(db, tenantId, snap);
+      message = `${restored} ${restored === 1 ? "Empfänger ist" : "Empfänger sind"} wieder in „${campaign.name}“ – mit Verlauf (gesendet, geöffnet, geantwortet).`; break;
+    }
+    case "kampagne_weg": {
+      const snap = payload as Partial<RecipientSnapshot> & { campaign?: Row };
+      const row = snap.campaign; if (!row) throw new Error("Dieser Eintrag lässt sich nicht zurücknehmen.");
+      const exists = (await db.select({ id: emailCampaigns.id }).from(emailCampaigns).where(and(eq(emailCampaigns.tenantId, tenantId), eq(emailCampaigns.id, Number(row.id)))).limit(1))[0];
+      if (!exists) { const folderId = Number(row.folderId) || 0; const folder = folderId ? (await db.select({ id: emailCampaignFolders.id }).from(emailCampaignFolders).where(and(eq(emailCampaignFolders.tenantId, tenantId), eq(emailCampaignFolders.id, folderId))).limit(1))[0] : null; await insertMissing(db, emailCampaigns, [{ ...row, folderId: folder ? folderId : null }]); }
+      const restored = await restoreRecipients(db, tenantId, snap);
+      message = `„${String(row.name ?? "Kampagne")}“ ist wieder da${restored ? ` – mit ${restored} ${restored === 1 ? "Empfänger" : "Empfängern"} und ihrem Verlauf` : ""}.`; break;
+    }
+    case "doppelt": { const { undoReconcile } = await import("./send-log"); const done = await undoReconcile(db, tenantId, payload as never); message = `${done} ${done === 1 ? "Eintrag steht" : "Einträge stehen"} wieder wie vorher – der Doppelt-Schutz greift für ${done === 1 ? "ihn" : "sie"} nicht mehr.`; break; }
     default: throw new Error("Dieser Eintrag lässt sich nicht zurücknehmen.");
   }
   await db.update(undoLog).set({ undoneAt: now, undoneByUserId: actorUserId }).where(eq(undoLog.id, entry.id));

@@ -2261,7 +2261,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const after = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(after.recipients).toHaveLength(7); expect(after.audienceInfo).toMatchObject({ pending: 0, noEmail: 1 });
     expect((await owner.leadops.syncEmailCampaignAudience({ id: saved.id })).added).toBe(0);
     // Liste B wieder entfernen → ihre 3 Empfänger sind wirklich raus, auch nach Versandlauf und „Jetzt aufnehmen“
-    const removedB = await owner.leadops.removeListsFromEmailCampaign({ id: saved.id, listNames: ["E2E Liste B"] }); expect(removedB).toEqual({ removed: 3, lists: ["E2E Liste A", "E2E Liste C"] });
+    const removedB = await owner.leadops.removeListsFromEmailCampaign({ id: saved.id, listNames: ["E2E Liste B"] }); expect(removedB).toEqual({ removed: 3, undoId: expect.any(Number), lists: ["E2E Liste A", "E2E Liste C"] });
     await owner.leadops.runEmailCampaigns(); expect((await owner.leadops.syncEmailCampaignAudience({ id: saved.id })).added).toBe(0);
     const afterB = await owner.leadops.getEmailCampaign({ id: saved.id }); expect(afterB.recipients).toHaveLength(4); expect(afterB.recipients.some((row) => row.lead?.listName === "E2E Liste B")).toBe(false);
     expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === saved.id)?.stats.total).toBe(4);
@@ -2421,7 +2421,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(leads).set({ listName: "Anderswo" }).where(eq(leads.id, testLead.id));
     expect(listed.audienceInfo?.outside ?? 0).toBe(0);
     const before = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(before.audienceInfo).toMatchObject({ total: 3, outside: 1 });
-    expect(await owner.leadops.pruneEmailCampaignRecipients({ id: campaign.id })).toEqual({ removed: 1 });
+    expect(await owner.leadops.pruneEmailCampaignRecipients({ id: campaign.id })).toEqual({ removed: 1, undoId: expect.any(Number) }); // liegt im Papierkorb
     const after = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
     expect(after.stats).toMatchObject({ total: 3, sent: 3, opened: 2, clicked: 1 }); expect(after.audienceInfo).toMatchObject({ outside: 0 }); expect(after.stats.mails.sent).toBe(4);
   }, 30000);
@@ -3833,6 +3833,69 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     rows = await rowsOf(); expect(rows.map((row) => row.status)).toEqual(["wartet", "fertig", "fertig"]);
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
   }, 60000);
+
+  it("63zg. Versand-Protokoll und Papierkorb: heute gesendet je Kampagne, Löschen gibt kein Tageslimit frei, Entfernen/Liste entfernen/Kampagne löschen → Papierkorb (wiederherstellbar), wer wieder dazukommt, bekommt nichts doppelt", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { emailSendLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns"); const { backfillSendLog, reconcileCampaign } = await import("./send-log");
+    const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+    await owner.leadops.importColdList({ listName: "Protokoll-Liste", toPipeline: false, rows: [["Ina", "ina@protokoll-e2e.example"], ["Jan", "jan@protokoll-e2e.example"], ["Kai", "kai@protokoll-e2e.example"]].map(([firstName, email]) => ({ firstName, lastName: "Protokoll", company: `${firstName} Protokoll GmbH`, email })) });
+    const tree = { start: "p1", nodes: [{ id: "p1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: "pw" }, { id: "pw", type: "wait" as const, hours: 72, next: "p2" }, { id: "p2", type: "send" as const, label: "Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Protokoll-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Protokoll-Liste" }, tree, design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
+    const dailyBefore = (await owner.leadops.campaignDailyStatus()).sent;
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const logOf = async () => db.select().from(emailSendLog).where(eq(emailSendLog.campaignId, campaign.id));
+    const until = async (check: () => Promise<boolean>) => { for (let i = 0; i < 40 && !(await check()); i += 1) await new Promise((resolve) => setTimeout(resolve, 150)); };
+    await until(async () => (await logOf()).length >= 3); expect((await logOf()).length).toBe(3);
+    const card = async () => (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+    expect((await card()).stats).toMatchObject({ sentToday: 3, sentGone: 0 }); expect((await card()).stats.mails?.sent).toBe(3);
+    const dailyAfter = (await owner.leadops.campaignDailyStatus()).sent; expect(dailyAfter - dailyBefore).toBe(3);
+    const rows = async () => (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).sort((a, b) => a.email.localeCompare(b.email) || a.id - b.id);
+    const ina = (await rows()).find((row) => row.email === "ina@protokoll-e2e.example")!; expect(ina.sentCount).toBe(1);
+    // Ina von Hand entfernen → Papierkorb; ihre E-Mail zählt weiter (Tageslimit, heute, Gesendet)
+    const removed = await owner.leadops.removeEmailRecipients({ campaignId: campaign.id, recipientIds: [ina.id] }); expect(removed.removed).toBe(1); expect(removed.undoId).toBeGreaterThan(0);
+    expect((await owner.leadops.campaignDailyStatus()).sent).toBe(dailyAfter); // Löschen gibt kein Tageslimit frei
+    expect((await card()).stats).toMatchObject({ sentToday: 3, sentGone: 1 }); expect((await card()).stats.mails?.sent).toBe(2); // Kennzahlen: nur, wer noch drin ist – dazu 1 an Entfernte
+    expect((await owner.leadops.listUndo({ limit: 50 })).find((row) => row.id === removed.undoId)).toMatchObject({ kind: "empfaenger_weg", label: "Aus Kampagne entfernt" });
+    // Ina kommt wieder dazu → keine zweite Erst-E-Mail: Verlauf aus dem Protokoll, sie wartet auf die Nachfrage (Erst-E-Mail + 72 Stunden)
+    const leadOf = async (email: string) => (await db.select().from(leads).where(eq(leads.email, email)))[0];
+    expect(await owner.leadops.addLeadsToEmailCampaign({ id: campaign.id, leadIds: [(await leadOf("ina@protokoll-e2e.example")).id] })).toMatchObject({ added: 1 });
+    const back = (await rows()).find((row) => row.email === "ina@protokoll-e2e.example")!; expect(back.id).not.toBe(ina.id);
+    expect(back).toMatchObject({ sentCount: 1, status: "wartet", nodeId: "pw" }); expect(Math.abs(new Date(back.nextActionAt!).getTime() - (new Date(ina.lastSentAt!).getTime() + 72 * 3_600_000))).toBeLessThan(5000);
+    expect((await db.select().from(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, back.id))).some((event) => event.kind === "gesendet" && event.note?.startsWith("Wiederhergestellt:"))).toBe(true);
+    await owner.leadops.runEmailCampaigns(); expect((await logOf()).length).toBe(3); // nichts doppelt
+    expect((await owner.leadops.listUndo({ limit: 50 })).some((row) => row.kind === "doppelt" && row.title.includes("Protokoll-Test"))).toBe(true);
+    // Papierkorb: Ina mit ihrem alten Eintrag zurück → der neue, nachgetragene Eintrag kommt raus (keine Doppelten)
+    await owner.leadops.undoOperation({ id: removed.undoId });
+    expect((await rows()).filter((row) => row.email === "ina@protokoll-e2e.example").map((row) => row.id)).toEqual([ina.id]);
+    expect((await card()).stats).toMatchObject({ sentGone: 0, sentToday: 3 });
+    // Ältere Fälle (vor dem Protokoll endgültig gelöscht): der Hinweis im Pipeline-Verlauf reicht – Kai bekommt die Erst-E-Mail nicht noch einmal
+    const kai = (await rows()).find((row) => row.email === "kai@protokoll-e2e.example")!; const kaiLead = await leadOf("kai@protokoll-e2e.example");
+    expect((await db.select().from(pipelineEvents).where(and(eq(pipelineEvents.leadId, kaiLead.id), like(pipelineEvents.note, "E-Mail aus „Protokoll-Test“ versendet%")))).length).toBeGreaterThan(0);
+    await db.delete(emailCampaignEvents).where(eq(emailCampaignEvents.recipientId, kai.id)); await db.delete(emailSendLog).where(eq(emailSendLog.recipientId, kai.id)); await db.delete(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, kai.id));
+    expect(await owner.leadops.syncEmailCampaignAudience({ id: campaign.id })).toMatchObject({ added: 1 });
+    const kaiBack = (await rows()).find((row) => row.email === "kai@protokoll-e2e.example")!; expect(kaiBack).toMatchObject({ sentCount: 1, status: "wartet", nodeId: "pw" });
+    expect((await reconcileCampaign(db, S.tenantId, (await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaign.id)))[0])).items).toHaveLength(0); // ein zweites Mal ändert nichts
+    // bewusst „wieder in die Kampagne“: Jan bekommt die Serie noch einmal von vorn
+    await db.update(emailCampaignRecipients).set({ status: "fertig", nodeId: null, nextActionAt: null }).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, "jan@protokoll-e2e.example")));
+    expect(await owner.leadops.addLeadsToEmailCampaign({ id: campaign.id, leadIds: [(await leadOf("jan@protokoll-e2e.example")).id], again: true })).toMatchObject({ added: 1 });
+    await owner.leadops.runEmailCampaigns(); await until(async () => (await logOf()).filter((row) => row.email === "jan@protokoll-e2e.example").length >= 2);
+    expect((await logOf()).filter((row) => row.email === "jan@protokoll-e2e.example")).toHaveLength(2);
+    // Liste aus der Kampagne nehmen → Papierkorb (mit Liste); Wiederherstellen holt Liste und Empfänger mit denselben IDs zurück
+    const before = await rows(); const sentBefore = (await logOf()).length;
+    const listRemoved = await owner.leadops.removeListsFromEmailCampaign({ id: campaign.id, listNames: ["Protokoll-Liste"] }); expect(listRemoved.removed).toBe(before.length); expect(listRemoved.lists).toEqual([]);
+    expect(await rows()).toHaveLength(0); expect((await card()).stats.mails?.sent ?? 0).toBe(0); expect((await card()).stats.sentGone).toBe(sentBefore);
+    await owner.leadops.undoOperation({ id: listRemoved.undoId });
+    expect((await rows()).map((row) => row.id)).toEqual(before.map((row) => row.id)); expect(audienceLists((await db.select().from(emailCampaigns).where(eq(emailCampaigns.id, campaign.id)))[0].audience as never)).toEqual(["Protokoll-Liste"]);
+    // Kampagne löschen → Papierkorb → wiederherstellen (mit allen Empfängern)
+    const deleted = await owner.leadops.deleteEmailCampaign({ id: campaign.id }); expect(deleted.undoId).toBeGreaterThan(0); expect(await rows()).toHaveLength(0);
+    expect((await owner.leadops.listUndo({ limit: 50 })).find((row) => row.id === deleted.undoId)).toMatchObject({ kind: "kampagne_weg" });
+    await owner.leadops.undoOperation({ id: deleted.undoId }); expect((await rows()).map((row) => row.id)).toEqual(before.map((row) => row.id)); expect((await card()).name).toBe("Protokoll-Test");
+    // Papierkorb nachtragen: E-Mails gelöschter Kontakte (Schnappschuss) zählen im Protokoll, auch wenn sie dort fehlten
+    await owner.leadops.deleteEmailLeads({ leadIds: [(await leadOf("ina@protokoll-e2e.example")).id] });
+    await db.delete(emailSendLog).where(and(eq(emailSendLog.campaignId, campaign.id), eq(emailSendLog.email, "ina@protokoll-e2e.example")));
+    expect((await backfillSendLog(db, S.tenantId)).trash).toBeGreaterThanOrEqual(1);
+    expect((await logOf()).filter((row) => row.email === "ina@protokoll-e2e.example").length).toBeGreaterThanOrEqual(1);
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+  }, 90000);
 
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");

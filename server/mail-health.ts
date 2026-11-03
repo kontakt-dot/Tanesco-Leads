@@ -107,7 +107,10 @@ export async function testSender(db: Db, tenantId: number, input: { id: number; 
 }
 export async function deleteSender(db: Db, tenantId: number, id: number) { await db.delete(mailSenders).where(and(eq(mailSenders.id, id), eq(mailSenders.tenantId, tenantId))); return { success: true as const }; }
 
+/** Heute gesendet je Absender-Adresse – aus dem Versand-Protokoll (Löschen von Empfängern gibt kein Budget frei). */
 async function sentTodayBySender(db: Db, tenantId: number, now = new Date()) {
+  const { sentTodayBySenderLog } = await import("./send-log");
+  const fromLog = await sentTodayBySenderLog(db, tenantId, now).catch(() => null); if (fromLog) return fromLog;
   const rows = await db.select({ sender: emailCampaignEvents.sender, count: sql<number>`count(*)` }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), gte(emailCampaignEvents.createdAt, dayStartIn(now)))).groupBy(emailCampaignEvents.sender);
   return new Map(rows.map((row) => [String(row.sender ?? "").toLowerCase(), Number(row.count) || 0]));
 }

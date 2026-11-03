@@ -2,6 +2,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { DELIVERY_LABEL, isBadDelivery } from "../../../shared/sent-tracking";
 import { trpc } from "@/lib/trpc";
 import { confirmAction } from "@/lib/confirm";
+import { withUndo } from "@/components/UndoPanel";
 import { AlertTriangle, Ban, CalendarClock, CheckCheck, Clock3, ExternalLink, Eye, Flag, GitBranch, Mail, MailX, MousePointerClick, Reply, Send, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
@@ -52,7 +53,7 @@ export default function CampaignContactDrawer({ recipientId, onClose, onChanged,
   const done = () => { void utils.leadops.emailRecipientLog.invalidate(); onChanged?.(); };
   const replied = trpc.leadops.markEmailReplied.useMutation({ onSuccess: (result) => { toast.success(result.stopped ? "Als geantwortet markiert – es geht keine weitere E-Mail an diesen Kontakt." : "Als geantwortet markiert."); done(); }, onError: (error) => toast.error(error.message) });
   const bounce = trpc.leadops.markEmailBounced.useMutation({ onSuccess: (result, variables) => { toast.success(`${result.email} gesperrt (${variables.kind === "bounce" ? "unzustellbar" : "Beschwerde"}).`); done(); }, onError: (error) => toast.error(error.message) });
-  const remove = trpc.leadops.removeEmailRecipients.useMutation({ onSuccess: () => { toast.success("Aus der Kampagne entfernt – es geht keine weitere E-Mail an diesen Kontakt."); onChanged?.(); onClose(); }, onError: (error) => toast.error(error.message) });
+  const remove = trpc.leadops.removeEmailRecipients.useMutation({ onSuccess: (result) => { toast.success("Aus der Kampagne entfernt – es geht keine weitere E-Mail an diesen Kontakt. Er liegt mit Verlauf im Papierkorb (Reiter „Verlauf“).", withUndo((result as { undoId?: number }).undoId, { duration: 9000 })); onChanged?.(); onClose(); }, onError: (error) => toast.error(error.message) });
   const data = log.data;
   const [mailOpen, setMailOpen] = useState<number | null>(null); // gesendete E-Mail im Verlauf aufgeklappt
   const r = data?.recipient;
@@ -115,7 +116,7 @@ export default function CampaignContactDrawer({ recipientId, onClose, onChanged,
           {!r.repliedAt && !closed && <button type="button" className="cj-btn" disabled={replied.isPending} onClick={() => replied.mutate({ recipientId: r.id })}><Reply className="h-4 w-4" /> Hat geantwortet</button>}
           {!closed && <button type="button" className="cj-btn" disabled={bounce.isPending} onClick={async () => { if (await confirmAction(`${r.email} als unzustellbar sperren? Die Adresse wird nie wieder angeschrieben.`)) bounce.mutate({ recipientId: r.id, kind: "bounce" }); }}><Ban className="h-4 w-4" /> Unzustellbar</button>}
           {!closed && <button type="button" className="cj-btn" disabled={bounce.isPending} onClick={async () => { if (await confirmAction(`${r.email} wegen Beschwerde sperren?`)) bounce.mutate({ recipientId: r.id, kind: "beschwerde" }); }}><ShieldAlert className="h-4 w-4" /> Beschwerde</button>}
-          <button type="button" className="cj-btn is-danger" disabled={remove.isPending} onClick={async () => { if (await confirmAction(`${name} aus der Kampagne entfernen? Es geht keine weitere E-Mail an diesen Kontakt, sein Verlauf in dieser Kampagne wird gelöscht.`, { danger: true })) remove.mutate({ campaignId: data.campaign.id, recipientIds: [r.id] }); }}><X className="h-4 w-4" /> Entfernen</button>
+          <button type="button" className="cj-btn is-danger" disabled={remove.isPending} onClick={async () => { if (await confirmAction(`${name} aus der Kampagne entfernen? Es geht keine weitere E-Mail an diesen Kontakt. Sein Verlauf kommt in den Papierkorb (Reiter „Verlauf“) und lässt sich wiederherstellen.`, { danger: true })) remove.mutate({ campaignId: data.campaign.id, recipientIds: [r.id] }); }}><X className="h-4 w-4" /> Entfernen</button>
         </footer>
       </>}
     </SheetContent>

@@ -26,8 +26,15 @@ export async function campaignDailyLimit(db: Db, tenantId: number): Promise<numb
   if (row?.warmupEnabled) { const { warmupLimit } = await import("./mail-health"); return warmupLimit(row.warmupStartedAt, configured).limit; } // Warmlaufen: Limit steigt Woche für Woche
   return configured;
 }
+/**
+ * Heute gesendete Kampagnen-E-Mails (alle Kampagnen zusammen) – aus dem Versand-Protokoll, das beim Löschen von Kontakten, Empfängern
+ * oder Kampagnen nicht schrumpft. So macht Löschen nie Platz für mehr E-Mails am selben Tag (Tageslimit schützt die Absender-Adresse).
+ */
 export async function sentToday(db: Db, tenantId: number, now = new Date()): Promise<number> {
-  const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), gte(emailCampaignEvents.createdAt, dayStartIn(now))));
+  const { sentTodayTotal } = await import("./send-log");
+  const fromLog = await sentTodayTotal(db, tenantId, now).catch(() => null);
+  if (fromLog !== null) return fromLog;
+  const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.tenantId, tenantId), eq(emailCampaignEvents.kind, "gesendet"), gte(emailCampaignEvents.createdAt, dayStartIn(now)))); // Notnagel, falls das Protokoll nicht lesbar ist
   return Number(count) || 0;
 }
 export async function campaignDailyStatus(db: Db, tenantId: number) {

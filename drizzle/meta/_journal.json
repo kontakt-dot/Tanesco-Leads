@@ -687,6 +687,13 @@
       "when": 1794300000000,
       "tag": "0097_opt_in_nachweis",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "5",
+      "when": 1794400000000,
+      "tag": "0098_versand_protokoll",
+      "breakpoints": true
     }
   ]
 }

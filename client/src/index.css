@@ -3892,3 +3892,11 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .rv-check:hover{background:rgba(255,255,255,.06)}
 .rv-row.is-picked .rv-item{border-color:rgba(130,120,255,.45)}
 
+
+/* v283: Versand-Protokoll und Papierkorb der E-Mail-Kampagnen */
+.cl-f small.cl-today{display:inline-flex;align-items:center;align-self:flex-start;gap:4px;margin-top:3px;padding:1px 7px;border-radius:999px;background:rgba(45,212,191,.14);color:#5eead4;font-weight:700;white-space:nowrap}
+.cl-f small.cl-today.is-zero{background:rgba(255,255,255,.06);color:#9d99b8;font-weight:600}
+.cl-f small.cl-why.is-gone{color:#fbbf24}
+.undo-list li.is-empfaenger_weg .undo-icon,.undo-list li.is-kampagne_weg .undo-icon{background:rgba(251,113,133,.14);color:#fda4af}
+.undo-list li.is-doppelt .undo-icon{background:rgba(45,212,191,.14);color:#5eead4}
+.undo-panel.is-email .xl-head p{max-width:86ch}

@@ -1869,3 +1869,10 @@ html:not(.dark) .rv-bulk-all input, html:not(.dark) .rv-check input { accent-col
 html:not(.dark) .rv-check:hover { background: #f1f5f9 !important; }
 html:not(.dark) .rv-row.is-picked .rv-item { border-color: #f2b8c1 !important; }
 
+
+/* v283: Versand-Protokoll und Papierkorb der E-Mail-Kampagnen */
+html:not(.dark) .cl-f small.cl-today { background: #ccfbf1 !important; color: #0f766e !important; }
+html:not(.dark) .cl-f small.cl-today.is-zero { background: #f2f4f7 !important; color: #667085 !important; }
+html:not(.dark) .cl-f small.cl-why.is-gone { color: #b45309 !important; }
+html:not(.dark) .undo-list li.is-empfaenger_weg .undo-icon, html:not(.dark) .undo-list li.is-kampagne_weg .undo-icon { background: #ffe4e6 !important; color: #be123c !important; }
+html:not(.dark) .undo-list li.is-doppelt .undo-icon { background: #ccfbf1 !important; color: #0f766e !important; }
