@@ -107,7 +107,7 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     expect(card.textContent).not.toContain("Liste „Dachdecker Hessen“"); expect(card.textContent).not.toMatch(/persönlich|\/Std\./);
     const review = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
     expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); // wer noch keine E-Mail hat – und warum
-    expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail wartetKI schreibt noch 2"); // alles in einem Hinweis: fertig zur Freigabe – und was die KI noch vorschreibt
+    expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail wartet1 freigegebenKI schreibt noch 2 · ca. 1 Min."); // was wartet, was freigegeben ist (geht noch raus) und wie lange die KI noch schreibt // alles in einem Hinweis: fertig zur Freigabe – und was die KI noch vorschreibt
     const writingPart = review.querySelector<HTMLElement>(".cl-approval-part.is-writing")!; expect(writingPart.getAttribute("title")).toContain("auch nachts");
     const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe · freier Vorschlag"); // Ansatz steht mit dabei
     expect(review.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); // aus dem Namen erkannt

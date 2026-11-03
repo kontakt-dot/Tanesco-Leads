@@ -1879,3 +1879,13 @@ html:not(.dark) .undo-list li.is-doppelt .undo-icon { background: #ccfbf1 !impor
 
 /* v284: zweite Fassung auf Klick, KI-Hinweis auf der Karte */
 html:not(.dark) .rv-approaches button.is-missing small { color: #7c3aed !important; }
+html:not(.dark) .cl-approval-part.is-approved { color: #0f766e !important; }
+
+/* v285: Schalter „KI schreibt vor“ und Löschen in der Freigabe */
+html:not(.dark) .rv-prewrite.is-off { background: #f8f9fb !important; border-color: #e4e7ec !important; color: #475467 !important; }
+html:not(.dark) .rv-prewrite.is-off svg { color: #98a2b3 !important; }
+html:not(.dark) .rv-prewrite-toggle { background: #ffffff !important; border-color: #d0d5dd !important; color: #1d2939 !important; }
+html:not(.dark) .rv-prewrite-toggle i { background: #d0d5dd !important; }
+html:not(.dark) .rv-prewrite-toggle.is-on i { background: #bc001d !important; }
+html:not(.dark) .rv-prewrite-toggle:focus-visible { outline-color: #bc001d !important; }
+html:not(.dark) .cl-approval-part.is-off { color: #667085 !important; }

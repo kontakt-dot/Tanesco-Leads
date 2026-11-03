@@ -2098,6 +2098,13 @@ html:not(.dark) .cl-f small.cl-why.is-gone { color: #8a6913 !important; }
 html:not(.dark) .undo-list li.is-empfaenger_weg .undo-icon, html:not(.dark) .undo-list li.is-kampagne_weg .undo-icon { color: #8b5a60 !important; }
 html:not(.dark) .undo-list li.is-doppelt .undo-icon { color: #338074 !important; }
 html:not(.dark) .rv-approaches button.is-missing small { color: #111318 !important; }
+html:not(.dark) .cl-approval-part.is-approved { color: #338074 !important; }
+html:not(.dark) .rv-prewrite.is-off { border-color: #e8ecf1 !important; background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .rv-prewrite.is-off svg { color: #8a94a6 !important; }
+html:not(.dark) .rv-prewrite-toggle { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
+html:not(.dark) .rv-prewrite-toggle i { background: #f8fafb !important; }
+html:not(.dark) .rv-prewrite-toggle.is-on i { background: #111318 !important; }
+html:not(.dark) .cl-approval-part.is-off { color: #8a94a6 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -4225,3 +4232,13 @@ html:not(.dark) .undo-list li.is-doppelt .undo-icon { background: #ccfbf1 !impor
 
 /* v284: zweite Fassung auf Klick, KI-Hinweis auf der Karte */
 html:not(.dark) .rv-approaches button.is-missing small { color: #7c3aed !important; }
+html:not(.dark) .cl-approval-part.is-approved { color: #0f766e !important; }
+
+/* v285: Schalter „KI schreibt vor“ und Löschen in der Freigabe */
+html:not(.dark) .rv-prewrite.is-off { background: #f8f9fb !important; border-color: #e4e7ec !important; color: #475467 !important; }
+html:not(.dark) .rv-prewrite.is-off svg { color: #98a2b3 !important; }
+html:not(.dark) .rv-prewrite-toggle { background: #ffffff !important; border-color: #d0d5dd !important; color: #1d2939 !important; }
+html:not(.dark) .rv-prewrite-toggle i { background: #d0d5dd !important; }
+html:not(.dark) .rv-prewrite-toggle.is-on i { background: #bc001d !important; }
+html:not(.dark) .rv-prewrite-toggle:focus-visible { outline-color: #bc001d !important; }
+html:not(.dark) .cl-approval-part.is-off { color: #667085 !important; }

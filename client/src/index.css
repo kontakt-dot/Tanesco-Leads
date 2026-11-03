@@ -3906,3 +3906,20 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .rv-approaches button.is-missing small{color:#c4b5fd}
 .rv-approaches button:disabled{cursor:progress;opacity:.7}
 .cl-ki-hint{max-width:100%;white-space:normal;line-height:1.35}
+.cl-approval-part.is-approved{display:inline-flex;align-items:center;gap:4px;color:#5eead4;font-weight:700}
+.cl-approval-part.is-approved svg{width:12px;height:12px;flex:none}
+
+/* v285: Schalter „KI schreibt vor“ und Löschen in der Freigabe */
+.rv-prewrite{align-items:center}
+.rv-prewrite > span{flex:1;min-width:0}
+.rv-prewrite.is-off{border-color:rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#b9b6d3}
+.rv-prewrite.is-off svg{color:#8a87a8}
+.rv-prewrite-toggle{flex:none;display:inline-flex;align-items:center;gap:8px;padding:5px 11px 5px 6px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:#e8e6ff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.rv-prewrite-toggle i{position:relative;width:28px;height:16px;border-radius:999px;background:rgba(255,255,255,.18);transition:background .15s}
+.rv-prewrite-toggle i::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:transform .15s}
+.rv-prewrite-toggle.is-on i{background:#7c6cff}
+.rv-prewrite-toggle.is-on i::after{transform:translateX(12px)}
+.rv-prewrite-toggle:focus-visible{outline:2px solid #a5a0ff;outline-offset:2px}
+.rv-prewrite-toggle:disabled{opacity:.6;cursor:progress}
+.cl-approval-part.is-off{color:#9d99b8;font-weight:600}
+@media (prefers-reduced-motion: reduce){.rv-prewrite-toggle i,.rv-prewrite-toggle i::after{transition:none}}

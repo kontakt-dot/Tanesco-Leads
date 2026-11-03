@@ -900,6 +900,24 @@ describe("Versand-Protokoll, heute gesendet und Papierkorb der E-Mail-Kampagnen 
   });
 });
 
+describe("Kampagnen-Karte: wie viele E-Mails freigegeben sind (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("„2 freigegeben“ steht im Freigabe-Hinweis – Erst-E-Mails und Nachfass-E-Mails, die noch rausgehen", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Frei-Demo", rows: ["ada", "ben", "cem"].map((name) => ({ firstName: name, lastName: "Frei", company: `${name} Solar`, email: `${name}@frei-demo.example` })) });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Freigegeben-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "16:30", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["Frei-Demo"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const rows = getStore().tables.emailCampaignRecipients.filter((item) => item.campaignId === saved.id).sort((a, b) => a.id - b.id);
+    rows.forEach((row, index) => Object.assign(row, { status: "wartet", nodeId: "m1", nextActionAt: new Date(Date.now() + 86_400_000), draftState: index < 2 ? "freigegeben" : "entwurf", draftSubject: `Für ${row.company}`, draftText: "Sehr geehrte Damen und Herren,\n\nein persönlicher Entwurf.\n\nVielen Dank", draftSource: "ki", draftNodeId: "m1", draftAt: new Date() }));
+    expect((await call("leadops.listEmailCampaigns", undefined)).find((row: any) => row.id === saved.id).review).toMatchObject({ freigegeben: 2, freigegebenFollowUps: 0 });
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Freigegeben-Demo"))!;
+    const part = card.querySelector<HTMLElement>(".cl-approval-part.is-approved")!; expect(part).toBeTruthy(); expect(part.textContent).toMatch(/^2 freigegeben/); expect(part.getAttribute("title")).toContain("im Versandfenster raus");
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
@@ -943,7 +961,7 @@ describe("Reiter „Verlauf“ (Chat-Build)", () => {
 describe("KI schreibt nach dem Start alle Entwürfe vor – auch außerhalb der Versandzeit (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
-  it("Starten mit „KI mit Freigabe“: alle Entwürfe sofort da, obwohl gerade keine Versandzeit ist; ohne Freigabe geht nichts raus; pausiert = Vorschreiben geht weiter", async () => {
+  it("Starten mit „KI mit Freigabe“: alle Entwürfe sofort da, obwohl gerade keine Versandzeit ist; ohne Freigabe geht nichts raus; pausiert = kein Vorschreiben", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "Nacht-Demo", rows: Array.from({ length: 6 }, (_, index) => ({ firstName: `Nora${index}`, lastName: "Nacht", company: `Nacht Solar ${index}`, email: `nora${index}@nacht-demo.example` })) });
     const tree = { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Erste an {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait", hours: 24, next: "m2" }, { id: "m2", type: "send", label: "Kurze Nachfrage", subject: "Nachfrage {{firma}}", blocks: starterBlocks("nachfassen"), next: null }] };
@@ -959,6 +977,58 @@ describe("KI schreibt nach dem Start alle Entwürfe vor – auch außerhalb der 
     // ein Entwurf verworfen → der nächste Lauf schreibt ihn wieder vor, auch außerhalb der Versandzeit
     Object.assign(rows[0], { draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null });
     await call("leadops.runEmailCampaigns"); expect(getStore().tables.emailCampaignRecipients.find((item) => item.id === rows[0].id)).toMatchObject({ draftState: "entwurf", draftNodeId: "m1" });
-    await call("leadops.setEmailCampaignStatus", { id: saved.id, status: "pausiert" }); expect((await call("leadops.campaignReviewQueue", { campaignId: saved.id })).prewriting).toBe(true); // pausiert: es geht nichts raus, aber die KI schreibt weiter vor (laufende Kampagnen zuerst)
+    await call("leadops.setEmailCampaignStatus", { id: saved.id, status: "pausiert" }); expect((await call("leadops.campaignReviewQueue", { campaignId: saved.id })).prewriting).toBe(false); // pausiert: die KI schreibt nichts vor
+  });
+});
+
+describe("Freigabe: Kontakte direkt löschen und „KI schreibt vor“ ausschalten (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Schalter „KI schreibt vor“: aus = die KI schreibt nichts von selbst (Karte zeigt „KI-Vorschreiben aus“); Mülleimer und „Löschen“ nehmen Kontakte ganz raus – Papierkorb, Kunden bleiben", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Lösch-Demo", rows: ["ada", "ben", "cem", "dan", "eva"].map((name) => ({ firstName: name, lastName: "Lösch", company: `${name} Solar`, email: `${name}@loesch-demo.example` })) });
+    const day = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" })).getDay();
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Lösch-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: true, weekdays: [(day + 3) % 7], from: "07:30", to: "08:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["Lösch-Demo"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const recipients = () => getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === saved.id).sort((a, b) => a.id - b.id);
+    expect(recipients()).toHaveLength(5); expect(recipients().every((row) => row.draftState === "entwurf")).toBe(true);
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const card = () => Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Lösch-Demo"))!;
+    await act(async () => { fireEvent.click(card().querySelector<HTMLButtonElement>(".cl-approval-main")!); }); await settle(400); await settle(300);
+    // Schalter ausschalten
+    const toggle = () => document.querySelector<HTMLButtonElement>(".rv-prewrite-toggle")!;
+    expect(toggle()).toBeTruthy(); expect(toggle().getAttribute("aria-checked")).toBe("true"); expect(toggle().textContent).toContain("KI schreibt vor: an");
+    await act(async () => { fireEvent.click(toggle()); }); await settle(300); await settle(300);
+    expect(getStore().tables.emailCampaigns.find((row) => row.id === saved.id)).toMatchObject({ prewrite: false });
+    expect(toggle().getAttribute("aria-checked")).toBe("false"); expect(toggle().textContent).toContain("KI schreibt vor: aus"); expect(document.querySelector(".rv-prewrite.is-off")?.textContent).toContain("KI-Vorschreiben ist aus");
+    // ein Entwurf fehlt → die KI schreibt ihn jetzt nicht von selbst
+    const last = recipients()[4]; Object.assign(last, { draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null, draftApproach: null });
+    await call("leadops.runEmailCampaigns"); expect(getStore().tables.emailCampaignRecipients.find((row) => row.id === last.id)?.draftState ?? null).toBeNull();
+    expect((await call("leadops.campaignReviewQueue", { campaignId: saved.id })).prewrite).toBe(false);
+    // Mülleimer beim gezeigten Kontakt: ganz gelöscht (Papierkorb)
+    await settle(300);
+    const shown = document.querySelector<HTMLElement>(".rv-item.is-active strong")?.textContent ?? ""; expect(shown).toMatch(/Lösch/);
+    const shownRow = recipients().find((row) => String(row.name).startsWith(shown.split(" ")[0]))!; expect(shownRow).toBeTruthy();
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>('button[aria-label="Kontakt löschen"]')!); }); await settle(200);
+    expect(document.querySelector(".app-confirm")?.textContent ?? "").toContain("Papierkorb");
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400); await settle(300);
+    expect(getStore().tables.leads.some((lead) => lead.id === shownRow.leadId)).toBe(false); expect(recipients().some((row) => row.id === shownRow.id)).toBe(false); expect(recipients()).toHaveLength(4);
+    const trash = await call("leadops.listUndo", { limit: 10 }); expect(trash[0]).toMatchObject({ kind: "loeschen" }); expect(trash[0].title).toContain("in der Freigabe gelöscht");
+    // zwei auswählen → „Löschen“; einer davon ist Kunde: bleibt erhalten, kommt nur aus der Kampagne
+    const [first, second] = recipients(); const customer = getStore().tables.leads.find((lead) => lead.id === second.leadId)!; customer.pipelineStage = "kunde";
+    for (const row of [first, second]) { const box = document.querySelector<HTMLInputElement>(`input[aria-label="${row.name} auswählen"]`)!; expect(box).toBeTruthy(); await act(async () => { fireEvent.click(box); }); }
+    await settle(100); expect(document.querySelector(".rv-bulk")?.textContent).toContain("2 ausgewählt");
+    const bulkDelete = Array.from(document.querySelectorAll<HTMLButtonElement>(".rv-bulk-actions button")).find((node) => node.textContent?.trim() === "Löschen")!; expect(bulkDelete).toBeTruthy();
+    await act(async () => { fireEvent.click(bulkDelete); }); await settle(200);
+    expect(document.querySelector(".app-confirm")?.textContent ?? "").toContain("Kunden bleiben erhalten");
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400); await settle(300);
+    expect(getStore().tables.leads.some((lead) => lead.id === first.leadId)).toBe(false); expect(getStore().tables.leads.find((lead) => lead.id === second.leadId)).toMatchObject({ pipelineStage: "kunde" });
+    expect(recipients().map((row) => row.id)).not.toContain(second.id); expect(recipients()).toHaveLength(2);
+    // Karte zeigt „KI-Vorschreiben aus“
+    cleanup(); window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const again = mount(); await settle(300); await settle(300);
+    const cardAgain = Array.from(again.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Lösch-Demo"))!;
+    expect(cardAgain.querySelector(".cl-approval-part.is-off")?.textContent).toBe("KI-Vorschreiben aus");
   });
 });

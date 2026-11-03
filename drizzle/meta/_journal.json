@@ -694,6 +694,13 @@
       "when": 1794400000000,
       "tag": "0098_versand_protokoll",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "5",
+      "when": 1794500000000,
+      "tag": "0099_ki_vorschreiben_schalter",
+      "breakpoints": true
     }
   ]
 }

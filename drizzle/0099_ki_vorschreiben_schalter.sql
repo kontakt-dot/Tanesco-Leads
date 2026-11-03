@@ -1,0 +1,1 @@
+ALTER TABLE `emailCampaigns` ADD `prewrite` boolean DEFAULT true NOT NULL;

@@ -2544,7 +2544,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
     const recipients = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
     expect(recipients.every((row) => row.sentCount === 0)).toBe(true); // ohne Freigabe geht nichts raus
-    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0, ohneEntwurf: recipients.filter((row) => !row.draftState).length, vorschreiben: false, tempo: null }); /* ohne KI-Schlüssel schreibt die KI nichts vor */
+    const list = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!; expect(list.review).toEqual({ zurFreigabe: 2, freigegeben: 0, ohneEntwurf: recipients.filter((row) => !row.draftState).length, freigegebenFollowUps: 0, vorschreiben: false, tempo: null }); /* ohne KI-Schlüssel schreibt die KI nichts vor */
     const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts).toMatchObject({ offen: 0, entwurf: 2, freigegeben: 0, erste: 2, followUps: 0 }); // der Versand-Lauf hat die Entwürfe schon geschrieben (Vorlage, ohne KI-Schlüssel) und wartet auf Freigabe
     const rita = queue.items.find((item) => item.email === "rita@review-e2e.example")!; expect(rita.city).toBe("Kassel");
     const drafts = await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [rita.id] }); // ohne KI-Schlüssel: Vorlage mit den Daten des Kontakts
@@ -3898,6 +3898,44 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
   }, 90000);
 
+  it("63zh. Freigabe: Schalter „KI schreibt vor“ je Kampagne (aus = nichts von selbst, nur auf Klick) und Kontakte direkt löschen (Papierkorb, wiederherstellbar, Kunden bleiben)", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { prewriteDrafts } = await import("./campaign-review");
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key"; (globalThis as { __draftPlan?: string[] }).__draftPlan = [];
+    try {
+      const starter = await owner.leadops.emailCampaignStarter();
+      await owner.leadops.importColdList({ listName: "Schalter-Liste", toPipeline: false, rows: [["Ada", "ada@schalter-e2e.example"], ["Bo", "bo@schalter-e2e.example"], ["Cy", "cy@schalter-e2e.example"]].map(([firstName, email]) => ({ firstName, lastName: "Schalter", company: `${firstName} Schalter GmbH`, email })) });
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Schalter-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Schalter-Liste" }, tree: { start: "s1", nodes: [{ id: "s1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+      await db.update(emailCampaigns).set({ status: "aktiv", startedAt: new Date() }).where(eq(emailCampaigns.id, campaign.id));
+      for (const [n, email] of ["ada@schalter-e2e.example", "bo@schalter-e2e.example", "cy@schalter-e2e.example"].entries()) { const lead = (await db.select().from(leads).where(eq(leads.email, email)))[0]; await db.insert(emailCampaignRecipients).values({ tenantId: S.tenantId, campaignId: campaign.id, leadId: lead.id, email, name: `${lead.firstName} Schalter`, company: lead.company, token: `sw${n}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.slice(0, 40), nodeId: "s1", nextActionAt: new Date(Date.now() + 86_400_000), status: "wartet", sentCount: 0 }); }
+      const card = async () => (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
+      expect(await card()).toMatchObject({ prewrite: true, review: { vorschreiben: true } });
+      // ausschalten: die KI schreibt nichts von selbst
+      expect(await owner.leadops.setEmailCampaignPrewrite({ id: campaign.id, enabled: false })).toEqual({ id: campaign.id, prewrite: false });
+      expect(await card()).toMatchObject({ prewrite: false, review: { vorschreiben: false } }); expect(await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).toMatchObject({ prewrite: false, prewriting: false });
+      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 0, open: 0 });
+      expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).every((row) => !row.draftState)).toBe(true);
+      // auf Klick schreibt sie trotzdem (Freigabe → Kontakt anklicken)
+      const [first] = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+      expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [first.id] })).drafts).toHaveLength(1);
+      // wieder einschalten: schreibt die übrigen
+      await owner.leadops.setEmailCampaignPrewrite({ id: campaign.id, enabled: true }); expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 2, open: 0 });
+      // Kontakte direkt aus der Freigabe löschen: ganz weg, Papierkorb, Kunde bleibt
+      const rows = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+      await db.update(leads).set({ pipelineStage: "kunde" }).where(eq(leads.id, rows[2].leadId!)); // Cy ist Kunde
+      const deleted = await owner.leadops.deleteLeadsFromReview({ campaignId: campaign.id, recipientIds: [rows[1].id, rows[2].id] });
+      expect(deleted).toMatchObject({ deleted: 1, keptCustomers: 1 }); expect(deleted.undoId).toBeGreaterThan(0);
+      expect((await db.select().from(leads).where(eq(leads.email, "bo@schalter-e2e.example")))).toHaveLength(0);
+      expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).map((row) => row.email)).toEqual(["ada@schalter-e2e.example"]); // Cy (Kunde) nur aus der Kampagne
+      expect((await db.select().from(leads).where(eq(leads.email, "cy@schalter-e2e.example")))[0]).toMatchObject({ pipelineStage: "kunde" });
+      const trash = await owner.leadops.listUndo({ limit: 30 });
+      expect(trash.find((row) => row.id === deleted.undoId)).toMatchObject({ kind: "loeschen" }); expect(trash.some((row) => row.kind === "empfaenger_weg" && row.id !== deleted.undoId && /Schalter-Test/.test(row.title))).toBe(true);
+      await owner.leadops.undoOperation({ id: deleted.undoId });
+      expect((await db.select().from(leads).where(eq(leads.email, "bo@schalter-e2e.example")))).toHaveLength(1);
+      expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).map((row) => row.email).sort()).toEqual(["ada@schalter-e2e.example", "bo@schalter-e2e.example"]);
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+    } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
+  }, 60000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
@@ -4303,9 +4341,10 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect(await db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")))).toHaveLength(0); // ohne Freigabe geht nichts raus
       expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }) as { prewriting?: boolean; counts: { offen: number } })).toMatchObject({ prewriting: true, counts: { offen: 0 } });
       expect(await prewriteDrafts(db, { campaignId: campaign.id })).toEqual({ written: 0, failed: 0, open: 0 }); // nichts mehr zu tun
-      // pausiert: es geht nichts raus, aber die KI schreibt weiter vor (laufende Kampagnen zuerst) – ohne KI-Schlüssel: kein Vorschreiben
+      // pausiert oder ohne KI-Schlüssel: kein Vorschreiben
       await owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "pausiert" });
-      expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: true });
+      expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: false });
+      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 0 }); // pausiert: nichts geschrieben
       await owner.leadops.setEmailCampaignStatus({ id: campaign.id, status: "aktiv" }); delete process.env.ANTHROPIC_API_KEY;
       expect(await prewriteDrafts(db, { campaignId: campaign.id })).toEqual({ written: 0, failed: 0, open: 0 });
       expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!.review).toMatchObject({ vorschreiben: false });

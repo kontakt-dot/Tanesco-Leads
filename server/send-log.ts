@@ -202,7 +202,7 @@ export async function reconcileCampaign(db: Db, tenantId: number, campaign: Camp
     const lost = logs.filter((row) => lower(row.email) === email && (row.recipientId === null || !ids.has(row.recipientId))); // E-Mails an gelöschte Einträge
     let sends: SendRecord[] = lost.map((row) => ({ nodeId: row.nodeId, at: new Date(row.sentAt), sender: row.sender, logId: row.id }));
     const trace = keep.leadId ? traces.get(keep.leadId) : undefined;
-    if (!sends.length && trace && trace.getTime() < new Date(keep.createdAt).getTime()) sends = [{ nodeId: firstSendNode(tree)?.id ?? null, at: trace, sender: null, logId: null }];
+    if (!sends.length && trace && trace.getTime() <= new Date(keep.createdAt).getTime()) sends = [{ nodeId: firstSendNode(tree)?.id ?? null, at: trace, sender: null, logId: null }]; // <=: Zeiten auf die Sekunde – dieser Eintrag selbst hat nie etwas gesendet
     if (!sends.length) continue;
     const replay = replayPosition(tree, sends); if (!replay) continue;
     const item: ReconcileItem = { recipientId: keep.id, kind: "wiederhergestellt", before: beforeOf(keep), eventIds: [], logIds: [], movedLogs: [] };

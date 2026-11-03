@@ -689,11 +689,11 @@ export async function withDraftLock<T>(recipientId: number, run: () => Promise<T
   try { return await run(); } finally { draftingNow.delete(recipientId); }
 }
 /**
- * Schreibt die KI für diese Kampagne die Entwürfe von selbst vor? Gestartet (aktiv oder pausiert – pausiert geht nichts raus, aber die Entwürfe
- * liegen bereit, wenn es weitergeht), „KI mit Freigabe“, KI eingerichtet. Laufende Kampagnen kommen zuerst dran.
+ * Schreibt die KI für diese Kampagne die Entwürfe von selbst vor? Nur laufend (aktiv) – pausierte bekommen nichts vorgeschrieben –, „KI mit Freigabe“,
+ * Vorschreiben nicht abgeschaltet (Schalter je Kampagne), KI eingerichtet.
  */
-export function prewritesDrafts(campaign: { status: string; kiModus?: string | null; reviewFirst?: boolean | null; isTemplate?: boolean | null; archivedAt?: Date | null }): boolean {
-  return (campaign.status === "aktiv" || campaign.status === "pausiert") && !campaign.isTemplate && !campaign.archivedAt && kiModusOf(campaign) === "freigabe" && Boolean(process.env.ANTHROPIC_API_KEY);
+export function prewritesDrafts(campaign: { status: string; kiModus?: string | null; reviewFirst?: boolean | null; isTemplate?: boolean | null; archivedAt?: Date | null; prewrite?: boolean | null }): boolean {
+  return campaign.status === "aktiv" && campaign.prewrite !== false && !campaign.isTemplate && !campaign.archivedAt && kiModusOf(campaign) === "freigabe" && Boolean(process.env.ANTHROPIC_API_KEY);
 }
 /** Wer braucht noch einen Entwurf? Offene Empfänger, deren nächster Schritt eine E-Mail ist und die noch keinen passenden Entwurf haben – erst die fälligen, dann die in der Wartezeit (je nach Reihenfolge der Aufnahme). */
 async function openDraftIds(db: Db, campaign: { id: number; tenantId: number; tree: unknown }): Promise<number[]> {
@@ -719,8 +719,8 @@ export async function prewriteTick(db: Db, options: { campaignId?: number | null
 export async function prewriteDrafts(db: Db, options: { campaignId?: number | null; max?: number; parallel?: number; budgetMs?: number } = {}): Promise<{ written: number; failed: number; open: number }> {
   if (!process.env.ANTHROPIC_API_KEY) return { written: 0, failed: 0, open: 0 };
   const started = Date.now(); const max = Math.max(1, options.max ?? 16); const parallel = Math.max(1, Math.min(4, options.parallel ?? 4)); const budgetMs = options.budgetMs ?? 50_000;
-  const conditions = [inArray(emailCampaigns.status, ["aktiv", "pausiert"]), isNull(emailCampaigns.archivedAt)]; if (options.campaignId) conditions.push(eq(emailCampaigns.id, options.campaignId));
-  const campaigns = (await db.select({ id: emailCampaigns.id, tenantId: emailCampaigns.tenantId, tree: emailCampaigns.tree, status: emailCampaigns.status, kiModus: emailCampaigns.kiModus, kiAnsatz: emailCampaigns.kiAnsatz, reviewFirst: emailCampaigns.reviewFirst, isTemplate: emailCampaigns.isTemplate, archivedAt: emailCampaigns.archivedAt }).from(emailCampaigns).where(and(...conditions))).filter((row) => prewritesDrafts(row));
+  const conditions = [eq(emailCampaigns.status, "aktiv"), isNull(emailCampaigns.archivedAt)]; if (options.campaignId) conditions.push(eq(emailCampaigns.id, options.campaignId)); // pausierte: nichts vorschreiben
+  const campaigns = (await db.select({ id: emailCampaigns.id, tenantId: emailCampaigns.tenantId, tree: emailCampaigns.tree, status: emailCampaigns.status, kiModus: emailCampaigns.kiModus, kiAnsatz: emailCampaigns.kiAnsatz, reviewFirst: emailCampaigns.reviewFirst, isTemplate: emailCampaigns.isTemplate, archivedAt: emailCampaigns.archivedAt, prewrite: emailCampaigns.prewrite }).from(emailCampaigns).where(and(...conditions))).filter((row) => prewritesDrafts(row));
   const now = Date.now(); let open = 0;
   const queues: Array<Array<{ tenantId: number; id: number; approach: DraftApproach }>> = []; const openNow = new Map<number, number>();
   for (const campaign of campaigns) {
@@ -729,9 +729,8 @@ export async function prewriteDrafts(db: Db, options: { campaignId?: number | nu
     queues.push(ids.filter((id) => !draftingNow.has(id) && now - (prewriteFailedAt.get(id) ?? 0) >= PREWRITE_RETRY_MS).map((id) => ({ tenantId: campaign.tenantId, id, approach })));
   }
   prewriteOpen = openNow;
-  const order: Array<{ tenantId: number; id: number; approach: DraftApproach }> = []; // reihum aus allen Kampagnen – erst die laufenden, dann die pausierten
-  const roundRobin = (list: typeof queues) => { for (let index = 0; order.length < max && list.some((queue) => index < queue.length); index += 1) for (const queue of list) if (index < queue.length && order.length < max) order.push(queue[index]); };
-  roundRobin(queues.filter((_, at) => campaigns[at].status === "aktiv")); roundRobin(queues.filter((_, at) => campaigns[at].status !== "aktiv"));
+  const order: Array<{ tenantId: number; id: number; approach: DraftApproach }> = []; // reihum aus allen laufenden Kampagnen
+  for (let index = 0; order.length < max && queues.some((queue) => index < queue.length); index += 1) for (const queue of queues) if (index < queue.length && order.length < max) order.push(queue[index]);
   let written = 0; let failed = 0; let next = 0;
   const worker = async () => {
     while (next < order.length && Date.now() - started < budgetMs) {
@@ -787,7 +786,7 @@ export async function reviewQueue(db: Db, tenantId: number, campaignId: number) 
   const leadRows = leadIds.length ? await db.select({ id: leads.id, publicId: leads.publicId, city: leads.city, listName: leads.listName, company: leads.company, firstName: leads.firstName, lastName: leads.lastName, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, leadIds))) : [];
   const items = rows.map(({ row, node, dueAt }) => { const lead = leadRows.find((item) => item.id === row.leadId) ?? null; const fits = draftFitsNode(row, node.id); const sent = row.sentCount > 0 ? sentOf(row.id) : []; const last = sent[sent.length - 1] ?? null; const promised = sent.length ? promisedTestLeads(sent) : null; const offer = testOfferFor(sparteOfCampaign(campaign, lead?.listName), promised); return { id: row.id, email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, step: row.sentCount + 1, dueAt, sentBefore: last ? { subject: last.subject ?? "", at: last.createdAt, count: sent.length } : null, testLeads: offer, promisedBefore: promised, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits ? withoutLegacyOptions(row.draftOptions) ?? [] : []) as DraftOption[], draftApproach: fits ? approachOf(row.draftApproach) : null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
   const withDraft = items.filter((item) => item.draftText);
-  return { items, prewriting: prewritesDrafts(campaign), counts: { offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length, erste: items.filter((item) => !item.followUp).length, followUps: items.filter((item) => item.followUp).length, faellig: items.filter((item) => !item.dueAt).length, spaeter: items.filter((item) => item.dueAt).length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } }; // prewriting: die KI schreibt die fehlenden Entwürfe im Hintergrund vor (auch nachts)
+  return { items, prewriting: prewritesDrafts(campaign), prewrite: campaign.prewrite !== false, /* Schalter „KI schreibt vor“ dieser Kampagne */ counts: { offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length, erste: items.filter((item) => !item.followUp).length, followUps: items.filter((item) => item.followUp).length, faellig: items.filter((item) => !item.dueAt).length, spaeter: items.filter((item) => item.dueAt).length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } }; // prewriting: die KI schreibt die fehlenden Entwürfe im Hintergrund vor (auch nachts)
 }
 
 /** Entwurf speichern, freigeben oder Freigabe zurücknehmen – gilt für den aktuellen Schritt des Empfängers. Freigegeben = geht beim nächsten Lauf raus. */
