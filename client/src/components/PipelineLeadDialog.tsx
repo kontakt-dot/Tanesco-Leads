@@ -14,7 +14,8 @@ import { toast } from "sonner";
 import type { AppRouter } from "../../../server/routers";
 import { categoryEmoji } from "../../../shared/category-emoji";
 import { CHANNEL_LABELS, euro, formatAppointment, formatDue, normalizePhone, taskKindEmoji, taskKindLabel, TEMPERATURE_HOT_FROM, TEMPERATURE_WARM_FROM, type MessageChannel } from "../../../shared/pipeline-extras";
-import { historyLabel, lostStage, nextStageKey, stageLabel, wonStage, type StageDef } from "../../../shared/sales-pipeline";
+import { historyLabel, lostStage, nextStageKey, pipelineSourceOf, stageLabel, wonStage, type StageDef } from "../../../shared/sales-pipeline";
+import { isCombinedEnergyCategory } from "../../../shared/lead-sparte";
 import LeadActionDialog, { type ActionLead, type ActionMode } from "@/components/LeadActionDialog";
 import type { DialTarget } from "@/components/PipelineDialer";
 import PipelineNotes from "@/components/PipelineNotes";
@@ -119,7 +120,7 @@ export default function PipelineLeadPage({ publicId, stageDefs: fallbackStageDef
           <div className="flex items-center justify-between gap-2"><span className="eyebrow">STAMMDATEN</span>{dirty && <small className="text-xs text-amber-200">nicht gespeichert</small>}</div>
           {form && <div className="lead-page-form">
             <label className="lead-action-field">Anrede<select className="lead-action-select" value={form.salutation} onChange={(event) => edit({ salutation: event.target.value })}><option value="">–</option><option value="herr">Herr</option><option value="frau">Frau</option></select></label>
-            <label className="lead-action-field">Kategorie<select className="lead-action-select" value={form.categoryId} onChange={(event) => edit({ categoryId: event.target.value })}>{!form.categoryId && <option value="">–</option>}{(categories.data ?? []).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+            <label className="lead-action-field">Kategorie<select className="lead-action-select" value={form.categoryId} onChange={(event) => edit({ categoryId: event.target.value })}>{!form.categoryId && <option value="">–</option>}{(categories.data ?? []).filter((category) => !(pipelineSourceOf(lead.adPlatform ?? null) === "email" && isCombinedEnergyCategory(category.name) && String(category.id) !== form.categoryId)).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
             <label className="lead-action-field">Vorname<Input value={form.firstName} onChange={(event) => edit({ firstName: event.target.value })} /></label>
             <label className="lead-action-field">Nachname<Input value={form.lastName} onChange={(event) => edit({ lastName: event.target.value })} /></label>
             <label className="lead-action-field is-wide">Firma<Input value={form.company} onChange={(event) => edit({ company: event.target.value })} /></label>

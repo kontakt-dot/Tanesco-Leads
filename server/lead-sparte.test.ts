@@ -203,3 +203,36 @@ describe("Zahl der Fragen je Sparte: Hausnotruf 6, Elektrorollstuhl 6, Alarmanla
     expect(draft("• Vorqualifizierung anhand von in der Regel sechs Fragen, der Interessent weiß danach, dass sich ein Anbieter bei ihm meldet\n• Keine Vorkasse")).toBe(`• Vorqualifizierung anhand von in der Regel sechs Fragen – beispielsweise die Krankenkasse, bei der der Interessent versichert ist, der Pflegegrad, die Wohnsituation usw.\n• Der Interessent weiß, dass sich ein Anbieter bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet auf Ihren Anruf\n• Keine Vorkasse`);
   });
 });
+
+describe("Pipeline „E-Mail-Kampagne“: jede Karte Photovoltaik ODER Wärmepumpe – nie „Photovoltaik & Wärmepumpe“", () => {
+  it("erkennt die Firma an Name, Webseite, E-Mail-Adresse, Angaben der Liste und Betreff – nur bei klarem Ergebnis", async () => {
+    const { energyKeyOfCompany } = await import("../shared/lead-sparte");
+    expect(energyKeyOfCompany({ company: "Sonnenkraft Solartechnik GmbH" })).toBe("photovoltaik");
+    expect(energyKeyOfCompany({ company: "clever-PV GmbH" })).toBe("photovoltaik");
+    expect(energyKeyOfCompany({ company: "Müller GmbH", website: "https://www.solarmodule-gladbeck.de/kontakt" })).toBe("photovoltaik");
+    expect(energyKeyOfCompany({ company: "Heizung & Sanitär Brandt" })).toBe("waermepumpe");
+    expect(energyKeyOfCompany({ company: "Brandt GmbH", email: "info@waermepumpen-brandt.de" })).toBe("waermepumpe");
+    expect(energyKeyOfCompany({ company: "Brandt GmbH", fields: ["Heizungsinstallateur", "4,8"] })).toBe("waermepumpe");
+    expect(energyKeyOfCompany({ company: "Solarthermie Schulz" })).toBe("waermepumpe"); // Solarthermie ist Wärme, keine Photovoltaik
+    expect(energyKeyOfCompany({ company: "1KOMMA5° Showroom Münster", subject: "Wärmepumpen-Anfragen für 1KOMMA5°" })).toBe("waermepumpe"); // nur der Betreff sagt etwas
+    expect(energyKeyOfCompany({ company: "Solar & Heizung Weber" })).toBeNull(); // macht beides
+    expect(energyKeyOfCompany({ company: "Stadtwerke Lindenau", website: "stadtwerke-lindenau.de" })).toBeNull(); // nichts dazu
+    expect(energyKeyOfCompany({ company: "Sonnenkraft Solartechnik GmbH", fields: ["Photovoltaik & Wärmepumpe"] })).toBe("photovoltaik"); // Liste für beides ändert nichts am Namen
+    expect(energyKeyOfCompany({ company: "Firma", website: "https://firma.de/wp-content/x" })).toBeNull(); // „wp-content“ der Webseite ist keine Wärmepumpe
+  });
+  it("Leadsparte der Kampagne: gewählte Kategorien vor der Sparte – Photovoltaik + Wärmepumpe (oder die gemeinsame, oder keine Sparte) = beides", async () => {
+    const { campaignEnergyKey } = await import("../shared/lead-sparte");
+    const categories = [{ id: 1, name: "Photovoltaik" }, { id: 2, name: "Wärmepumpe" }, { id: 3, name: "Photovoltaik & Wärmepumpe" }, { id: 4, name: "Alarmanlagen" }, { id: 5, name: "Photovoltaik Gewerbe" }];
+    expect(campaignEnergyKey(categories, { leadCategoryIds: [2] })).toBe("waermepumpe");
+    expect(campaignEnergyKey(categories, { leadCategoryIds: [5] })).toBe("photovoltaik");
+    expect(campaignEnergyKey(categories, { leadCategoryIds: [1, 2] })).toBe("beides");
+    expect(campaignEnergyKey(categories, { leadCategoryIds: [3, 1, 2] })).toBe("beides");
+    expect(campaignEnergyKey(categories, { leadCategoryIds: [4] })).toBeNull();
+    expect(campaignEnergyKey(categories, { leadSparte: "Wärmepumpe" })).toBe("waermepumpe");
+    expect(campaignEnergyKey(categories, { leadSparte: "Photovoltaik & Wärmepumpe" })).toBe("beides");
+    expect(campaignEnergyKey(categories, { name: "Über 100 Bewerungen" }, ["Photovoltaik & Wärmepumpe über 100 Bewertungen"])).toBe("beides");
+    expect(campaignEnergyKey(categories, { name: "Leads WP bundesweit" })).toBe("waermepumpe");
+    expect(campaignEnergyKey(categories, { name: "Neue Kampagne" })).toBe("beides"); // ohne Sparte gilt PV & WP
+    expect(campaignEnergyKey(categories, { leadSparte: "Hausnotruf" })).toBeNull();
+  });
+});

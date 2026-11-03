@@ -433,6 +433,7 @@ export async function onInterestedReply(db: Db, tenantId: number, input: { leadI
   await db.update(leads).set({ inPipeline: true, adPlatform: "email", ...(campaign ? { adCampaignId: `email-${campaign.id}`, adCampaignName: campaign.name.slice(0, 160) } : lead.adCampaignId ? {} : { adCampaignId: "email-posteingang", adCampaignName: "Posteingang" }), ...(categoryId && categoryId !== lead.categoryId ? { categoryId } : {}) }).where(eq(leads.id, lead.id));
   const { moveStage } = await import("./meta-ads"); await moveStage(db, tenantId, { publicId: lead.publicId, stage: target, note: `${note} – aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen`, actorUserId: null });
   await autoAssign(db, tenantId, lead.id); // Verteilung wie beim Übernehmen von Hand
+  if (categoryId) { const { pickEnergyForEmailCards } = await import("./inbox"); await pickEnergyForEmailCards(db, tenantId, { leadIds: [lead.id] }).catch(() => null); } // Kampagne für PV und WP: Photovoltaik oder Wärmepumpe je Firma
   return target;
 }
 /**

@@ -44,6 +44,7 @@ export async function fileSentCard(db: Db, tenantId: number, input: { leadId: nu
   await db.update(leads).set({ inPipeline: true, adPlatform: "email", pipelineStage: move.to, pipelineUpdatedAt: new Date(), ...(move.intake && input.campaignId ? { adCampaignId: `email-${input.campaignId}`, adCampaignName: name } : {}), ...(categoryId && categoryId !== lead.categoryId ? { categoryId } : {}) }).where(eq(leads.id, lead.id));
   await db.insert(pipelineEvents).values({ tenantId, leadId: lead.id, fromStage: move.from, toStage: move.to, actorUserId: null, note: move.intake ? `E-Mail aus „${name}“ versendet – automatisch aus der E-Mail-Akquise in die Pipeline „E-Mail-Kampagne“ übernommen` : `E-Mail aus „${name}“ versendet` });
   if (move.intake) { const { autoAssign } = await import("./pipeline-extras"); await autoAssign(db, tenantId, lead.id); } // Verteilung wie beim Übernehmen von Hand
+  if (move.intake && categoryId) { const { pickEnergyForEmailCards } = await import("./inbox"); await pickEnergyForEmailCards(db, tenantId, { leadIds: [lead.id] }).catch(() => null); } // Kampagne für PV und WP: Photovoltaik oder Wärmepumpe je Firma
   return move;
 }
 

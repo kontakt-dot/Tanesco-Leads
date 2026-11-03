@@ -691,6 +691,44 @@ describe("Pipeline „E-Mail-Kampagne“: PV und WP getrennt, Filter nach Kampag
   });
 });
 
+describe("Pipeline „E-Mail-Kampagne“ ohne „Photovoltaik & Wärmepumpe“ und ohne „Karten verteilen“ (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  async function bothCampaign() {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Beides-Demo", toPipeline: false, rows: [{ firstName: "Sonja", lastName: "Sonne", company: "Sonnenkraft Solartechnik GmbH", email: "sonja@beides-demo.example" }, { firstName: "Bernd", lastName: "Brandt", company: "Heizung & Sanitär Brandt", email: "bernd@beides-demo.example" }, { firstName: "Lena", lastName: "Linde", company: "Stadtwerke Lindenau", email: "lena@beides-demo.example" }] });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Energieversorger & Großanbieter", leadSparte: "Photovoltaik & Wärmepumpe", fromName: "T", fromEmail: "t@t.de", replyTo: null, audience: { source: "liste", listName: "Beides-Demo" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50 });
+    await call("leadops.startEmailCampaign", { id: saved.id }); await call("leadops.runEmailCampaigns");
+    return saved;
+  }
+  it("Daten: Kampagne für beides → je Firma Photovoltaik oder Wärmepumpe, unklar vorerst Photovoltaik; von Hand gewählte gemeinsame wird beim Öffnen wieder getrennt", async () => {
+    await bothCampaign(); const store = getStore();
+    const nameOf = (email: string) => { const lead = store.tables.leads.find((row) => row.email === email)!; return store.tables.leadCategories.find((row) => row.id === lead.categoryId)?.name; };
+    expect(nameOf("sonja@beides-demo.example")).toBe("Photovoltaik"); expect(nameOf("bernd@beides-demo.example")).toBe("Wärmepumpe"); expect(nameOf("lena@beides-demo.example")).toBe("Photovoltaik");
+    const lena = store.tables.leads.find((row) => row.email === "lena@beides-demo.example")!;
+    expect((await call("leadops.pipelineHistory", { publicId: lena.publicId })).some((event: any) => /^Kategorie getrennt \(PV oder WP\): „Photovoltaik“ \(vorher „Photovoltaik & Wärmepumpe“\) – nicht eindeutig/.test(event.note ?? ""))).toBe(true);
+    const combined = store.tables.leadCategories.find((row) => row.name === "Photovoltaik & Wärmepumpe")!; const bernd = store.tables.leads.find((row) => row.email === "bernd@beides-demo.example")!;
+    await call("leadops.setPipelineCategory", { publicId: bernd.publicId, categoryId: combined.id }); expect(nameOf("bernd@beides-demo.example")).toBe("Photovoltaik & Wärmepumpe");
+    const board = await call("leadops.pipelineOverview", { source: "email" });
+    expect(nameOf("bernd@beides-demo.example")).toBe("Wärmepumpe"); expect(board.categories.map((item: any) => item.name)).not.toContain("Photovoltaik & Wärmepumpe");
+    expect(board.stages.flatMap((stage: any) => stage.leads).some((lead: any) => lead.categoryName === "Photovoltaik & Wärmepumpe")).toBe(false);
+  });
+  it("Oberfläche: kein „Karten verteilen“ in der Pipeline „E-Mail-Kampagne“ (in Kaltakquise schon); die Kategorie-Auswahl der Karte bietet die gemeinsame nicht an", async () => {
+    await bothCampaign();
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    let view = mount(); await settle(400); await settle(400);
+    const texts = () => Array.from(view.container.querySelectorAll("button")).map((node) => node.textContent?.trim() ?? "");
+    expect(texts().some((text) => text.includes("Auswählen"))).toBe(true); expect(texts().some((text) => text.includes("Karten verteilen"))).toBe(false);
+    const trigger = Array.from(view.container.querySelectorAll<HTMLElement>(".cat-pick-trigger")).find((node) => node.textContent?.includes("Wärmepumpe"))!; expect(trigger).toBeTruthy();
+    await act(async () => { fireEvent.keyDown(trigger, { key: "ArrowDown" }); }); await settle(300);
+    const items = Array.from(document.querySelectorAll<HTMLElement>(".cat-pick-menu .cat-pick-item")).map((node) => node.textContent ?? "");
+    expect(items.some((text) => text.includes("Photovoltaik") && !text.includes("Wärmepumpe"))).toBe(true); expect(items.some((text) => text.includes("Photovoltaik & Wärmepumpe"))).toBe(false);
+    cleanup(); window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=kaltakquise");
+    view = mount(); await settle(400); await settle(400);
+    expect(texts().some((text) => text.includes("Karten verteilen"))).toBe(true);
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });

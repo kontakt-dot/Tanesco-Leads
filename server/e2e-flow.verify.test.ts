@@ -3728,6 +3728,35 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(inArray(emailCampaignRecipients.campaignId, [wpCampaign.id, pvCampaign.id]));
   }, 60000);
 
+  it("63zc. Pipeline „E-Mail-Kampagne“ ohne „Photovoltaik & Wärmepumpe“: Kampagne für beides → je Firma Photovoltaik oder Wärmepumpe (unklar → vorerst Photovoltaik), auch von Hand gewählte gemeinsame; beim Start je Firma nachgeprüft", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { ENERGY_PICK_NOTE, pickEnergyForEmailCardsAll } = await import("./inbox");
+    const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+    const rows = [["Sonja", "Sonne", "Sonnenkraft Solartechnik GmbH", "sonja@beides-e2e.example"], ["Bernd", "Brandt", "Heizung & Sanitär Brandt", "bernd@beides-e2e.example"], ["Lena", "Linde", "Stadtwerke Lindenau", "lena@beides-e2e.example"], ["Karl", "Kern", "Kern Heiztechnik", "karl@beides-e2e.example"], ["Kira", "Kraft", "Wärme Kraft Heizung", "kira@beides-e2e.example"]];
+    await owner.leadops.importColdList({ listName: "Beides-Liste", toPipeline: false, rows: rows.map(([firstName, lastName, company, email]) => ({ firstName, lastName, company, email })) });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Beides-Test Energieversorger", leadSparte: "Photovoltaik & Wärmepumpe", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Beides-Liste" }, tree: { start: "b1", nodes: [{ id: "b1", type: "send" as const, label: "Erste", subject: "Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const card = async (email: string) => (await db.select().from(leads).where(eq(leads.email, email)))[0];
+    const categories = await owner.leadops.listCategories(); const pv = categories.find((row) => row.name === "Photovoltaik")!; const wp = categories.find((row) => row.name === "Wärmepumpe")!; const combined = categories.find((row) => row.name === "Photovoltaik & Wärmepumpe")!;
+    expect(await card("sonja@beides-e2e.example")).toMatchObject({ adPlatform: "email", categoryId: pv.id }); // Name → Photovoltaik
+    expect((await card("bernd@beides-e2e.example")).categoryId).toBe(wp.id); expect((await card("karl@beides-e2e.example")).categoryId).toBe(wp.id); // Heizung → Wärmepumpe
+    expect((await card("lena@beides-e2e.example")).categoryId).toBe(pv.id); // nicht eindeutig → vorerst Photovoltaik
+    const history = async (email: string) => (await owner.leadops.pipelineHistory({ publicId: (await card(email)).publicId })).map((event) => event.note ?? "");
+    expect((await history("lena@beides-e2e.example")).some((note) => note.startsWith(`${ENERGY_PICK_NOTE}: „Photovoltaik“ (vorher „Photovoltaik & Wärmepumpe“) – nicht eindeutig`))).toBe(true);
+    expect((await history("bernd@beides-e2e.example")).some((note) => note.startsWith(`${ENERGY_PICK_NOTE}: „Wärmepumpe“`) && note.includes("passend zur Firma"))).toBe(true);
+    // Von Hand auf die gemeinsame gestellt → beim Öffnen der Pipeline wieder je Firma; die Auswahl „Lead-Kategorie“ kennt die gemeinsame hier nicht
+    await owner.leadops.setPipelineCategory({ publicId: (await card("bernd@beides-e2e.example")).publicId, categoryId: combined.id }); expect((await card("bernd@beides-e2e.example")).categoryId).toBe(combined.id);
+    const board = await owner.leadops.pipelineOverview({ source: "email", limitPerStage: 1000 }) as { categories: Array<{ id: number }>; stages: Array<{ leads: Array<{ email: string | null; categoryId: number | null }> }> };
+    expect((await card("bernd@beides-e2e.example")).categoryId).toBe(wp.id);
+    expect(board.categories.some((item) => item.id === combined.id)).toBe(false); expect(board.stages.flatMap((stage) => stage.leads).some((lead) => lead.categoryId === combined.id)).toBe(false);
+    // Beim Start: früher automatisch „Photovoltaik“ (erste gewählte Kategorie) → je Firma nachgeprüft; von Hand gewählte bleiben
+    const karl = await card("karl@beides-e2e.example"); await db.update(leads).set({ categoryId: pv.id }).where(eq(leads.id, karl.id)); await db.delete(pipelineEvents).where(and(eq(pipelineEvents.leadId, karl.id), eq(pipelineEvents.toStage, "kategorie")));
+    await owner.leadops.setPipelineCategory({ publicId: (await card("kira@beides-e2e.example")).publicId, categoryId: pv.id }); // Kira: bewusst Photovoltaik (von Hand)
+    expect((await pickEnergyForEmailCardsAll(db)).changed).toBeGreaterThanOrEqual(1);
+    expect((await card("karl@beides-e2e.example")).categoryId).toBe(wp.id); expect((await card("kira@beides-e2e.example")).categoryId).toBe(pv.id); expect((await card("lena@beides-e2e.example")).categoryId).toBe(pv.id);
+    expect((await pickEnergyForEmailCardsAll(db)).changed).toBe(0); // nur einmal
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+  }, 60000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

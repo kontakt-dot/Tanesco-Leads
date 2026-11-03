@@ -132,6 +132,38 @@ export function isSingleEnergyCategory(name: string | null | undefined): boolean
 export function combinedEnergyCategory<T extends { name: string }>(categories: T[]): T | null { return categories.find((category) => resolveSparte(category.name)?.key === "pv-wp") ?? null; }
 /** Für Karten der Vertriebspipeline: Photovoltaik oder Wärmepumpe → die gemeinsame Kategorie (wenn es sie gibt), alles andere bleibt, wie es ist. */
 export function vertriebCategory<T extends { name: string }>(categories: T[], picked: T | null | undefined): T | null { if (!picked) return null; if (!isSingleEnergyCategory(picked.name)) return picked; return combinedEnergyCategory(categories) ?? picked; }
+/* ---------------------------------------------------------------- Pipeline „E-Mail-Kampagne“: jede Karte Photovoltaik ODER Wärmepumpe */
+/** Die gemeinsame Kategorie „Photovoltaik & Wärmepumpe“ (auch „PV & WP“)? – in der Pipeline „E-Mail-Kampagne“ gibt es sie nicht. */
+export const isCombinedEnergyCategory = (name: string | null | undefined) => resolveSparte(name)?.key === "pv-wp";
+/**
+ * Welche Leadsparte hat eine E-Mail-Kampagne – für die Pipeline „E-Mail-Kampagne“? „photovoltaik“ oder „waermepumpe“, wenn sie genau
+ * eins davon ist; „beides“ bei Photovoltaik & Wärmepumpe (auch ohne gewählte Sparte); null, wenn es keine PV/WP-Kampagne ist.
+ * Gewählte Lead-Kategorien zählen vor der eingetragenen bzw. erkannten Sparte (alle gewählten: Photovoltaik + Wärmepumpe = beides).
+ */
+export function campaignEnergyKey(categories: Array<{ id: number; name: string }>, campaign: { leadCategoryIds?: unknown; leadSparte?: string | null; name?: string | null }, lists: string[] = []): "photovoltaik" | "waermepumpe" | "beides" | null {
+  const ids = Array.isArray(campaign.leadCategoryIds) ? (campaign.leadCategoryIds as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0) : [];
+  const chosen = ids.map((id) => categories.find((row) => row.id === id)).filter((row): row is { id: number; name: string } => Boolean(row));
+  const keyOf = (keys: string[]): "photovoltaik" | "waermepumpe" | "beides" => { const pv = keys.includes("photovoltaik") || keys.includes("pv-wp"); const wp = keys.includes("waermepumpe") || keys.includes("pv-wp"); return pv && wp ? "beides" : pv ? "photovoltaik" : "waermepumpe"; };
+  if (chosen.length) { const keys = chosen.map((row) => sparteOfCategory(row.name).key); return ENERGY_KEYS.has(keys[0]) ? keyOf(keys.filter((key) => ENERGY_KEYS.has(key))) : null; } // wie beim Einsortieren: die erste gewählte entscheidet, ob es eine PV/WP-Kampagne ist
+  const sparte = sparteOf(campaign, lists);
+  return isEnergySparte(sparte) ? keyOf([sparte.key]) : null;
+}
+const PV_HINT_RE = /photovoltaik|solar(?!therm)|\bpv\b|pv-?anlage|sonnenstrom|balkonkraftwerk|stromspeicher|batteriespeicher/i;
+const WP_HINT_RE = /w(?:ä|ae)rmepumpe|\bwp\b|heizung|heiztechnik|w(?:ä|ae)rmetechnik|haustechnik|geb(?:ä|ae)udetechnik|sanit(?:ä|ae)r|\bshk\b|klimatechnik|k(?:ä|ae)ltetechnik|solartherm/i;
+const hostOf = (value: string | null | undefined) => (value ?? "").trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^www\./, "").split(/[/?#\s]/)[0] ?? "";
+/**
+ * Ist die Firma ein Photovoltaik- oder ein Wärmepumpen-Betrieb? Gezählt wird, was im Firmennamen, in der Webseite, in der E-Mail-Adresse,
+ * in den Angaben der Liste und im Betreff der ersten E-Mail an sie steht – Name und Webseite zählen am meisten („Solar Müller“ → Photovoltaik,
+ * „Heizung & Sanitär Brandt“ → Wärmepumpe). Nur bei einem klaren Ergebnis; macht die Firma beides oder steht nichts dazu da
+ * (z. B. Stadtwerke, Energieversorger), dann null.
+ */
+export function energyKeyOfCompany(hints: { company?: string | null; website?: string | null; email?: string | null; fields?: Array<string | null | undefined>; subject?: string | null }): "photovoltaik" | "waermepumpe" | null {
+  const domain = ((hints.email ?? "").split("@")[1] ?? "").trim().toLowerCase();
+  const parts: Array<[string, number]> = [[hints.company ?? "", 3], [hostOf(hints.website), 3], [domain, 2], ...(hints.fields ?? []).map((field): [string, number] => [String(field ?? ""), 1]), [hints.subject ?? "", 1]];
+  let pv = 0; let wp = 0;
+  for (const [text, weight] of parts) { if (!text.trim()) continue; if (PV_HINT_RE.test(text)) pv += weight; if (WP_HINT_RE.test(text)) wp += weight; }
+  return pv > wp ? "photovoltaik" : wp > pv ? "waermepumpe" : null;
+}
 /** Passt der Text zur Sparte? In jeder Sparte außer PV/WP darf nichts von Photovoltaik oder Wärmepumpen stehen. */
 export function fitsSparte(sparte: Pick<Sparte, "key"> & { label?: string }, text: string): boolean { const energyLabel = sparte.key === "eigene" && (PV_RE.test(sparte.label ?? "") || WP_RE.test(sparte.label ?? "")); /* eigene Sparte wie „Batteriespeicher für PV“ */ return isEnergy(sparte) || energyLabel || !(PV_RE.test(text) || WP_RE.test(text)); }
 const ENERGY_WORD = "(?:photovoltaik\\w*|solar\\w*|pv(?:-?anlagen?)?|wärmepumpe\\w*|waermepumpe\\w*)";
