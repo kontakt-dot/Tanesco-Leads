@@ -361,13 +361,16 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
 /** Erst-E-Mails (noch nichts gesendet) oder Follow-ups (schon mindestens eine E-Mail raus) – oder beides (null). */
 export type DraftKind = "erste" | "followup" | null | undefined;
 export const ofKind = (row: { sentCount: number }, kind: DraftKind) => !kind || (kind === "followup") === row.sentCount > 0;
-export async function approveAllDrafts(db: Db, tenantId: number, campaignId: number, approve: boolean, kind: DraftKind = null) {
+/** Alle (bzw. nur `recipientIds` – Auswahl in der Freigabe) fertigen Entwürfe freigeben oder Freigaben zurücknehmen. */
+export async function approveAllDrafts(db: Db, tenantId: number, campaignId: number, approve: boolean, kind: DraftKind = null, recipientIds: number[] | null = null) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   const tree = (campaign.tree ?? { start: null, nodes: [] }) as EmailTree;
   const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
   const sentNodes = await sentNodeMap(db, tenantId, rows.filter((row) => row.sentCount > 0).map((row) => row.id));
   let changed = 0; let withoutDraft = 0; let templateOnly = 0;
+  const only = recipientIds ? new Set(recipientIds) : null; // leere Auswahl = niemand (nie „alle“)
   for (const row of rows) {
+    if (only && !only.has(row.id)) continue; // Auswahl in der Freigabe
     if (!ofKind(row, kind)) continue; // nur Erst-E-Mails bzw. nur Follow-ups – getrennt freigeben
     const node = dueSendNode(tree, { ...row, sentNodeIds: sentNodes.get(row.id) ?? [] }); if (!node) continue; // auch Follow-ups, die noch in der Wartezeit stecken (vorab freigeben)
     const fits = Boolean(row.draftState) && draftFitsNode(row, node.id) && Boolean(row.draftSubject?.trim()) && (row.draftText ?? "").trim().length >= 10;
@@ -390,9 +393,10 @@ export async function draftSamples(db: Db, tenantId: number, campaignId: number)
   return Array.from(out.values());
 }
 /** Alle noch nicht gesendeten Entwürfe einer Kampagne verwerfen (auch schon freigegebene) – die KI schreibt sie danach mit den aktuellen Regeln neu. */
-export async function resetDrafts(db: Db, tenantId: number, campaignId: number, kind: DraftKind = null) {
+export async function resetDrafts(db: Db, tenantId: number, campaignId: number, kind: DraftKind = null, recipientIds: number[] | null = null) {
   const open = await db.select({ id: emailCampaignRecipients.id, draftState: emailCampaignRecipients.draftState, sentCount: emailCampaignRecipients.sentCount }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
-  const ids = open.filter((row) => row.draftState && ofKind(row, kind)).map((row) => row.id);
+  const only = recipientIds ? new Set(recipientIds) : null; // leere Auswahl = niemand (nie „alle“)
+  const ids = open.filter((row) => row.draftState && ofKind(row, kind) && (!only || only.has(row.id))).map((row) => row.id);
   if (ids.length) await db.update(emailCampaignRecipients).set({ draftState: null, draftSubject: null, draftText: null, draftOptions: null, draftApproach: null, draftNodeId: null, draftSource: null, draftAt: null }).where(inArray(emailCampaignRecipients.id, ids));
   return { reset: ids.length };
 }

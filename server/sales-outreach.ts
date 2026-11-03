@@ -8,7 +8,7 @@ import { deliveryCounts, isBadDelivery, sentOriginCounts } from "../shared/sent-
 import { DEFAULT_SPARTE, OLD_ENERGY_PHRASE, resolveSparte, SPARTE_PHRASE, sparteFromCategories, sparteOf, withSparte } from "../shared/lead-sparte";
 import { byCategoryThenName, campaignTag } from "../shared/campaign-tag";
 import { tidyListName } from "../shared/list-name";
-import { fixTreeQuestions, testLeadsOfSent } from "../shared/email-campaigns";
+import { canEnrollAgain, fixTreeQuestions, testLeadsOfSent } from "../shared/email-campaigns";
 import { cleanFolderName, folderKey, folderNameIssue, MAX_FOLDERS, planSparteFolders, sortFolders, sortSummary } from "../shared/campaign-folders";
 import crypto from "node:crypto";
 import { entryStage, isColdLike, isCustomSource, isStage, listCampaignId, platformForSource, stagesOf, type PipelineSource } from "../shared/sales-pipeline";
@@ -32,7 +32,7 @@ import type { OwnerShare, ShareMode } from "../shared/pipeline-extras";
 
 /* ---------- Kaltakquise-Listen ---------- */
 import { coldListCsv, extraFieldsOf, parseColdList, type ColdRow } from "../shared/cold-list";
-import { lostStage, PIPELINE_SOURCE_LABEL, pipelineSourceOf, stagesForLead, wonStage } from "../shared/sales-pipeline";
+import { lostStage, PIPELINE_SOURCE_LABEL, pipelineLabel, pipelineSourceOf, stageLabel, stagesForLead, wonStage } from "../shared/sales-pipeline";
 import { requireVertriebCategoryId } from "./vertrieb-category";
 export { parseColdList };
 /** Tag holen oder anlegen (Name wird auf 80 Zeichen gekürzt). */
@@ -505,7 +505,7 @@ export async function previewAudience(db: Db, tenantId: number, audience: Audien
   return { count: rows.length, sample };
 }
 /** Kontakte in eine Kampagne aufnehmen (ohne Doppelte, Mehrfach-Durchlauf beachten) – beim Start und beim Hinzufügen von Listen. */
-async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaign, rows: Awaited<ReturnType<typeof audienceLeads>>, options: { onlyNew?: boolean; picked?: boolean } = {}) {
+async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaign, rows: Awaited<ReturnType<typeof audienceLeads>>, options: { onlyNew?: boolean; picked?: boolean; again?: boolean } = {}) {
   const id = campaign.id;
   const previousRows = await db.select({ email: emailCampaignRecipients.email, status: emailCampaignRecipients.status, repliedAt: emailCampaignRecipients.repliedAt }).from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, id)));
   const previousOf = new Map<string, Array<{ status: string; repliedAt: Date | null }>>(); for (const row of previousRows) { const key = row.email.toLowerCase(); previousOf.set(key, [...(previousOf.get(key) ?? []), row]); }
@@ -513,7 +513,7 @@ async function enrollRecipients(db: Db, tenantId: number, campaign: EmailCampaig
   let added = 0; let skipped = 0; let repeated = 0; const intake: number[] = [];
   // Lead-Kategorie der Kampagne (gewählte Kategorie bzw. die zur Leadsparte passende): Kontakte, die über diese Kampagne in die Pipeline kommen, bekommen sie
   const { campaignCategoryFor } = await import("./inbox"); const campaignCategoryId = await campaignCategoryFor(db, tenantId, campaign, { create: true, separateEnergy: true }).catch(() => null); // Pipeline „E-Mail-Kampagne“: PV und WP getrennt
-  for (const row of rows) { const previous = previousOf.get(row.email!.toLowerCase()) ?? []; if ((options.onlyNew && previous.length) || !canEnroll(previous, maxRuns).ok) { skipped += 1; continue; } previousOf.set(row.email!.toLowerCase(), [...previous, { status: "wartet", repliedAt: null }]); if (previous.length) repeated += 1; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date(), ...(campaignCategoryId ? { categoryId: campaignCategoryId } : {}) }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); if (campaignCategoryId) intake.push(row.id); }
+  for (const row of rows) { const previous = previousOf.get(row.email!.toLowerCase()) ?? []; if (options.again ? !canEnrollAgain(previous).ok : (options.onlyNew && previous.length) || !canEnroll(previous, maxRuns).ok) { skipped += 1; continue; } /* „again“: von Hand wieder hinein – auch nach Durchlauf oder Antwort, nur nicht doppelt laufend */ previousOf.set(row.email!.toLowerCase(), [...previous, { status: "wartet", repliedAt: null }]); if (previous.length) repeated += 1; const current = (await db.select({ platform: leads.adPlatform, stage: leads.pipelineStage }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; if (current && !current.platform) { await db.update(leads).set({ adPlatform: "email", adCampaignId: `email-${id}`, adCampaignName: campaign.name, pipelineStage: current.stage ?? "neu", pipelineUpdatedAt: new Date(), ...(campaignCategoryId ? { categoryId: campaignCategoryId } : {}) }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: null, toStage: current.stage ?? "neu", actorUserId: null, note: `In E-Mail-Kampagne „${campaign.name}“ aufgenommen` }); if (campaignCategoryId) intake.push(row.id); }
     await db.insert(emailCampaignRecipients).values({ tenantId, campaignId: id, leadId: row.id, email: row.email!, name: `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim() || null, company: row.company ?? null, token: crypto.randomBytes(16).toString("hex"), nodeId: tree(campaign).start, nextActionAt: new Date(Date.now() - 2000), status: "wartet", sentCount: 0, variant: abTest ? abVariantFor(index, campaign.abSplit) : null, pickedAt: options.picked ? new Date() : null }); index += 1; added += 1; } /* 2 s in der Vergangenheit: MySQL rundet Sekunden auf */
   if (intake.length) { const { pickEnergyForEmailCards } = await import("./inbox"); await pickEnergyForEmailCards(db, tenantId, { leadIds: intake }).catch(() => null); } // Kampagne für PV und WP: Photovoltaik oder Wärmepumpe je Firma
   return { added, skipped, repeated, maxRuns };
@@ -549,6 +549,14 @@ export async function stopRecipientInCampaign(db: Db, tenantId: number, recipien
   const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.id, recipientId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
   if (!rows.length) throw new Error("Dieser Kontakt steckt in keiner laufenden Serie mehr.");
   return stopRecipientRows(db, tenantId, rows, actorUserId);
+}
+/** Mehrere Kontakte einer Kampagne auf einmal aus dem E-Mail-Funnel nehmen (Auswahl in der Freigabe) – mit Rückgängig. */
+export async function stopRecipientsInCampaign(db: Db, tenantId: number, campaignId: number, recipientIds: number[], actorUserId: number | null) {
+  const ids = Array.from(new Set(recipientIds)).slice(0, 5000); if (!ids.length) return { stopped: 0, undoId: 0 };
+  const rows = await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.id, ids), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"])));
+  if (!rows.length) return { stopped: 0, undoId: 0 };
+  const result = await stopRecipientRows(db, tenantId, rows, actorUserId);
+  return { stopped: rows.length, undoId: (result as { undoId?: number }).undoId ?? 0 };
 }
 async function stopRecipientRows(db: Db, tenantId: number, rows: Array<typeof emailCampaignRecipients.$inferSelect>, actorUserId: number | null) {
   const items: Array<{ recipientId: number; status: string; nodeId: string | null; nextActionAt: Date | null; eventId: number }> = [];
@@ -587,7 +595,7 @@ export async function removeListsFromEmailCampaign(db: Db, tenantId: number, inp
  * Einzelne Kontakte (z. B. aus einer Liste) in eine Kampagne nehmen – unabhängig von der Zielgruppe. Läuft die Kampagne,
  * bekommen sie die Serie sofort; im Entwurf warten sie und starten mit der Kampagne. Ohne E-Mail, gesperrt oder schon drin → übersprungen.
  */
-export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: { id: number; leadIds: number[] }, appUrl: string) {
+export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: { id: number; leadIds: number[]; again?: boolean }, appUrl: string) {
   const campaign = (await db.select().from(emailCampaigns).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
   if (campaign.isTemplate) throw new Error("Das ist eine Vorlage – bitte zuerst eine Kampagne daraus anlegen.");
   if (campaign.archivedAt) throw new Error(ARCHIVED_HINT);
@@ -599,7 +607,7 @@ export async function addLeadsToEmailCampaign(db: Db, tenantId: number, input: {
   const blocked = await suppressedSet(db, tenantId);
   const noEmail = rows.filter((row) => !validEmail(row.email)).length; const suppressed = rows.filter((row) => validEmail(row.email) && blocked.has(row.email.toLowerCase())).length;
   const usable = rows.filter((row) => validEmail(row.email) && !blocked.has(row.email!.toLowerCase()));
-  const result = await enrollRecipients(db, tenantId, campaign, usable, { onlyNew: true, picked: true });
+  const result = await enrollRecipients(db, tenantId, campaign, usable, input.again ? { picked: true, again: true } : { onlyNew: true, picked: true }); // again: wer schon durch war, bekommt die Serie noch einmal von vorn
   if (result.added) {
     if (campaign.status === "beendet") await db.update(emailCampaigns).set({ status: "aktiv" }).where(eq(emailCampaigns.id, campaign.id));
     await logActivity(db, tenantId, { kind: "kampagne", title: `Kampagne „${campaign.name}“: ${result.added} Kontakt${result.added === 1 ? "" : "e"} einzeln hinzugefügt`, refType: "emailCampaign", refId: campaign.id });
@@ -1158,8 +1166,10 @@ export type { PipelineSource } from "../shared/sales-pipeline";
 /** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board (meta-ads.pipelineOverview). */
 export const matchesSource = (adPlatform: string | null | undefined, source: PipelineSource | null | undefined) => !source ? true : source === "kaltakquise" ? adPlatform === "kaltakquise" : source === "email" ? adPlatform === "email" : isCustomSource(source) ? adPlatform === source : adPlatform !== "kaltakquise" && adPlatform !== "email" && !isCustomSource(adPlatform);
 
-export async function emailLeads(db: Db, tenantId: number, options: { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivityFilter | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null; blocked?: boolean | null } = {}) {
-  const limit = Math.min(1000, Math.max(10, options.limit ?? 200));
+export type EmailLeadsFilter = { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivityFilter | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null; blocked?: boolean | null; ids?: number[] | null };
+export async function emailLeads(db: Db, tenantId: number, options: EmailLeadsFilter = {}, internal: { all?: boolean } = {}) {
+  const limit = internal.all ? Number.MAX_SAFE_INTEGER : Math.min(1000, Math.max(10, options.limit ?? 200)); // all: alle Treffer (Auswahl „alle“, Export)
+  const onlyIds = options.ids?.length ? new Set(options.ids) : null;
   const rows = await db.select({
     id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, company: leads.company,
     email: leads.email, phone: leads.phone, city: leads.city, postcode: leads.postcode, listName: leads.listName, stage: leads.pipelineStage, inPipeline: leads.inPipeline, adPlatform: leads.adPlatform, adCampaignName: leads.adCampaignName,
@@ -1207,6 +1217,7 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
 
   const search = (options.search ?? "").trim().toLowerCase();
   const filtered = items.filter((item) => {
+    if (onlyIds && !onlyIds.has(item.id)) return false;
     if (options.listName && item.listName !== options.listName) return false;
     if (options.campaignId && !item.campaigns.some((campaign) => campaign.id === options.campaignId)) return false;
     if (options.activity === "angeschrieben" ? !(item.mails > 0 || item.lastSentAt) : options.activity && item.activity !== options.activity) return false;
@@ -1230,6 +1241,35 @@ export async function emailLeads(db: Db, tenantId: number, options: { search?: s
   // Anrufzähler je Kontakt (Spalte „Anrufe“ im Reiter Kontakte)
   const page = sortiert.slice(0, limit); const { callCountsMap } = await import("./pipeline-extras"); const callMap = await callCountsMap(db, tenantId, page.map((item) => item.id));
   return { items: page.map((item) => ({ ...item, calls: callMap.get(item.id) ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } })), total: filtered.length, counts, lists, campaigns, blocked: items.filter((item) => item.blocked).length };
+}
+
+/** „Alle N auswählen“ im Reiter „Kontakte“: alle Treffer des Filters (nicht nur die gezeigten) – mit dem, was die Knöpfe brauchen. */
+export async function emailLeadPicks(db: Db, tenantId: number, options: EmailLeadsFilter = {}) {
+  const result = await emailLeads(db, tenantId, options, { all: true });
+  return { total: result.total, items: result.items.map((item) => ({ id: item.id, publicId: item.publicId, name: [item.firstName, item.lastName].filter(Boolean).join(" ") || item.company || item.email || item.publicId, email: item.email ?? null, blocked: item.blocked, inPipeline: item.inPipeline !== false })) };
+}
+const EXPORT_ACTIVITY: Record<EmailLeadActivity, string> = { gesendet: "Nicht geöffnet", geoeffnet: "Geöffnet", geklickt: "Geklickt", geantwortet: "Geantwortet", abgemeldet: "Abgemeldet", bounce: "Unzustellbar", ohne: "Noch nichts" };
+/**
+ * Export des Reiters „Kontakte“ (Excel, CSV, Google Sheets): die Auswahl (`ids`) bzw. alle Treffer des Filters – je Kontakt eine Zeile mit
+ * Name, Firma, Kontaktdaten, Liste, Kampagnen, letzter Reaktion, E-Mails, Stufe, Pipeline, Vertriebler, Datum und den Spalten der Liste.
+ * Die Datei baut die Oberfläche (gleiche Spalten für alle drei Formate).
+ */
+export async function exportEmailLeads(db: Db, tenantId: number, options: EmailLeadsFilter = {}) {
+  const result = await emailLeads(db, tenantId, options, { all: true });
+  const { pipelineStageSets } = await import("./meta-ads"); const sets = await pipelineStageSets(db, tenantId);
+  const { loadSettings } = await import("./pipeline-extras"); const custom = (await loadSettings(db, tenantId)).customPipelines ?? [];
+  const day = (value: Date | string | null | undefined) => (value ? new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Berlin" }) : "");
+  const time = (value: Date | string | null | undefined) => (value ? new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }) : "");
+  const extraKeys: string[] = []; for (const item of result.items) for (const key of Object.keys(item.felder ?? {})) if (!extraKeys.includes(key)) extraKeys.push(key);
+  const readable = (key: string) => { const label = key.replace(/_/g, " ").trim(); return `${label.charAt(0).toUpperCase()}${label.slice(1)}`; };
+  const columns = ["Vorname", "Nachname", "Firma", "E-Mail", "Telefon", "PLZ", "Ort", "Liste", "Kampagnen", "Zuletzt", "Zuletzt am", "E-Mails gesendet", "Zuletzt gesendet", "Stufe", "Pipeline", "Vertriebler", "Angelegt", "Gesperrt", ...extraKeys.map(readable)];
+  const rows = result.items.map((item) => {
+    const source = pipelineSourceOf(item.adPlatform ?? null); const stages = stagesForLead(sets, { adPlatform: item.adPlatform ?? null });
+    const pipelineName = item.inPipeline === false ? "nur E-Mail" : pipelineLabel(source, custom);
+    return [item.firstName ?? "", item.lastName ?? "", item.company ?? "", item.email ?? "", item.phone ?? "", item.postcode ?? "", item.city ?? "", item.listName ?? "", item.campaigns.map((campaign) => campaign.name).join(", "), item.blocked ? "Gesperrt" : EXPORT_ACTIVITY[item.activity] ?? "", day(item.activityAt), String(item.mails ?? 0), time(item.lastSentAt), item.stage ? stageLabel(item.stage, stages) : "", pipelineName, item.ownerName ?? "", day(item.createdAt), item.blocked ? (item.blockedReason ?? "Ja") : "", ...extraKeys.map((key) => (item.felder ?? {})[key] ?? "")];
+  });
+  const stamp = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }); // 2026-11-03
+  return { columns, rows, count: rows.length, fileName: `Kontakte ${stamp}` };
 }
 
 /**

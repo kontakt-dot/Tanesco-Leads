@@ -424,6 +424,16 @@ export function canEnroll(previous: Array<{ status: string; repliedAt?: Date | s
   return { ok: true, reason: null };
 }
 
+/**
+ * Von Hand „wieder in die Kampagne“ (Pipeline, Lead-Seite): auch wer schon durch war, geantwortet hat oder aus dem Funnel genommen wurde,
+ * bekommt die Serie noch einmal von vorn – nur nicht, wer gerade drin läuft, und nie Abgemeldete, Unzustellbare oder Beschwerden.
+ */
+export function canEnrollAgain(previous: Array<{ status: string }>): { ok: boolean; reason: string | null } {
+  if (previous.some((row) => isOpenRecipient(row.status))) return { ok: false, reason: "läuft bereits" };
+  if (previous.some((row) => row.status === "bounce" || row.status === "beschwerde" || row.status === "abgemeldet")) return { ok: false, reason: "gesperrt" };
+  return { ok: true, reason: null };
+}
+
 /** Listen einer Zielgruppe „Liste“: neue Form `listNames` (mehrere), ältere Kampagnen haben nur `listName`. */
 /* ── Kampagnen zusammenführen: Schritte zweier Abläufe einander zuordnen ── */
 /** Schritte in der Reihenfolge des Ablaufs (vom Start aus, Verzweigungen erst „ja“ dann „nein“); nicht erreichbare Schritte hinten dran. */

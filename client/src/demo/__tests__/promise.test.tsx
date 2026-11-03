@@ -761,6 +761,113 @@ describe("Statistik der Pipeline „E-Mail-Kampagne“ (Chat-Build)", () => {
   });
 });
 
+describe("Leads wieder in eine E-Mail-Kampagne; Kontakte: alle auswählen und exportieren (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Pipeline-Karte: aufklappen → „In E-Mail-Kampagne“ → Kampagne wählen – auch wer schon geantwortet hat, bekommt die Serie noch einmal", async () => {
+    const store = getStore(); const juergen = store.tables.leads.find((row) => row.email === "info@stadler-solar.de")!; expect(juergen).toBeTruthy();
+    const bayern = store.tables.emailCampaigns.find((row) => row.name === "PV-Betriebe Bayern")!;
+    for (const row of store.tables.emailCampaignRecipients.filter((item) => item.campaignId === bayern.id && item.email === juergen.email)) Object.assign(row, { status: "fertig", repliedAt: new Date(), nodeId: null, nextActionAt: null }); // durch und geantwortet
+    const before = store.tables.emailCampaignRecipients.filter((item) => item.campaignId === bayern.id && item.email === juergen.email).length;
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const view = mount(); await settle(400); await settle(400);
+    const card = Array.from(view.container.querySelectorAll<HTMLElement>(".pipeline-card")).find((node) => node.querySelector(".pipeline-card-head")?.textContent?.includes("Jürgen Stadler"))!; expect(card).toBeTruthy();
+    await act(async () => { fireEvent.click(card.querySelector<HTMLButtonElement>(".pipeline-card-head")!); }); await settle(300); await settle(200);
+    const select = card.querySelector<HTMLSelectElement>("select[aria-label='In E-Mail-Kampagne']")!; expect(select).toBeTruthy();
+    expect(Array.from(select.options).some((option) => option.textContent?.includes("PV-Betriebe Bayern"))).toBe(true);
+    await act(async () => { fireEvent.change(select, { target: { value: String(bayern.id) } }); }); await settle(400);
+    const after = getStore().tables.emailCampaignRecipients.filter((item) => item.campaignId === bayern.id && item.email === juergen.email);
+    expect(after.length).toBe(before + 1); expect(after.some((item) => item.status === "wartet" && !item.repliedAt)).toBe(true);
+    // gleich noch einmal: läuft jetzt schon – nicht doppelt
+    const again = await call("leadops.addLeadsToEmailCampaign", { id: bayern.id, leadIds: [juergen.id], again: true }); expect(again).toMatchObject({ added: 0, already: 1 });
+  });
+  it("Auswahl-Modus der Pipeline und Lead-Seite haben „In E-Mail-Kampagne“", async () => {
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const view = mount(); await settle(400); await settle(400);
+    const choose = Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.includes("Auswählen"))!;
+    await act(async () => { fireEvent.click(choose); }); await settle(300);
+    const bulk = view.container.querySelector<HTMLElement>(".pipeline-bulk")!; expect(bulk).toBeTruthy();
+    const bulkSelect = bulk.querySelector<HTMLSelectElement>("select[aria-label='In E-Mail-Kampagne']")!; expect(bulkSelect).toBeTruthy(); expect(bulkSelect.disabled).toBe(true); // erst Karten auswählen
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLButtonElement>(".pipeline-card-head")!); }); await settle(200);
+    expect(view.container.querySelector<HTMLSelectElement>(".pipeline-bulk select[aria-label='In E-Mail-Kampagne']")!.disabled).toBe(false);
+    // Lead-Seite, Reiter „E-Mail-Serien“
+    await act(async () => { fireEvent.click(choose); }); await settle(200); // Auswahl beenden
+    const card = view.container.querySelector<HTMLElement>(".pipeline-card")!; await act(async () => { fireEvent.click(card.querySelector<HTMLButtonElement>(".pipeline-card-head")!); }); await settle(300);
+    await act(async () => { fireEvent.click(card.querySelector<HTMLButtonElement>("button[aria-label='Lead-Seite öffnen']")!); }); await settle(500); await settle(300);
+    const tab = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.startsWith("E-Mail-Serien"))!; expect(tab).toBeTruthy();
+    await act(async () => { fireEvent.click(tab); }); await settle(300);
+    expect(document.querySelector(".lead-series-add select[aria-label='In E-Mail-Kampagne aufnehmen']")).toBeTruthy();
+  });
+  it("Kontakte: „Alle N auswählen“ über die gezeigten 200 hinaus, Export als CSV und für Google Sheets", async () => {
+    await call("leadops.importColdList", { listName: "Viele-Demo", toPipeline: false, rows: Array.from({ length: 205 }, (_, n) => ({ firstName: `Vera${n}`, lastName: "Viel", company: `Viel ${n} GmbH`, email: `vera${n}@viele-demo.example`, phone: `+49 30 7770${String(n).padStart(3, "0")}`, postcode: "01067", city: "Dresden" })) });
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kontakte");
+    const view = mount(); await settle(500); await settle(400);
+    const list = Array.from(view.container.querySelectorAll<HTMLSelectElement>("select[aria-label='Liste']"))[0]; await act(async () => { fireEvent.change(list, { target: { value: "Viele-Demo" } }); }); await settle(400);
+    const actions = () => view.container.querySelector<HTMLElement>(".email-leads-actions")!;
+    // ein Kontakt einzeln, dann „Alle 205 auswählen“ (Link) – und das Kästchen oben wählt direkt alle 205
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLInputElement>("tbody input[type='checkbox']")!); }); await settle(200);
+    expect(actions().querySelector("strong")?.textContent).toBe("1 ausgewählt");
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLInputElement>("input[aria-label='Alle auswählen']")!); }); await settle(400);
+    expect(actions().querySelector("strong")?.textContent).toBe("Alle 205 ausgewählt");
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLInputElement>("input[aria-label='Alle auswählen']")!); }); await settle(200); // wieder abwählen
+    expect(view.container.querySelector(".email-leads-actions")).toBeNull();
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLInputElement>("input[aria-label='Alle auswählen']")!); }); await settle(400);
+    expect(actions().querySelector("strong")?.textContent).toBe("Alle 205 ausgewählt");
+    // CSV: Datei mit allen 205
+    const blobs: Blob[] = []; const original = URL.createObjectURL; URL.createObjectURL = ((blob: Blob) => { blobs.push(blob); return "blob:test"; }) as typeof URL.createObjectURL; URL.revokeObjectURL = (() => undefined) as typeof URL.revokeObjectURL;
+    try {
+      const exportButton = view.container.querySelector<HTMLButtonElement>(".email-leads-export")!; expect(exportButton.textContent).toContain("Auswahl exportieren (205)");
+      await act(async () => { fireEvent.keyDown(exportButton, { key: "ArrowDown" }); }); await settle(200);
+      const items = Array.from(document.querySelectorAll<HTMLElement>(".export-menu .export-menu-item")); expect(items.map((node) => node.querySelector("strong")?.textContent)).toEqual(["Excel", "CSV", "Google Sheets"]);
+      await act(async () => { fireEvent.click(items[1]); }); await settle(400);
+      expect(blobs).toHaveLength(1); const text = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blobs[0]); }); const lines = text.replace(/^﻿/, "").split("\r\n");
+      expect(lines[0].startsWith("Vorname;Nachname;Firma;E-Mail;Telefon;PLZ;Ort;Liste")).toBe(true); expect(lines).toHaveLength(206);
+      // Google Sheets: Fenster mit Kopieren und Öffnen
+      await act(async () => { fireEvent.keyDown(view.container.querySelector<HTMLButtonElement>(".email-leads-export")!, { key: "ArrowDown" }); }); await settle(200);
+      const sheets = Array.from(document.querySelectorAll<HTMLElement>(".export-menu .export-menu-item")).find((node) => node.textContent?.includes("Google Sheets"))!;
+      await act(async () => { fireEvent.click(sheets); }); await settle(400);
+      const dialog = document.querySelector<HTMLElement>(".sheets-dialog")!; expect(dialog).toBeTruthy(); expect(dialog.textContent).toContain("205 Kontakte"); expect(dialog.textContent).toContain("Tabelle kopieren"); expect(dialog.textContent).toContain("Google Sheet öffnen");
+    } finally { URL.createObjectURL = original; }
+  });
+});
+
+describe("Freigabe: nach Liste filtern und mehrere auf einmal bearbeiten (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("Liste wählen, alle ankreuzen, „Freigeben“ – nur diese; dann einen anderen ankreuzen und „Aus Funnel nehmen“", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Freigabe-A", rows: [{ firstName: "Ada", lastName: "Auswahl", company: "Ada Solar", email: "ada@auswahl-demo.example" }, { firstName: "Ben", lastName: "Auswahl", company: "Ben Solar", email: "ben@auswahl-demo.example" }] });
+    await call("leadops.importColdList", { listName: "Freigabe-B", rows: [{ firstName: "Cem", lastName: "Auswahl", company: "Cem Solar", email: "cem@auswahl-demo.example" }] });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Auswahl-Freigabe", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["Freigabe-A", "Freigabe-B"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const rows = () => getStore().tables.emailCampaignRecipients.filter((item) => item.campaignId === saved.id).sort((a, b) => String(a.email).localeCompare(String(b.email)));
+    expect(rows()).toHaveLength(3);
+    for (const row of rows()) Object.assign(row, { status: "wartet", nodeId: "m1", nextActionAt: new Date(Date.now() + 86_400_000), draftState: "entwurf", draftSubject: `Für ${row.company}`, draftText: "Sehr geehrte Damen und Herren,\n\nein persönlicher Entwurf.\n\nVielen Dank", draftSource: "ki", draftNodeId: "m1", draftAt: new Date() });
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const view = mount(); await settle(300); await settle(300);
+    const open = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cl-card .cl-name")).find((node) => node.textContent?.includes("Auswahl-Freigabe"))!;
+    await act(async () => { fireEvent.click(open); }); await settle(300); await settle(200);
+    const go = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".rv-banner button")).find((node) => /Jetzt freigeben/.test(node.textContent ?? ""))!; expect(go).toBeTruthy();
+    await act(async () => { fireEvent.click(go); }); await settle(300); await settle(300);
+    const listSelect = view.container.querySelector<HTMLSelectElement>("select[aria-label='Nach Liste filtern']")!; expect(listSelect).toBeTruthy();
+    expect(Array.from(listSelect.options).map((option) => option.textContent)).toEqual(["Alle Listen (3)", "Freigabe-A (2)", "Freigabe-B (1)"]);
+    await act(async () => { fireEvent.change(listSelect, { target: { value: "Freigabe-A" } }); }); await settle(200);
+    expect(view.container.querySelectorAll(".rv-list .rv-item")).toHaveLength(2);
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLInputElement>("input[aria-label='Alle sichtbaren auswählen']")!); }); await settle(100);
+    expect(view.container.querySelector(".rv-bulk-all strong")?.textContent).toBe("2 ausgewählt");
+    const approveButton = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".rv-bulk-actions button")).find((node) => node.textContent?.trim() === "Freigeben")!;
+    await act(async () => { fireEvent.click(approveButton); }); await settle(200);
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400); await settle(300);
+    expect(rows().map((row) => row.draftState)).toEqual(["freigegeben", "freigegeben", "entwurf"]); // Ada, Ben – Cem (andere Liste) bleibt
+    await act(async () => { fireEvent.change(view.container.querySelector<HTMLSelectElement>("select[aria-label='Nach Liste filtern']")!, { target: { value: "Freigabe-B" } }); }); await settle(200);
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLInputElement>(".rv-list input[type='checkbox']")!); }); await settle(100);
+    const stopButton = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".rv-bulk-actions button")).find((node) => node.textContent?.includes("Aus Funnel nehmen"))!;
+    await act(async () => { fireEvent.click(stopButton); }); await settle(200);
+    await act(async () => { fireEvent.click(document.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400);
+    expect(rows().map((row) => row.status)).toEqual(["wartet", "wartet", "fertig"]);
+  });
+});
+
 describe("Pipeline-Karte: Kategorie wechseln (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });

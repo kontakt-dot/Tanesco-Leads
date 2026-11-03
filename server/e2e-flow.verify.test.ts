@@ -3787,6 +3787,53 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(inArray(emailCampaignRecipients.campaignId, [pv.id, wp.id]));
   }, 60000);
 
+  it("63ze. Leads wieder in eine E-Mail-Kampagne packen (auch nach Durchlauf/Antwort, nie doppelt laufend, nie Abgemeldete); Kontakte: alle auswählen und exportieren", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+    await owner.leadops.importColdList({ listName: "Wieder-Liste", toPipeline: false, rows: [["Anna", "anna@wieder-e2e.example"], ["Bert", "bert@wieder-e2e.example"], ["Cleo", "cleo@wieder-e2e.example"]].map(([firstName, email]) => ({ firstName, lastName: "Wieder", company: `${firstName} Wieder GmbH`, email })) });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Wieder-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Wieder-Liste" }, tree: { start: "w1", nodes: [{ id: "w1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: window } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id }); await owner.leadops.runEmailCampaigns();
+    const lead = async (email: string) => (await db.select().from(leads).where(eq(leads.email, email)))[0];
+    const rowsOf = async (email: string) => db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, email)));
+    // Anna: durch und hat geantwortet · Bert: läuft gerade · Cleo: abgemeldet
+    await db.update(emailCampaignRecipients).set({ status: "fertig", repliedAt: new Date(), nodeId: null, nextActionAt: null }).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, "anna@wieder-e2e.example")));
+    await db.update(emailCampaignRecipients).set({ status: "wartet" }).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, "bert@wieder-e2e.example")));
+    await db.update(emailCampaignRecipients).set({ status: "abgemeldet" }).where(and(eq(emailCampaignRecipients.campaignId, campaign.id), eq(emailCampaignRecipients.email, "cleo@wieder-e2e.example")));
+    const ids = [(await lead("anna@wieder-e2e.example")).id, (await lead("bert@wieder-e2e.example")).id, (await lead("cleo@wieder-e2e.example")).id];
+    expect(await owner.leadops.addLeadsToEmailCampaign({ id: campaign.id, leadIds: ids })).toMatchObject({ added: 0, already: 3 }); // ohne „wieder“: wer schon drin war, bleibt draußen
+    expect(await owner.leadops.addLeadsToEmailCampaign({ id: campaign.id, leadIds: ids, again: true })).toMatchObject({ added: 1, already: 2 }); // nur Anna – Bert läuft schon, Cleo ist abgemeldet
+    const anna = await rowsOf("anna@wieder-e2e.example"); expect(anna).toHaveLength(2); expect(anna.some((row) => row.status === "wartet" && !row.repliedAt && row.pickedAt)).toBe(true);
+    expect(await rowsOf("bert@wieder-e2e.example")).toHaveLength(1); expect(await rowsOf("cleo@wieder-e2e.example")).toHaveLength(1);
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+    // Kontakte: „Alle N auswählen“ holt alle Treffer, nicht nur die gezeigten; Export als Tabelle (Auswahl oder ganzer Filter)
+    await owner.leadops.importColdList({ listName: "Picks-Liste", toPipeline: false, rows: Array.from({ length: 12 }, (_, n) => ({ firstName: `Pia${n}`, lastName: "Pick", company: `Pick ${n} GmbH`, email: `pia${n}@picks-e2e.example`, phone: `+49 30 55500${String(n).padStart(2, "0")}`, postcode: "01067", city: "Dresden" })) });
+    const page = await owner.leadops.emailLeads({ listName: "Picks-Liste", limit: 10 }); expect(page.items).toHaveLength(10); expect(page.total).toBe(12);
+    const picks = await owner.leadops.emailLeadPicks({ listName: "Picks-Liste" }); expect(picks.total).toBe(12); expect(picks.items).toHaveLength(12); expect(picks.items.every((row) => row.publicId && row.email?.endsWith("@picks-e2e.example"))).toBe(true);
+    const all = await owner.leadops.exportEmailLeads({ listName: "Picks-Liste" }); expect(all.count).toBe(12);
+    expect(all.columns.slice(0, 8)).toEqual(["Vorname", "Nachname", "Firma", "E-Mail", "Telefon", "PLZ", "Ort", "Liste"]); expect(all.columns).toEqual(expect.arrayContaining(["Kampagnen", "Zuletzt", "Stufe", "Pipeline", "Vertriebler", "Angelegt"]));
+    const pia0 = all.rows.find((row) => row[3] === "pia0@picks-e2e.example")!; expect(pia0.slice(0, 4)).toEqual(["Pia0", "Pick", "Pick 0 GmbH", "pia0@picks-e2e.example"]); expect(pia0[4].replace(/\D/g, "")).toMatch(/5550000$/); expect(pia0.slice(5, 8)).toEqual(["01067", "Dresden", "Picks-Liste"]); expect(pia0[9]).toBe("Noch nichts");
+    const some = await owner.leadops.exportEmailLeads({ listName: "Picks-Liste", ids: picks.items.slice(0, 2).map((row) => row.id) }); expect(some.count).toBe(2); expect(some.fileName).toMatch(/^Kontakte \d{4}-\d{2}-\d{2}$/);
+  }, 60000);
+
+  it("63zf. Freigabe: ausgewählte Kontakte freigeben, wieder prüfen, neu schreiben lassen oder aus dem Funnel nehmen – nur genau diese (leere Auswahl = niemand)", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
+    await owner.leadops.importColdList({ listName: "Auswahl-Freigabe", toPipeline: false, rows: [["Ada", "ada@auswahl-e2e.example"], ["Ben", "ben@auswahl-e2e.example"], ["Cem", "cem@auswahl-e2e.example"]].map(([firstName, email]) => ({ firstName, lastName: "Auswahl", company: `${firstName} Auswahl GmbH`, email })) });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Auswahl-Freigabe", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Auswahl-Freigabe" }, tree: { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: window, kiModus: "freigabe", kiAnsatz: "frei" } as never);
+    const rowsOf = async () => (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id))).sort((a, b) => a.email.localeCompare(b.email));
+    for (const [n, email] of ["ada@auswahl-e2e.example", "ben@auswahl-e2e.example", "cem@auswahl-e2e.example"].entries()) { const lead = (await db.select().from(leads).where(eq(leads.email, email)))[0]; await db.insert(emailCampaignRecipients).values({ tenantId: S.tenantId, campaignId: campaign.id, leadId: lead.id, email, name: `${lead.firstName} Auswahl`, company: lead.company, token: `af${n}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.slice(0, 40), nodeId: "a1", nextActionAt: new Date(Date.now() + 86_400_000), status: "wartet", sentCount: 0, draftState: "entwurf", draftSubject: `Für ${lead.company}`, draftText: "Sehr geehrte Damen und Herren,\n\nein persönlicher Entwurf.\n\nVielen Dank", draftSource: "ki", draftNodeId: "a1", draftAt: new Date() }); }
+    const [ada, ben, cem] = await rowsOf(); expect([ada.email, ben.email, cem.email]).toEqual(["ada@auswahl-e2e.example", "ben@auswahl-e2e.example", "cem@auswahl-e2e.example"]);
+    expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true, recipientIds: [] })).toMatchObject({ approved: 0 }); // leere Auswahl: niemand
+    expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true, recipientIds: [ada.id, ben.id] })).toMatchObject({ approved: 2 });
+    let rows = await rowsOf(); expect(rows.map((row) => row.draftState)).toEqual(["freigegeben", "freigegeben", "entwurf"]);
+    expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: false, recipientIds: [ben.id] })).toMatchObject({ reverted: 1 });
+    expect(await owner.leadops.resetCampaignDrafts({ campaignId: campaign.id, recipientIds: [cem.id] })).toMatchObject({ reset: 1 });
+    rows = await rowsOf(); expect(rows.map((row) => row.draftState)).toEqual(["freigegeben", "entwurf", null]); expect(rows[2].draftText).toBeNull();
+    expect(await owner.leadops.stopRecipientsInCampaign({ campaignId: campaign.id, recipientIds: [ben.id, cem.id] })).toMatchObject({ stopped: 2 });
+    rows = await rowsOf(); expect(rows.map((row) => row.status)).toEqual(["wartet", "fertig", "fertig"]);
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+  }, 60000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
