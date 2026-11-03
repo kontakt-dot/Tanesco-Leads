@@ -2105,16 +2105,34 @@ html:not(.dark) .rv-prewrite-toggle { border: 1px solid #e8ecf1 !important; back
 html:not(.dark) .rv-prewrite-toggle i { background: #f8fafb !important; }
 html:not(.dark) .rv-prewrite-toggle.is-on i { background: #111318 !important; }
 html:not(.dark) .cl-approval-part.is-off { color: #8a94a6 !important; }
-html:not(.dark) .rv-prewrite-lists { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
-html:not(.dark) .rv-prewrite-lists.has-off { color: #8b7e4b !important; }
-html:not(.dark) .rv-lists-menu small { color: #8a94a6 !important; }
 html:not(.dark) .rv-fit-filter { color: #8a5a5a !important; }
 html:not(.dark) .rv-fit-filter.is-active { background: #d73d3d !important; color: #0f172a !important; }
 html:not(.dark) .rv-state em.is-unfit { color: #8a5a5a !important; }
 html:not(.dark) .rv-note.is-unfit { color: #0f172a !important; }
 html:not(.dark) .rv-note.is-unfit > svg { color: #883e3e !important; }
 html:not(.dark) .cl-approval-part.is-unfit { color: #8a5a5a !important; }
-html:not(.dark) .cl-list-off { background: #f8fafb !important; color: #8a94a6 !important; }
+html:not(.dark) .cl-f small.cl-why.is-period { color: #8a94a6 !important; }
+html:not(.dark) .cl-f small.cl-why.is-approach { color: #111318 !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-approach { color: #111318 !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-approach-free { color: #338074 !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-done { color: #8a94a6 !important; }
+html:not(.dark) .cl-approval-part.is-nodraft { color: #4b5568 !important; }
+html:not(.dark) .rv-pick-quick { color: #4b5568 !important; }
+html:not(.dark) .rv-pick-quick button { border: 1px solid #e8ecf1 !important; color: #0f172a !important; }
+html:not(.dark) .rv-pick-quick button:hover { background: #f8fafb !important; }
+html:not(.dark) .rv-pick-quick button.is-active { background: #111318 !important; border-color: #111318 !important; color: #0f172a !important; }
+html:not(.dark) .rv-bulk-approach { color: #4b5568 !important; }
+html:not(.dark) .rv-state small.rv-ab { color: #111318 !important; }
+html:not(.dark) .ab-compare-head h3 { color: #0f172a !important; }
+html:not(.dark) .ab-compare-head p { color: #4b5568 !important; }
+html:not(.dark) .ab-compare-table th, html:not(.dark) .ab-compare-table td { border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .ab-compare-table thead th { color: #8a94a6 !important; }
+html:not(.dark) .ab-compare-table tbody th { color: #0f172a !important; }
+html:not(.dark) .ab-compare-table td { color: #0f172a !important; }
+html:not(.dark) .ab-compare-table td small { color: #8a94a6 !important; }
+html:not(.dark) .ab-compare-table td.is-best { color: #338074 !important; }
+html:not(.dark) .ab-compare-note { color: #4b5568 !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-blocked { color: #8a6913 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -4252,11 +4270,7 @@ html:not(.dark) .rv-prewrite-toggle i { background: #d0d5dd !important; }
 html:not(.dark) .rv-prewrite-toggle.is-on i { background: #bc001d !important; }
 html:not(.dark) .rv-prewrite-toggle:focus-visible { outline-color: #bc001d !important; }
 html:not(.dark) .cl-approval-part.is-off { color: #667085 !important; }
-/* v287: KI je Liste an/aus, Markierung „Passt nicht?“ */
-html:not(.dark) .rv-prewrite-lists { background: #ffffff !important; border-color: #d0d5dd !important; color: #1d2939 !important; }
-html:not(.dark) .rv-prewrite-lists.has-off { background: #fffbeb !important; border-color: #fcd34d !important; color: #b45309 !important; }
-html:not(.dark) .rv-prewrite-lists:focus-visible { outline-color: #bc001d !important; }
-html:not(.dark) .rv-lists-menu small { color: #667085 !important; }
+/* v287: Markierung „Passt nicht?“ */
 html:not(.dark) .rv-fit-filter { background: #fef2f2 !important; border-color: #fecaca !important; color: #b42318 !important; }
 html:not(.dark) .rv-fit-filter.is-active { background: #d92d20 !important; border-color: #d92d20 !important; color: #ffffff !important; }
 html:not(.dark) .rv-fit-filter:focus-visible { outline-color: #d92d20 !important; }
@@ -4264,4 +4278,27 @@ html:not(.dark) .rv-state em.is-unfit { background: #fef2f2 !important; color: #
 html:not(.dark) .rv-note.is-unfit { background: #fef2f2 !important; border-color: #fecaca !important; color: #912018 !important; }
 html:not(.dark) .rv-note.is-unfit > svg { color: #d92d20 !important; }
 html:not(.dark) .cl-approval-part.is-unfit { color: #b42318 !important; }
-html:not(.dark) .cl-list-off { background: #f2f4f7 !important; color: #475467 !important; }
+/* v288: Zahlen auf der Karte */
+html:not(.dark) .cl-f small.cl-why.is-period { color: #667085 !important; }
+html:not(.dark) .cl-f small.cl-why.is-approach { color: #5b21b6 !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-approach { color: #5b21b6 !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-approach-free { color: #0f766e !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-done { color: #667085 !important; }
+html:not(.dark) .cl-approval-part.is-nodraft { color: #475467 !important; }
+/* v288: A/B-Test der Ansätze */
+html:not(.dark) .rv-pick-quick { color: #475467 !important; }
+html:not(.dark) .rv-pick-quick button { background: #ffffff !important; border-color: #d0d5dd !important; color: #1d2939 !important; }
+html:not(.dark) .rv-pick-quick button:hover { background: #f9fafb !important; }
+html:not(.dark) .rv-pick-quick button.is-active { background: #bc001d !important; border-color: #bc001d !important; color: #ffffff !important; }
+html:not(.dark) .rv-pick-quick button:focus-visible, html:not(.dark) .rv-bulk-approach button:focus-visible { outline-color: #bc001d !important; }
+html:not(.dark) .rv-bulk-approach { color: #344054 !important; }
+html:not(.dark) .rv-state small.rv-ab { color: #5b21b6 !important; }
+html:not(.dark) .ab-compare-head h3 { color: #101828 !important; }
+html:not(.dark) .ab-compare-head p, html:not(.dark) .ab-compare-note { color: #475467 !important; }
+html:not(.dark) .ab-compare-table th, html:not(.dark) .ab-compare-table td { border-bottom-color: #eaecf0 !important; }
+html:not(.dark) .ab-compare-table thead th { color: #667085 !important; }
+html:not(.dark) .ab-compare-table tbody th { color: #101828 !important; }
+html:not(.dark) .ab-compare-table td { color: #1d2939 !important; }
+html:not(.dark) .ab-compare-table td small { color: #667085 !important; }
+html:not(.dark) .ab-compare-table td.is-best { color: #047857 !important; }
+html:not(.dark) .cd-kpi small.cd-why.is-blocked { color: #b45309 !important; }

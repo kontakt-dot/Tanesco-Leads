@@ -708,6 +708,13 @@
       "when": 1794600000000,
       "tag": "0100_ki_listen_und_kategorie",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "5",
+      "when": 1794700000000,
+      "tag": "0101_ansatz_test",
+      "breakpoints": true
     }
   ]
 }

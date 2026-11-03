@@ -127,6 +127,7 @@ export function startEmailCampaignScheduler(intervalSeconds = Number(process.env
     try { const db = await getDb(); if (!db) return;
       if (!repaired) { repaired = true;
         // Versand-Protokoll vervollständigen (auch aus dem Papierkorb) und Doppelt-Schutz für alle Kampagnen – VOR dem ersten Versand nach dem Start
+        { const { backfillSentApproach } = await import("./send-log"); const filled = await backfillSentApproach(db).catch((error) => { console.error("[Versand-Ansatz] Nachtragen:", error instanceof Error ? error.message : error); return 0; }); if (filled) console.log(`[Versand-Ansatz] Ansatz bei ${filled} schon gesendeten E-Mails nachgetragen`); }
         { const { backfillSendLog, reconcileAllCampaigns } = await import("./send-log"); const logged = await backfillSendLog(db).catch((error) => { console.error("[Versand-Protokoll] Nachtragen:", error instanceof Error ? error.message : error); return { events: 0, trash: 0 }; }); if (logged.events || logged.trash) console.log(`[Versand-Protokoll] ${logged.events} gesendete E-Mails aus dem Verlauf und ${logged.trash} aus dem Papierkorb nachgetragen`);
           const guarded = await reconcileAllCampaigns(db).catch((error) => { console.error("[Doppelt-Schutz]", error instanceof Error ? error.message : error); return { duplicates: 0, restored: 0 }; }); if (guarded.duplicates || guarded.restored) console.log(`[Doppelt-Schutz] ${guarded.restored} Kontakte hatten ihre Kampagne schon bekommen – Verlauf wiederhergestellt; ${guarded.duplicates} doppelte Einträge beendet`); }
         const count = await repairWaitingRecipients(db).catch((error) => { console.error("[E-Mail-Kampagnen] Wartende nachziehen:", error instanceof Error ? error.message : error); return 0; }); if (count) console.log(`[E-Mail-Kampagnen] ${count} wartende Kontakte stehen jetzt am Warten-Schritt`);
@@ -164,7 +165,8 @@ export function startDraftPrewriter(intervalSeconds = Number(process.env.EMAIL_P
   const tick = async (): Promise<boolean> => {
     try { const db = await getDb(); if (!db) return false; const { prewriteTick } = await import("./campaign-review"); const result = await prewriteTick(db);
       if (result && (result.written || result.failed)) console.log(`[E-Mail-Kampagnen] Entwürfe vorgeschrieben: ${result.written}${result.failed ? ` (${result.failed} nicht geklappt – neuer Versuch in 10 Minuten)` : ""} – noch ${result.open} offen`);
-      return Boolean(result && result.written > 0 && result.open > 0); }
+      if (result && result.fitChecked) console.log(`[E-Mail-Kampagnen] Kategorie nachgeprüft: ${result.fitChecked}${result.fitFlagged ? ` (${result.fitFlagged} passen vielleicht nicht – markiert)` : ""} – noch ${result.fitOpen} offen`);
+      return Boolean(result && ((result.written > 0 && result.open > 0) || (result.fitChecked > 0 && result.fitOpen > 0))); }
     catch (error) { console.error("[E-Mail-Kampagnen] Entwürfe vorschreiben:", error instanceof Error ? error.message : error); return false; }
   };
   const loop = async () => { const more = await tick(); prewriteTimer = setTimeout(() => void loop(), more ? 3000 : intervalSeconds * 1000); prewriteTimer.unref?.(); };

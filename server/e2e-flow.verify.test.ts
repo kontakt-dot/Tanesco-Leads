@@ -26,6 +26,11 @@ import { buildProviderPayload } from "./lead-integration-export";
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(async (params: { messages: Array<{ role: string; content: unknown }>; outputSchema?: { name?: string; schema?: { properties?: Record<string, unknown> } } }) => {
     // KI-Entwürfe für Kampagnen-Mails (wie die echte KI): je verlangtem Ansatz Betreff, Text und Bezüge – Verhalten je Aufruf über globalThis.__draftPlan
+    if (params.outputSchema?.name === "kategoriepruefung") { // Nachprüfung schon geschriebener Entwürfe: passt die Firma zur Lead-Kategorie?
+      const prompt = String(params.messages.find((message) => message.role === "user")?.content ?? ""); const firma = /Firma: (.+)/.exec(prompt)?.[1]?.trim() ?? "";
+      const verdict = /großhandel/i.test(firma) ? { passt: "nein", grund: "Laut Webseite reiner Großhandel – keine Montage beim Kunden" } : { passt: "ja", grund: "Fachbetrieb mit Montage laut Webseite" };
+      return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(verdict) }, finish_reason: "stop" }] };
+    }
     if (params.outputSchema?.name === "vorschlaege") {
       const prompt = String(params.messages.find((message) => message.role === "user")?.content ?? "");
       const mode = ((globalThis as { __draftPlan?: string[] }).__draftPlan ?? []).shift() ?? "gut";
@@ -3944,7 +3949,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
   }, 60000);
 
-  it("63zi. KI je Liste an/aus und Kategorie-Prüfung: ausgeschaltete Listen schreibt die KI nicht vor; Firmen, die nicht zur Lead-Kategorie passen, sind markiert – „Alle freigeben“ lässt sie aus, „Passt doch“ hebt die Markierung dauerhaft auf", async () => {
+  it("63zi. Kategorie-Prüfung: Firmen, die nicht zur Lead-Kategorie passen, sind markiert – „Alle freigeben“ lässt sie aus, „Passt doch“ hebt die Markierung dauerhaft auf", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { prewriteDrafts } = await import("./campaign-review");
     const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key"; (globalThis as { __draftPlan?: string[] }).__draftPlan = [];
     try {
@@ -3956,21 +3961,18 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await owner.leadops.startEmailCampaign({ id: campaign.id });
       const rows = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
       expect(await rows()).toHaveLength(5);
-      // Liste „PV Aus-Liste“ ausschalten: dafür schreibt die KI nichts von selbst
-      expect(await owner.leadops.setEmailCampaignListPrewrite({ id: campaign.id, listName: "PV Aus-Liste", enabled: false })).toMatchObject({ prewrite: false, prewriteOffLists: ["PV Aus-Liste"] });
       await db.update(emailCampaignRecipients).set({ draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null, draftSource: null, fitState: null, fitNote: null }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
-      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 3, open: 0 });
+      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 5, open: 0 });
       const after = await rows(); const byEmail = (email: string) => after.find((row) => row.email === email)!;
-      expect(after.filter((row) => row.email.startsWith("aus")).every((row) => !row.draftState)).toBe(true);
       expect(byEmail("handel@fit-e2e.example")).toMatchObject({ draftState: "entwurf", fitState: "passt_nicht" }); expect(byEmail("handel@fit-e2e.example").fitNote).toContain("Großhandel");
       expect(byEmail("sonne@fit-e2e.example")).toMatchObject({ fitState: "passt" });
       // Karte und Freigabe zeigen beides
       const card = (await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)!;
-      expect(card).toMatchObject({ prewriteOffLists: ["PV Aus-Liste"], review: { ohneEntwurf: 0, passtNicht: 1 } });
+      expect(card).toMatchObject({ review: { ohneEntwurf: 0, passtNicht: 1 } });
       const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id });
-      expect(queue.prewriteOffLists).toEqual(["PV Aus-Liste"]); expect(queue.counts.passtNicht).toBe(1); expect(queue.items.find((item) => item.email === "handel@fit-e2e.example")).toMatchObject({ fitState: "passt_nicht" });
+      expect(queue.counts.passtNicht).toBe(1); expect(queue.items.find((item) => item.email === "handel@fit-e2e.example")).toMatchObject({ fitState: "passt_nicht" });
       // „Alle freigeben“: der Großhandel bleibt offen
-      expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true })).toMatchObject({ approved: 2, notFitting: 1 });
+      expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true })).toMatchObject({ approved: 4, notFitting: 1 });
       expect((await rows()).find((row) => row.email === "handel@fit-e2e.example")).toMatchObject({ draftState: "entwurf" });
       // „Passt doch“: Markierung weg – auch nach „KI neu schreiben“ bleibt sie weg
       const handel = byEmail("handel@fit-e2e.example");
@@ -3979,12 +3981,72 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [handel.id] })).drafts).toHaveLength(1);
       expect((await rows()).find((row) => row.id === handel.id)).toMatchObject({ fitState: "geprueft", draftState: "entwurf" });
       expect(await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true })).toMatchObject({ approved: 1, notFitting: 0 });
-      // Liste wieder einschalten: jetzt schreibt die KI auch dort vor
-      expect(await owner.leadops.setEmailCampaignListPrewrite({ id: campaign.id, listName: "PV Aus-Liste", enabled: true })).toMatchObject({ prewriteOffLists: [] });
-      expect(await prewriteDrafts(db, { campaignId: campaign.id })).toMatchObject({ written: 2, open: 0 });
       await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
     } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
   }, 60000);
+
+  it("63zk. Kategorie nachprüfen: schon geschriebene Entwürfe (ohne Prüfung) prüft die KI nach, ohne sie neu zu schreiben – ein freigegebener Großhandel geht zurück auf „Zu prüfen“ und ist markiert", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { checkFitBatch } = await import("./campaign-review");
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key";
+    try {
+      const starter = await owner.leadops.emailCampaignStarter();
+      await owner.leadops.importColdList({ listName: "PV Nachprüf-Liste", toPipeline: false, rows: [["Sonne Montage GmbH", "sonne@nach-e2e.example"], ["Solar Großhandel Süd GmbH", "handel@nach-e2e.example"]].map(([company, email]) => ({ firstName: "Nach", lastName: "Prüf", company, city: "Kassel", email })) });
+      const day = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" })).getDay();
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Photovoltaik Nachprüfung", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listNames: ["PV Nachprüf-Liste"] }, tree: { start: "n1", nodes: [{ id: "n1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: true, weekdays: [(day + 3) % 7], from: "07:30", to: "08:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: campaign.id });
+      // alte Entwürfe: geschrieben, aber nie geprüft – einer schon freigegeben
+      await db.update(emailCampaignRecipients).set({ draftState: "freigegeben", draftNodeId: "n1", draftSubject: "Für Sie", draftText: "Sehr geehrte Damen und Herren,\n\nein alter Entwurf ohne Prüfung.\n\nViele Grüße", draftSource: "kiweb", fitState: null, fitNote: null }).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+      const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id }); expect(queue.counts.fitUnchecked).toBe(2);
+      expect(await checkFitBatch(db, { campaignId: campaign.id })).toEqual({ checked: 2, flagged: 1, open: 0 });
+      const rows = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+      expect(rows.find((row) => row.email === "handel@nach-e2e.example")).toMatchObject({ fitState: "passt_nicht", draftState: "entwurf", draftText: "Sehr geehrte Damen und Herren,\n\nein alter Entwurf ohne Prüfung.\n\nViele Grüße" }); // zurück zur Prüfung, Text bleibt
+      expect(rows.find((row) => row.email === "sonne@nach-e2e.example")).toMatchObject({ fitState: "passt", draftState: "freigegeben" });
+      expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).counts).toMatchObject({ fitUnchecked: 0, passtNicht: 1 });
+      expect(await checkFitBatch(db, { campaignId: campaign.id })).toEqual({ checked: 0, flagged: 0, open: 0 }); // nichts doppelt
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+    } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
+  }, 60000);
+
+  it("63zl. A/B-Test der Ansätze: Ansatz zuordnen (vorhandene Fassung sofort, fehlende schreibt die KI neu – gilt auch beim Neuschreiben), Ansatz jeder gesendeten E-Mail wird gespeichert und für alte nachgetragen, Vergleich je Ansatz", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { prewriteDrafts } = await import("./campaign-review"); const { backfillSentApproach } = await import("./send-log");
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key"; (globalThis as { __draftPlan?: string[] }).__draftPlan = [];
+    const until = async (check: () => Promise<boolean>) => { for (let i = 0; i < 60 && !(await check()); i += 1) await new Promise((resolve) => setTimeout(resolve, 150)); };
+    try {
+      const starter = await owner.leadops.emailCampaignStarter();
+      await owner.leadops.importColdList({ listName: "AB-Liste", toPipeline: false, rows: ["Anton", "Berta", "Cäsar", "Dora"].map((firstName, n) => ({ firstName, lastName: "AB", company: `${firstName} Solar GmbH`, city: "Kassel", email: `ab${n}@ab-e2e.example` })) });
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Photovoltaik AB-Test", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listNames: ["AB-Liste"] }, tree: { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: campaign.id }); await prewriteDrafts(db, { campaignId: campaign.id });
+      const recipientsOf = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+      const sentEvents = async () => db.select().from(emailCampaignEvents).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
+      const [a, b, c, d] = await recipientsOf(); expect([a, b, c, d].every((row) => row.draftState === "entwurf" && row.draftApproach === "frei")).toBe(true);
+      // Cäsar hat beide Fassungen (z. B. „Auf Klick schreiben lassen“) → wird sofort umgestellt; Anton und Berta schreibt die KI neu
+      const third = "Sehr geehrte Damen und Herren,\n\nüber unsere Quellen wissen wir, dass bei Ihnen sehr wahrscheinlich Leads ankommen, die ohnehin von uns stammen – nur über Zwischenhändler weitergereicht. Deshalb möchten wir direkt mit Ihnen zusammenarbeiten.\n\nViele Grüße";
+      await db.update(emailCampaignRecipients).set({ draftOptions: [...((c.draftOptions as unknown[]) ?? []), { key: "drittanbieter", label: "Drittanbieter-Ansatz", subject: "Direkt statt über Zwischenhändler", text: third, source: "ki" }] }).where(eq(emailCampaignRecipients.id, c.id));
+      expect(await owner.leadops.assignDraftApproach({ campaignId: campaign.id, recipientIds: [a.id, b.id, c.id], approach: "drittanbieter" })).toMatchObject({ assigned: 3, switched: 1, rewriting: 2 });
+      await until(async () => (await recipientsOf()).filter((row) => row.id === a.id || row.id === b.id).every((row) => row.draftState === "entwurf" && row.draftApproach === "drittanbieter"));
+      let rows = await recipientsOf();
+      expect(rows.find((row) => row.id === a.id)).toMatchObject({ approachPick: "drittanbieter", draftApproach: "drittanbieter", draftState: "entwurf" });
+      expect(rows.find((row) => row.id === c.id)).toMatchObject({ approachPick: "drittanbieter", draftApproach: "drittanbieter", draftSubject: "Direkt statt über Zwischenhändler" });
+      expect(rows.find((row) => row.id === d.id)).toMatchObject({ approachPick: null, draftApproach: "frei" });
+      expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).items.filter((item) => item.approachPick === "drittanbieter")).toHaveLength(3);
+      // „KI neu schreiben“ bleibt beim zugeordneten Ansatz
+      await owner.leadops.generateCampaignDrafts({ campaignId: campaign.id, recipientIds: [a.id] }); rows = await recipientsOf(); expect(rows.find((row) => row.id === a.id)).toMatchObject({ draftApproach: "drittanbieter" });
+      // freigeben und senden: der Ansatz jeder E-Mail wird gespeichert
+      await owner.leadops.approveAllCampaignDrafts({ campaignId: campaign.id, approve: true }); await owner.leadops.runEmailCampaigns();
+      await until(async () => (await sentEvents()).length >= 4);
+      expect((await sentEvents()).map((event) => event.approach).sort()).toEqual(["drittanbieter", "drittanbieter", "drittanbieter", "frei"]);
+      expect((await owner.leadops.listEmailCampaigns()).find((row) => row.id === campaign.id)?.sentApproaches).toEqual({ drittanbieter: 3, frei: 1, vorlage: 0, unbekannt: 0 });
+      expect((await owner.leadops.getEmailCampaign({ id: campaign.id })).approachStats).toEqual([{ approach: "drittanbieter", people: 3, opened: 0, clicked: 0, replied: 0 }, { approach: "frei", people: 1, opened: 0, clicked: 0, replied: 0 }]);
+      // alte E-Mails ohne Angabe werden nachgetragen: Kernbotschaft → Drittanbieter, Nachfass-Mail folgt der Erst-E-Mail, sonst frei
+      await db.update(emailCampaignEvents).set({ approach: null }).where(and(eq(emailCampaignEvents.campaignId, campaign.id), eq(emailCampaignEvents.kind, "gesendet")));
+      await db.insert(emailCampaignEvents).values({ tenantId: S.tenantId, campaignId: campaign.id, recipientId: c.id, nodeId: "a1", kind: "gesendet", subject: "Kurz nachgefragt", body: "Sehr geehrte Damen und Herren,\n\nkurz nachgefragt zu meiner letzten E-Mail.\n\nViele Grüße", bodySource: "ki", createdAt: new Date(Date.now() + 60_000) });
+      expect(await backfillSentApproach(db)).toBeGreaterThanOrEqual(5);
+      const after = await sentEvents();
+      expect(after.filter((event) => event.recipientId === c.id).map((event) => event.approach)).toEqual(["drittanbieter", "drittanbieter"]);
+      expect(after.find((event) => event.recipientId === d.id)?.approach).toBe("frei"); expect(after.find((event) => event.recipientId === a.id)?.approach).toBe("drittanbieter");
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+    } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
+  }, 90000);
 
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");

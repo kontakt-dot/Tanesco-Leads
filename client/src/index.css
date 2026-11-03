@@ -3732,7 +3732,7 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cd-kpi.is-pick:hover{border-color:rgba(141,133,255,.5);transform:translateY(-1px)}
 .cd-kpi.is-pick:focus-visible{outline:2px solid rgba(141,133,255,.7);outline-offset:2px}
 .cd-kpi.is-pick.is-active{border-color:rgba(141,133,255,.85);box-shadow:0 0 0 3px rgba(129,120,255,.18)}
-.cd-kpi.is-pick small::after{content:" · ansehen";opacity:.75}
+.cd-kpi.is-pick small:not(.cd-why)::after{content:" · ansehen";opacity:.75} /* nur am Hinweis, nicht an den Aufteilungs-Zeilen */
 .cd-panel-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px;padding:3px;border-radius:12px;background:rgba(255,255,255,.04);width:fit-content;max-width:100%}
 .cd-panel-tabs button{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:9px;border:0;background:transparent;font:inherit;font-size:13px;font-weight:600;color:#a5a3c4;cursor:pointer}
 .cd-panel-tabs button i{font-style:normal;font-size:11px;padding:1px 7px;border-radius:999px;background:rgba(255,255,255,.08)}
@@ -3924,14 +3924,7 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cl-approval-part.is-off{color:#9d99b8;font-weight:600}
 @media (prefers-reduced-motion: reduce){.rv-prewrite-toggle i,.rv-prewrite-toggle i::after{transition:none}}
 
-/* v287: KI je Liste an/aus, Markierung „Passt nicht?“ (Kategorie-Prüfung der KI) */
-.rv-prewrite-lists{flex:none;display:inline-flex;align-items:center;gap:6px;margin-left:6px;padding:5px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:#e8e6ff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
-.rv-prewrite-lists.has-off{border-color:rgba(251,191,36,.45);background:rgba(251,191,36,.08);color:#fde68a}
-.rv-prewrite-lists:focus-visible{outline:2px solid #a5a0ff;outline-offset:2px}
-.rv-lists-menu{min-width:260px;max-width:min(380px,92vw);max-height:340px;overflow:auto}
-.rv-lists-menu [role="menuitemcheckbox"]{display:flex;align-items:center;gap:8px}
-.rv-lists-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rv-lists-menu small{flex:none;font-size:11px;color:#8a87a8;font-weight:600}
+/* v287: Markierung „Passt nicht?“ (Kategorie-Prüfung der KI) */
 .rv-fit-filter{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.08);color:#fca5a5;font-size:12px;font-weight:700;cursor:pointer}
 .rv-fit-filter i{font-style:normal;font-size:11px;opacity:.85}
 .rv-fit-filter.is-active{background:#ef4444;border-color:#ef4444;color:#fff}
@@ -3943,5 +3936,33 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .rv-note.is-unfit > button{flex:none}
 .cl-approval-part.is-unfit{display:inline-flex;align-items:center;gap:4px;color:#fca5a5;font-weight:700}
 .cl-approval-part.is-unfit svg{width:12px;height:12px;flex:none}
-.cl-list-off{font-style:normal;margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.08);color:#9d99b8;font-size:10px;font-weight:700;line-height:1.6;white-space:nowrap}
-@media (max-width: 760px){.rv-prewrite{flex-wrap:wrap}.rv-prewrite-lists{margin-left:0}}
+
+/* v288: Zahlen auf der Karte – Empfänger ergibt sich aus den Zeilen, Ansatz der gesendeten E-Mails */
+.cl-f small.cl-why.is-period{color:#8a87a8;font-weight:600}
+.cl-f small.cl-why.is-approach{color:#c4b5fd}
+.cd-kpi small.cd-why.is-approach{color:#c4b5fd}.cd-kpi small.cd-why.is-approach-free{color:#5eead4}.cd-kpi small.cd-why.is-done{color:#9d99b8}
+.cl-approval-part.is-nodraft{color:#b9b6d3;font-weight:600}
+/* v288: A/B-Test der Ansätze – Schnellauswahl, Ansatz zuordnen, Vergleich */
+.rv-pick-quick{display:inline-flex;align-items:center;gap:4px;margin-left:10px;font-size:12px;color:#a5a3c4}
+.rv-pick-quick > span{margin-right:2px}
+.rv-pick-quick button{height:26px;min-width:38px;padding:0 9px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:transparent;color:#e2e0ff;font-size:12px;font-weight:700;cursor:pointer}
+.rv-pick-quick button:hover{background:rgba(255,255,255,.06)}
+.rv-pick-quick button.is-active{background:#8278ff;border-color:#8278ff;color:#fff}
+.rv-pick-quick button:focus-visible,.rv-bulk-approach button:focus-visible{outline:2px solid #a5a0ff;outline-offset:2px}
+.rv-bulk-approach{display:inline-flex;align-items:center;gap:6px;padding:0 4px;font-size:12px;font-weight:700;color:#c4bfff}
+.rv-state small.rv-ab{color:#c4b5fd;font-weight:700}
+.ab-compare{padding:14px 16px;margin-bottom:16px}
+.ab-compare-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:10px}
+.ab-compare-head h3{margin:0;font-size:14px;font-weight:800;color:#f1f0ff}
+.ab-compare-head p{margin:0;font-size:12px;color:#a5a3c4}
+.ab-compare-table{width:100%;border-collapse:collapse;font-size:13px}
+.ab-compare-table th,.ab-compare-table td{padding:8px 10px;text-align:left;border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap}
+.ab-compare-table thead th{font-size:11px;font-weight:700;color:#8a87a8}
+.ab-compare-table tbody th{font-weight:700;color:#e8e6ff}
+.ab-compare-table td{color:#e2e0ff;font-variant-numeric:tabular-nums}
+.ab-compare-table td small{margin-left:4px;color:#8a87a8;font-size:11px}
+.ab-compare-table td.is-best{color:#5eead4;font-weight:800}
+.ab-compare-note{margin:8px 0 0;font-size:11.5px;color:#a5a3c4}
+@media (max-width: 760px){.ab-compare{overflow-x:auto}.rv-pick-quick{margin-left:0}}
+.cd-kpi small.cd-why.is-blocked{color:#fbbf24}
+.cd-kpi small.cd-why{white-space:normal;overflow:visible;align-items:flex-start;line-height:1.3}.cd-kpi small.cd-why::before{margin-top:4px}

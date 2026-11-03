@@ -14,7 +14,7 @@
  */
 import { and, eq, gte, inArray, isNull, like, lte, sql } from "drizzle-orm";
 import { activityLog, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, emailSendLog, inboxMessages, pipelineEvents } from "../drizzle/schema";
-import { dayStartIn, firstSendNode, REPLY_STOP_NOTE, stopsOnReply, type EmailTree } from "../shared/email-campaigns";
+import { dayStartIn, firstSendNode, hasThirdPartyClaim, REPLY_STOP_NOTE, stopsOnReply, type EmailTree } from "../shared/email-campaigns";
 import { RESTORED_NOTE, replayPosition, sentTracePrefix, type SendRecord } from "../shared/send-guard";
 export { withSendLog } from "../shared/send-guard";
 import { isAutoReply } from "../shared/reply-ai";
@@ -258,6 +258,32 @@ export async function undoReconcile(db: Db, tenantId: number, payload: { campaig
     for (const part of chunks(item.logIds, 500)) await db.delete(emailSendLog).where(and(eq(emailSendLog.tenantId, tenantId), inArray(emailSendLog.id, part)));
     for (const moved of item.movedLogs) await db.update(emailSendLog).set({ recipientId: moved.recipientId }).where(and(eq(emailSendLog.tenantId, tenantId), eq(emailSendLog.id, moved.id)));
     done += 1;
+  }
+  return done;
+}
+
+/**
+ * Ansatz der schon gesendeten E-Mails nachtragen (vor v288 wurde er nicht gespeichert): Vorlage = „vorlage“; KI- oder eigener Text mit der
+ * Drittanbieter-Kernbotschaft = „drittanbieter“; Nachfass-Mails ohne Kernbotschaft folgen der Erst-E-Mail desselben Kontakts; sonst „frei“.
+ * Ohne gespeicherten Text: „unbekannt“. Läuft beim Serverstart, nur über E-Mails ohne Angabe – nie doppelt.
+ */
+export async function backfillSentApproach(db: Db): Promise<number> {
+  let done = 0;
+  for (let pass = 0; pass < 20; pass += 1) {
+    const rows = await db.select({ id: emailCampaignEvents.id, recipientId: emailCampaignEvents.recipientId, body: emailCampaignEvents.body, bodySource: emailCampaignEvents.bodySource, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.kind, "gesendet"), isNull(emailCampaignEvents.approach))).orderBy(emailCampaignEvents.recipientId, emailCampaignEvents.createdAt, emailCampaignEvents.id).limit(3000);
+    if (!rows.length) break;
+    const firstOf = new Map<number, string>(); const groups = new Map<string, number[]>();
+    // Erst-E-Mails, die schon einen Ansatz haben (früherer Durchgang oder neu gesendet) – Nachfass-Mails folgen ihnen
+    const recipientIds = Array.from(new Set(rows.map((row) => row.recipientId)));
+    for (let index = 0; index < recipientIds.length; index += 500) { const known = await db.select({ recipientId: emailCampaignEvents.recipientId, approach: emailCampaignEvents.approach }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.kind, "gesendet"), inArray(emailCampaignEvents.recipientId, recipientIds.slice(index, index + 500)), sql`${emailCampaignEvents.approach} is not null`)).orderBy(emailCampaignEvents.createdAt, emailCampaignEvents.id); for (const row of known) if (row.approach && !firstOf.has(row.recipientId)) firstOf.set(row.recipientId, row.approach); }
+    for (const row of rows) {
+      const own = row.bodySource === "vorlage" || row.bodySource === "entwurf-vorlage" ? "vorlage" : !row.body ? "unbekannt" : hasThirdPartyClaim(row.body) ? "drittanbieter" : null;
+      const approach = own ?? (firstOf.get(row.recipientId) === "drittanbieter" ? "drittanbieter" : "frei");
+      if (!firstOf.has(row.recipientId)) firstOf.set(row.recipientId, approach);
+      groups.set(approach, [...(groups.get(approach) ?? []), row.id]);
+    }
+    for (const [approach, ids] of Array.from(groups.entries())) for (let index = 0; index < ids.length; index += 500) await db.update(emailCampaignEvents).set({ approach }).where(inArray(emailCampaignEvents.id, ids.slice(index, index + 500)));
+    done += rows.length; if (rows.length < 3000) break;
   }
   return done;
 }

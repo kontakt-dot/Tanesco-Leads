@@ -309,7 +309,7 @@ describe("Freigabe getrennt nach Erst-E-Mails und Follow-ups (Chat-Build)", () =
     const view = mount(); await settle(300); await settle(300);
     const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.querySelector(".cl-name")?.textContent?.includes("Freigabe-Art"))!; expect(card).toBeTruthy();
     const pill = card.querySelector(".cl-approval")!; expect(pill).toBeTruthy(); expect(pill.querySelector(".cl-approval-main")?.textContent).toBe("Zur Freigabe");
-    const part = Array.from(pill.querySelectorAll<HTMLButtonElement>(".cl-approval-part")).find((node) => /Erst-E-Mail/.test(node.textContent ?? ""))!; expect(part.textContent).toBe("1 Erst-E-Mail wartet");
+    const part = Array.from(pill.querySelectorAll<HTMLButtonElement>(".cl-approval-part")).find((node) => /Erst-E-Mail/.test(node.textContent ?? ""))!; expect(part.textContent).toBe("1 Erst-E-Mail zu prüfen");
     await act(async () => { fireEvent.click(part); }); await settle(400); await settle(300);
     const dialog = document.querySelector(".review-dialog"); expect(dialog).toBeTruthy(); expect(view.container.querySelector(".ch-title")).toBeNull(); // Fenster über der Übersicht, nicht die geöffnete Kampagne
     const kindBar = dialog!.querySelector(".cd-filters.is-kind")!; expect(Array.from(kindBar.querySelectorAll("button")).find((node) => node.getAttribute("aria-selected") === "true")?.textContent).toMatch(/^Erst-E-Mails/);
@@ -1074,10 +1074,10 @@ describe("Freigabe: keine Endlosschleife, wenn die KI einen Entwurf nicht schrei
   });
 });
 
-describe("Freigabe: KI je Liste an/aus und Markierung „Passt nicht?“ (Chat-Build)", () => {
+describe("Freigabe: Markierung „Passt nicht?“ (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
-  it("Karte zeigt „1 passt nicht?“ und öffnet die Freigabe gefiltert; „Passt doch“ hebt die Markierung auf; „Je Liste“ schaltet die KI für eine Liste aus – die Karte zeigt „KI aus für …“", async () => {
+  it("Karte zeigt „1 passt nicht?“ und öffnet die Freigabe gefiltert; „Passt doch“ hebt die Markierung auf", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "Solar Liste A", rows: ["anke", "bodo", "clara"].map((name) => ({ firstName: name, lastName: "Prüf", company: name === "bodo" ? "Bodo Großhandel GmbH" : `${name} Solar`, email: `${name}@pruef-demo.example` })) });
     await call("leadops.importColdList", { listName: "Solar Liste B", rows: ["dora", "emil"].map((name) => ({ firstName: name, lastName: "Prüf", company: `${name} Solar`, email: `${name}@pruef-demo.example` })) });
@@ -1101,20 +1101,42 @@ describe("Freigabe: KI je Liste an/aus und Markierung „Passt nicht?“ (Chat-B
     await act(async () => { fireEvent.click(Array.from(note.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.includes("Passt doch"))!); }); await settle(400); await settle(300);
     expect(getStore().tables.emailCampaignRecipients.find((row) => row.id === bodo.id)).toMatchObject({ fitState: "geprueft" });
     expect(document.querySelector(".rv-fit-filter")).toBeNull(); expect(document.querySelectorAll(".rv-item")).toHaveLength(5); // Filter weg, alle wieder da
-    // „Je Liste“: KI für „Solar Liste B“ aus
-    const listsButton = document.querySelector<HTMLButtonElement>(".rv-prewrite-lists")!; expect(listsButton.textContent).toContain("Je Liste");
-    await act(async () => { fireEvent.keyDown(listsButton, { key: "ArrowDown" }); }); await settle(300);
-    const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')); expect(items.map((node) => node.querySelector(".rv-lists-name")?.textContent)).toEqual(["Solar Liste A", "Solar Liste B"]); expect(items.every((node) => node.getAttribute("aria-checked") === "true")).toBe(true);
-    await act(async () => { fireEvent.click(items[1]); }); await settle(400); await settle(300);
-    expect(getStore().tables.emailCampaigns.find((row) => row.id === saved.id)).toMatchObject({ prewriteOffLists: ["Solar Liste B"] });
-    expect(document.querySelector(".rv-prewrite-lists")?.textContent).toContain("Listen: 1 aus"); expect(document.querySelector(".rv-prewrite")?.textContent).toContain("Für die Liste „Solar Liste B“ schreibt sie nichts von selbst.");
-    // fehlt ein Entwurf in Liste B, schreibt die KI ihn nicht von selbst
-    const dora = recipients().find((row) => String(row.email).startsWith("dora"))!; Object.assign(dora, { draftState: null, draftText: null, draftSubject: null, draftOptions: null, draftNodeId: null, draftApproach: null });
-    await call("leadops.runEmailCampaigns"); expect(getStore().tables.emailCampaignRecipients.find((row) => row.id === dora.id)?.draftState ?? null).toBeNull();
-    // Karte: „KI aus für „Solar Liste B““
+    void view;
+  });
+});
+
+describe("Freigabe: A/B-Test der Ansätze (Chat-Build)", () => {
+  beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
+  afterEach(() => { cleanup(); });
+  it("„25“ wählt die ersten 25, „Ansatz: Drittanbieter“ stellt sie um (Filter zählt mit); nach dem Versand zeigt die Karte „Drittanbieter 25 · frei 5“ und die Kampagne den Vergleich", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "AB-Demo", rows: Array.from({ length: 30 }, (_, n) => ({ firstName: `Kontakt${n}`, lastName: "AB", company: `AB Solar ${n}`, email: `ab${n}@ab-demo.example` })) });
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Photovoltaik AB-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["AB-Demo"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const recipients = () => getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === saved.id);
+    expect(recipients()).toHaveLength(30); expect(recipients().every((row) => row.draftApproach === "frei")).toBe(true);
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    mount(); await settle(300); await settle(300);
+    const card = () => Array.from(document.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Photovoltaik AB-Demo"))!;
+    await act(async () => { fireEvent.click(card().querySelector<HTMLButtonElement>(".cl-approval-main")!); }); await settle(400); await settle(300);
+    const quick = Array.from(document.querySelectorAll<HTMLButtonElement>(".rv-pick-quick button")); expect(quick.map((node) => node.textContent)).toEqual(["25"]); // 30 Kontakte: 25 (50 und 100 erst bei mehr)
+    await act(async () => { fireEvent.click(quick[0]); }); await settle(200);
+    expect(document.querySelector(".rv-bulk")?.textContent).toContain("25 ausgewählt");
+    const toThird = Array.from(document.querySelectorAll<HTMLButtonElement>(".rv-bulk-approach button")).find((node) => node.textContent === "Drittanbieter")!; expect(toThird).toBeTruthy();
+    await act(async () => { fireEvent.click(toThird); }); await settle(400); await settle(300);
+    expect(recipients().filter((row) => row.approachPick === "drittanbieter" && row.draftApproach === "drittanbieter")).toHaveLength(25);
+    const filter = document.querySelector<HTMLSelectElement>(".rv-approach-filter")!; expect(Array.from(filter.options).map((option) => option.textContent)).toEqual(["Alle Ansätze", "Drittanbieter-Ansatz (25)", "Freier Vorschlag (5)"]);
+    await act(async () => { fireEvent.change(filter, { target: { value: "frei" } }); }); await settle(200);
+    expect(document.querySelectorAll(".rv-item")).toHaveLength(5); expect(document.querySelectorAll(".rv-state small.rv-ab")).toHaveLength(0);
+    // freigeben und senden
+    await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true }); await call("leadops.runEmailCampaigns");
+    expect(getStore().tables.emailCampaignEvents.filter((event) => event.campaignId === saved.id && event.kind === "gesendet")).toHaveLength(30);
     cleanup(); window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     mount(); await settle(300); await settle(300);
-    expect(card().querySelector(".cl-approval-part.is-off")?.textContent).toBe("KI aus für „Solar Liste B“"); expect(card().querySelector(".cl-approval-part.is-unfit")).toBeNull();
-    void view;
+    expect(card().querySelector(".cl-f.is-sent .cl-why.is-approach")?.textContent).toBe("Drittanbieter 25 · frei 5");
+    expect(card().querySelector(".cl-f.is-total small")?.textContent).toBe("alle angeschrieben");
+    await act(async () => { fireEvent.click(card().querySelector<HTMLButtonElement>(".cl-name")!); }); await settle(400); await settle(300);
+    const compare = document.querySelector<HTMLElement>(".ab-compare")!; expect(compare).toBeTruthy();
+    expect(Array.from(compare.querySelectorAll("tbody tr")).map((row) => Array.from(row.children).slice(0, 2).map((cell) => cell.textContent))).toEqual([["Drittanbieter-Ansatz", "25"], ["Freier Vorschlag", "5"]]);
   });
 });

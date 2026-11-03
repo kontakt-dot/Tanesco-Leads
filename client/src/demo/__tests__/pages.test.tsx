@@ -93,7 +93,7 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     const whyLines = Array.from(delivered.querySelectorAll<HTMLElement>("small.cl-why")).map((node) => ({ tone: Array.from(node.classList).find((name) => name.startsWith("is-")), text: node.textContent }));
     expect(whyLines[0]).toEqual({ tone: "is-bad", text: "1 nicht angekommen" }); expect(whyLines.every((line) => /^\d+ (nicht angekommen|verzögert|ohne Meldung)$/.test(String(line.text)))).toBe(true);
     for (const line of whyLines) expect(delivered.querySelector(`.cl-seg em.${line.tone}`)).toBeTruthy(); // gleiche Farbe wie das Balken-Stück
-    expect(card.querySelector(".cl-f.is-total small")?.textContent).toBe("alle erreicht");
+    expect(card.querySelector(".cl-f.is-total small")?.textContent).toBe("alle angeschrieben");
     // Einstellungen als eigene Felder mit Zeichen – ohne Liste, ohne „persönlich“-Zähler, Drip „pro Stunde“, Versand mit ausgeschriebenen Tagen
     const label = (node: Element) => Array.from(node.querySelector("dt")?.childNodes ?? []).filter((child) => !(child instanceof HTMLElement && child.classList.contains("fact-icon"))).map((child) => child.textContent).join("");
     const specs = Object.fromEntries(Array.from(card.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent]));
@@ -106,8 +106,8 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     const plain = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Nachfassen nach Angebot"))!; expect(plain.querySelector(".cl-title .sparte-badge .sparte-badge-emoji")?.textContent).toBe("☀️♨️"); expect(plain.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️♨️Photovoltaik & WärmepumpeStandard"); expect(plain.querySelector(".cl-title .sparte-badge")?.classList.contains("is-standard")).toBe(true);
     expect(card.textContent).not.toContain("Liste „Dachdecker Hessen“"); expect(card.textContent).not.toMatch(/persönlich|\/Std\./);
     const review = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
-    expect(review.querySelector(".cl-f.is-total small")?.textContent).toBe("4 warten noch"); // wer noch keine E-Mail hat – und warum
-    expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail wartet1 freigegebenKI schreibt noch 2 · ca. 1 Min."); // was wartet, was freigegeben ist (geht noch raus) und wie lange die KI noch schreibt // alles in einem Hinweis: fertig zur Freigabe – und was die KI noch vorschreibt
+    expect(Array.from(review.querySelectorAll(".cl-f.is-total small")).map((node) => node.textContent)).toContain("4 warten auf die 1. E-Mail"); // wer noch keine E-Mail hat – und warum
+    expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail zu prüfenKI schreibt noch 2 · ca. 1 Min.1 freigegeben"); // zusammen = „4 warten auf die 1. E-Mail“ // was wartet, was freigegeben ist (geht noch raus) und wie lange die KI noch schreibt // alles in einem Hinweis: fertig zur Freigabe – und was die KI noch vorschreibt
     const writingPart = review.querySelector<HTMLElement>(".cl-approval-part.is-writing")!; expect(writingPart.getAttribute("title")).toContain("auch nachts");
     const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe · freier Vorschlag"); // Ansatz steht mit dabei
     expect(review.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); // aus dem Namen erkannt
@@ -143,7 +143,7 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     const facts = Object.fromEntries(Array.from(head.querySelectorAll(".ch-fact")).map((node) => [factLabel(node), Array.from(node.querySelectorAll("dd > span")).map((part) => part.textContent)]));
     expect(head.querySelector(".ch-title > :first-child")?.classList.contains("sparte-badge")).toBe(true); expect(head.querySelector(".ch-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); expect(head.querySelector(".ch-title .sparte-badge + h1")).toBeTruthy(); expect(head.querySelectorAll(".ch-fact .fact-icon").length).toBe(5); // Kategorie-Schild zuerst, dann der Name, jede Angabe mit Zeichen
     expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], KI: ["schreibt einzeln", "mit Freigabe · freier Vorschlag"], Versand: ["09:00–11:30 und 14:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
-    expect(head.querySelector(".ch-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail wartetKI schreibt noch 2"); // Freigabe in einem Hinweis, auch oben in der Kampagne
+    expect(head.querySelector(".ch-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail zu prüfenKI schreibt noch 21 freigegeben"); // Freigabe in einem Hinweis, auch oben in der Kampagne
     expect(head.querySelector(".cd-chips")).toBeNull(); // keine lange Schilder-Reihe mehr
   });
 });
