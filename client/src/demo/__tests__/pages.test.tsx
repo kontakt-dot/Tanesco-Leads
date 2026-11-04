@@ -109,7 +109,7 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     // Einstellungen als eigene Felder mit Zeichen – ohne Liste, ohne „persönlich“-Zähler, Drip „pro Stunde“, Versand mit ausgeschriebenen Tagen
     const label = (node: Element) => Array.from(node.querySelector("dt")?.childNodes ?? []).filter((child) => !(child instanceof HTMLElement && child.classList.contains("fact-icon"))).map((child) => child.textContent).join("");
     const specs = Object.fromEntries(Array.from(card.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent]));
-    expect(specs).toEqual({ KI: "Vorlage für alle", Versand: "Mo–Fr · 09:00–11:30 und 14:00–16:30", Drip: "40 pro Stunde", "A/B-Betreff": "A vorn" }); // kurz: „Bei Antwort: Serie stoppt“ ist der Normalfall und steht nur noch als Warnung da
+    expect(specs).toEqual({ KI: "Vorlage für alle", Versand: "Mo–Fr · 08:00–12:00 und 13:00–16:30", Drip: "40 pro Stunde", "A/B-Betreff": "A vorn" }); // kurz: „Bei Antwort: Serie stoppt“ ist der Normalfall und steht nur noch als Warnung da
     expect(Array.from(card.querySelectorAll(".cl-spec")).map(label)).toEqual(["KI", "Versand", "Drip", "A/B-Betreff"]); // feste Reihenfolge
     expect(Array.from(card.querySelectorAll(".cl-spec .fact-icon svg")).length).toBe(4); // jedes Feld mit eigenem Zeichen
     // Lead-Kategorie als Schild ganz links vor dem Namen – mit Emoji der Kategorie
@@ -136,7 +136,7 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
   });
   it("Versand: eine gespeicherte Tageszeit, die genau der normalen Zeit entspricht, steht nicht extra da – nur echte Abweichungen („freitags bis 13:00“)", async () => {
     const row = getStore().tables.emailCampaigns.find((item) => item.name === "Dachdecker Hessen – Erstkontakt")!;
-    row.sendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00", timezone: "Europe/Berlin", preset: "2fenster-0900-1130-1400-1630", days: { "1": { from: "09:00", to: "16:30" }, "5": { from: "09:00", to: "13:00" } } };
+    row.sendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "16:30", pauseFrom: "12:00", pauseTo: "13:00", timezone: "Europe/Berlin", preset: "2fenster-0800-1200-1300-1630", days: { "1": { from: "08:00", to: "16:30" }, "5": { from: "08:00", to: "13:00" } } };
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const { view } = mount(); await settle(300); await settle(300);
     const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Dachdecker Hessen – Erstkontakt"))!;
@@ -156,7 +156,7 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     const factLabel = (node: Element) => Array.from(node.querySelector("dt")?.childNodes ?? []).filter((child) => !(child instanceof HTMLElement && child.classList.contains("fact-icon"))).map((child) => child.textContent).join("");
     const facts = Object.fromEntries(Array.from(head.querySelectorAll(".ch-fact")).map((node) => [factLabel(node), Array.from(node.querySelectorAll("dd > span")).map((part) => part.textContent)]));
     expect(head.querySelector(".ch-title > :first-child")?.classList.contains("sparte-badge")).toBe(true); expect(head.querySelector(".ch-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); expect(head.querySelector(".ch-title .sparte-badge + h1")).toBeTruthy(); expect(head.querySelectorAll(".ch-fact .fact-icon").length).toBe(5); // Kategorie-Schild zuerst, dann der Name, jede Angabe mit Zeichen
-    expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], KI: ["schreibt einzeln", "mit Freigabe · individueller Vorschlag"], Versand: ["09:00–11:30 und 14:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
+    expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], KI: ["schreibt einzeln", "mit Freigabe · individueller Vorschlag"], Versand: ["08:00–12:00 und 13:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
     expect(head.querySelector(".ch-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail zu prüfenKI schreibt noch 21 freigegeben"); // Freigabe in einem Hinweis, auch oben in der Kampagne
     expect(head.querySelector(".cd-chips")).toBeNull(); // keine lange Schilder-Reihe mehr
   });

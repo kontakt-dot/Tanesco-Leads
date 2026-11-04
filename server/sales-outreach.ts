@@ -217,7 +217,7 @@ async function repairCampaignTrees(db: Db, tenantId: number) {
     // Fußzeile einmalig leeren: der alte Standardtext („Du erhältst diese E-Mail, weil …“ bzw. Anschrift + Abmelde-Satz) verschwindet überall; eigene Texte bleiben
     const design = (row.design ?? null) as Partial<EmailDesign> | null; const footer = design?.footerText ?? "";
     const clearFooter = !design?.footerReset && Boolean(footer.trim()) && (/Du erhältst diese E-Mail, weil/i.test(footer) || footer.trim() === companyFooterText().trim() || /^Tanesco Digital GbR/i.test(footer.trim())); // nur einmal – wer die Fußzeile danach bewusst setzt, behält sie
-    // Versandzeiten einmalig auf die zwei Zeitfenster umstellen (9:00–11:30 und 14:00–16:30, Mo–Fr); spätere eigene Änderungen bleiben
+    // Versandzeiten einmalig auf die zwei Zeitfenster umstellen (8:00–12:00 und 13:00–16:30, Mo–Fr); spätere eigene Änderungen bleiben
     const stored = (row.sendWindow ?? null) as Partial<SendWindow> | null; const moveWindow = stored?.preset !== SEND_WINDOW_PRESET;
     const sendWindow = moveWindow ? { ...DEFAULT_SEND_WINDOW, timezone: stored?.timezone || DEFAULT_SEND_WINDOW.timezone, drip: stored?.drip ?? null } : null;
     if (next || clearFooter || sendWindow) await db.update(emailCampaigns).set({ ...(next ? { tree: next } : {}), ...(clearFooter ? { design: { ...(design ?? {}), footerText: "", footerReset: 1 } } : {}), ...(sendWindow ? { sendWindow } : {}), updatedAt: row.updatedAt }).where(eq(emailCampaigns.id, row.id)); // automatische Auffrischung zählt nicht als „bearbeitet“
@@ -225,7 +225,7 @@ async function repairCampaignTrees(db: Db, tenantId: number) {
   // Gespeicherte KI-Entwürfe: Aroundhome raus (Text, Betreff, Alternativen), holprige Formulierung „qualifiziert über … Fragen“ glätten
   await cleanStoredDrafts(db, tenantId).catch(() => null);
 }
-/** Laufende Kampagnen ohne aktuelle Versandzeiten einmalig auf die zwei Zeitfenster (9:00–11:30, 14:00–16:30 Uhr) umstellen – auch ohne dass jemand die Seite öffnet. Drip-Einstellung bleibt. */
+/** Laufende Kampagnen ohne aktuelle Versandzeiten einmalig auf die zwei Zeitfenster (8:00–12:00, 13:00–16:30 Uhr) umstellen – auch ohne dass jemand die Seite öffnet. Drip-Einstellung bleibt. */
 const windowsMigrated = new Set<number>();
 export async function migrateSendWindows(db: Db, tenantId: number): Promise<number> {
   if (windowsMigrated.has(tenantId)) return 0; windowsMigrated.add(tenantId);

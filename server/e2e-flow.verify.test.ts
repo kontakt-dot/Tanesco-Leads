@@ -2912,7 +2912,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await expect(owner.leadops.startEmailCampaign({ id: empty.id })).rejects.toThrow(/Noch keine Kontakte ausgewählt/);
   }, 40000);
 
-  it("63a. Versandzeiten: laufende Kampagnen werden einmalig auf 9:00–11:30 und 14:00–16:30 Uhr umgestellt (Drip bleibt), gespeicherte eigene Zeiten bleiben", async () => {
+  it("63a. Versandzeiten: laufende Kampagnen werden einmalig auf 8:00–12:00 und 13:00–16:30 Uhr umgestellt (Drip bleibt), gespeicherte eigene Zeiten bleiben", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const starter = await owner.leadops.emailCampaignStarter();
     const tree = { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] };
     const base = { fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "alle" }, tree, design: starter.design as unknown as Record<string, unknown> };
@@ -2921,11 +2921,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Wie vor dem Update gespeichert: 7:30–17:00, freitags bis 13 Uhr, Drip 20/Std. – ohne Kennung der neuen Zeiten
     await db.update(emailCampaigns).set({ status: "aktiv", sendWindow: { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin", days: { "5": { from: "07:30", to: "13:00" } }, drip: { enabled: true, perHour: 20, gapSeconds: 180 } } }).where(eq(emailCampaigns.id, old.id));
     const moved = (await owner.leadops.getEmailCampaign({ id: old.id })).sendWindow as Record<string, unknown>;
-    expect(moved).toMatchObject({ enabled: true, from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00", days: null, drip: { enabled: true, perHour: 20, gapSeconds: 180 } });
+    expect(moved).toMatchObject({ enabled: true, from: "08:00", to: "16:30", pauseFrom: "12:00", pauseTo: "13:00", days: null, drip: { enabled: true, perHour: 20, gapSeconds: 180 } });
     expect((await owner.leadops.getEmailCampaign({ id: own.id })).sendWindow).toMatchObject({ weekdays: [1, 2, 3], from: "08:00", to: "12:00", pauseFrom: null }); // bewusst gespeichert → bleibt
     // Danach selbst geändert → bleibt ebenfalls (keine zweite Umstellung)
     await owner.leadops.saveEmailCampaign({ ...base, id: old.id, name: "Alte Zeiten", sendWindow: { ...moved, from: "10:00" } } as never);
-    expect((await owner.leadops.getEmailCampaign({ id: old.id })).sendWindow).toMatchObject({ from: "10:00", pauseFrom: "11:30" });
+    expect((await owner.leadops.getEmailCampaign({ id: old.id })).sendWindow).toMatchObject({ from: "10:00", pauseFrom: "12:00" });
   }, 30000);
 
   it("63b. Aroundhome nie in Entwürfen: Text, Betreff und Alternativ-Vorschläge werden gesäubert, Prüfung im Freigabe-Fenster", async () => {

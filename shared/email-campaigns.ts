@@ -42,12 +42,12 @@ export function dripBudget(drip: DripSettings, sentLastHour: number, lastSentAt:
   return Math.min(left, Math.max(1, Math.floor(60 / drip.gapSeconds))); // je Minuten-Durchlauf höchstens so viele, wie der Abstand zulässt
 }
 export type SendWindow = { enabled: boolean; weekdays: number[]; from: string; to: string; timezone: string; days?: Record<string, SendDay> | null; drip?: DripSettings | null; pauseFrom?: string | null; pauseTo?: string | null; preset?: string | null }; // Pause: dazwischen wird nicht gesendet (zwei Zeitfenster am Tag)
-/** Standard: werktags zwei Zeitfenster, 9:00–11:30 und 14:00–16:30 Uhr (Berlin) – die Zeiten, die am besten konvertieren. Fällige E-Mails außerhalb warten bis zum nächsten Fenster. */
-export const SEND_WINDOW_PRESET = "2fenster-0900-1130-1400-1630";
-export const DEFAULT_SEND_WINDOW: SendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00", timezone: "Europe/Berlin", days: null, preset: SEND_WINDOW_PRESET };
-/** Gilt die Pause (z. B. 11:30–14:00)? Nur wenn sie innerhalb von Von–Bis liegt. */
+/** Standard: werktags zwei Zeitfenster, 8:00–12:00 und 13:00–16:30 Uhr (Berlin), Mittagspause 12–13 Uhr. Fällige E-Mails außerhalb warten bis zum nächsten Fenster. */
+export const SEND_WINDOW_PRESET = "2fenster-0800-1200-1300-1630"; // neuer Schlüssel → alle Kampagnen werden beim Serverstart einmal auf diese Zeiten umgestellt
+export const DEFAULT_SEND_WINDOW: SendWindow = { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "16:30", pauseFrom: "12:00", pauseTo: "13:00", timezone: "Europe/Berlin", days: null, preset: SEND_WINDOW_PRESET };
+/** Gilt die Pause (z. B. 12:00–13:00)? Nur wenn sie innerhalb von Von–Bis liegt. */
 export const pauseOf = (window: Pick<SendWindow, "pauseFrom" | "pauseTo">) => (window.pauseFrom && window.pauseTo && window.pauseFrom < window.pauseTo ? { from: window.pauseFrom, to: window.pauseTo } : null);
-/** Lesbar: „09:00–11:30 und 14:00–16:30“ oder „07:30–17:00“. */
+/** Lesbar: „08:00–12:00 und 13:00–16:30“ oder „07:30–17:00“. */
 export const windowTimes = (window: SendWindow, day?: SendDay | null) => { const from = day?.from ?? window.from; const to = day?.to ?? window.to; const pause = pauseOf(window); return pause && pause.from > from && pause.to < to ? `${from}–${pause.from} und ${pause.to}–${to}` : `${from}–${to}`; };
 /** Gespeichertes Fenster einer Kampagne auflösen: fehlende Felder mit dem Standard füllen; ohne gespeichertes Fenster (ältere Kampagnen) bleibt der Versand rund um die Uhr. */
 export const resolveSendWindow = (stored: Partial<SendWindow> | null | undefined): SendWindow => stored ? { ...DEFAULT_SEND_WINDOW, ...stored, days: stored.days === undefined ? DEFAULT_SEND_WINDOW.days : stored.days } : { ...DEFAULT_SEND_WINDOW, enabled: false };

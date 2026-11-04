@@ -1120,7 +1120,7 @@ describe("Liste direkt im Kampagnen-Editor hochladen, Standard-Versandfenster (C
     const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Mailing Oktober", fromName: "Tanesco", fromEmail: "vertrieb@tanesco.digital", replyTo: null, audience: { source: "liste", listName: "Mailing Oktober" }, tree: starter.tree, design: starter.design, sendWindow: { enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" }, isTemplate: false, abSplit: 50 });
     const campaign = await call("leadops.getEmailCampaign", { id: saved.id }); expect(campaign.sendWindow).toMatchObject({ enabled: true, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" });
     // bestehende Kampagnen (vor dem Update gespeichert) laufen einmalig auf die zwei Zeitfenster um – Drip bleibt
-    const legacy = getStore().tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!; expect((await call("leadops.getEmailCampaign", { id: legacy.id })).sendWindow).toMatchObject({ enabled: true, from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00" });
+    const legacy = getStore().tables.emailCampaigns.find((row) => row.name === "Dachdecker Hessen – Erstkontakt")!; expect((await call("leadops.getEmailCampaign", { id: legacy.id })).sendWindow).toMatchObject({ enabled: true, from: "08:00", to: "16:30", pauseFrom: "12:00", pauseTo: "13:00" });
   });
 });
 

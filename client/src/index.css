@@ -3997,3 +3997,11 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .kpi-people-campaign{grid-area:camp;font-size:12px;color:#b3b0d0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kpi-people em{grid-area:when;font-style:normal;font-size:11.5px;color:#8a87a8;font-variant-numeric:tabular-nums}
 @media (max-width:600px){.kpi-people button{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"name when" "mail when" "camp camp"}}
+/* v291: „Heute“ – gesendet · steht heute noch an · für später */
+.cl-today-plan{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px}
+.cl-today-plan>span{display:inline-flex;align-items:baseline;gap:5px;min-height:28px;padding:4px 11px;border-radius:999px;font-size:12px;color:#b3b0d0;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
+.cl-today-plan b{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;color:#f5f3ff}
+.cl-today-plan .is-sent{color:#5eead4;background:rgba(45,212,191,.1);border-color:rgba(45,212,191,.25)}
+.cl-today-plan .is-next{color:#c4b5fd;background:rgba(129,120,255,.12);border-color:rgba(129,120,255,.3)}
+.cl-today-plan .is-limit{color:#8a87a8}
+.cl-today-plan.is-full .is-next{color:#fca5a5;background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.3)}

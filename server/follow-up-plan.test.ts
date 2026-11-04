@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SEND_WINDOW, type EmailTree, type SendWindow } from "../shared/email-campaigns";
+import { DEFAULT_SEND_WINDOW as STANDARD_WINDOW, type EmailTree, type SendWindow } from "../shared/email-campaigns";
+const DEFAULT_SEND_WINDOW: SendWindow = { ...STANDARD_WINDOW, from: "09:00", to: "16:30", pauseFrom: "11:30", pauseTo: "14:00" }; // feste Zeiten für diese Rechen-Tests (Standard ist jetzt 8–12 und 13–16:30)
 import { nextEmailOf, planDayKey, planFollowUps, windowIntervals, type PlanCampaign, type PlanRecipient } from "../shared/follow-up-plan";
 
 // Mittwoch, 28.10.2026, 10:18 Uhr deutscher Zeit (Winterzeit: UTC+1)
