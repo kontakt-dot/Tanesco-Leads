@@ -13,7 +13,7 @@ export type MessageContent = string | TextContent | ImageContent | FileContent;
 export type Message = { role: Role; content: MessageContent | MessageContent[]; name?: string };
 export type JsonSchema = { name: string; schema: Record<string, unknown>; strict?: boolean };
 export type OutputSchema = JsonSchema;
-export type InvokeParams = { messages: Message[]; maxTokens?: number; max_tokens?: number; outputSchema?: OutputSchema; output_schema?: OutputSchema; model?: string; temperature?: number };
+export type InvokeParams = { messages: Message[]; maxTokens?: number; max_tokens?: number; outputSchema?: OutputSchema; output_schema?: OutputSchema; model?: string; temperature?: number; purpose?: string /* für den KI-Verbrauch: wofür war die Anfrage */ };
 export type InvokeResult = { id: string; created: number; model: string; choices: Array<{ index: number; message: { role: Role; content: string }; finish_reason: string | null }>; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
 
 const API_URL = process.env.ANTHROPIC_API_URL ?? "https://api.anthropic.com/v1/messages";
@@ -67,7 +67,9 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   const messages = params.messages.filter((message) => message.role !== "system").map((message) => ({ role: message.role === "assistant" ? "assistant" : "user", content: toBlocks(message.content) }));
   if (!messages.length) messages.push({ role: "user", content: [{ type: "text", text: "Bitte antworte gemäß Systemanweisung." }] });
   const body: Record<string, unknown> = { model: pickModel(params.model), max_tokens: params.maxTokens ?? params.max_tokens ?? 4096, messages };
-  if (system) body.system = system;
+  // Prompt-Zwischenspeicher: die lange Systemanweisung (und das Schema davor) ist bei jedem Entwurf gleich – Anthropic berechnet sie
+  // beim Wiederholen nur zu einem Zehntel. Unter ~1024 Tokens wird nichts gespeichert (kostet dann nichts extra).
+  if (system) body.system = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
   if (typeof params.temperature === "number") body.temperature = params.temperature;
   if (schema) {
     body.tools = [{ name: schema.name, description: "Gibt das Ergebnis strukturiert im vorgegebenen Schema zurück.", input_schema: schema.schema }];
@@ -75,7 +77,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   }
   // Zeitgrenze passend zur Länge der Antwort (z. B. 4096 Tokens → ca. 2 Minuten), mindestens 90 s, höchstens 5 Minuten
   const timeoutMs = Number(process.env.ANTHROPIC_TIMEOUT_MS ?? 0) || Math.max(90_000, Math.min(300_000, Number(body.max_tokens) * 30));
-  type AnthropicResponse = { id: string; model: string; stop_reason: string | null; content: Array<{ type: string; text?: string; name?: string; input?: unknown }>; usage?: { input_tokens: number; output_tokens: number } };
+  type AnthropicResponse = { id: string; model: string; stop_reason: string | null; content: Array<{ type: string; text?: string; name?: string; input?: unknown }>; usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
   let answer: AnthropicResponse | null = null;
   for (let attempt = 0; answer === null; attempt += 1) {
     const started = Date.now(); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -98,6 +100,8 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     } finally { clearTimeout(timer); }
   }
   const data: AnthropicResponse = answer;
+  // Verbrauch verbuchen (Zweck = Name des Schemas, sonst „sonstiges“) – nebenbei, ein Fehler hier stört die Antwort nie
+  if (data.usage) { const usage = data.usage; void (async () => { try { const { getDb } = await import("../db"); const db = await getDb(); if (!db) return; const { recordAiUsage } = await import("../ai-budget"); await recordAiUsage(db as never, { model: data.model ?? String(body.model), purpose: params.purpose ?? schema?.name ?? "sonstiges", input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0, cacheRead: usage.cache_read_input_tokens ?? 0, cacheWrite: usage.cache_creation_input_tokens ?? 0 }); } catch { /* egal */ } })(); }
   let content = "";
   if (schema) { const tool = data.content.find((block) => block.type === "tool_use" && block.name === schema.name); content = tool?.input !== undefined ? JSON.stringify(tool.input) : data.content.filter((block) => block.type === "text").map((block) => block.text ?? "").join("\n").trim(); }
   else content = data.content.filter((block) => block.type === "text").map((block) => block.text ?? "").join("\n").trim();

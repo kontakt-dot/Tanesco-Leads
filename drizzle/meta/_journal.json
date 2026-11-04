@@ -715,6 +715,13 @@
       "when": 1794700000000,
       "tag": "0101_ansatz_test",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "5",
+      "when": 1794800000000,
+      "tag": "0102_ki_verbrauch",
+      "breakpoints": true
     }
   ]
 }

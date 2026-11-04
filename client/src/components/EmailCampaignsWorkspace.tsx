@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { confirmAction } from "@/lib/confirm";
+import { confirmAction, promptAction } from "@/lib/confirm";
 import { readListFile } from "@/lib/list-file";
 import ListColumnMapping from "@/components/ListColumnMapping";
 import { parseColdList, STANDARD_PLACEHOLDERS, type ColumnTarget } from "../../../shared/cold-list";
@@ -534,7 +534,18 @@ function TodayPlanAll({ daily, rows }: { daily: { sent: number; limit: number; l
     <span className="is-next"><b>{todayLeft}</b> {daily.left === 0 ? "– Limit erreicht, weiter ab morgen" : todayLeft === 1 ? "steht noch an" : "stehen noch an"}</span>
     {later + paused > 0 && <span className="is-later"><b>{later + paused}</b> freigegeben für später</span>}
     <span className="is-limit">Limit {daily.limit}</span>
+    <AiTodayChip />
   </span>;
+}
+const euro = (cents: number) => `${(cents / 100).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+/** „KI heute 3,20 € von 10 €“ – Klick ändert das Tagesbudget. Im Hinweis: wofür das Geld ging. */
+function AiTodayChip() {
+  const utils = trpc.useUtils();
+  const usage = trpc.leadops.aiUsageToday.useQuery(undefined, { retry: false, refetchInterval: 60_000 }).data;
+  const setBudget = trpc.leadops.setAiDailyBudget.useMutation({ onSuccess: (result) => { toast.success(`KI-Tagesbudget: ${euro(result.budgetCents)} – im Hintergrund schreibt die KI höchstens bis dahin.`); void utils.leadops.aiUsageToday.invalidate(); void utils.leadops.campaignReviewQueue.invalidate(); }, onError: (error) => toast.error(error.message) });
+  if (!usage) return null;
+  const title = `KI-Kosten heute (ca.): ${euro(usage.spentCents)} von ${euro(usage.budgetCents)} Tagesbudget, ${usage.calls} Anfragen.${usage.parts.length ? "\n" + usage.parts.map((part) => `${part.label}: ${euro(part.cents)} (${part.calls})`).join("\n") : ""}\nIst das Budget erreicht, schreibt und prüft die KI im Hintergrund erst morgen weiter – was du selbst anklickst, geht immer. Klick: Budget ändern.`;
+  return <button type="button" className={`is-ai ${usage.reached ? "is-full" : ""}`} title={title} onClick={async () => { const value = await promptAction("KI-Tagesbudget in Euro (für das Vorschreiben und Prüfen im Hintergrund):", String(Math.round(usage.budgetCents / 100)), "z. B. 10"); const euros = Number(String(value ?? "").replace(",", ".")); if (value !== null && Number.isFinite(euros) && euros >= 1) setBudget.mutate({ euros }); }}><Sparkles aria-hidden="true" /> KI heute <b>{euro(usage.spentCents)}</b> / {euro(usage.budgetCents)}</button>;
 }
 /** Gesendet je Lead-Kategorie (Leadsparte der Kampagne) – im gewählten Zeitraum, größte zuerst: „☀️ Photovoltaik 98 E-Mails · 64 Kontakte“. */
 function SentByCategory({ rows }: { rows: CampaignRow[] }) {

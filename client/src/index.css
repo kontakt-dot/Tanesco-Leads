@@ -4012,3 +4012,7 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cl-today-plan .is-label{background:transparent!important;border-color:transparent!important;padding-left:0;padding-right:2px;font-weight:600}
 .cd-today-line{display:flex;justify-content:flex-end;margin:0 0 10px}
 .cd-today-line:empty{display:none}
+.cl-today-plan .is-ai{display:inline-flex;align-items:baseline;gap:5px;min-height:28px;padding:4px 11px;border-radius:999px;font:inherit;font-size:12px;color:#b3b0d0;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);cursor:pointer}
+.cl-today-plan .is-ai svg{width:12px;height:12px;align-self:center}
+.cl-today-plan .is-ai:hover{border-color:rgba(129,120,255,.4)}
+.cl-today-plan .is-ai.is-full{color:#fca5a5;border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.1)}

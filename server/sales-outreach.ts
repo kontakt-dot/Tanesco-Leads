@@ -829,7 +829,7 @@ export async function processEmailCampaigns(db: Db, appUrl: string, options: { c
     // KI-Versand: „freigabe“ = jede E-Mail (jeder Schritt) braucht deine Freigabe – die Sperre sitzt direkt vor dem Senden (defer).
     // „auto“ = die KI schreibt jede E-Mail im Hintergrund direkt vor dem Versand. „aus“ = Vorlagen wie immer.
     const kiModus = kiModusOf(campaign); const kiAnsatz = kiAnsatzOf(campaign);
-    let kiBudget = 4; // höchstens so viele KI-Entwürfe je Kampagne und Lauf (Webseite lesen + schreiben dauert) – der Rest ist in der nächsten Minute dran
+    const { backgroundAiAllowed } = await import("./ai-budget"); let kiBudget = (await backgroundAiAllowed(db, campaign.tenantId).catch(() => true)) ? 4 : 0; // höchstens so viele KI-Entwürfe je Kampagne und Lauf (Webseite lesen + schreiben dauert) – der Rest ist in der nächsten Minute dran; KI-Tagesbudget erreicht → 0 (morgen weiter)
     const campaignTree = tree(campaign);
     // Doppelt-Schutz direkt vor dem Versand: fällige Erst-E-Mails an Adressen, die diese Kampagne schon bekommen haben (Eintrag gelöscht und
     // wieder aufgenommen), gehen nicht noch einmal raus – ihr Verlauf wird wiederhergestellt; doppelte Einträge laufen nie parallel

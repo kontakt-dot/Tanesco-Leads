@@ -4106,10 +4106,41 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const atSend = await add("fenster-a@fw-e2e.example", "m1"); const atWait = await add("fenster-b@fw-e2e.example", "w1");
     expect(await releaseWindowWaits(db, S.tenantId as number, campaign.id)).toBe(1);
     const rows = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
-    expect(rows.find((row) => row.id === atSend)!.nextActionAt!.getTime()).toBeLessThanOrEqual(Date.now()); // sofort neu einplanen
-    expect(rows.find((row) => row.id === atWait)!.nextActionAt!.getTime()).toBe(Math.floor(later.getTime() / 1000) * 1000); // Wartezeit bleibt
+    expect(rows.find((row) => row.id === atSend)!.nextActionAt!.getTime()).toBeLessThanOrEqual(Date.now() + 1000); // sofort neu einplanen (Datenbank rundet auf Sekunden)
+    expect(Math.abs(rows.find((row) => row.id === atWait)!.nextActionAt!.getTime() - later.getTime())).toBeLessThan(1500); // Wartezeit bleibt
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
   }, 30000);
+
+  it("63zp. KI-Kosten: Verbrauch wird je Tag gezählt, Tagesbudget stoppt das Vorschreiben im Hintergrund, Vorrat höchstens 2 Tage (2 × Tageslimit)", async () => {
+    const { recordAiUsage, aiUsageToday, costMilliCents } = await import("./ai-budget"); const { prewriteDrafts, prewritePauseOf } = await import("./campaign-review"); const { aiUsageDays, mailSettings: settingsTable } = await import("../drizzle/schema");
+    const { starterBlocks } = await import("../shared/email-design");
+    expect(costMilliCents({ model: "claude-sonnet-4-6", purpose: "vorschlaege", input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 })).toBe(276_000); // 3 $ → 2,76 €
+    expect(costMilliCents({ model: "claude-haiku-4-5", purpose: "kategoriepruefung", input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 })).toBe(92_000); // Haiku: ein Drittel
+    await db.delete(aiUsageDays);
+    await recordAiUsage(db, { model: "claude-sonnet-4-6", purpose: "vorschlaege", input: 4000, output: 800, cacheRead: 0, cacheWrite: 0 });
+    await recordAiUsage(db, { model: "claude-sonnet-4-6", purpose: "vorschlaege", input: 4000, output: 800, cacheRead: 0, cacheWrite: 0 });
+    let usage = await owner.leadops.aiUsageToday(); expect(usage.calls).toBe(2); expect(usage.parts[0]).toMatchObject({ purpose: "vorschlaege", label: "E-Mail-Entwürfe", calls: 2 }); expect(usage.spentCents).toBe(Math.round(2 * costMilliCents({ model: "claude-sonnet-4-6", purpose: "x", input: 4000, output: 800, cacheRead: 0, cacheWrite: 0 }) / 1000));
+    // Budget 1 € – schon 2 € verbraucht → im Hintergrund wird nichts geschrieben
+    await owner.leadops.setAiDailyBudget({ euros: 1 });
+    await recordAiUsage(db, { model: "claude-sonnet-4-6", purpose: "vorschlaege", input: 700_000, output: 0, cacheRead: 0, cacheWrite: 0 }); // ca. 1,93 €
+    const { forgetSpentCache: forget } = await import("./ai-budget"); forget();
+    usage = await aiUsageToday(db, S.tenantId as number); expect(usage.reached).toBe(true);
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key";
+    try {
+      const starter = await owner.leadops.emailCampaignStarter();
+      await owner.leadops.importColdList({ listName: "Budget-Liste", toPipeline: false, rows: ["Ida", "Jan"].map((firstName, n) => ({ firstName, lastName: "Budget", company: `${firstName} Solar GmbH`, city: "Kassel", email: `budget${n}@budget-e2e.example` })) });
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Photovoltaik Budget", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listNames: ["Budget-Liste"] }, tree: { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: campaign.id });
+      const result = await prewriteDrafts(db, { campaignId: campaign.id });
+      expect(result.written).toBe(0); expect(prewritePauseOf(S.tenantId as number)).toBe("budget");
+      expect((await owner.leadops.campaignReviewQueue({ campaignId: campaign.id })).prewritePause).toBe("budget");
+      // Budget hoch → schreibt wieder
+      await owner.leadops.setAiDailyBudget({ euros: 50 }); await db.delete(aiUsageDays); await new Promise((resolve) => setTimeout(resolve, 50));
+      const { forgetSpentCache } = await import("./ai-budget"); forgetSpentCache();
+      const again = await prewriteDrafts(db, { campaignId: campaign.id }); expect(again.written).toBe(2);
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+    } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; await db.update(settingsTable).set({ aiDailyBudgetCents: 1000 }).where(eq(settingsTable.tenantId, S.tenantId as number)); await db.delete(aiUsageDays); }
+  }, 90000);
 
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");

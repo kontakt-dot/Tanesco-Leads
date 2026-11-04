@@ -171,7 +171,7 @@ export function startDraftPrewriter(intervalSeconds = Number(process.env.EMAIL_P
       if (result && (result.written || result.failed)) console.log(`[E-Mail-Kampagnen] Entwürfe vorgeschrieben: ${result.written}${result.failed ? ` (${result.failed} nicht geklappt – neuer Versuch in 10 Minuten)` : ""} – noch ${result.open} offen`);
       if (result && result.fitChecked) console.log(`[E-Mail-Kampagnen] Kategorie nachgeprüft: ${result.fitChecked}${result.fitFlagged ? ` (${result.fitFlagged} passen vielleicht nicht – markiert)` : ""} – noch ${result.fitOpen} offen`);
       if (result && (result.abSwitched || result.abRewritten)) console.log(`[E-Mail-Kampagnen] A/B-Ansatz umgestellt: ${result.abSwitched + result.abRewritten}${result.abRewritten ? ` (${result.abRewritten} neu geschrieben)` : ""} – noch ${result.abOpen} offen`);
-      return Boolean(result && ((result.written > 0 && result.open > 0) || (result.fitChecked > 0 && result.fitOpen > 0) || ((result.abSwitched > 0 || result.abRewritten > 0) && result.abOpen > 0))); }
+      return Boolean(result && ((result.written > 0 && result.open > 0) || (result.fitChecked > 0 && result.fitOpen > 0))); } // Ansatz-Umstellung läuft im Minutentakt mit (kein Schnell-Takt – spart KI-Kosten)
     catch (error) { console.error("[E-Mail-Kampagnen] Entwürfe vorschreiben:", error instanceof Error ? error.message : error); return false; }
   };
   const loop = async () => { const more = await tick(); prewriteTimer = setTimeout(() => void loop(), more ? 3000 : intervalSeconds * 1000); prewriteTimer.unref?.(); };
