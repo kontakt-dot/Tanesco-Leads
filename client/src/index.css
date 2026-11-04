@@ -2891,11 +2891,12 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-tag.is-ki{color:#a5f3fc;background:rgba(34,211,238,.1)}
 .cl-side{grid-area:side;display:flex;align-items:center;justify-content:flex-end;gap:10px}
 .cl-side .campaign-actbar{flex-wrap:nowrap}
-.cl-funnel{grid-area:funnel;cursor:pointer;width:700px;max-width:100%;display:grid;grid-template-columns:.95fr .95fr 1.3fr .95fr .95fr .95fr;border-radius:12px;background:rgba(255,255,255,.035);overflow:hidden}
-.cl-f{position:relative;display:flex;flex-direction:column;gap:1px;padding:8px 12px 11px;min-width:0}
+.cl-funnel{grid-area:funnel;cursor:pointer;width:730px;max-width:100%;display:grid;grid-template-columns:1.12fr 1.08fr 1.22fr .82fr .82fr .86fr;border-radius:14px;background:rgba(255,255,255,.035);overflow:hidden}
+.cl-f{position:relative;display:flex;flex-direction:column;gap:2px;padding:9px 12px 12px;min-width:0}
 .cl-f+.cl-f{box-shadow:inset 1px 0 0 rgba(255,255,255,.06)}
-.cl-f span{font-size:10.5px;font-weight:600;color:#8a87a8;white-space:nowrap}
-.cl-f strong{font-size:17px;font-weight:800;color:#f5f3ff;font-variant-numeric:tabular-nums;line-height:1.2}
+.cl-f span{font-size:10.5px;font-weight:600;color:#8a87a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cl-f span .cl-span-note{font-style:normal;font-weight:600;color:#6f6c8f} /* dezent: „· 154 neu“ beim gewählten Zeitraum */
+.cl-f strong{font-size:19px;font-weight:800;color:#f5f3ff;font-variant-numeric:tabular-nums;line-height:1.2}
 .cl-f small{font-size:10.5px;line-height:1.35;color:#8a87a8}
 .cl-f small.is-bad{color:#fca5a5;font-weight:600}
 .cl-f small.is-wait{color:#c4bfff}
@@ -2909,7 +2910,6 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .cl-f small.cl-why::before,.cd-kpi small.cd-why::before{content:"";flex:none;width:7px;height:7px;border-radius:2px;background:currentColor}
 .cl-f small.cl-why.is-ok{color:#2dd4bf}.cl-f small.cl-why.is-wait,.cd-kpi small.cd-why.is-wait{color:#c4b5fd}.cl-f small.cl-why.is-bad,.cd-kpi small.cd-why.is-bad{color:#f87171}.cl-f small.cl-why.is-open,.cd-kpi small.cd-why.is-open{color:#8a87a8}
 .cl-f small.cl-why.is-blocked{color:#fbbf24}.cl-f small.cl-why.is-done{color:#9d99b8}
-.cl-f.is-total small.cl-why::before{display:none}
 /* Schmalere Liste (z. B. Seitenleiste offen): Kennzahlen über die ganze Breite unter Name und Knöpfen – nie gequetscht */
 @container (max-width:1320px){.cl-card{grid-template-areas:"head side" "funnel funnel" "main main"}.cl-funnel{width:auto}.cl-main{align-self:start}}
 @container (max-width:720px){.cl-card{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "funnel" "main" "side";padding:14px}.cl-funnel{grid-template-columns:repeat(3,minmax(0,1fr))}.cl-f:nth-child(4){box-shadow:none}.cl-f:nth-child(n+4){border-top:1px solid rgba(255,255,255,.06)}.cl-audience-name{max-width:100%}.cl-side{justify-content:flex-start;flex-wrap:wrap}} /* Handy: Kennzahlen in zwei Reihen, Karte nie breiter als der Bildschirm */
@@ -3966,3 +3966,34 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 @media (max-width: 760px){.ab-compare{overflow-x:auto}.rv-pick-quick{margin-left:0}}
 .cd-kpi small.cd-why.is-blocked{color:#fbbf24}
 .cd-kpi small.cd-why{white-space:normal;overflow:visible;align-items:flex-start;line-height:1.3}.cd-kpi small.cd-why::before{margin-top:4px}
+/* v289: Karte ruhiger – Zeilen in den Zahlen-Kästchen brechen um statt abgeschnitten zu werden; Empfänger mit Anteils-Balken */
+.cl-f small.cl-why{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.3;align-items:flex-start}
+.cl-f small.cl-why::before{margin-top:3px}
+.cl-f small{overflow-wrap:anywhere}
+.cl-f.is-total .cl-seg{height:4px}
+.rv-fit-delete{margin-left:auto}
+.rv-note.is-unfit .cj-btn{flex:none}
+/* v289: Gesendet je Lead-Kategorie – eine ruhige Reihe über den Kennzahlen */
+.cd-cats{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.cd-cats-label{font-size:12px;font-weight:600;color:#8a87a8;margin-right:4px}
+.cd-cat{position:relative;display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:4px 12px 6px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);font-size:12.5px;color:#d7d5ee;overflow:hidden}
+.cd-cat strong{font-weight:600}
+.cd-cat b{font-weight:800;font-variant-numeric:tabular-nums;color:#f5f3ff}
+.cd-cat i{position:absolute;left:0;bottom:0;height:3px;background:#8278ff;border-radius:0 3px 3px 0}
+/* v289: Zahlen-Reihe immer über die ganze Breite (wie bei schmalen Fenstern) – überall gleich, nichts abgeschnitten */
+.cl-card{grid-template-areas:"head side" "funnel funnel" "main main"}
+.cl-funnel{width:auto}
+.cl-main{align-self:start}
+@container (max-width:720px){.cl-card{grid-template-areas:"head" "funnel" "main" "side"}}
+/* v289: Kontakte hinter einer Kennzahl (alle Kampagnen) */
+.kpi-people-dialog{max-width:min(760px,calc(100vw - 32px))!important;max-height:min(80vh,720px);display:flex;flex-direction:column;gap:10px}
+.kpi-people-count{margin-left:6px;padding:1px 8px;border-radius:999px;background:rgba(129,120,255,.18);font-size:12px;font-weight:700}
+.kpi-people-search{height:36px;padding:0 12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);color:inherit;font-size:13px}
+.kpi-people{list-style:none;margin:0;padding:0;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.kpi-people button{width:100%;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;grid-template-areas:"name camp when" "mail camp when";gap:1px 12px;align-items:center;padding:8px 10px;border-radius:10px;border:1px solid transparent;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.kpi-people button:hover{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08)}
+.kpi-people strong{grid-area:name;font-size:13px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi-people small{grid-area:mail;font-size:11.5px;color:#8a87a8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi-people-campaign{grid-area:camp;font-size:12px;color:#b3b0d0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi-people em{grid-area:when;font-style:normal;font-size:11.5px;color:#8a87a8;font-variant-numeric:tabular-nums}
+@media (max-width:600px){.kpi-people button{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"name when" "mail when" "camp camp"}}

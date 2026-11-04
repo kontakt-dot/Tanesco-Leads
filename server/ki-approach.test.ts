@@ -3,29 +3,29 @@ import { approachLabel, approachOf, autoDraftFor, copiesTemplate, DRAFT_APPROACH
 
 const individual = "Sehr geehrter Herr Wiebe,\n\nauf Ihrer Website steht „Keine Anzahlung, 0 % Risiko“. Genau so arbeiten wir auch.";
 const thirdParty = "Sehr geehrter Herr Wiebe,\n\nsehr wahrscheinlich kommen bei Ihnen Leads an, die ohnehin von uns stammen – nur über Zwischenhändler weitergereicht.";
-const options = [{ key: "frei", label: "Freier Vorschlag", subject: "Ihr Versprechen ohne Anzahlung", text: `${individual} Mehr Text, damit es lang genug ist.` }, { key: "drittanbieter", label: "Drittanbieter-Ansatz", subject: "Direkte Zusammenarbeit", text: `${thirdParty} Mehr Text, damit es lang genug ist.` }];
+const options = [{ key: "frei", label: "Individueller Vorschlag", subject: "Ihr Versprechen ohne Anzahlung", text: `${individual} Mehr Text, damit es lang genug ist.` }, { key: "drittanbieter", label: "Drittanbieter-Ansatz", subject: "Direkte Zusammenarbeit", text: `${thirdParty} Mehr Text, damit es lang genug ist.` }];
 
 describe("KI-Ansatz: es geht nur der gewählte Ansatz raus", () => {
-  it("nur noch zwei Ansätze: Drittanbieter und freier Vorschlag – alte Kampagnen mit „individuell“ gelten als frei", () => {
+  it("nur noch zwei Ansätze: Drittanbieter und individueller Vorschlag – alte Kampagnen mit „individuell“ gelten als frei", () => {
     expect(DRAFT_APPROACHES.map((item) => item.key)).toEqual(["drittanbieter", "frei"]);
     expect(KI_ANSATZ_OPTIONS.map((item) => item.key)).toEqual(["drittanbieter", "frei"]); // Auswahl im Builder
-    expect(KI_ANSATZ_OPTIONS.map((item) => item.label)).toEqual(["Drittanbieter-Ansatz", "Freier Vorschlag"]);
+    expect(KI_ANSATZ_OPTIONS.map((item) => item.label)).toEqual(["Drittanbieter-Ansatz", "Individueller Vorschlag"]);
     expect(kiAnsatzOf({ kiAnsatz: "individuell" })).toBe("frei"); expect(kiAnsatzOf({ kiAnsatz: null })).toBe("frei"); expect(kiAnsatzOf({})).toBe("frei"); expect(kiAnsatzOf({ kiAnsatz: "drittanbieter" })).toBe("drittanbieter"); expect(kiAnsatzOf({ kiAnsatz: "frei" })).toBe("frei");
     expect(approachOf("individuell")).toBeNull(); expect(approachOf("frei")).toBe("frei"); expect(approachOf("drittanbieter")).toBe("drittanbieter"); expect(approachOf(null)).toBeNull();
-    expect(approachLabel("frei")).toBe("Freier Vorschlag"); expect(approachLabel("individuell")).toBe("Individueller Ansatz (alt)");
+    expect(approachLabel("frei")).toBe("Individueller Vorschlag"); expect(approachLabel("individuell")).toBe("Individueller Ansatz (alt)");
   });
-  it("freier Vorschlag ohne Drittanbieter-Kernbotschaft – Drittanbieter wird nicht beschnitten", () => {
+  it("individueller Vorschlag ohne Drittanbieter-Kernbotschaft – Drittanbieter wird nicht beschnitten", () => {
     expect(fitsApproach("frei", individual)).toBe(true);
     expect(fitsApproach("frei", thirdParty)).toBe(false);
     expect(fitsApproach("frei", "Ihre Anfragen stammen sehr wahrscheinlich von uns – nur eben über Umwege.")).toBe(false);
     expect(fitsApproach("frei", "Unsere Leads landen über Zwischenhändler bei Ihnen.")).toBe(false);
-    // allgemeiner Ärger mit Lead-Anbietern darf in den freien Vorschlag – das ist NICHT die Drittanbieter-Kernbotschaft (früher fälschlich verworfen → Vorlage statt KI-Text)
+    // allgemeiner Ärger mit Lead-Anbietern darf in den individuellen Vorschlag – das ist NICHT die Drittanbieter-Kernbotschaft (früher fälschlich verworfen → Vorlage statt KI-Text)
     expect(fitsApproach("frei", "Viele Drittanbieter verkaufen dieselbe Anfrage an mehrere Betriebe – bei uns geht jeder Lead nur an Sie.")).toBe(true);
     expect(fitsApproach("frei", "Wer Leads über Zwischenhändler einkauft, kennt falsche Nummern und Vorkasse.")).toBe(true);
     // ganz normale Sätze über unser Angebot – wurden früher fälschlich aussortiert (dann kam die Vorlage statt des KI-Textes)
     for (const text of ["Unsere Leads werden nicht an Dritte weiterverkauft – jede Anfrage geht nur an Sie.", "Unsere Anfragen kommen ohne Umweg über Portale direkt zu Ihnen.", "Die Leads stammen aus unserer eigenen Generierung über Facebook und Instagram.", "Viele Drittanbieter verkaufen dieselbe Anfrage an mehrere Betriebe – unsere Leads gehen exklusiv an Sie.", "Unsere Interessenten stammen von unseren eigenen Kampagnen.", "Unsere Leads werden nicht über Zwischenhändler verkauft.", "Vermutlich haben Sie schon von uns gehört."]) expect(fitsApproach("frei", text)).toBe(true);
     for (const text of ["Die Leads, die Sie heute über Zwischenhändler kaufen, stammen oft von uns.", "Wir gehen davon aus, dass Sie schon Leads von uns bekommen – nur über Umwege."]) expect(fitsApproach("frei", text)).toBe(false);
-    // steht die Kernbotschaft doch im freien Vorschlag, fliegt nur dieser Satz raus – der Rest des KI-Textes bleibt
+    // steht die Kernbotschaft doch im individuellen Vorschlag, fliegt nur dieser Satz raus – der Rest des KI-Textes bleibt
     const mixed = "Sehr geehrter Herr Wiebe,\n\nIhre Notrufzentrale ist rund um die Uhr besetzt. Sehr wahrscheinlich stammen Ihre Anfragen ohnehin von uns. Unsere Leads gehen exklusiv an Sie.\n\nVielen Dank";
     expect(dropThirdPartyClaim(mixed)).toBe("Sehr geehrter Herr Wiebe,\n\nIhre Notrufzentrale ist rund um die Uhr besetzt. Unsere Leads gehen exklusiv an Sie.\n\nVielen Dank");
     expect(dropThirdPartyClaim(individual)).toBe(individual);

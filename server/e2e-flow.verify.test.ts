@@ -3375,7 +3375,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const old = await owner.leadops.saveEmailCampaign({ ...base, name: "Hausnotruf • Fragen alt" } as never); // Sparte aus dem Namen erkannt
     await db.update(emailCampaigns).set({ tree }).where(eq(emailCampaigns.id, old.id));
     const stamp = (await db.select({ updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, old.id)))[0].updatedAt;
-    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrte Frau Alarm,\n\nunsere Leads sind in der Regel anhand von zehn Fragen telefonisch vorqualifiziert.\n\nVielen Dank", draftOptions: [{ key: "frei", label: "Freier Vorschlag", subject: "Ihr Einbruchschutz", text: "Jeder Lead wird über 10 Fragen qualifiziert." }] }).where(eq(emailCampaignRecipients.id, anna.id));
+    await db.update(emailCampaignRecipients).set({ draftText: "Sehr geehrte Frau Alarm,\n\nunsere Leads sind in der Regel anhand von zehn Fragen telefonisch vorqualifiziert.\n\nVielen Dank", draftOptions: [{ key: "frei", label: "Individueller Vorschlag", subject: "Ihr Einbruchschutz", text: "Jeder Lead wird über 10 Fragen qualifiziert." }] }).where(eq(emailCampaignRecipients.id, anna.id));
     const { fixQuestionCounts } = await import("./campaign-review");
     const result = await fixQuestionCounts(db); expect(result.campaigns).toBeGreaterThanOrEqual(1); expect(result.drafts).toBeGreaterThanOrEqual(1);
     const repaired = (await db.select({ tree: emailCampaigns.tree, updatedAt: emailCampaigns.updatedAt }).from(emailCampaigns).where(eq(emailCampaigns.id, old.id)))[0];
@@ -4048,6 +4048,54 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
   }, 90000);
 
+  it("63zm. A/B-Test abgesichert: freigegebener Entwurf im falschen Ansatz geht NICHT raus, fixApproachMismatches stellt um (Fassung sofort, sonst KI; alte Fassung bleibt Vorschlag) – eigene Texte bleiben und gehen raus", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { fixApproachMismatches } = await import("./campaign-review");
+    const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = "test-key"; (globalThis as { __draftPlan?: string[] }).__draftPlan = [];
+    try {
+      const starter = await owner.leadops.emailCampaignStarter();
+      await owner.leadops.importColdList({ listName: "AB-Fix-Liste", toPipeline: false, rows: ["Emil", "Frieda", "Gustav"].map((firstName, n) => ({ firstName, lastName: "Fix", company: `${firstName} Solar GmbH`, city: "Kassel", email: `abfix${n}@ab-e2e.example` })) });
+      const campaign = await owner.leadops.saveEmailCampaign({ name: "Photovoltaik AB-Fix", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listNames: ["AB-Fix-Liste"] }, tree: { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: campaign.id });
+      const rowsOf = async () => db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id)).orderBy(asc(emailCampaignRecipients.id));
+      const [emil, frieda, gustav] = await rowsOf(); const past = new Date(Date.now() - 3_600_000);
+      const frei = "Sehr geehrte Damen und Herren,\n\nals Solarbetrieb in Kassel betreuen Sie Familien, die schnell eine verlässliche Lösung brauchen – wir liefern die Anfragen dazu, direkt aus der Region.\n\nVielen Dank";
+      const third = "Sehr geehrte Damen und Herren,\n\nüber unsere Quellen wissen wir, dass bei Ihnen Leads ankommen, die ohnehin von uns stammen – nur über Zwischenhändler weitergereicht. Lassen Sie uns direkt zusammenarbeiten.\n\nVielen Dank";
+      // Zuordnung „Drittanbieter“ liegt vor, aber die Umstellung ging verloren (z. B. Server-Neustart): Emil mit gespeicherter Drittanbieter-Fassung, Frieda ohne, Gustav mit eigenem Text
+      await db.update(emailCampaignRecipients).set({ nodeId: "a1", status: "wartet", nextActionAt: past, draftNodeId: "a1", draftState: "freigegeben", draftSubject: "Anfragen aus Kassel für Emil Solar GmbH", draftText: frei, draftApproach: "frei", draftSource: "kiweb", draftOptions: [{ key: "drittanbieter", label: "Drittanbieter-Ansatz", subject: "Direkt statt über Zwischenhändler", text: third, source: "ki" }], approachPick: "drittanbieter" }).where(eq(emailCampaignRecipients.id, emil.id));
+      await db.update(emailCampaignRecipients).set({ nodeId: "a1", status: "wartet", nextActionAt: past, draftNodeId: "a1", draftState: "freigegeben", draftSubject: "Anfragen aus Kassel für Frieda Solar GmbH", draftText: frei, draftApproach: "frei", draftSource: "ki", draftOptions: null, approachPick: "drittanbieter" }).where(eq(emailCampaignRecipients.id, frieda.id));
+      await db.update(emailCampaignRecipients).set({ nodeId: "a1", status: "wartet", nextActionAt: past, draftNodeId: "a1", draftState: "freigegeben", draftSubject: "Eigener Betreff", draftText: "Sehr geehrte Damen und Herren,\n\nmein ganz eigener Text für Gustav Solar.\n\nVielen Dank", draftApproach: "frei", draftSource: "hand", draftOptions: null, approachPick: "drittanbieter" }).where(eq(emailCampaignRecipients.id, gustav.id));
+      await owner.leadops.runEmailCampaigns();
+      const afterRun = await rowsOf();
+      expect(afterRun.find((row) => row.id === emil.id)).toMatchObject({ sentCount: 0, draftState: "freigegeben", draftApproach: "frei" }); // falscher Ansatz → wartet auf die Umstellung
+      expect(afterRun.find((row) => row.id === frieda.id)?.sentCount).toBe(0);
+      expect(afterRun.find((row) => row.id === gustav.id)?.sentCount).toBe(1); // eigener Text geht raus, wie er dasteht
+      const fixed = await fixApproachMismatches(db, { max: 10 });
+      expect(fixed).toMatchObject({ switched: 1, rewritten: 1 });
+      const afterFix = await rowsOf();
+      const emil2 = afterFix.find((row) => row.id === emil.id)!;
+      expect(emil2).toMatchObject({ draftState: "entwurf", draftApproach: "drittanbieter", draftSubject: "Direkt statt über Zwischenhändler" }); // Fassung war da → sofort umgestellt, wartet auf neue Freigabe
+      expect(((emil2.draftOptions as Array<{ key: string }>) ?? []).some((option) => option.key === "frei")).toBe(true); // alte Fassung bleibt als Vorschlag wählbar
+      const frieda2 = afterFix.find((row) => row.id === frieda.id)!;
+      expect(frieda2.draftState).toBe("entwurf"); expect(frieda2.draftApproach).toBe("drittanbieter"); // KI hat neu geschrieben
+      expect(afterFix.find((row) => row.id === gustav.id)?.draftSource).toBe("hand"); // eigener Text unangetastet
+      expect(await fixApproachMismatches(db, { max: 10 })).toMatchObject({ switched: 0, rewritten: 0, open: 0 }); // nichts mehr offen
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+    } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; }
+  }, 90000);
+
+  it("63zn. Kontakt in zwei Listen: in der Freigabe der Wärmepumpe-Kampagne steht die Liste der Kampagne (nicht die zuerst hochgeladene PV-Liste)", async () => {
+    const { starterBlocks } = await import("../shared/email-design");
+    const starter = await owner.leadops.emailCampaignStarter();
+    const row = { firstName: "Hanna", lastName: "Doppel", company: "Doppel Energie GmbH", city: "Kassel", email: "doppel@zwei-listen-e2e.example" };
+    await owner.leadops.importColdList({ listName: "PV Zwei-Listen", toPipeline: false, rows: [row] });
+    await owner.leadops.importColdList({ listName: "WP Zwei-Listen", toPipeline: false, rows: [row] });
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Wärmepumpe Zwei-Listen", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listNames: ["WP Zwei-Listen"] }, tree: { start: "a1", nodes: [{ id: "a1", type: "send" as const, label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, kiModus: "freigabe", kiAnsatz: "frei", sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+    await owner.leadops.startEmailCampaign({ id: campaign.id });
+    const queue = await owner.leadops.campaignReviewQueue({ campaignId: campaign.id });
+    expect(queue.items.map((item) => item.listName)).toEqual(["WP Zwei-Listen"]);
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+  }, 60000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };
@@ -4064,12 +4112,12 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Ziel: Zoe frisch (Entwurf für m1), Dup frisch ohne Versand
     const zoe = await addRecipient(target.id, "zoe@merge-e2e.example", "Zoe Ziel", { nodeId: "m1", nextActionAt: past, draftNodeId: "m1", draftState: "entwurf", draftSubject: "Erste an Ziel GmbH", draftText: "Sehr geehrte Frau Ziel,\n\nein Entwurf im Ziel.\n\nVielen Dank", draftApproach: "drittanbieter", draftSource: "hand" });
     const dupTarget = await addRecipient(target.id, "dup@merge-e2e.example", "Dup Doppelt", { nodeId: "m1", nextActionAt: past });
-    // Quelle A: Anna fertig (2 Mails), Bert wartet an w1 (erste Mail mit 20 Test-Leads), Carl an m2 mit Entwurf im freien Ansatz, Dup mit einer gesendeten Mail (weiter als im Ziel)
+    // Quelle A: Anna fertig (2 Mails), Bert wartet an w1 (erste Mail mit 20 Test-Leads), Carl an m2 mit Entwurf im individuellen Ansatz, Dup mit einer gesendeten Mail (weiter als im Ziel)
     const anna = await addRecipient(a.id, "anna@merge-e2e.example", "Anna Alt", { nodeId: null, status: "fertig", sentCount: 2, lastSentAt: past, openedAt: past, clickedAt: past });
     await sentEvent(a.id, anna, "m1", "Erste an Alt GmbH", "Sehr geehrte Frau Alt,\n\nerste Mail mit 20 Test-Leads kostenlos.\n\nVielen Dank", new Date(past.getTime() - 86_400_000)); await waitEvent(a.id, anna, "w1", new Date(past.getTime() - 86_400_000 + 1000)); await sentEvent(a.id, anna, "m2", "Nachfrage Alt GmbH", "Sehr geehrte Frau Alt,\n\nkurz nachgefragt: 20 Test-Leads kostenlos.\n\nVielen Dank", past);
     const bert = await addRecipient(a.id, "bert@merge-e2e.example", "Bert Bereit", { nodeId: "w1", nextActionAt: future, sentCount: 1, lastSentAt: past, openedAt: past });
     await sentEvent(a.id, bert, "m1", "Erste an Bereit GmbH", "Sehr geehrter Herr Bereit,\n\nzum Kennenlernen: 20 Test-Leads kostenlos.\n\nVielen Dank", past); await waitEvent(a.id, bert, "w1", new Date(past.getTime() + 1000));
-    const carl = await addRecipient(a.id, "carl@merge-e2e.example", "Carl Entwurf", { nodeId: "m2", nextActionAt: past, sentCount: 1, lastSentAt: past, draftNodeId: "m2", draftState: "entwurf", draftSubject: "Nachfrage Entwurf GmbH", draftText: "Sehr geehrter Herr Entwurf,\n\nfreier Entwurf.\n\nVielen Dank", draftApproach: "frei", draftSource: "vorlage", draftOptions: [{ key: "frei", label: "Freier Vorschlag", subject: "Nachfrage Entwurf GmbH", text: "Sehr geehrter Herr Entwurf,\n\nfreier Entwurf.\n\nVielen Dank", source: "vorlage" }] });
+    const carl = await addRecipient(a.id, "carl@merge-e2e.example", "Carl Entwurf", { nodeId: "m2", nextActionAt: past, sentCount: 1, lastSentAt: past, draftNodeId: "m2", draftState: "entwurf", draftSubject: "Nachfrage Entwurf GmbH", draftText: "Sehr geehrter Herr Entwurf,\n\nfreier Entwurf.\n\nVielen Dank", draftApproach: "frei", draftSource: "vorlage", draftOptions: [{ key: "frei", label: "Individueller Vorschlag", subject: "Nachfrage Entwurf GmbH", text: "Sehr geehrter Herr Entwurf,\n\nfreier Entwurf.\n\nVielen Dank", source: "vorlage" }] });
     await sentEvent(a.id, carl, "m1", "Erste an Entwurf GmbH", "Sehr geehrter Herr Entwurf,\n\nerste Mail mit 10 Test-Leads kostenlos.\n\nVielen Dank", past); await waitEvent(a.id, carl, "w1", new Date(past.getTime() + 1000));
     const dupA = await addRecipient(a.id, "dup@merge-e2e.example", "Dup Doppelt", { nodeId: "w1", nextActionAt: future, sentCount: 1, lastSentAt: past });
     await sentEvent(a.id, dupA, "m1", "Erste an Doppelt GmbH", "Sehr geehrte Damen und Herren,\n\nerste Mail mit 20 Test-Leads kostenlos.\n\nVielen Dank", past); await waitEvent(a.id, dupA, "w1", new Date(past.getTime() + 1000));

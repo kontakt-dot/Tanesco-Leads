@@ -81,6 +81,18 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     expect(Array.from(view.container.querySelectorAll(".cl-card .campaign-act")).map((node) => node.textContent?.trim())).toContain("Wiederherstellen");
     expect(view.container.querySelector(".cl-archive-hint")?.textContent).toContain("Zahlen bleiben erhalten");
   });
+  it("Übersicht: Gesendet je Lead-Kategorie; Klick auf „Geöffnet“ (alle Kampagnen) zeigt die Kontakte, die geöffnet haben – Klick öffnet ihre Kampagne", async () => {
+    try { localStorage.removeItem("kampagnen-kpi"); localStorage.removeItem("kampagnen-zeitraum"); } catch { /* egal */ }
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    const { view } = mount(); await settle(300); await settle(300);
+    const cats = view.container.querySelector(".cd-cats"); expect(cats).toBeTruthy(); expect(cats!.querySelectorAll(".cd-cat").length).toBeGreaterThan(0);
+    const opened = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cd-kpibar .cd-kpi.is-pick")).find((node) => node.querySelector("span")?.textContent === "Geöffnet")!; expect(opened).toBeTruthy();
+    await act(async () => { fireEvent.click(opened); }); await settle(400); await settle(300);
+    const dialog = document.querySelector(".kpi-people-dialog")!; expect(dialog).toBeTruthy(); expect(dialog.textContent).toContain("Haben geöffnet");
+    const people = Array.from(document.querySelectorAll<HTMLButtonElement>(".kpi-people button")); expect(people.length).toBeGreaterThan(0);
+    await act(async () => { fireEvent.click(people[0]); }); await settle(300); await settle(200);
+    expect(document.querySelector(".kpi-people-dialog")).toBeNull(); expect(view.container.querySelector(".ch h1")).toBeTruthy(); // Kampagne ist offen
+  });
   it("Karte: Kennzahlen als eine Reihe – Empfänger, Gesendet, Zugestellt (mit Aufteilung), Geöffnet, Geklickt, Antwort; Einstellungen dezent", async () => {
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const { view } = mount(); await settle(300); await settle(300);
@@ -97,28 +109,30 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     // Einstellungen als eigene Felder mit Zeichen – ohne Liste, ohne „persönlich“-Zähler, Drip „pro Stunde“, Versand mit ausgeschriebenen Tagen
     const label = (node: Element) => Array.from(node.querySelector("dt")?.childNodes ?? []).filter((child) => !(child instanceof HTMLElement && child.classList.contains("fact-icon"))).map((child) => child.textContent).join("");
     const specs = Object.fromEntries(Array.from(card.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent]));
-    expect(specs).toEqual({ KI: "ausVorlage für alle", "Bei Antwort": "Serie stoppt", Versand: "Montag bis Freitag, 09:00–11:30 und 14:00–16:30", Drip: "40 pro Stunde", "A/B-Betreff": "A vorn" });
-    expect(Array.from(card.querySelectorAll(".cl-spec")).map(label)).toEqual(["KI", "Bei Antwort", "Versand", "Drip", "A/B-Betreff"]); // feste Reihenfolge
-    expect(Array.from(card.querySelectorAll(".cl-spec .fact-icon svg")).length).toBe(5); // jedes Feld mit eigenem Zeichen
+    expect(specs).toEqual({ KI: "Vorlage für alle", Versand: "Mo–Fr · 09:00–11:30 und 14:00–16:30", Drip: "40 pro Stunde", "A/B-Betreff": "A vorn" }); // kurz: „Bei Antwort: Serie stoppt“ ist der Normalfall und steht nur noch als Warnung da
+    expect(Array.from(card.querySelectorAll(".cl-spec")).map(label)).toEqual(["KI", "Versand", "Drip", "A/B-Betreff"]); // feste Reihenfolge
+    expect(Array.from(card.querySelectorAll(".cl-spec .fact-icon svg")).length).toBe(4); // jedes Feld mit eigenem Zeichen
     // Lead-Kategorie als Schild ganz links vor dem Namen – mit Emoji der Kategorie
     const badge = card.querySelector(".cl-title .sparte-badge")!; expect(card.querySelector(".cl-title > :first-child")?.classList.contains("sparte-badge")).toBe(true); expect(badge.querySelector(".sparte-badge-emoji")?.textContent).toBe("☀️"); expect(badge.textContent).toBe("☀️Photovoltaik"); expect(badge.classList.contains("is-standard")).toBe(false); expect(card.querySelector(".cl-title .sparte-badge + .cl-name")).toBeTruthy();
     // ohne gewählte Sparte: beide Emojis und dezent „Standard“
     const plain = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Nachfassen nach Angebot"))!; expect(plain.querySelector(".cl-title .sparte-badge .sparte-badge-emoji")?.textContent).toBe("☀️♨️"); expect(plain.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️♨️Photovoltaik & WärmepumpeStandard"); expect(plain.querySelector(".cl-title .sparte-badge")?.classList.contains("is-standard")).toBe(true);
     expect(card.textContent).not.toContain("Liste „Dachdecker Hessen“"); expect(card.textContent).not.toMatch(/persönlich|\/Std\./);
     const review = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
-    expect(Array.from(review.querySelectorAll(".cl-f.is-total small")).map((node) => node.textContent)).toContain("4 warten auf die 1. E-Mail"); // wer noch keine E-Mail hat – und warum
+    expect(Array.from(review.querySelectorAll(".cl-f.is-total small")).map((node) => node.textContent)).toContain("4 warten"); // wer noch keine E-Mail hat – kurz; das Warum steht im Hinweis (title)
+    expect(review.querySelector(".cl-f.is-total")?.getAttribute("title")).toContain("warten auf die 1. E-Mail"); // Erklärung bleibt beim Draufzeigen
+    expect(review.querySelector(".cl-f.is-total .cl-seg")).toBeTruthy(); // Balken zeigt die Anteile (angeschrieben / warten / übrige)
     expect(review.querySelector(".cl-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail zu prüfenKI schreibt noch 2 · ca. 1 Min.1 freigegeben"); // zusammen = „4 warten auf die 1. E-Mail“ // was wartet, was freigegeben ist (geht noch raus) und wie lange die KI noch schreibt // alles in einem Hinweis: fertig zur Freigabe – und was die KI noch vorschreibt
     const writingPart = review.querySelector<HTMLElement>(".cl-approval-part.is-writing")!; expect(writingPart.getAttribute("title")).toContain("auch nachts");
-    const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("schreibt einzelnmit Freigabe · freier Vorschlag"); // Ansatz steht mit dabei
+    const reviewSpecs = Object.fromEntries(Array.from(review.querySelectorAll(".cl-spec")).map((node) => [label(node), node.querySelector("dd")?.textContent])); expect(reviewSpecs.KI).toBe("mit Freigabeindividueller Vorschlag"); // Ansatz steht mit dabei – kurz, ohne „schreibt einzeln“
     expect(review.querySelector(".cl-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); // aus dem Namen erkannt
   });
-  it("Karte: beim KI-Feld steht, welcher Ansatz gewählt ist – Drittanbieter-Ansatz oder freier Vorschlag (auch bei „automatisch“)", async () => {
+  it("Karte: beim KI-Feld steht, welcher Ansatz gewählt ist – Drittanbieter-Ansatz oder individueller Vorschlag (auch bei „automatisch“)", async () => {
     const row = getStore().tables.emailCampaigns.find((item) => item.name === "Solarteure Hessen – persönlich")!; Object.assign(row, { kiAnsatz: "drittanbieter", kiModus: "auto", reviewFirst: false });
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const { view } = mount(); await settle(300); await settle(300);
     const card = () => Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((item) => item.textContent?.includes("Solarteure Hessen – persönlich"))!;
     const ki = () => Array.from(card().querySelectorAll(".cl-spec")).find((node) => node.querySelector("dt")?.textContent?.includes("KI"))!;
-    expect(ki().querySelector("dd")?.textContent).toBe("schreibt einzelnautomatisch · Drittanbieter-Ansatz");
+    expect(ki().querySelector("dd")?.textContent).toBe("automatischDrittanbieter-Ansatz");
   });
   it("Versand: eine gespeicherte Tageszeit, die genau der normalen Zeit entspricht, steht nicht extra da – nur echte Abweichungen („freitags bis 13:00“)", async () => {
     const row = getStore().tables.emailCampaigns.find((item) => item.name === "Dachdecker Hessen – Erstkontakt")!;
@@ -142,7 +156,7 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
     const factLabel = (node: Element) => Array.from(node.querySelector("dt")?.childNodes ?? []).filter((child) => !(child instanceof HTMLElement && child.classList.contains("fact-icon"))).map((child) => child.textContent).join("");
     const facts = Object.fromEntries(Array.from(head.querySelectorAll(".ch-fact")).map((node) => [factLabel(node), Array.from(node.querySelectorAll("dd > span")).map((part) => part.textContent)]));
     expect(head.querySelector(".ch-title > :first-child")?.classList.contains("sparte-badge")).toBe(true); expect(head.querySelector(".ch-title .sparte-badge")?.textContent).toBe("☀️Photovoltaik"); expect(head.querySelector(".ch-title .sparte-badge + h1")).toBeTruthy(); expect(head.querySelectorAll(".ch-fact .fact-icon").length).toBe(5); // Kategorie-Schild zuerst, dann der Name, jede Angabe mit Zeichen
-    expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], KI: ["schreibt einzeln", "mit Freigabe · freier Vorschlag"], Versand: ["09:00–11:30 und 14:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
+    expect(facts).toEqual({ Zielgruppe: ["Liste „Solarteure Hessen“"], KI: ["schreibt einzeln", "mit Freigabe · individueller Vorschlag"], Versand: ["09:00–11:30 und 14:00–16:30", "Montag bis Freitag"], Drip: ["40 pro Stunde"], "Bei Antwort": ["Serie stoppt"] });
     expect(head.querySelector(".ch-alerts .cl-approval")?.textContent).toBe("Zur Freigabe1 Erst-E-Mail zu prüfenKI schreibt noch 21 freigegeben"); // Freigabe in einem Hinweis, auch oben in der Kampagne
     expect(head.querySelector(".cd-chips")).toBeNull(); // keine lange Schilder-Reihe mehr
   });

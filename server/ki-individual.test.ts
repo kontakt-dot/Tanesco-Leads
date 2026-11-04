@@ -9,7 +9,7 @@ const info = { Firma: "Notruf Nord GmbH", Ort: "Kassel", Webseite: "notruf-nord.
 const site = { url: "https://notruf-nord.de", text: "Notruf Nord – Ihr Hausnotruf in Kassel. Installation am Tag nach der Bestellung. Über 2.000 Kunden in Nordhessen." };
 const own = "Sehr geehrte Damen und Herren,\n\nauf Ihrer Webseite steht, dass der Hausnotruf bei Ihnen schon am Tag nach der Bestellung installiert ist. Genau diese Geschwindigkeit erwarten die Familien, die sich bei uns melden – meist Kinder, die für ihre Eltern in Kassel und Nordhessen eine Lösung suchen. Viele Lead-Anbieter verkaufen dieselbe Anfrage an mehrere Betriebe; bei uns geht jede nur an Sie.\n\nZum Kennenlernen: 20 Test-Leads kostenlos, in der Regel anhand von sechs Fragen telefonisch vorqualifiziert.";
 
-describe("Freier Vorschlag: wirklich auf die Firma geschrieben – schwache Texte werden neu geschrieben, nie durch die Vorlage ersetzt", () => {
+describe("Individueller Vorschlag: wirklich auf die Firma geschrieben – schwache Texte werden neu geschrieben, nie durch die Vorlage ersetzt", () => {
   const before = process.env.ANTHROPIC_API_KEY;
   beforeEach(() => { invoke.mockReset(); process.env.ANTHROPIC_API_KEY = "test-key"; });
   afterAll(() => { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; });
@@ -52,7 +52,7 @@ describe("Freier Vorschlag: wirklich auf die Firma geschrieben – schwache Text
     expect((await aiDrafts(template, info, site, { approaches: ["frei"], sparte }))?.[0].issues).toEqual(["bezuege"]); // keine Bezüge genannt
     invoke.mockResolvedValueOnce(answer({ frei: { subject: "Kurze Frage", text: own, bezuege: ["Kassel"] } }));
     expect((await aiDrafts(template, info, null, { approaches: ["frei"], sparte }))?.[0].issues).toEqual([]); // ohne Webseite reicht ein Bezug
-    expect(retryNoteFor("frei", ["bezuege"])).toContain("Impressum"); expect(retryNoteFor("frei", ["vorlage"])).toContain("kein Satz aus der Vorlage"); expect(retryNoteFor("frei", null)).toContain("freien Vorschlag");
+    expect(retryNoteFor("frei", ["bezuege"])).toContain("Impressum"); expect(retryNoteFor("frei", ["vorlage"])).toContain("kein Satz aus der Vorlage"); expect(retryNoteFor("frei", null)).toContain("individuellen Vorschlag");
     // der Drittanbieter-Ansatz hat seine eigenen Regeln (Kernbotschaft) – dort keine Bezugs- oder Vorlagen-Prüfung
     invoke.mockResolvedValueOnce(answer({ drittanbieter: { subject: "Direkte Zusammenarbeit", text: `${own}\n\nSehr wahrscheinlich kommen bei Ihnen Leads an, die ohnehin von uns stammen.`, bezuege: [] } }));
     expect((await aiDrafts(template, info, site, { approaches: ["drittanbieter"], sparte }))?.[0]).toMatchObject({ key: "drittanbieter", issues: [] });
@@ -61,7 +61,7 @@ describe("Freier Vorschlag: wirklich auf die Firma geschrieben – schwache Text
     const retry = await aiDrafts(template, info, site, { approaches: ["frei"], sparte, retryNote: "Wichtig: Der vorige Entwurf war zu allgemein." });
     expect(retry?.[0].key).toBe("frei"); expect(String((invoke.mock.calls.at(-1)![0] as { messages: Array<{ content: string }> }).messages[1].content)).toContain("Der vorige Entwurf war zu allgemein");
   });
-  it("Wärmepumpen-Leads an eine Hausnotruf-Firma → verworfen; Drittanbieter-Kernbotschaft im freien Vorschlag → nur dieser Satz raus", async () => {
+  it("Wärmepumpen-Leads an eine Hausnotruf-Firma → verworfen; Drittanbieter-Kernbotschaft im individuellen Vorschlag → nur dieser Satz raus", async () => {
     const { aiDrafts } = await import("./campaign-review"); const { resolveSparte } = await import("../shared/lead-sparte");
     const sparte = resolveSparte("Hausnotruf")!;
     invoke.mockResolvedValueOnce(answer({ frei: { subject: "Mehr Anfragen", text: own.replace("Zum Kennenlernen", "Unsere Wärmepumpen-Leads sind geprüft. Zum Kennenlernen"), bezuege: ["Webseite", "Region"] } }));

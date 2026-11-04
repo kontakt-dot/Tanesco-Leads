@@ -1,12 +1,12 @@
 /**
  * KI-Versand: Die KI schreibt JEDE E-Mail einer Kampagne einzeln – für jeden Kontakt und jeden Schritt des Ablaufs
- * (Erst-E-Mail und Nachfass-Mails), im gewählten Ansatz (Drittanbieter oder freier Vorschlag). Zwei Betriebsarten:
+ * (Erst-E-Mail und Nachfass-Mails), im gewählten Ansatz (Drittanbieter oder individueller Vorschlag). Zwei Betriebsarten:
  * „freigabe“ = du liest jeden Entwurf unter „Freigeben“ und schickst ihn los; „auto“ = die KI schreibt im Hintergrund
  * und der Versand läuft sofort weiter (ist die KI nicht erreichbar, wartet die E-Mail – nie still die Vorlage). „aus“ = Vorlagen wie früher.
  * Dazu das Tageslimit für alle Kampagnen zusammen (Standard 80 E-Mails am Tag).
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
-import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leads, mailSettings } from "../drizzle/schema";
+import { categoryFields, emailCampaignEvents, emailCampaignRecipients, emailCampaigns, leadCategories, leadTagAssignments, leads, mailSettings, tags } from "../drizzle/schema";
 import { audienceLists, kiModusOf, stopsOnReply } from "../shared/email-campaigns";
 import { nextEmailOf } from "../shared/follow-up-plan";
 import { DEFAULT_SPARTE, dropPayFit, fitsSparte, fixQuestionCount, isEnergySparte, mentionsPayFit, mentionsQuestions, numberWord, offerChain, offersForeignLeads, qualifyPhrase, questionCount, questionTopics, resolveSparte, sparteOf, topicsExamples, topicsSentence, withQuestionTopics, withSparte, type Sparte } from "../shared/lead-sparte";
@@ -97,6 +97,12 @@ async function loadContext(db: Db, tenantId: number, recipient: Recipient, nodeI
 }
 
 /** Leadsparte einer Kampagne: eingetragen, sonst erkannt aus Name, Listen der Zielgruppe und Liste des Kontakts. */
+/** Liste eines Kontakts aus Sicht der Kampagne: seine Hauptliste nur, wenn sie zur Kampagne gehört – sonst (Kontakt steht in zwei Listen) die Liste der Kampagne. */
+export function campaignListOf(campaign: { audience?: unknown }, listName: string | null | undefined): string | null {
+  const lists = audienceLists((campaign.audience ?? null) as never);
+  if (!lists.length || (listName && lists.includes(listName))) return listName ?? null;
+  return lists.length === 1 ? lists[0] : null;
+}
 export function sparteOfCampaign(campaign: { leadSparte?: string | null; name?: string | null; audience?: unknown }, listName?: string | null): ReturnType<typeof sparteOf> {
   return sparteOf(campaign, [...audienceLists((campaign.audience ?? null) as never), listName ?? ""].filter(Boolean));
 }
@@ -127,11 +133,11 @@ function systemFor(sparte: Sparte, testLeads: number = testLeadsFor(sparte)): st
 
 LEADSPARTE dieser Kampagne: ${sparte.label}.${sparte.categories?.length ? ` Gewählte Lead-Kategorien: ${sparte.categories.join(", ")} – richte die E-Mails genau auf diese Leads aus.` : ""} Jede E-Mail handelt ausschließlich von ${sparte.leads} – Interessenten für ${sparte.topic}, die Tanesco gewinnt und an den Empfänger übergibt. Keine andere Sparte erwähnen${energy ? "" : " – kein Wort zu Photovoltaik, Solar, PV oder Wärmepumpen"}. Vorlage und Beispiel unten können aus einer anderen Sparte stammen: übernimm daraus nur Aufbau und Ton, nie das Thema.
 
-Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selbst online generieren (eigene Online-Leadgenerierung), ${qualify}${examples ? ` – abgefragt werden ${examples}` : ""}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf den Anruf des Betriebs. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt. Schreibe NIE, dass der Betrieb nur für passende Leads zahlt oder nur passende Leads bezahlt werden – dieser Satz kommt in keiner E-Mail vor (die Testphase ist kostenlos). Test-Angebot: ${testLeads} Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – genau ${testWord}, nie eine andere Zahl (auch wenn Vorlage oder Beispiel eine andere nennen).${promised} Baue dieses Angebot in beide Ansätze ein, Drittanbieter und freien Vorschlag (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
+Was Tanesco anbietet (nur diese Fakten verwenden): ${sparte.leads}, die wir selbst online generieren (eigene Online-Leadgenerierung), ${qualify}${examples ? ` – abgefragt werden ${examples}` : ""}; der Interessent weiß danach, dass sich ein ${sparte.partner} bei ihm meldet, um ihm ein Angebot zu unterbreiten – er wartet also auf den Anruf des Betriebs. Interne Qualitätskontrolle, exklusiv, Echtzeit per API/Schnittstelle, keine Vorkasse, keine lange Vertragsbindung, gut skalierbar, seit über vier Jahren im Leadmarkt. Schreibe NIE, dass der Betrieb nur für passende Leads zahlt oder nur passende Leads bezahlt werden – dieser Satz kommt in keiner E-Mail vor (die Testphase ist kostenlos). Test-Angebot: ${testLeads} Test-Leads kostenlos, individuell für den Betrieb und telefonisch qualifiziert – genau ${testWord}, nie eine andere Zahl (auch wenn Vorlage oder Beispiel eine andere nennen).${promised} Baue dieses Angebot in beide Ansätze ein, Drittanbieter und individuellen Vorschlag (in Erst-E-Mails immer, in Nachfass-Mails, wenn es passt).
 
 1) "drittanbieter" – Drittanbieter-Ansatz. Kernbotschaft, die IMMER enthalten sein muss: Wir sind einer der größten Lead-Lieferanten Deutschlands, und über unsere Quellen haben wir mitbekommen, dass bei der Firma sehr wahrscheinlich Leads ankommen, die ohnehin von uns stammen – nur weitergereicht über Zwischenhändler. Dieser Umweg macht Qualität und Preis kaputt: Die Leads werden mehrfach weiterverkauft, jeder Zwischenschritt schlägt auf den Preis auf, und beim Betrieb kommen genervte Interessenten und falsche Kontaktdaten an. Genau deshalb streben wir die direkte Zusammenarbeit mit dieser Firma an (kürzere Lieferkette, besserer Preis ohne Zwischenstufen, mehr Transparenz, direkte Qualitätskontrolle). Formuliere es als begründete Vermutung („sehr wahrscheinlich“, „gehen wir davon aus“), nie als bewiesene Tatsache, und erfinde keinen konkreten Zwischenhändler-Namen. Seriös und förmlich, darf eine kurze Aufzählung der Vorteile haben, bittet um ein Telefonat mit dem Ansprechpartner aus dem Leadmanagement. Trotzdem IMMER persönlich und individuell, nie Serienbrief: mindestens zwei konkrete Bezüge auf genau diese Firma (etwas Wörtliches oder Konkretes von der Webseite, die Leistung/Spezialisierung, Region/Einzugsgebiet, Größe oder Geschäftsfeld) – einer davon im ersten Absatz, bevor die Kernbotschaft kommt, und die Vorteile auf die Situation der Firma bezogen. 120–200 Wörter.
 
-2) "frei" – Freier Vorschlag: deine eigene, kreative Idee für genau diese Firma – ein Aufhänger, der nur zu ihr passt, z. B. eine kluge Frage zu ihrem Geschäft, eine Beobachtung zu ihrer Region oder Zielgruppe, ein kleines Rechenbeispiel oder ein Vergleich. Ganz anders aufgebaut als der Drittanbieter-Ansatz.
+2) "frei" – Individueller Vorschlag: deine eigene, kreative Idee für genau diese Firma – ein Aufhänger, der nur zu ihr passt, z. B. eine kluge Frage zu ihrem Geschäft, eine Beobachtung zu ihrer Region oder Zielgruppe, ein kleines Rechenbeispiel oder ein Vergleich. Ganz anders aufgebaut als der Drittanbieter-Ansatz.
 - Lies dafür Webseite und Impressum genau: Was bietet die Firma an (Produkte, Leistungen, Marken, Spezialisierung), für wen, wo (Standorte, Einzugsgebiet), seit wann, wie groß, wer führt sie? Greife mindestens zwei konkrete Punkte auf – gern mit den Worten der Webseite. Ohne Webseite: aus den Angaben (Firma, Ort, Liste, weitere Felder).
 - Kein Satz darf so allgemein sein, dass er wortgleich in jeder E-Mail stehen könnte – ausgenommen Test-Angebot, Qualifizierung und Schluss. Übernimm KEINEN Satz aus der Vorlage der Kampagne – sie zeigt nur Thema und Ton. Keine Floskeln, keine Aufzählung. 80–140 Wörter.
 - Ohne die Drittanbieter-Kernbotschaft (Leads, die bei der Firma ankommen, stammen in Wahrheit von uns). Normale Aussagen zu unserem Angebot sind erlaubt (exklusiv, nicht an Dritte weiterverkauft, ohne Umweg über Portale, eigene Generierung).
@@ -273,7 +279,7 @@ export async function aiDrafts(base: { subject: string; text: string }, info: Re
       if (offersForeignLeads(sparte, `${subject}\n${text}`)) return null; // falsches Thema (z. B. PV-Leads an eine Hausnotruf-Firma) – nur das ist ein harter Fehler
       if (approach.key !== "drittanbieter") { const cleaned = dropThirdPartyClaim(text); if (cleaned.length < Math.max(80, text.length * 0.5)) return null; text = cleaned; } // Drittanbieter-Kernbotschaft: nur diese Sätze raus, der Rest des KI-Textes bleibt
       const issues: AiOption["issues"] = [];
-      if (approach.key === "frei" && firstMail && refs.length < (site ? 2 : 1)) issues.push("bezuege"); // der freie Vorschlag muss wirklich auf die Firma geschrieben sein
+      if (approach.key === "frei" && firstMail && refs.length < (site ? 2 : 1)) issues.push("bezuege"); // der individuelle Vorschlag muss wirklich auf die Firma geschrieben sein
       if (approach.key !== "drittanbieter" && copiesTemplate(text, base.text)) issues.push("vorlage");
       return { key: approach.key, label: approach.label, subject, text, refs, issues, fit };
     }).filter((item): item is AiOption => Boolean(item));
@@ -292,7 +298,7 @@ export async function aiFitCheck(category: string, info: Record<string, string>,
 /** Zweiter Versuch: der KI genau sagen, was am ersten Text fehlte. */
 export function retryNoteFor(approach: DraftApproach, issues: AiOption["issues"] | null): string {
   if (approach === "drittanbieter") return "Wichtig: Schreibe den Drittanbieter-Ansatz für genau diese Firma – mit zwei konkreten Bezügen auf ihre Webseite vor der Kernbotschaft.";
-  const parts = ["Wichtig: Schreibe den freien Vorschlag ganz neu."];
+  const parts = ["Wichtig: Schreibe den individuellen Vorschlag ganz neu."];
   if (!issues) parts.push("Der vorige Text kam nicht brauchbar an.");
   if (issues?.includes("bezuege")) parts.push("Der vorige Text hatte zu wenig konkrete Bezüge auf genau diese Firma – greife mindestens zwei konkrete Punkte von Webseite und Impressum auf (Leistungen, Produkte, Spezialisierung, Zahlen, Region, Zitate, Geschäftsführer für die Anrede) und nenne sie unter „bezuege“.");
   if (issues?.includes("vorlage")) parts.push("Der vorige Text war zu nah an der Vorlage der Kampagne – schreibe in eigenen Worten, kein Satz aus der Vorlage.");
@@ -347,7 +353,7 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const recipient = (await db.select().from(emailCampaignRecipients).where(and(eq(emailCampaignRecipients.id, recipientId), eq(emailCampaignRecipients.tenantId, tenantId))).limit(1))[0];
   if (!recipient) throw new Error("Empfänger nicht gefunden.");
   const context = await loadContext(db, tenantId, recipient, options.nodeId); const { campaign, lead, node, phone } = context;
-  const sparte = await withCategoryHints(db, tenantId, campaign, sparteOfCampaign(campaign, lead?.listName)); const values = withSparte(context.values, sparte); // Leadsparte: Hausnotruf-Firmen bekommen Hausnotruf-Texte
+  const sparte = await withCategoryHints(db, tenantId, campaign, sparteOfCampaign(campaign, campaignListOf(campaign, lead?.listName))); const values = withSparte(context.values, sparte); // Leadsparte: Hausnotruf-Firmen bekommen Hausnotruf-Texte
   const sentEvents = await db.select({ nodeId: emailCampaignEvents.nodeId, subject: emailCampaignEvents.subject, body: emailCampaignEvents.body, createdAt: emailCampaignEvents.createdAt }).from(emailCampaignEvents).where(and(eq(emailCampaignEvents.recipientId, recipient.id), eq(emailCampaignEvents.kind, "gesendet"))).orderBy(asc(emailCampaignEvents.id));
   if (sentEvents.some((event) => event.nodeId === node.id)) throw new Error(`Die E-Mail „${node.label?.trim() || node.subject}“ ist an diesen Kontakt schon raus.`);
   // Test-Angebot: die Zahl der Sparte (PV & WP 20, sonst 10) – wurden diesem Kontakt in einer E-Mail davor mehr zugesagt, bleibt es dabei
@@ -355,7 +361,7 @@ export async function draftForRecipient(db: Db, tenantId: number, recipientId: n
   const templateBase = templateDraft(node, values); const base = { subject: withTestOffer(templateBase.subject, testLeads), text: withTestOffer(templateBase.text, testLeads) };
   const meta = (lead?.metadata ?? {}) as Record<string, unknown>;
   const website = websiteOf(lead?.metadata, recipient.email);
-  const info: Record<string, string> = { Firma: values.firma, Ansprechpartner: [values.anrede, values.vorname, values.nachname].filter(Boolean).join(" "), Ort: values.stadt, "PLZ": String(lead?.postcode ?? ""), Webseite: website ?? String(meta.website ?? meta.webseite ?? ""), Liste: String(lead?.listName ?? ""), ...Object.fromEntries(Object.entries(extraFieldsOf(lead?.metadata)).filter(([key, value]) => !PORTAL_RE.test(key) && !PORTAL_RE.test(String(value))).map(([key, value]) => [key, String(value)])) }; // Portal-Daten (Aroundhome) gehen nie an die KI
+  const info: Record<string, string> = { Firma: values.firma, Ansprechpartner: [values.anrede, values.vorname, values.nachname].filter(Boolean).join(" "), Ort: values.stadt, "PLZ": String(lead?.postcode ?? ""), Webseite: website ?? String(meta.website ?? meta.webseite ?? ""), Liste: String(campaignListOf(campaign, lead?.listName) ?? ""), ...Object.fromEntries(Object.entries(extraFieldsOf(lead?.metadata)).filter(([key, value]) => !PORTAL_RE.test(key) && !PORTAL_RE.test(String(value))).map(([key, value]) => [key, String(value)])) }; // Portal-Daten (Aroundhome) gehen nie an die KI
   // Webseite lesen (Startseite + Impressum + Leistungen/Über uns) – die KI greift daraus konkrete Punkte auf
   const rawSite = process.env.ANTHROPIC_API_KEY && website ? await readWebsiteCached(website) : null;
   const site = rawSite ? { ...rawSite, text: rawSite.text.split(/\n+/).filter((line) => !PORTAL_RE.test(line)).join("\n") } : null; // Portal-Hinweise der Webseite (z. B. Aroundhome-Siegel) nicht an die KI
@@ -491,7 +497,7 @@ function withoutLegacyOptions(options: unknown): DraftOption[] | null {
   return Array.isArray(options) ? (options as DraftOption[]).filter((item) => Boolean(approachOf(item?.key))) : null;
 }
 /**
- * Den individuellen Ansatz gibt es nicht mehr – nur noch Drittanbieter und den freien Vorschlag. Einmal nach dem Serverstart
+ * Den individuellen Ansatz gibt es nicht mehr – nur noch Drittanbieter und den individuellen Vorschlag. Einmal nach dem Serverstart
  * (und vor dem Anzeigen unter „Freigeben“): Kampagnen mit „individuell“ stehen danach auf „frei“. Offene, noch nicht gesendete
  * Entwürfe im individuellen Ansatz – auch schon freigegebene – wechseln auf den gespeicherten KI-Vorschlag im Ansatz ihrer Kampagne
  * (dann wieder „zu prüfen“), sonst werden sie verworfen und die KI schreibt sie neu. Selbst geschriebene Texte bleiben, nur die
@@ -710,11 +716,25 @@ export function roundRobinEta(open: number[], mine: number, perMinute: number | 
   return Math.max(1, Math.round(before / perMinute));
 }
 /** Entwurf schreiben, aber nie zweimal gleichzeitig für denselben Empfänger – null, wenn gerade schon einer entsteht. */
+/** Gespeicherte Fassung im gewünschten Ansatz (echter Text, keine Vorlage) – zum sofortigen Umstellen. */
+const targetOptionOf = (options: DraftOption[], approach: DraftApproach) => options.find((item) => item?.key === approach && item.source !== "vorlage" && item.subject?.trim() && (item.text ?? "").trim().length > 40) ?? null;
+/** Die aktuelle Fassung als Vorschlag sichern, bevor umgestellt wird – so geht beim Wechseln nichts verloren (auch eigene Texte nicht). */
+const withCurrentAsOption = (row: { draftOptions: unknown; draftApproach: string | null; draftSubject: string | null; draftText: string | null; draftSource: string | null }): DraftOption[] => {
+  const options = Array.isArray(row.draftOptions) ? [...(row.draftOptions as DraftOption[])] : [];
+  const key = row.draftApproach === "drittanbieter" || row.draftApproach === "frei" ? row.draftApproach : null;
+  if (!key || !row.draftSubject?.trim() || !(row.draftText ?? "").trim()) return options;
+  const current: DraftOption = { key, label: approachLabel(key), subject: row.draftSubject, text: row.draftText!, source: row.draftSource === "vorlage" ? "vorlage" : "ki" };
+  const index = options.findIndex((item) => item?.key === key);
+  if (index >= 0) options[index] = { ...options[index], subject: current.subject, text: current.text, source: current.source }; else options.push(current);
+  return options;
+};
 /**
  * A/B-Test in der Freigabe: den ausgewählten Kontakten einen Ansatz zuordnen (Drittanbieter oder frei). Die Zuordnung gilt für alle E-Mails
- * des Kontakts (auch Follow-ups). Gibt es den Entwurf schon in diesem Ansatz (KI-Fassung unter den Vorschlägen), wird sofort umgestellt;
- * sonst schreibt die KI ihn im Hintergrund neu (auch bei pausierter Kampagne – du hast es ausgelöst). Selbst geschriebene Texte bleiben.
- * Umgestellte Entwürfe stehen wieder auf „Zu prüfen“ (der Text ist ja ein anderer).
+ * des Kontakts (auch Follow-ups). Gibt es den Entwurf schon in diesem Ansatz (Fassung unter den Vorschlägen), wird sofort umgestellt – auch
+ * freigegebene und selbst geschriebene (die eigene Fassung bleibt als Vorschlag wählbar); sonst schreibt die KI ihn im Hintergrund neu (auch
+ * bei pausierter Kampagne – du hast es ausgelöst). Nur ein eigener Text ohne fertige Fassung im Ziel-Ansatz bleibt stehen.
+ * Umgestellte Entwürfe stehen wieder auf „Zu prüfen“ (der Text ist ja ein anderer). Was hier (z. B. durch einen Neustart) liegen bleibt,
+ * holt fixApproachMismatches im Minutentakt nach – und der Versand wartet bei falschem Ansatz (siehe sales-outreach).
  */
 export async function assignDraftApproach(db: Db, tenantId: number, input: { campaignId: number; recipientIds: number[]; approach: DraftApproach }) {
   const campaign = (await db.select({ id: emailCampaigns.id }).from(emailCampaigns).where(and(eq(emailCampaigns.id, input.campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0]; if (!campaign) throw new Error("Kampagne nicht gefunden.");
@@ -724,10 +744,10 @@ export async function assignDraftApproach(db: Db, tenantId: number, input: { cam
   for (const row of rows) {
     if (draftingNow.has(row.id)) { await db.update(emailCampaignRecipients).set({ approachPick: input.approach }).where(eq(emailCampaignRecipients.id, row.id)); rewrite.push(row.id); continue; } // schreibt gerade – danach in diesem Ansatz neu
     if (!row.draftState || row.draftApproach === input.approach) { await db.update(emailCampaignRecipients).set({ approachPick: input.approach }).where(eq(emailCampaignRecipients.id, row.id)); if (row.draftState) kept += 1; continue; } // ohne Entwurf: die KI schreibt ihn gleich in diesem Ansatz
-    if (row.draftSource === "hand") { await db.update(emailCampaignRecipients).set({ approachPick: input.approach }).where(eq(emailCampaignRecipients.id, row.id)); kept += 1; continue; } // selbst geschrieben – bleibt
-    const option = (Array.isArray(row.draftOptions) ? row.draftOptions as DraftOption[] : []).find((item) => item?.key === input.approach && item.source !== "vorlage" && item.subject?.trim() && (item.text ?? "").trim().length > 40);
-    if (option) { await db.update(emailCampaignRecipients).set({ approachPick: input.approach, draftSubject: option.subject, draftText: option.text, draftApproach: input.approach, draftState: "entwurf", draftAt: new Date() }).where(eq(emailCampaignRecipients.id, row.id)); switched += 1; continue; }
-    await db.update(emailCampaignRecipients).set({ approachPick: input.approach, draftState: null, draftSubject: null, draftText: null, draftOptions: null, draftNodeId: null, draftSource: null, draftApproach: null }).where(eq(emailCampaignRecipients.id, row.id)); rewrite.push(row.id); // neu schreiben lassen
+    const options = withCurrentAsOption(row); const option = targetOptionOf(options, input.approach);
+    if (option) { await db.update(emailCampaignRecipients).set({ approachPick: input.approach, draftOptions: options, draftSubject: option.subject, draftText: option.text, draftApproach: input.approach, draftState: "entwurf", draftAt: new Date(), ...(row.draftSource === "hand" ? { draftSource: "ki" } : {}) }).where(eq(emailCampaignRecipients.id, row.id)); switched += 1; continue; } // Fassung ist da – sofort umstellen (auch freigegebene und eigene; die alte Fassung bleibt als Vorschlag)
+    if (row.draftSource === "hand") { await db.update(emailCampaignRecipients).set({ approachPick: input.approach }).where(eq(emailCampaignRecipients.id, row.id)); kept += 1; continue; } // eigener Text ohne fertige Ziel-Fassung – bleibt und geht so raus
+    await db.update(emailCampaignRecipients).set({ approachPick: input.approach, draftState: null, draftSubject: null, draftText: null, draftOptions: options.length ? options : null, draftNodeId: null, draftSource: null, draftApproach: null }).where(eq(emailCampaignRecipients.id, row.id)); rewrite.push(row.id); // neu schreiben lassen – die alte Fassung bleibt als Vorschlag erhalten
   }
   if (rewrite.length) void rewriteInApproach(db, tenantId, rewrite, input.approach);
   return { assigned: rows.length, switched, kept, rewriting: rewrite.length };
@@ -737,6 +757,35 @@ async function rewriteInApproach(db: Db, tenantId: number, ids: number[], approa
   let next = 0;
   const worker = async () => { while (next < ids.length) { const id = ids[next++]; for (let attempt = 0; attempt < 20 && draftingNow.has(id); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 3000)); await withDraftLock(id, async () => { const fresh = (await db.select({ draftState: emailCampaignRecipients.draftState, draftApproach: emailCampaignRecipients.draftApproach }).from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, id)).limit(1))[0]; if (fresh?.draftState && fresh.draftApproach === approach) return null; return draftForRecipient(db, tenantId, id, { onlyApproach: approach }); }).catch((error) => console.error("[A/B-Ansatz]", error instanceof Error ? error.message.slice(0, 160) : error)); } };
   await Promise.all(Array.from({ length: Math.min(3, ids.length) }, worker));
+}
+/**
+ * A/B-Test absichern: Kontakte, deren Entwurf noch im falschen Ansatz steht (zugeordneter Ansatz ≠ Ansatz des Entwurfs – z. B. weil der
+ * Server beim Umstellen neu gestartet ist oder die KI gerade nicht konnte), im Minutentakt nachziehen: gespeicherte Fassung sofort
+ * umstellen, sonst schreibt die KI neu (höchstens 3 je Durchgang). Eigene Texte (draftSource „hand“) bleiben unangetastet – sie gehen so
+ * raus, wie sie dastehen. Freigegebene stehen danach wieder auf „Zu prüfen“; bis dahin hält der Versandlauf solche E-Mails zurück.
+ */
+export async function fixApproachMismatches(db: Db, options: { max?: number } = {}): Promise<{ switched: number; rewritten: number; open: number }> {
+  const max = Math.max(1, options.max ?? 12);
+  const mismatch = sql`(${emailCampaignRecipients.draftApproach} is null or ${emailCampaignRecipients.draftApproach} <> ${emailCampaignRecipients.approachPick})`;
+  const notHand = sql`(${emailCampaignRecipients.draftSource} is null or ${emailCampaignRecipients.draftSource} <> 'hand')`;
+  const rows = await db.select({ id: emailCampaignRecipients.id, tenantId: emailCampaignRecipients.tenantId, approachPick: emailCampaignRecipients.approachPick, draftOptions: emailCampaignRecipients.draftOptions, draftApproach: emailCampaignRecipients.draftApproach, draftSubject: emailCampaignRecipients.draftSubject, draftText: emailCampaignRecipients.draftText, draftSource: emailCampaignRecipients.draftSource })
+    .from(emailCampaignRecipients).innerJoin(emailCampaigns, eq(emailCampaignRecipients.campaignId, emailCampaigns.id))
+    .where(and(inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), inArray(emailCampaignRecipients.approachPick, ["drittanbieter", "frei"]), isNotNull(emailCampaignRecipients.draftState), mismatch, notHand, eq(emailCampaigns.isTemplate, false), isNull(emailCampaigns.archivedAt), inArray(emailCampaigns.status, ["aktiv", "pausiert"])))
+    .orderBy(asc(emailCampaignRecipients.id)).limit(Math.max(50, max));
+  let switched = 0; const toRewrite: Array<{ id: number; tenantId: number; approach: DraftApproach }> = [];
+  for (const row of rows.slice(0, max)) {
+    if (draftingNow.has(row.id)) continue; // schreibt gerade – nächster Durchgang
+    const approach = row.approachPick as DraftApproach;
+    const options2 = withCurrentAsOption(row); const option = targetOptionOf(options2, approach);
+    if (option) { await db.update(emailCampaignRecipients).set({ draftOptions: options2, draftSubject: option.subject, draftText: option.text, draftApproach: approach, draftState: "entwurf", draftAt: new Date() }).where(eq(emailCampaignRecipients.id, row.id)); switched += 1; continue; }
+    toRewrite.push({ id: row.id, tenantId: row.tenantId, approach });
+  }
+  let rewritten = 0;
+  for (const item of toRewrite.slice(0, 3)) { // höchstens 3 KI-Aufrufe je Durchgang – schont Budget und Limits
+    const made = await withDraftLock(item.id, () => draftForRecipient(db, item.tenantId, item.id, { onlyApproach: item.approach })).catch((error) => { console.error("[A/B-Ansatz] Umstellen:", error instanceof Error ? error.message.slice(0, 160) : error); return null; });
+    if (made) rewritten += 1;
+  }
+  return { switched, rewritten, open: rows.length - switched - rewritten };
 }
 export async function withDraftLock<T>(recipientId: number, run: () => Promise<T>): Promise<T | null> {
   if (draftingNow.has(recipientId)) return null;
@@ -789,10 +838,10 @@ export async function checkFitBatch(db: Db, options: { campaignId?: number | nul
     try {
       const recipient = (await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.id, id)).limit(1))[0]; if (!recipient || recipient.fitState || !recipient.draftState) continue;
       const lead = recipient.leadId ? (await db.select().from(leads).where(eq(leads.id, recipient.leadId)).limit(1))[0] ?? null : null;
-      const sparte = await withCategoryHints(db, campaign.tenantId, campaign, sparteOfCampaign(campaign, lead?.listName));
+      const sparte = await withCategoryHints(db, campaign.tenantId, campaign, sparteOfCampaign(campaign, campaignListOf(campaign, lead?.listName)));
       const category = (sparte as { categories?: string[] }).categories?.length ? (sparte as { categories?: string[] }).categories!.join(", ") : sparte.label;
       const website = websiteOf(lead?.metadata, recipient.email); const site = website ? await readWebsiteCached(website) : null;
-      const info: Record<string, string> = { Firma: lead?.company ?? recipient.company ?? "", Ort: lead?.city ?? "", PLZ: String(lead?.postcode ?? ""), Webseite: website ?? "", Liste: lead?.listName ?? "" };
+      const info: Record<string, string> = { Firma: lead?.company ?? recipient.company ?? "", Ort: lead?.city ?? "", PLZ: String(lead?.postcode ?? ""), Webseite: website ?? "", Liste: campaignListOf(campaign, lead?.listName) ?? "" };
       if (site) { const profile = extractProfile([{ url: site.url, text: site.text }]); if (profile.services.length) info["Leistungen laut Webseite"] = profile.services.join(", "); }
       const fit = await aiFitCheck(category, info, site ? { url: site.url, text: site.text.split(/\n+/).filter((line) => !PORTAL_RE.test(line)).join("\n") } : null);
       if (!fit) { fitFailedAt.set(id, Date.now()); continue; }
@@ -808,9 +857,11 @@ export async function prewriteTick(db: Db, options: { campaignId?: number | null
   if (prewriteBusy) return null; prewriteBusy = true;
   try {
     const result = await prewriteDrafts(db, options);
+    // A/B-Test: liegen gebliebene Ansatz-Umstellungen nachziehen (gespeicherte Fassung sofort, sonst KI)
+    const ab = options.campaignId ? { switched: 0, rewritten: 0, open: 0 } : await fixApproachMismatches(db).catch(() => ({ switched: 0, rewritten: 0, open: 0 }));
     // danach: schon geschriebene Entwürfe auf die Lead-Kategorie nachprüfen (wenige, solange noch Entwürfe fehlen – Schreiben geht vor)
     const fit = options.campaignId ? { checked: 0, flagged: 0, open: 0 } : await checkFitBatch(db, { max: result.open > 0 ? 4 : 12 }).catch(() => ({ checked: 0, flagged: 0, open: 0 }));
-    return { ...result, fitChecked: fit.checked, fitFlagged: fit.flagged, fitOpen: fit.open };
+    return { ...result, abSwitched: ab.switched, abRewritten: ab.rewritten, abOpen: ab.open, fitChecked: fit.checked, fitFlagged: fit.flagged, fitOpen: fit.open };
   } finally { prewriteBusy = false; }
 }
 export async function prewriteDrafts(db: Db, options: { campaignId?: number | null; max?: number; parallel?: number; budgetMs?: number } = {}): Promise<{ written: number; failed: number; open: number }> {
@@ -881,7 +932,16 @@ export async function reviewQueue(db: Db, tenantId: number, campaignId: number) 
   }).filter((item): item is { row: Recipient; node: Extract<EmailNode, { type: "send" }>; dueAt: Date | null } => Boolean(item));
   const leadIds = Array.from(new Set(rows.map(({ row }) => row.leadId).filter((id): id is number => typeof id === "number")));
   const leadRows = leadIds.length ? await db.select({ id: leads.id, publicId: leads.publicId, city: leads.city, listName: leads.listName, company: leads.company, firstName: leads.firstName, lastName: leads.lastName, metadata: leads.metadata }).from(leads).where(and(eq(leads.tenantId, tenantId), inArray(leads.id, leadIds))) : [];
-  const items = rows.map(({ row, node, dueAt }) => { const lead = leadRows.find((item) => item.id === row.leadId) ?? null; const fits = draftFitsNode(row, node.id); const sent = row.sentCount > 0 ? sentOf(row.id) : []; const last = sent[sent.length - 1] ?? null; const promised = sent.length ? promisedTestLeads(sent) : null; const offer = testOfferFor(sparteOfCampaign(campaign, lead?.listName), promised); return { id: row.id, writing: draftingNow.has(row.id) /* die KI schreibt diesen Entwurf gerade (im Hintergrund) */, approachPick: row.approachPick ?? null, /* A/B-Test: von Hand zugeordneter Ansatz */ fitState: row.fitState ?? null, fitNote: row.fitNote ?? null, /* passt laut KI vielleicht nicht zur Lead-Kategorie */ email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, step: row.sentCount + 1, dueAt, sentBefore: last ? { subject: last.subject ?? "", at: last.createdAt, count: sent.length } : null, testLeads: offer, promisedBefore: promised, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits ? withoutLegacyOptions(row.draftOptions) ?? [] : []) as DraftOption[], draftApproach: fits ? approachOf(row.draftApproach) : null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
+  // Liste je Kontakt: die Liste DIESER Kampagne, in der er steht – ein Kontakt aus zwei Listen (z. B. erst „Photovoltaik ICP“, dann auch
+  // „Wärmepumpe ICP“) trägt als Hauptliste die zuerst hochgeladene; in der Wärmepumpe-Kampagne soll dort „Wärmepumpe ICP“ stehen.
+  const campaignLists = audienceLists((campaign.audience ?? null) as never);
+  const tagLists = new Map<number, string[]>();
+  if (campaignLists.length && leadIds.length) {
+    const tagRows = await db.select({ id: tags.id, name: tags.name }).from(tags).where(and(eq(tags.tenantId, tenantId), inArray(tags.name, campaignLists.map((name) => `Liste: ${name}`.slice(0, 80)))));
+    if (tagRows.length) { const nameOf = new Map(tagRows.map((tag) => [tag.id, campaignLists.find((name) => `Liste: ${name}`.slice(0, 80) === tag.name) ?? ""])); for (const link of await db.select({ leadId: leadTagAssignments.leadId, tagId: leadTagAssignments.tagId }).from(leadTagAssignments).where(and(inArray(leadTagAssignments.leadId, leadIds), inArray(leadTagAssignments.tagId, tagRows.map((tag) => tag.id))))) { const name = nameOf.get(link.tagId); if (name) tagLists.set(link.leadId, [...(tagLists.get(link.leadId) ?? []), name]); } }
+  }
+  const listOfLead = (lead: { id: number; listName: string | null } | null) => !lead ? null : !campaignLists.length || (lead.listName && campaignLists.includes(lead.listName)) ? lead.listName : tagLists.get(lead.id)?.[0] ?? lead.listName;
+  const items = rows.map(({ row, node, dueAt }) => { const found = leadRows.find((item) => item.id === row.leadId) ?? null; const lead = found ? { ...found, listName: listOfLead(found) } : null; const fits = draftFitsNode(row, node.id); const sent = row.sentCount > 0 ? sentOf(row.id) : []; const last = sent[sent.length - 1] ?? null; const promised = sent.length ? promisedTestLeads(sent) : null; const offer = testOfferFor(sparteOfCampaign(campaign, campaignListOf(campaign, lead?.listName)), promised); return { id: row.id, writing: draftingNow.has(row.id) /* die KI schreibt diesen Entwurf gerade (im Hintergrund) */, approachPick: row.approachPick ?? null, /* A/B-Test: von Hand zugeordneter Ansatz */ fitState: row.fitState ?? null, fitNote: row.fitNote ?? null, /* passt laut KI vielleicht nicht zur Lead-Kategorie */ email: row.email, name: row.name, company: row.company ?? lead?.company ?? null, city: lead?.city ?? null, listName: lead?.listName ?? null, publicId: lead?.publicId ?? null, website: websiteOf(lead?.metadata, row.email), nodeId: node.id, nodeLabel: node.label?.trim() || node.subject, followUp: row.sentCount > 0, step: row.sentCount + 1, dueAt, sentBefore: last ? { subject: last.subject ?? "", at: last.createdAt, count: sent.length } : null, testLeads: offer, promisedBefore: promised, draftSubject: fits ? row.draftSubject : null, draftText: fits ? row.draftText : null, draftOptions: (fits ? withoutLegacyOptions(row.draftOptions) ?? [] : []) as DraftOption[], draftApproach: fits ? approachOf(row.draftApproach) : null, draftState: (fits ? row.draftState || null : null) as "entwurf" | "freigegeben" | null, draftSource: fits ? row.draftSource : null, draftAt: fits ? row.draftAt : null }; });
   const withDraft = items.filter((item) => item.draftText);
   return { items, prewriting: prewritesDrafts(campaign), prewrite: campaign.prewrite !== false, /* Schalter „KI schreibt vor“ dieser Kampagne */  counts: { passtNicht: items.filter((item) => item.fitState === "passt_nicht" && item.draftState !== "freigegeben").length, fitUnchecked: campaign.status === "aktiv" && campaign.prewrite !== false && sparteOfCampaign(campaign).source !== "standard" && process.env.ANTHROPIC_API_KEY ? items.filter((item) => item.draftState && !item.fitState).length : 0, /* Kategorie-Prüfung: noch nicht geprüfte Entwürfe */ offen: items.filter((item) => !item.draftState).length, entwurf: items.filter((item) => item.draftState === "entwurf").length, freigegeben: items.filter((item) => item.draftState === "freigegeben").length, erste: items.filter((item) => !item.followUp).length, followUps: items.filter((item) => item.followUp).length, faellig: items.filter((item) => !item.dueAt).length, spaeter: items.filter((item) => item.dueAt).length }, portalCheck: { checked: withDraft.length, found: withDraft.filter(mentionsPortal).length, cleaned: repaired.cleaned, reset: repaired.reset } }; // prewriting: die KI schreibt die fehlenden Entwürfe im Hintergrund vor (auch nachts)
 }

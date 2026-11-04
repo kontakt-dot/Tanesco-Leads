@@ -718,7 +718,7 @@ export function draftToBlocks(text: string, original: EmailBlock[]): EmailBlock[
   return [{ id: "draft-text", type: "text", text: cleanDraftText(text.trim()) }, ...keep];
 }
 
-/* ── Zwei Ansätze je E-Mail: Drittanbieter und Freier Vorschlag ───────────────────────────────────
+/* ── Zwei Ansätze je E-Mail: Drittanbieter und Individueller Vorschlag ───────────────────────────────────
  * Den „individuellen Ansatz“ gibt es seit dem 28.10.2026 nicht mehr (er war bei allen Firmen zu ähnlich). Alte Werte
  * „individuell“ in Kampagnen gelten als „frei“; alte Entwürfe darin stellt eine einmalige Umstellung nach dem Start um. */
 export type DraftApproach = "drittanbieter" | "frei";
@@ -730,12 +730,12 @@ export const approachOf = (value: string | null | undefined): DraftApproach | nu
 export type DraftOption = { key: DraftApproach; label: string; subject: string; text: string; source?: "ki" | "vorlage"; refs?: string[] };
 export const DRAFT_APPROACHES: Array<{ key: DraftApproach; label: string; hint: string }> = [
   { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Unsere Leads kommen schon über Drittpartner bei der Firma an – wir sind die direkte Quelle und bieten die direkte Zusammenarbeit an." },
-  { key: "frei", label: "Freier Vorschlag", hint: "Eigene, kreative Idee der KI – persönlich auf genau diese Firma zugeschnitten (Webseite, Impressum, Anrede)." },
+  { key: "frei", label: "Individueller Vorschlag", hint: "Eigene, kreative Idee der KI – persönlich auf genau diese Firma zugeschnitten (Webseite, Impressum, Anrede)." },
 ];
 export const approachLabel = (key: string | null | undefined) => DRAFT_APPROACHES.find((item) => item.key === key)?.label ?? (key === LEGACY_APPROACH ? "Individueller Ansatz (alt)" : "Entwurf");
 /**
  * Die Drittanbieter-KERNBOTSCHAFT: Leads, die bei der Firma (über Zwischenhändler) ankommen, stammen in Wahrheit von uns. Nur genau
- * diese Behauptung gehört nicht in den freien Vorschlag. Ganz normale Sätze über unser Angebot bleiben erlaubt –
+ * diese Behauptung gehört nicht in den individuellen Vorschlag. Ganz normale Sätze über unser Angebot bleiben erlaubt –
  * „Unsere Leads werden nicht an Dritte weiterverkauft“, „ohne Umweg über Portale“, „aus unserer eigenen Generierung“, „viele
  * Drittanbieter verkaufen Leads mehrfach“. (Früher wurde der ganze KI-Text schon wegen solcher Sätze verworfen und durch die Vorlage
  * ersetzt.)
@@ -795,13 +795,13 @@ export const KI_MODUS_OPTIONS: Array<{ key: KiModus; label: string; hint: string
 ];
 export const KI_ANSATZ_OPTIONS: Array<{ key: KiAnsatz; label: string; hint: string }> = [
   { key: "drittanbieter", label: "Drittanbieter-Ansatz", hint: "Kernbotschaft: Leads kommen sehr wahrscheinlich über Zwischenhändler an und stammen ohnehin von uns – deshalb direkte Zusammenarbeit. Trotzdem persönlich je Firma." },
-  { key: "frei", label: "Freier Vorschlag", hint: "Eigene, kreative Idee der KI für jede Firma – persönlich aus Webseite und Impressum (mit Anrede des Geschäftsführers), ohne die Drittanbieter-Botschaft." },
+  { key: "frei", label: "Individueller Vorschlag", hint: "Eigene, kreative Idee der KI für jede Firma – persönlich aus Webseite und Impressum (mit Anrede des Geschäftsführers), ohne die Drittanbieter-Botschaft." },
 ];
 /** Betriebsart einer Kampagne – alte Kampagnen mit „Erst-E-Mail einzeln freigeben“ zählen als „freigabe“. */
 export function kiModusOf(campaign: { kiModus?: string | null; reviewFirst?: boolean | null }): KiModus {
   return campaign.kiModus === "auto" || campaign.kiModus === "freigabe" || campaign.kiModus === "aus" ? campaign.kiModus : campaign.reviewFirst ? "freigabe" : "aus";
 }
-/** Ansatz einer Kampagne: Drittanbieter, sonst der freie Vorschlag (auch für alte Kampagnen mit „individuell“ oder ohne Angabe). */
+/** Ansatz einer Kampagne: Drittanbieter, sonst der individuelle Vorschlag (auch für alte Kampagnen mit „individuell“ oder ohne Angabe). */
 export function kiAnsatzOf(campaign: { kiAnsatz?: string | null }): KiAnsatz { return campaign.kiAnsatz === "drittanbieter" ? "drittanbieter" : "frei"; }
 
 /** Ohne KI: der Drittanbieter-Ansatz als feste Vorlage mit den Daten der Firma. */

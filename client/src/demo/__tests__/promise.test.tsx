@@ -222,7 +222,7 @@ describe("Oberfläche (Chat-Build): Mails davor im Posteingang, Kategorie-Filter
     const view = mount(); await settle(300); await settle(300);
     const open = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cl-card .cl-name")).find((node) => node.textContent?.includes("Freigabe-UI"))!;
     await act(async () => { fireEvent.click(open); }); await settle(300); await settle(200);
-    const go = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".rv-banner button")).find((node) => /Jetzt freigeben/.test(node.textContent ?? ""))!; expect(go).toBeTruthy();
+    const go = view.container.querySelector<HTMLButtonElement>(".ch-alerts .cl-approval-main")!; expect(go).toBeTruthy(); expect(view.container.querySelector(".rv-banner")).toBeNull(); // „Zur Freigabe“ nur einmal – oben im Kopf
     await act(async () => { fireEvent.click(go); }); await settle(300); await settle(300);
     const kinds = () => Array.from(view.container.querySelectorAll(".rv-list .rv-step .rv-kind")).map((node) => node.textContent?.trim());
     expect(kinds().sort()).toEqual(["Erst-E-Mail", "Follow-up 2"]);
@@ -848,7 +848,7 @@ describe("Freigabe: nach Liste filtern und mehrere auf einmal bearbeiten (Chat-B
     const view = mount(); await settle(300); await settle(300);
     const open = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cl-card .cl-name")).find((node) => node.textContent?.includes("Auswahl-Freigabe"))!;
     await act(async () => { fireEvent.click(open); }); await settle(300); await settle(200);
-    const go = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".rv-banner button")).find((node) => /Jetzt freigeben/.test(node.textContent ?? ""))!; expect(go).toBeTruthy();
+    const go = view.container.querySelector<HTMLButtonElement>(".ch-alerts .cl-approval-main")!; expect(go).toBeTruthy(); expect(view.container.querySelector(".rv-banner")).toBeNull(); // „Zur Freigabe“ nur einmal – oben im Kopf
     await act(async () => { fireEvent.click(go); }); await settle(300); await settle(300);
     const listSelect = view.container.querySelector<HTMLSelectElement>("select[aria-label='Nach Liste filtern']")!; expect(listSelect).toBeTruthy();
     expect(Array.from(listSelect.options).map((option) => option.textContent)).toEqual(["Alle Listen (3)", "Freigabe-A (2)", "Freigabe-B (1)"]);
@@ -1108,7 +1108,7 @@ describe("Freigabe: Markierung „Passt nicht?“ (Chat-Build)", () => {
 describe("Freigabe: A/B-Test der Ansätze (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
-  it("„25“ wählt die ersten 25, „Ansatz: Drittanbieter“ stellt sie um (Filter zählt mit); nach dem Versand zeigt die Karte „Drittanbieter 25 · frei 5“ und die Kampagne den Vergleich", async () => {
+  it("„25“ wählt die ersten 25, „Ansatz: Drittanbieter“ stellt sie um (Filter zählt mit); nach dem Versand zeigt die Karte „Drittanbieter 25 · individuell 5“ und die Kampagne den Vergleich", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "AB-Demo", rows: Array.from({ length: 30 }, (_, n) => ({ firstName: `Kontakt${n}`, lastName: "AB", company: `AB Solar ${n}`, email: `ab${n}@ab-demo.example` })) });
     const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Photovoltaik AB-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["AB-Demo"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
@@ -1125,7 +1125,7 @@ describe("Freigabe: A/B-Test der Ansätze (Chat-Build)", () => {
     const toThird = Array.from(document.querySelectorAll<HTMLButtonElement>(".rv-bulk-approach button")).find((node) => node.textContent === "Drittanbieter")!; expect(toThird).toBeTruthy();
     await act(async () => { fireEvent.click(toThird); }); await settle(400); await settle(300);
     expect(recipients().filter((row) => row.approachPick === "drittanbieter" && row.draftApproach === "drittanbieter")).toHaveLength(25);
-    const filter = document.querySelector<HTMLSelectElement>(".rv-approach-filter")!; expect(Array.from(filter.options).map((option) => option.textContent)).toEqual(["Alle Ansätze", "Drittanbieter-Ansatz (25)", "Freier Vorschlag (5)"]);
+    const filter = document.querySelector<HTMLSelectElement>(".rv-approach-filter")!; expect(Array.from(filter.options).map((option) => option.textContent)).toEqual(["Alle Ansätze", "Drittanbieter-Ansatz (25)", "Individueller Vorschlag (5)"]);
     await act(async () => { fireEvent.change(filter, { target: { value: "frei" } }); }); await settle(200);
     expect(document.querySelectorAll(".rv-item")).toHaveLength(5); expect(document.querySelectorAll(".rv-state small.rv-ab")).toHaveLength(0);
     // freigeben und senden
@@ -1133,10 +1133,10 @@ describe("Freigabe: A/B-Test der Ansätze (Chat-Build)", () => {
     expect(getStore().tables.emailCampaignEvents.filter((event) => event.campaignId === saved.id && event.kind === "gesendet")).toHaveLength(30);
     cleanup(); window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     mount(); await settle(300); await settle(300);
-    expect(card().querySelector(".cl-f.is-sent .cl-why.is-approach")?.textContent).toBe("Drittanbieter 25 · frei 5");
+    expect(card().querySelector(".cl-f.is-sent .cl-why.is-approach")?.textContent).toBe("Drittanbieter 25 · individuell 5");
     expect(card().querySelector(".cl-f.is-total small")?.textContent).toBe("alle angeschrieben");
     await act(async () => { fireEvent.click(card().querySelector<HTMLButtonElement>(".cl-name")!); }); await settle(400); await settle(300);
     const compare = document.querySelector<HTMLElement>(".ab-compare")!; expect(compare).toBeTruthy();
-    expect(Array.from(compare.querySelectorAll("tbody tr")).map((row) => Array.from(row.children).slice(0, 2).map((cell) => cell.textContent))).toEqual([["Drittanbieter-Ansatz", "25"], ["Freier Vorschlag", "5"]]);
+    expect(Array.from(compare.querySelectorAll("tbody tr")).map((row) => Array.from(row.children).slice(0, 2).map((cell) => cell.textContent))).toEqual([["Drittanbieter-Ansatz", "25"], ["Individueller Vorschlag", "5"]]);
   });
 });
