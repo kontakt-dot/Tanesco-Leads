@@ -4005,3 +4005,8 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cl-today-plan .is-next{color:#c4b5fd;background:rgba(129,120,255,.12);border-color:rgba(129,120,255,.3)}
 .cl-today-plan .is-limit{color:#8a87a8}
 .cl-today-plan.is-full .is-next{color:#fca5a5;background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.3)}
+/* v292: heute je Kampagne – „heute 12 raus · 30 stehen an“ */
+.cl-today-row{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.cl-today-row .cl-today{margin-top:0}
+.cl-f small.cl-today.is-next{background:rgba(129,120,255,.16);color:#c4b5fd}
+.cl-today-plan .is-label{background:transparent!important;border-color:transparent!important;padding-left:0;padding-right:2px;font-weight:600}

@@ -4096,6 +4096,21 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
   }, 60000);
 
+  it("63zo. Versandzeiten geändert: wer am Sende-Schritt auf das alte Fenster wartet, wird sofort neu eingeplant – Wartezeiten zwischen den E-Mails bleiben", async () => {
+    const { starterBlocks } = await import("../shared/email-design"); const { releaseWindowWaits } = await import("./sales-outreach");
+    const starter = await owner.leadops.emailCampaignStarter();
+    const campaign = await owner.leadops.saveEmailCampaign({ name: "Fenster-Neu", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "alle" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Hallo {{firma}}", blocks: starterBlocks("kaltakquise"), next: "w1" }, { id: "w1", type: "wait" as const, hours: 72, next: "m2" }, { id: "m2", type: "send" as const, label: "Nachfrage", subject: "Nachfrage", blocks: starterBlocks("nachfassen"), next: null }] }, design: starter.design as unknown as Record<string, unknown> } as never);
+    await db.update(emailCampaigns).set({ status: "aktiv" }).where(eq(emailCampaigns.id, campaign.id));
+    const later = new Date(Date.now() + 3 * 3_600_000);
+    const add = async (email: string, nodeId: string) => Number((await db.insert(emailCampaignRecipients).values({ tenantId: S.tenantId, campaignId: campaign.id, leadId: null, email, name: email, token: `fw${Math.random().toString(36).slice(2, 14)}`, nodeId, nextActionAt: later, status: "wartet" } as never))[0].insertId);
+    const atSend = await add("fenster-a@fw-e2e.example", "m1"); const atWait = await add("fenster-b@fw-e2e.example", "w1");
+    expect(await releaseWindowWaits(db, S.tenantId as number, campaign.id)).toBe(1);
+    const rows = await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, campaign.id));
+    expect(rows.find((row) => row.id === atSend)!.nextActionAt!.getTime()).toBeLessThanOrEqual(Date.now()); // sofort neu einplanen
+    expect(rows.find((row) => row.id === atWait)!.nextActionAt!.getTime()).toBe(Math.floor(later.getTime() / 1000) * 1000); // Wartezeit bleibt
+    await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, campaign.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, campaign.id));
+  }, 30000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

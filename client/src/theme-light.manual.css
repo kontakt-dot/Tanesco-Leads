@@ -1940,3 +1940,5 @@ html:not(.dark) .cl-today-plan .is-sent { background: #f0fdfa !important; border
 html:not(.dark) .cl-today-plan .is-next { background: #f5f3ff !important; border-color: #ddd6fe !important; color: #5b21b6 !important; }
 html:not(.dark) .cl-today-plan.is-full .is-next { background: #fef3f2 !important; border-color: #fecdca !important; color: #b42318 !important; }
 html:not(.dark) .cl-today-plan .is-limit { color: #667085 !important; }
+html:not(.dark) .cl-f small.cl-today.is-next { background: #f5f3ff !important; color: #5b21b6 !important; }
+html:not(.dark) .cl-today-plan .is-label { background: transparent !important; border-color: transparent !important; color: #667085 !important; }

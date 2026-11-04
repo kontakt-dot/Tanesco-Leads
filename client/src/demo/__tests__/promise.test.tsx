@@ -890,7 +890,7 @@ describe("Versand-Protokoll, heute gesendet und Papierkorb der E-Mail-Kampagnen 
     // Karte: „heute 2“ unter „Gesendet“; Verlauf → Papierkorb zeigt den Eintrag und holt ihn zurück
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const view = mount(); await settle(300); await settle(300);
-    const ours = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Protokoll-Demo"))!; expect(ours.querySelector(".cl-f.is-sent .cl-today")?.textContent).toBe("heute 2");
+    const ours = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Protokoll-Demo"))!; expect(ours.querySelector(".cl-f.is-sent .cl-today")?.textContent).toBe("heute 2 raus");
     cleanup(); window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=verlauf");
     const history = mount(); await settle(300); await settle(300);
     const entry = Array.from(history.container.querySelectorAll<HTMLElement>(".undo-list li")).find((node) => node.textContent?.includes("Empfänger von Hand entfernt"))!; expect(entry).toBeTruthy(); expect(entry.textContent).toContain("Aus Kampagne entfernt");

@@ -221,9 +221,23 @@ async function repairCampaignTrees(db: Db, tenantId: number) {
     const stored = (row.sendWindow ?? null) as Partial<SendWindow> | null; const moveWindow = stored?.preset !== SEND_WINDOW_PRESET;
     const sendWindow = moveWindow ? { ...DEFAULT_SEND_WINDOW, timezone: stored?.timezone || DEFAULT_SEND_WINDOW.timezone, drip: stored?.drip ?? null } : null;
     if (next || clearFooter || sendWindow) await db.update(emailCampaigns).set({ ...(next ? { tree: next } : {}), ...(clearFooter ? { design: { ...(design ?? {}), footerText: "", footerReset: 1 } } : {}), ...(sendWindow ? { sendWindow } : {}), updatedAt: row.updatedAt }).where(eq(emailCampaigns.id, row.id)); // automatische Auffrischung zählt nicht als „bearbeitet“
+    if (sendWindow) await releaseWindowWaits(db, tenantId, row.id).catch(() => 0); // neue Versandzeiten gelten sofort
    }
   // Gespeicherte KI-Entwürfe: Aroundhome raus (Text, Betreff, Alternativen), holprige Formulierung „qualifiziert über … Fragen“ glätten
   await cleanStoredDrafts(db, tenantId).catch(() => null);
+}
+/**
+ * Versandzeiten geändert: wer nur aufs (alte) Versandfenster, den Drip oder das Tageslimit wartet, steht an einem Sende-Schritt mit
+ * Zeit in der Zukunft – diese Zeit galt für die alten Zeiten. Auf „jetzt“ zurücksetzen, der nächste Lauf rechnet mit den neuen Zeiten
+ * (z. B. 13:00 statt 14:00). Wartezeiten zwischen den E-Mails (Warte-Schritte) bleiben unangetastet.
+ */
+export async function releaseWindowWaits(db: Db, tenantId: number, campaignId: number): Promise<number> {
+  const row = (await db.select({ tree: emailCampaigns.tree }).from(emailCampaigns).where(and(eq(emailCampaigns.id, campaignId), eq(emailCampaigns.tenantId, tenantId))).limit(1))[0];
+  const sendIds = (((row?.tree ?? null) as EmailTree | null)?.nodes ?? []).filter((node) => node.type === "send").map((node) => node.id);
+  if (!sendIds.length) return 0;
+  const now = new Date();
+  const result = await db.update(emailCampaignRecipients).set({ nextActionAt: now }).where(and(eq(emailCampaignRecipients.tenantId, tenantId), eq(emailCampaignRecipients.campaignId, campaignId), inArray(emailCampaignRecipients.status, ["wartet", "laeuft"]), inArray(emailCampaignRecipients.nodeId, sendIds), sql`${emailCampaignRecipients.nextActionAt} > ${now}`));
+  return Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
 }
 /** Laufende Kampagnen ohne aktuelle Versandzeiten einmalig auf die zwei Zeitfenster (8:00–12:00, 13:00–16:30 Uhr) umstellen – auch ohne dass jemand die Seite öffnet. Drip-Einstellung bleibt. */
 const windowsMigrated = new Set<number>();
@@ -234,6 +248,7 @@ export async function migrateSendWindows(db: Db, tenantId: number): Promise<numb
   for (const row of rows) {
     const stored = (row.sendWindow ?? null) as Partial<SendWindow> | null; if (stored?.preset === SEND_WINDOW_PRESET) continue;
     await db.update(emailCampaigns).set({ sendWindow: { ...DEFAULT_SEND_WINDOW, timezone: stored?.timezone || DEFAULT_SEND_WINDOW.timezone, drip: stored?.drip ?? null }, updatedAt: row.updatedAt }).where(eq(emailCampaigns.id, row.id)); changed += 1; // „zuletzt bearbeitet“ bleibt
+    await releaseWindowWaits(db, tenantId, row.id).catch(() => 0); // nach den neuen Zeiten neu einplanen
   }
   return changed;
 }
@@ -369,6 +384,7 @@ export async function saveEmailCampaign(db: Db, tenantId: number, userId: number
   const values = { tenantId, name, fromName: input.fromName?.trim() || null, fromEmail: input.fromEmail?.trim().toLowerCase() || null, replyTo: input.replyTo?.trim() || null, audience: input.isTemplate ? withoutLists(input.audience) : input.audience, /* Vorlagen speichern nie Listen */ tree, design: { ...DEFAULT_DESIGN, ...input.design } /* Fußzeile bleibt leer – wer sie will, wendet sie unter Einstellungen → Branding an */, createdByUserId: userId, ...(input.sendWindow !== undefined ? { sendWindow: normalizeSendWindow(input.sendWindow) } : {}), ...(input.isTemplate !== undefined && input.isTemplate !== null ? { isTemplate: input.isTemplate } : {}), ...(input.abSplit !== undefined && input.abSplit !== null ? { abSplit: Math.min(90, Math.max(10, Math.round(input.abSplit))) } : {}), ...(typeof input.stopOnReply === "boolean" ? { stopOnReply: input.stopOnReply } : {}), ...(typeof input.maxRuns === "number" ? { maxRuns: Math.max(0, Math.min(99, Math.round(input.maxRuns))) } : {}), ...(typeof input.reviewFirst === "boolean" ? { reviewFirst: input.reviewFirst } : {}), ...(input.kiModus === "aus" || input.kiModus === "freigabe" || input.kiModus === "auto" ? { kiModus: input.kiModus, reviewFirst: input.kiModus === "freigabe" } : {}), ...(input.kiAnsatz === "frei" || input.kiAnsatz === "drittanbieter" ? { kiAnsatz: input.kiAnsatz } : {}), ...(leadSparte !== undefined ? { leadSparte: leadSparte?.trim().slice(0, 120) || null } : {}), ...(categories !== null ? { leadCategoryIds: categories.length ? categories.map((row) => row.id) : null } : {}) };
   if (input.id) {
     await db.update(emailCampaigns).set(values).where(and(eq(emailCampaigns.id, input.id), eq(emailCampaigns.tenantId, tenantId)));
+    if (before && input.sendWindow !== undefined && JSON.stringify(before.sendWindow ?? null) !== JSON.stringify((values as { sendWindow?: unknown }).sendWindow ?? before.sendWindow ?? null)) await releaseWindowWaits(db, tenantId, input.id).catch(() => 0); // Versandzeiten geändert → sofort danach einplanen
     // Umbenannt: Pipeline-Karten und Kontakte tragen den Kampagnennamen – der folgt mit
     if (before && before.name !== name) await db.update(leads).set({ adCampaignName: name }).where(and(eq(leads.tenantId, tenantId), eq(leads.adCampaignId, `email-${input.id}`)));
     // Ansatz geändert (z. B. Drittanbieter → frei): offene Entwürfe im alten Ansatz umstellen bzw. neu schreiben lassen – es geht nur noch der gewählte Ansatz raus
