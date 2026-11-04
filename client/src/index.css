@@ -4010,3 +4010,5 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cl-today-row .cl-today{margin-top:0}
 .cl-f small.cl-today.is-next{background:rgba(129,120,255,.16);color:#c4b5fd}
 .cl-today-plan .is-label{background:transparent!important;border-color:transparent!important;padding-left:0;padding-right:2px;font-weight:600}
+.cd-today-line{display:flex;justify-content:flex-end;margin:0 0 10px}
+.cd-today-line:empty{display:none}
