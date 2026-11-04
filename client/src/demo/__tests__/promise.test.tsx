@@ -1108,6 +1108,31 @@ describe("Freigabe: Markierung „Passt nicht?“ (Chat-Build)", () => {
 describe("Freigabe: A/B-Test der Ansätze (Chat-Build)", () => {
   beforeEach(() => { resetStore(); try { localStorage.clear(); } catch { /* egal */ } });
   afterEach(() => { cleanup(); });
+  it("Freigabe-Filter: Zahlen passen zu den anderen Filtern (keine „5 zu prüfen“ bei leerer Gruppe) und rechts steht nur ein Kontakt, der links sichtbar ist", async () => {
+    const { starterBlocks } = await import("../../../../shared/email-design");
+    await call("leadops.importColdList", { listName: "Filter-Demo", rows: Array.from({ length: 6 }, (_, n) => ({ firstName: `Kontakt${n}`, lastName: "F", company: `Filter Solar ${n}`, email: `f${n}@filter-demo.example` })) });
+    const blocks = [{ id: "b1", type: "text", text: "Sehr geehrte Damen und Herren,\n\nkurz zu unseren Leads." }];
+    const saved = await call("leadops.saveEmailCampaign", { id: null, name: "Photovoltaik Filter-Demo", fromName: "T", fromEmail: "t@t.de", replyTo: null, design: {}, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "08:00", to: "18:00", timezone: "Europe/Berlin" }, abSplit: 50, audience: { source: "liste", listNames: ["Filter-Demo"] }, tree: { start: "m1", nodes: [{ id: "m1", type: "send", label: "Erste", subject: "Für {{firma}}", blocks, next: "w1" }, { id: "w1", type: "wait", hours: 72, next: "m2" }, { id: "m2", type: "send", label: "Nachfrage", subject: "Kurz nachgefragt", blocks, next: null }] }, kiModus: "freigabe", kiAnsatz: "frei" });
+    await call("leadops.startEmailCampaign", { id: saved.id });
+    const rows = getStore().tables.emailCampaignRecipients.filter((row) => row.campaignId === saved.id).sort((a, b) => a.id - b.id);
+    // alle Erst-E-Mails freigegeben; zwei Kontakte schon angeschrieben → ihre Follow-ups warten „zu prüfen“
+    await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true, recipientIds: rows.slice(0, 2).map((row) => row.id) });
+    await call("leadops.runEmailCampaigns");
+    await call("leadops.approveAllCampaignDrafts", { campaignId: saved.id, approve: true, recipientIds: rows.slice(2).map((row) => row.id) });
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
+    mount(); await settle(300); await settle(300);
+    const card = Array.from(document.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Photovoltaik Filter-Demo"))!;
+    await act(async () => { fireEvent.click(card.querySelector<HTMLButtonElement>(".cl-approval-main")!); }); await settle(400); await settle(300);
+    const chip = (group: string, label: RegExp) => Array.from(document.querySelectorAll<HTMLButtonElement>(`${group} button`)).find((node) => label.test(node.textContent ?? ""))!;
+    expect(chip(".cd-filters.is-kind", /^Erst-E-Mails/)).toBeTruthy(); // Follow-ups da → Art-Filter da
+    await act(async () => { fireEvent.click(chip(".cd-filters.is-kind", /^Erst-E-Mails/)); }); await settle(200);
+    const reviewChip = chip(".cd-filters:not(.is-kind)", /^Zu prüfen/); expect(reviewChip.querySelector("i")?.textContent).toBe("0"); // Erst-E-Mails sind alle freigegeben
+    await act(async () => { fireEvent.click(reviewChip); }); await settle(200);
+    expect(document.querySelectorAll(".rv-item").length).toBe(0); expect(document.querySelector(".rv-list")?.textContent).toContain("Niemand in dieser Gruppe");
+    expect(document.querySelector(".rv-editor-who")).toBeNull(); expect(document.querySelector(".rv-editor")?.textContent).toContain("Links einen Kontakt wählen"); // rechts kein Kontakt, der links fehlt
+    const all = Array.from(document.querySelectorAll<HTMLButtonElement>(".rv-list button")).find((node) => node.textContent === "Alle zeigen")!; expect(all).toBeTruthy();
+    await act(async () => { fireEvent.click(all); }); await settle(200); expect(document.querySelectorAll(".rv-item").length).toBeGreaterThan(0);
+  });
   it("„25“ wählt die ersten 25, „Ansatz: Drittanbieter“ stellt sie um (Filter zählt mit); nach dem Versand zeigt die Karte „Drittanbieter 25 · individuell 5“ und die Kampagne den Vergleich", async () => {
     const { starterBlocks } = await import("../../../../shared/email-design");
     await call("leadops.importColdList", { listName: "AB-Demo", rows: Array.from({ length: 30 }, (_, n) => ({ firstName: `Kontakt${n}`, lastName: "AB", company: `AB Solar ${n}`, email: `ab${n}@ab-demo.example` })) });
