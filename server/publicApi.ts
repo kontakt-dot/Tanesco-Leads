@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { apiTokens, categoryFields, claimEvents, claims, deliveryStopReasons, deliveryStops, invoices, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, reclamationReasons, supplierInboundMappings, suppliers, metaConnections } from "../drizzle/schema";
 import { deliverLeadNow, loadDeliverySettings, triggerLeadAutomations } from "./lead-pipeline";
 import { checkPhoneNumber, handleWattfoxCallback } from "./partner-accounts";
-import { ingestDialerCall } from "./call-qa";
+import { describeDialerWebhook, ingestDialerCall } from "./call-qa";
 import { desc, sql } from "drizzle-orm";
 import { getDb } from "./db";
 import { registerContractRoutes } from "./contract-routes";
@@ -195,6 +195,10 @@ export function registerPublicApiRoutes(app: Express) {
   };
   app.post("/api/partner/dialer/:token", dialerHandler);
   app.post("/api/partner/ondialer/:token", dialerHandler);
+  /** Prüf-Adresse für den Dialer-Entwickler: GET zeigt, ob Adresse und Token stimmen und welche Felder erwartet werden – speichert nichts. */
+  const dialerDescribe = async (req: Request, res: Response) => { const db = await getDb(); if (!db) return res.status(503).json({ error: "database unavailable" }); const result = await describeDialerWebhook(db, String(req.params.token ?? "")); return res.status(result.status).json(result.body); };
+  app.get("/api/partner/dialer/:token", dialerDescribe);
+  app.get("/api/partner/ondialer/:token", dialerDescribe);
   app.get("/api/partner/wattfox/:token", wattfoxHandler);
   app.post("/api/partner/wattfox/:token", wattfoxHandler);
   // ---- Meta Lead Ads: Webhook-Prüfung (GET) und neue Leads (POST), Facebook-Login-Rückruf

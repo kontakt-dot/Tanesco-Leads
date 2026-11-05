@@ -8,10 +8,10 @@
  *  5. Entscheidung: ab Freigabe-Schwelle Lead freigeben (und über die Automatisierung ausliefern/verkaufen),
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
-import { and, asc, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, like, lt, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { callQaConfigs, callRecords, leadStatusEvents, leads, optIns, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
-import { convertRawContact } from "./raw-data";
+import { convertRawContact, normalizeRawPhone } from "./raw-data";
 import { invokeLLM } from "./_core/llm";
 import { noteAfterEvaluation } from "./call-notes";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
@@ -120,20 +120,56 @@ export async function rotateCallQaToken(db: Db, tenantId: number) {
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "");
 const truthy = (value: unknown) => value === true || ["true", "1", "yes", "ja", "y"].includes(String(value ?? "").toLowerCase());
 
+/** Welcher Transkriptionsdienst würde greifen? (für die Prüf-Antwort an den Dialer-Entwickler) */
+const transcriptionService = (config: CallQaConfig) => config.transcriptionProvider === "auto" ? (process.env.OPENAI_API_KEY ? "openai" : process.env.DEEPGRAM_API_KEY ? "deepgram" : "nur Transkript im Webhook") : config.transcriptionProvider;
+/**
+ * GET auf die Webhook-Adresse: Prüf-Antwort für den Dialer-Entwickler – ist die Adresse richtig, ist die Bewertung an, welche Felder werden erwartet,
+ * wird eine Einwilligung verlangt, gibt es einen Transkriptionsdienst. Speichert nichts.
+ */
+export async function describeDialerWebhook(db: Db, token: string) {
+  const config = (await db.select().from(callQaConfigs).where(eq(callQaConfigs.webhookToken, token)).limit(1))[0];
+  if (!config) return { status: 404, body: { ok: false, error: "unknown webhook token" } };
+  const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) };
+  return { status: 200, body: { ok: true, service: "Gesprächsbewertung", method: "POST", content_type: "application/json", enabled: config.enabled, consent_required: config.consentRequired, transcription: transcriptionService(config), recording_auth_header: Boolean(config.recordingAuthHeader), expected_fields: mapping, required: [mapping.callId, mapping.phone, mapping.recordingUrl], test_mode: "POST mit \"test\": true prüft die Felder und den Aufnahme-Link, ohne etwas zu speichern" } };
+}
+/** Rohdaten-Kontakt zur Rufnummer (noch nicht Lead) – damit eine Freigabe ihn zum Lead macht und eine Ablehnung ihn verwirft. */
+async function rawContactByPhone(db: Db, tenantId: number, phone: string) {
+  const normalized = normalizeRawPhone(phone); if (!normalized) return undefined; // Rohdaten speichern Nummern als +49…
+  const national = `0${normalized.replace(/^\+49/, "")}`;
+  const variants = Array.from(new Set([phone, normalized, normalized.replace(/^\+/, "00"), national]));
+  const rows = await db.select({ id: rawContacts.id, phone: rawContacts.phone, status: rawContacts.status, leadId: rawContacts.leadId }).from(rawContacts).where(and(eq(rawContacts.tenantId, tenantId), inArray(rawContacts.status, ["neu", "in_liste"]), or(...variants.map((value) => eq(rawContacts.phone, value))))).orderBy(desc(rawContacts.createdAt)).limit(5);
+  return rows.find((row) => row.phone && normalizeRawPhone(row.phone) === normalized && !row.leadId) ?? rows.find((row) => !row.leadId);
+}
 export async function ingestDialerCall(db: Db, token: string, payload: Record<string, unknown>, options: { fetchImpl?: typeof fetch } = {}) {
   const config = (await db.select().from(callQaConfigs).where(eq(callQaConfigs.webhookToken, token)).limit(1))[0];
   if (!config) return { status: 404, body: { error: "unknown webhook token" } };
-  if (!config.enabled) return { status: 403, body: { error: "call evaluation disabled" } };
   const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) };
   const get = (key: keyof typeof DEFAULT_MAPPING) => readPath(payload, mapping[key]) ?? payload[key];
+  // Testmodus: "test": true → Felder und Aufnahme-Link prüfen, nichts speichern (für den Dialer-Entwickler beim Einrichten)
+  if (truthy(payload.test) || truthy(payload.dry_run)) {
+    const found: string[] = []; const missing: string[] = [];
+    for (const key of Object.keys(DEFAULT_MAPPING) as Array<keyof typeof DEFAULT_MAPPING>) { if (text(get(key)) || typeof get(key) === "boolean") found.push(mapping[key]); else missing.push(mapping[key]); }
+    const required = (["callId", "phone", "recordingUrl"] as const).filter((key) => !text(get(key))).map((key) => mapping[key]);
+    const recordingUrl = text(get("recordingUrl")); let recording: Record<string, unknown> = { checked: false };
+    if (recordingUrl) {
+      const headers: Record<string, string> = {}; if (config.recordingAuthHeader) { const raw = decryptIntegrationSecret(config.recordingAuthHeader); const [name, ...rest] = raw.split(":"); if (rest.length) headers[name.trim().toLowerCase()] = rest.join(":").trim(); else headers.authorization = raw; }
+      try { const response = await (options.fetchImpl ?? fetch)(recordingUrl, { method: "GET", headers: { ...headers, range: "bytes=0-1023" } }); recording = { checked: true, reachable: response.ok, http_status: response.status, content_type: response.headers.get("content-type") }; }
+      catch (error) { recording = { checked: true, reachable: false, error: error instanceof Error ? error.message : String(error) }; }
+    }
+    const consent = truthy(get("consent")) || !config.consentRequired;
+    return { status: 200, body: { ok: required.length === 0 && (recording.reachable !== false), test: true, stored: false, enabled: config.enabled, fields_found: found, fields_missing: missing, required_missing: required, recording, would_evaluate: config.enabled && consent && required.length === 0 && recording.reachable !== false, reason: !config.enabled ? "Gesprächsbewertung ist in der App ausgeschaltet" : required.length ? `Pflichtfelder fehlen: ${required.join(", ")}` : recording.reachable === false ? "Aufnahme-Link nicht abrufbar" : !consent ? `Einwilligung erforderlich – Feld „${mapping.consent}“ muss true sein` : "alles in Ordnung", transcription: transcriptionService(config) } };
+  }
+  if (!config.enabled) return { status: 403, body: { error: "call evaluation disabled" } };
   const externalCallId = text(get("callId")) || null;
   if (externalCallId) { const existing = (await db.select({ id: callRecords.id, status: callRecords.status }).from(callRecords).where(and(eq(callRecords.tenantId, config.tenantId), eq(callRecords.externalCallId, externalCallId))).limit(1))[0]; if (existing) return { status: 200, body: { ok: true, call_id: existing.id, duplicate: true, status: existing.status } }; }
   const phone = text(get("phone")); const leadRef = text(get("leadId"));
   let lead = leadRef ? (await db.select().from(leads).where(and(eq(leads.tenantId, config.tenantId), eq(leads.kind, "verkauf"), or(eq(leads.publicId, leadRef), ...(Number.isInteger(Number(leadRef)) && Number(leadRef) > 0 ? [eq(leads.id, Number(leadRef))] : [])))).limit(1))[0] : undefined;
   if (!lead && phone) { const digits = normalizePhone(phone); const candidates = await db.select().from(leads).where(and(eq(leads.tenantId, config.tenantId), eq(leads.kind, "verkauf"), or(eq(leads.phone, phone), eq(leads.phone, `+${digits}`), eq(leads.phone, `0${digits.replace(/^49/, "")}`)))).orderBy(desc(leads.createdAt)).limit(5); lead = candidates.find((row) => row.phone && normalizePhone(row.phone) === digits) ?? candidates[0]; }
+  // Kein Lead zur Nummer, aber ein Rohdaten-Kontakt (hochgeladene Callcenter-Liste): merken – „freigegeben“ macht ihn zum Lead, „zurückgewiesen“ verwirft ihn
+  const rawContact = !lead && phone ? await rawContactByPhone(db, config.tenantId, phone) : undefined;
   const consent = truthy(get("consent")) || !config.consentRequired;
   const startedAtRaw = text(get("startedAt")); const startedAt = startedAtRaw && !Number.isNaN(new Date(startedAtRaw).getTime()) ? new Date(startedAtRaw) : new Date();
-  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, phone: phone || lead?.phone || null, agentName: text(get("agent")) || null, campaign: text(get("campaign")) || null, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
+  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: text(get("agent")) || null, campaign: text(get("campaign")) || null, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
   const callId = Number(inserted[0]?.insertId) || 0;
   if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, evaluated: false, reason: "no consent" } }; }
   const result = await processCall(db, callId, options);
@@ -162,8 +198,10 @@ async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typ
   if (!call.recordingUrl) throw new Error("Keine Aufzeichnungs-URL übergeben.");
   const headers: Record<string, string> = {};
   if (config.recordingAuthHeader) { const raw = decryptIntegrationSecret(config.recordingAuthHeader); const [name, ...rest] = raw.split(":"); if (rest.length) headers[name.trim().toLowerCase()] = rest.join(":").trim(); else headers.authorization = raw; }
-  const audioResponse = await fetchImpl(call.recordingUrl, { headers });
-  if (!audioResponse.ok) throw new Error(`Aufzeichnung konnte nicht geladen werden (HTTP ${audioResponse.status}).`);
+  let audioResponse: Response;
+  try { audioResponse = await fetchImpl(call.recordingUrl, { headers }); }
+  catch (error) { throw Object.assign(new Error(`Aufzeichnung konnte nicht geladen werden (${error instanceof Error ? error.message : String(error)}).`), { retryable: true }); }
+  if (!audioResponse.ok) throw Object.assign(new Error(`Aufzeichnung konnte nicht geladen werden (HTTP ${audioResponse.status}).`), { retryable: audioResponse.status !== 401 && audioResponse.status !== 403 }); // 404/425/5xx: Datei meist noch nicht fertig – später noch einmal
   const audio = new Uint8Array(await audioResponse.arrayBuffer());
   const contentType = audioResponse.headers.get("content-type") ?? "audio/mpeg";
   if (provider === "openai") {
@@ -216,6 +254,24 @@ export function decideCall(config: Pick<CallQaConfig, "autoApproveThreshold" | "
 
 /* ------------------------------------------------------------------ Verarbeitung & Entscheidung */
 
+const RECORDING_RETRIES = 8;
+const retrying = new Set<number>();
+/**
+ * Gespräche, deren Aufnahme beim Eingang noch nicht abrufbar war, später noch einmal holen: Versuch n wartet 2^n Minuten (2, 4, 8 … höchstens 60),
+ * insgesamt bis zu 8 Versuche über etwa 4 Stunden. Läuft im Minutentakt aus dem Zeitplaner.
+ */
+export async function retryWaitingRecordings(db: Db, options: { fetchImpl?: typeof fetch; max?: number } = {}): Promise<{ retried: number; done: number }> {
+  const since = new Date(Date.now() - 24 * 3_600_000);
+  const rows = await db.select({ id: callRecords.id, error: callRecords.error, updatedAt: callRecords.updatedAt }).from(callRecords).where(and(eq(callRecords.status, "fehlgeschlagen"), gte(callRecords.createdAt, since), like(callRecords.error, "%Neuer Versuch folgt automatisch%"))).orderBy(asc(callRecords.updatedAt)).limit(options.max ?? 10);
+  let retried = 0; let done = 0;
+  for (const row of rows) {
+    const attempt = Number(/Versuch (\d+)\//.exec(row.error ?? "")?.[1]) || 1; const waitMs = Math.min(60, 2 ** attempt) * 60_000;
+    if (Date.now() - new Date(row.updatedAt).getTime() < waitMs || retrying.has(row.id)) continue;
+    retrying.add(row.id);
+    try { const result = await processCall(db, row.id, options); retried += 1; if (result.status === "bewertet") done += 1; } catch { /* bleibt fehlgeschlagen */ } finally { retrying.delete(row.id); }
+  }
+  return { retried, done };
+}
 export async function processCall(db: Db, callId: number, options: { fetchImpl?: typeof fetch } = {}) {
   const call = (await db.select().from(callRecords).where(eq(callRecords.id, callId)).limit(1))[0];
   if (!call) throw new Error("Gespräch wurde nicht gefunden.");
@@ -248,7 +304,10 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     return { status: "bewertet" as const, score: evaluation.score, verdict: evaluation.verdict, decision, error: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unbekannter Fehler";
-    await db.update(callRecords).set({ status: "fehlgeschlagen", error: message }).where(eq(callRecords.id, callId));
+    // Aufnahme (noch) nicht abrufbar: Dialer melden das Gespräch oft, bevor die Datei fertig ist – bis zu 8 Versuche mit wachsendem Abstand (2 min … 60 min)
+    const attempt = (Number(/Versuch (\d+)\//.exec(call.error ?? "")?.[1]) || 0) + 1;
+    const retryable = Boolean((error as { retryable?: boolean }).retryable) && attempt <= RECORDING_RETRIES;
+    await db.update(callRecords).set({ status: "fehlgeschlagen", error: retryable ? `${message} Neuer Versuch folgt automatisch (Versuch ${attempt}/${RECORDING_RETRIES}).` : message }).where(eq(callRecords.id, callId));
     return { status: "fehlgeschlagen" as const, score: null, verdict: null, decision: "offen" as const, error: message };
   }
 }

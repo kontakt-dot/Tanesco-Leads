@@ -9,7 +9,7 @@ import { createContext } from "./context";
 import { registerStripeWebhook } from "../stripe";
 import { registerPublicApiRoutes } from "../publicApi";
 import { ensurePublicAppUrl, rememberPublicHost } from "../public-url";
-import { startDeliveryScheduler, startDialerScheduler, startDraftPrewriter, startEmailCampaignScheduler } from "../delivery-scheduler";
+import { startDeliveryScheduler, startDialerScheduler, startDraftPrewriter, startEmailCampaignScheduler, startRecordingRetry } from "../delivery-scheduler";
 import { runIntegrationHealthChecks } from "../integration-health";
 import { registerFileRoutes } from "../storage";
 import { registerTelephonyRoutes } from "../telephony-routes";
@@ -47,6 +47,7 @@ async function startServer() {
   app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads"), { maxAge: "7d" })); // Bilder aus dem E-Mail-Builder
   registerPublicApiRoutes(app);
   startDialerScheduler(); // Predictive-Dialer (DIALER_TICK_SECONDS, Standard 5, 0 = aus)
+  startRecordingRetry(); // Dialer-Webhook: Aufnahmen, die beim Eingang noch nicht fertig waren, später nachholen
   startEmailCampaignScheduler(); // E-Mail-Kampagnen im Minutentakt (EMAIL_CAMPAIGN_TICK_SECONDS, Standard 60)
   startDraftPrewriter(); // KI schreibt nach dem Start alle Entwürfe vor – auch nachts (EMAIL_PREWRITE_TICK_SECONDS, Standard 60)
   // Technische Listennamen („PV_WP_…_neu“) einmalig lesbar machen – idempotent, bewusst vergebene Namen bleiben

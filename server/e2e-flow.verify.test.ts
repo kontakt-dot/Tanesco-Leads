@@ -94,6 +94,7 @@ beforeAll(async () => {
     if (url.endsWith("/login")) return new Response(JSON.stringify({ auth_token: "tok-12345" }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("aroundhome-d2d")) return new Response(JSON.stringify({ data: [{ uuid: "d2d-1", status: "qualified", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-2", status: "open", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-3", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar", sub_id: "D2D-TEST2", created_at: new Date(Date.now() - 24 * 3_600_000).toISOString() }, { uuid: "d2d-4", status: "qualified", sub_id: "D2D-FREMD", created_at: new Date().toISOString() }] }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("aroundhome-export")) return new Response(JSON.stringify({ data: [{ uuid: S.aroundhomeRef ?? "none", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar" }, { uuid: "ah-unbekannt", status: "cancelled", cancellation_reason: "Dublette" }, { uuid: "ah-ok", status: "confirmed" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("recordings-later/")) return S.recordingReady ? new Response(new Uint8Array([73, 68, 51, 3, 0, 0]), { status: 200, headers: { "content-type": "audio/mpeg" } }) : new Response("not ready", { status: 404 }); // Dialer meldet das Gespräch, bevor die Datei fertig ist
     if (url.includes("recordings/")) return new Response(new Uint8Array([73, 68, 51, 3, 0, 0]), { status: 200, headers: { "content-type": "audio/mpeg" } });
     if (url.includes("api.openai.com/v1/audio/transcriptions")) return new Response(S.transcriptForStub ?? "Agent: Hallo. Kunde: Ja gerne, ich bin Eigentümer und einverstanden.", { status: 200, headers: { "content-type": "text/plain" } });
     if (url.includes("hlrlookup.com")) return new Response(JSON.stringify(url.includes("msisdn=491700000000") ? { status: "valid", network: "Telekom" } : { status: "invalid" }), { status: 200, headers: { "content-type": "application/json" } });
@@ -4154,6 +4155,43 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.emailLeads({ search: "meta-e2e" })).items.map((item) => item.email)).toEqual(["mona@meta-e2e.example"]); // ohne Angabe: alle (wie bisher)
     await db.delete(leadsTable).where(eq(leadsTable.publicId, "META-E2E01"));
   }, 30000);
+
+  it("63zr. OnDialer-Webhook: Prüf-Adresse (GET), Testmodus ohne Speichern, Aufnahme noch nicht fertig → automatischer neuer Versuch, Rohdaten-Kontakt per Rufnummer → Freigabe macht ihn zum Lead", async () => {
+    const { retryWaitingRecordings } = await import("./call-qa"); const { callRecords: callsTable, rawContacts: rawTable } = await import("../drizzle/schema");
+    const settings = await owner.leadops.getCallQaSettings(); expect(settings.enabled).toBe(true); // seit Test 15 an
+    const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    // Prüf-Adresse
+    const info = await fetch(dialerUrl); expect(info.status).toBe(200); const described = await info.json();
+    expect(described).toMatchObject({ ok: true, method: "POST", enabled: true, consent_required: true, expected_fields: { callId: "call_id", phone: "phone", recordingUrl: "recording_url", consent: "consent" }, required: ["call_id", "phone", "recording_url"], recording_auth_header: true, transcription: "openai" });
+    expect((await fetch(`${apiBase}/api/partner/ondialer/falscher-token`)).status).toBe(404);
+    // Testmodus: nichts wird gespeichert, Felder und Aufnahme-Link werden geprüft
+    const probe = await post({ test: true, call_id: "od-test-1", phone: "+49 40 777009", recording_url: "https://dialer.example/recordings/test.mp3", consent: true });
+    expect(probe.status).toBe(200); expect(probe.json).toMatchObject({ ok: true, test: true, stored: false, would_evaluate: true, recording: { checked: true, reachable: true }, reason: "alles in Ordnung" }); expect(probe.json.fields_missing).toContain("agent");
+    expect((await owner.leadops.listCalls({})).some((item) => item.externalCallId === "od-test-1")).toBe(false);
+    const bad = await post({ test: true, call_id: "od-test-2" }); expect(bad.json.ok).toBe(false); expect(bad.json.required_missing).toEqual(["phone", "recording_url"]); expect(bad.json.reason).toContain("Pflichtfelder fehlen");
+    const noConsent = await post({ test: true, call_id: "od-test-3", phone: "+49 40 777009", recording_url: "https://dialer.example/recordings/test.mp3" }); expect(noConsent.json.would_evaluate).toBe(false); expect(noConsent.json.reason).toContain("Einwilligung");
+    // Rohdaten-Kontakt (noch kein Lead) wird angerufen; die Aufnahme ist beim Eingang noch nicht fertig
+    const batch = await owner.leadops.createRawBatch({ name: "OnDialer Rohliste", categoryId: S.pv.id, sourceName: "OnDialer", mapping: {}, rows: [{ firstName: "Rudi", lastName: "Roh", phone: "+49 30 9177 6001" }] } as never);
+    const raw = (await db.select().from(rawTable).where(eq(rawTable.batchId, batch.batchId)))[0]; expect(raw).toBeTruthy(); expect(raw.leadId).toBeNull();
+    S.recordingReady = false; S.transcriptForStub = "Agent: Guten Tag Herr Roh, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar.";
+    const first = await post({ call_id: "od-2001", phone: "+49 30 9177 6001", agent: "Yilmaz", campaign: "PV Herbst", started_at: new Date().toISOString(), duration: 240, recording_url: "https://dialer.example/recordings-later/2001.mp3", consent: true });
+    expect(first.status).toBe(200); expect(first.json).toMatchObject({ ok: true, evaluated: false }); expect(String(first.json.error)).toContain("Aufzeichnung konnte nicht geladen werden");
+    let record = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-2001")))[0];
+    expect(record.status).toBe("fehlgeschlagen"); expect(record.error).toContain("Neuer Versuch folgt automatisch (Versuch 1/8)"); expect(record.rawContactId).toBe(raw.id); expect(record.leadId).toBeNull();
+    expect(await retryWaitingRecordings(db)).toEqual({ retried: 0, done: 0 }); // zu früh (2 Minuten Abstand)
+    await db.update(callsTable).set({ updatedAt: new Date(Date.now() - 3 * 60_000) }).where(eq(callsTable.id, record.id)); // Zeit vorspulen
+    expect(await retryWaitingRecordings(db)).toEqual({ retried: 1, done: 0 }); // Aufnahme immer noch nicht da → Versuch 2, nächster erst nach 4 Minuten
+    record = (await db.select().from(callsTable).where(eq(callsTable.id, record.id)))[0]; expect(record.error).toContain("(Versuch 2/8)");
+    S.recordingReady = true; await db.update(callsTable).set({ updatedAt: new Date(Date.now() - 5 * 60_000) }).where(eq(callsTable.id, record.id));
+    expect(await retryWaitingRecordings(db)).toEqual({ retried: 1, done: 1 });
+    record = (await db.select().from(callsTable).where(eq(callsTable.id, record.id)))[0];
+    expect(record).toMatchObject({ status: "bewertet", decision: "freigegeben" }); expect(record.leadId).toBeTruthy();
+    const rawAfter = (await db.select().from(rawTable).where(eq(rawTable.id, raw.id)))[0]; expect(rawAfter.status).toBe("konvertiert"); expect(rawAfter.leadId).toBe(record.leadId); // Freigabe → Rohdaten-Kontakt ist jetzt Lead
+    expect((await owner.leadops.listCalls({})).find((item) => item.externalCallId === "od-2001")).toMatchObject({ agentName: "Yilmaz", campaign: "PV Herbst", status: "bewertet" });
+    // Duplikat (OnDialer schickt noch einmal) → nichts doppelt
+    expect((await post({ call_id: "od-2001", phone: "+49 30 9177 6001", recording_url: "https://dialer.example/recordings-later/2001.mp3", consent: true })).json).toMatchObject({ ok: true, duplicate: true });
+  }, 60000);
 
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");

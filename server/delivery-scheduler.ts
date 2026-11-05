@@ -84,6 +84,19 @@ let lastInboxSync = 0;
 let dialerTimer: ReturnType<typeof setInterval> | undefined;
 
 /** Predictive-Dialer und Nachbereitung im Sekundentakt (DIALER_TICK_SECONDS, Standard 5, 0 = aus). */
+let recordingRetryTimer: ReturnType<typeof setInterval> | undefined;
+/** Gespräche vom Dialer-Webhook, deren Aufnahme noch nicht abrufbar war, im Minutentakt noch einmal holen und bewerten (call-qa.retryWaitingRecordings). */
+export function startRecordingRetry(intervalSeconds = Number(process.env.RECORDING_RETRY_TICK_SECONDS ?? 60)) {
+  if (recordingRetryTimer || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return undefined;
+  let running = false;
+  const tick = async () => {
+    if (running) return; running = true;
+    try { const db = await getDb(); if (!db) return; const { retryWaitingRecordings } = await import("./call-qa"); const result = await retryWaitingRecordings(db); if (result.retried) console.log(`[Gespräche] Aufnahme nachgeholt: ${result.retried} Versuche, ${result.done} bewertet`); }
+    catch (error) { console.error("[Gespräche] Aufnahme nachholen:", error instanceof Error ? error.message : error); } finally { running = false; }
+  };
+  recordingRetryTimer = setInterval(tick, intervalSeconds * 1000); recordingRetryTimer.unref?.();
+  return recordingRetryTimer;
+}
 export function startDialerScheduler(intervalSeconds = Number(process.env.DIALER_TICK_SECONDS ?? 5)) {
   if (dialerTimer || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return undefined;
   let running = false;
