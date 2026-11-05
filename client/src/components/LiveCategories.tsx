@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { categoryBadgeCode } from "../../../shared/category-code";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -163,7 +164,7 @@ export default function LiveCategories() {
     {!libraryOpen && <div className="grid gap-4 xl:grid-cols-[minmax(260px,0.72fr)_minmax(0,1.7fr)]">
       <aside className="surface-panel overflow-hidden">
         <div className="border-b border-white/10 px-4 py-4"><span className="eyebrow">KATEGORIEN</span><p className="mt-1 text-sm text-slate-400">Wählen Sie eine Kategorie, um ihre Grundeinstellungen, Fachfelder und Datenharmonisierung zu bearbeiten.</p></div>
-        <div className="p-2">{(categories.data ?? []).map((row) => <button type="button" key={row.id} onClick={() => selectCategory(row)} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${draft?.id === row.id ? "bg-violet-500/15 ring-1 ring-violet-400/35" : "hover:bg-white/5"}`}><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-mono text-xs font-bold ring-1 ring-white/10" style={{ backgroundColor: tint(categoryColor(row), 0.18), color: categoryColor(row) }}>{row.shortcode}</span><span className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-100"><span className="cat-emoji" aria-hidden="true">{categoryEmoji(row)}</span>{row.name}</strong><span className="mt-1 block text-xs text-slate-500">{row.status}</span></span><ChevronRight className="h-4 w-4 text-slate-600 transition group-hover:text-violet-200" /></button>)}</div>
+        <div className="p-2">{(categories.data ?? []).map((row) => <button type="button" key={row.id} onClick={() => selectCategory(row)} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${draft?.id === row.id ? "bg-violet-500/15 ring-1 ring-violet-400/35" : "hover:bg-white/5"}`}><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-mono text-xs font-bold ring-1 ring-white/10" style={{ backgroundColor: tint(categoryColor(row), 0.18), color: categoryColor(row) }} title={row.shortcode}>{categoryBadgeCode(row.shortcode, row.name)}</span><span className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-100"><span className="cat-emoji" aria-hidden="true">{categoryEmoji(row)}</span>{row.name}</strong><span className="mt-1 block text-xs text-slate-500">{row.status}</span></span><ChevronRight className="h-4 w-4 text-slate-600 transition group-hover:text-violet-200" /></button>)}</div>
         {!categories.isLoading && !categories.data?.length && <div className="px-4 pb-5 text-sm text-slate-500">Noch keine Kategorie vorhanden. Starten Sie mit der PV-Vorlage oder einer individuellen Kategorie.</div>}
       </aside>
 

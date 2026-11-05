@@ -6,6 +6,7 @@
  * Kategorievorlagen) werden direkt aus /server wiederverwendet.
  */
 import { websiteLinkOf, websiteOf } from "../../../shared/website";
+import { shortCategoryCode } from "../../../shared/category-code";
 import { tidyListName } from "../../../shared/list-name";
 import { pvCategoryFieldMappings, pvCategoryFields, heatPumpCategoryFields } from "../../../server/category-fields";
 import { byCategoryThenName, campaignTag, type CampaignTag } from "../../../shared/campaign-tag";
@@ -897,7 +898,7 @@ function demoPickEnergyForEmailCards(options: { leadIds?: number[]; recheck?: bo
 }
 function demoCreateCategoryForSparte(label: string, options: { shortcode?: string; emoji?: string; color?: string; detail?: string } = {}): { id: number; name: string } {
   const name = label.trim().slice(0, 160); const same = T().leadCategories.find((row) => !row.isTemplate && String(row.name).trim().toLowerCase() === name.toLowerCase()); if (same) return { id: same.id, name: String(same.name) };
-  const base = (options.shortcode ?? name.toUpperCase().replace(/Ä/g, "AE").replace(/Ö/g, "OE").replace(/Ü/g, "UE").replace(/ß/gi, "SS").replace(/[^A-Z0-9]/g, "").slice(0, 8)) || "KAT"; const codes = new Set(T().leadCategories.map((row) => String(row.shortcode).toUpperCase())); let code = base; for (let n = 2; codes.has(code); n += 1) code = `${base.slice(0, 6)}${n}`;
+  const base = (options.shortcode ?? shortCategoryCode(name)) || "KAT"; const codes = new Set(T().leadCategories.map((row) => String(row.shortcode).toUpperCase())); let code = base; for (let n = 2; codes.has(code); n += 1) code = `${base.slice(0, 6)}${n}`;
   const category = insert(store, "leadCategories", { tenantId: tenant().id, shortcode: code, name, color: options.color ?? null, emoji: options.emoji ?? suggestCategoryEmoji(name), multisaleMax: 1, defaultLeadPrice: null, geocodingRequired: true, marketplaceEnabled: false, pipelineType: "Sales-Pipeline", offerDescription: null, isTemplate: false, status: "aktiv", createdAt: new Date(), updatedAt: new Date() });
   demoLog({ kind: "sonstiges", title: `Lead-Kategorie „${name}“ angelegt`, detail: options.detail ?? "Automatisch zur Leadsparte einer E-Mail-Kampagne – damit Kontakte aus der Kampagne in der Pipeline ihre Kategorie tragen.", refType: "leadCategory", refId: category.id });
   return { id: category.id, name };

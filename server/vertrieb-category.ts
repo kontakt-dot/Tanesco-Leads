@@ -7,6 +7,7 @@
  * Verkaufs-Leads (kind „verkauf“) bleiben bei Photovoltaik bzw. Wärmepumpe – dort sind es zwei Produkte.
  */
 import { and, desc, eq, inArray, isNull, like, ne, or } from "drizzle-orm";
+import { shortCategoryCode } from "../shared/category-code";
 import { leadCategories, leads, pipelineEvents } from "../drizzle/schema";
 import { COMBINED_ENERGY_CATEGORY, combinedEnergyCategory, isSingleEnergyCategory, vertriebCategory } from "../shared/lead-sparte";
 import type { Db } from "./lead-pipeline";
@@ -24,7 +25,7 @@ export async function createCategoryForSparte(db: Db, tenantId: number, label: s
   const name = label.trim().slice(0, 160);
   const existing = await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false)));
   const same = existing.find((row) => row.name.trim().toLowerCase() === name.toLowerCase()); if (same) return { id: same.id, name: same.name };
-  const base = (options.shortcode ?? name.toUpperCase().replace(/Ä/g, "AE").replace(/Ö/g, "OE").replace(/Ü/g, "UE").replace(/ß/gi, "SS").replace(/[^A-Z0-9]/g, "").slice(0, 8)) || "KAT";
+  const base = (options.shortcode ?? shortCategoryCode(name)) || "KAT";
   const codes = new Set(existing.map((row) => row.shortcode.toUpperCase())); let code = base; for (let n = 2; codes.has(code); n += 1) code = `${base.slice(0, 6)}${n}`;
   const { suggestCategoryEmoji } = await import("../shared/category-emoji");
   await db.insert(leadCategories).values({ tenantId, shortcode: code, name, color: options.color ?? null, emoji: options.emoji ?? suggestCategoryEmoji(name), status: "aktiv", geocodingRequired: true, marketplaceEnabled: false });
