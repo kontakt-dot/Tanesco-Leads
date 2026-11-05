@@ -4142,6 +4142,19 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     } finally { if (before === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = before; await db.update(settingsTable).set({ aiDailyBudgetCents: 1000 }).where(eq(settingsTable.tenantId, S.tenantId as number)); await db.delete(aiUsageDays); }
   }, 90000);
 
+  it("63zq. Reiter „Kontakte“ (E-Mail-Kampagnen): Meta-Ads-/Posteingangs-Kontakte nur mit Herkunft „andere“/„alle“ – Standard „akquise“ zeigt nur Listen- und Kampagnen-Kontakte", async () => {
+    const { leads: leadsTable, leadCategories: categoriesTable } = await import("../drizzle/schema");
+    const category = (await db.select({ id: categoriesTable.id }).from(categoriesTable).where(eq(categoriesTable.tenantId, S.tenantId as number)).limit(1))[0];
+    await db.insert(leadsTable).values({ tenantId: S.tenantId as number, publicId: "META-E2E01", categoryId: category.id, kind: "vertrieb", firstName: "Mona", lastName: "Meta", email: "mona@meta-e2e.example", country: "DE", supplierName: "Meta Lead Ads", status: "neu", cost: "0.00", pipelineStage: "neu", adPlatform: "facebook", adCampaignId: "meta-e2e", adCampaignName: "BKV Handwerk" } as never);
+    await owner.leadops.importColdList({ listName: "Herkunft-Liste", toPipeline: false, rows: [{ firstName: "Lisa", lastName: "Liste", company: "Liste GmbH", email: "lisa@herkunft-e2e.example" }] });
+    expect((await owner.leadops.emailLeads({ origin: "akquise", search: "herkunft-e2e" })).items.map((item) => item.email)).toEqual(["lisa@herkunft-e2e.example"]);
+    const akquise = await owner.leadops.emailLeads({ origin: "akquise", search: "meta-e2e" }); expect(akquise.items).toHaveLength(0); expect(akquise.other).toBeGreaterThanOrEqual(1); // Meta-Lead nicht dabei, aber gezählt
+    expect((await owner.leadops.emailLeads({ origin: "andere", search: "meta-e2e" })).items.map((item) => item.email)).toEqual(["mona@meta-e2e.example"]);
+    expect((await owner.leadops.emailLeads({ origin: "andere", search: "herkunft-e2e" })).items).toHaveLength(0);
+    expect((await owner.leadops.emailLeads({ search: "meta-e2e" })).items.map((item) => item.email)).toEqual(["mona@meta-e2e.example"]); // ohne Angabe: alle (wie bisher)
+    await db.delete(leadsTable).where(eq(leadsTable.publicId, "META-E2E01"));
+  }, 30000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

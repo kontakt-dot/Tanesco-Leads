@@ -799,6 +799,23 @@ describe("Leads wieder in eine E-Mail-Kampagne; Kontakte: alle auswählen und ex
     await act(async () => { fireEvent.click(tab); }); await settle(300);
     expect(document.querySelector(".lead-series-add select[aria-label='In E-Mail-Kampagne aufnehmen']")).toBeTruthy();
   });
+  it("Kontakte (E-Mail-Kampagnen): Meta-Ads- und Posteingangs-Kontakte stehen nicht von allein dazwischen – ausgeblendet mit Hinweis, über „Herkunft“ einblendbar und mit Herkunft beschriftet", async () => {
+    const metaWithMail = getStore().tables.leads.filter((lead) => lead.kind === "vertrieb" && lead.email && !lead.listName && (lead.adPlatform === "facebook" || lead.adPlatform === "instagram"));
+    expect(metaWithMail.length).toBeGreaterThan(0); const one = metaWithMail[0];
+    window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kontakte");
+    const view = mount(); await settle(500); await settle(400);
+    const rowsText = () => Array.from(view.container.querySelectorAll(".email-leads-table tbody tr")).map((row) => row.textContent ?? "");
+    const herkunft = view.container.querySelector<HTMLSelectElement>("select[aria-label='Herkunft']")!; expect(herkunft).toBeTruthy(); expect(herkunft.value).toBe("akquise");
+    expect(rowsText().some((text) => text.includes(String(one.email)))).toBe(false); // Meta-Lead nicht in der Akquise-Liste
+    expect(Array.from(view.container.querySelectorAll(".email-leads-table tbody td.is-liste")).every((cell) => cell.textContent && cell.textContent !== "–" && !/Meta Ads|Posteingang/.test(cell.textContent))).toBe(true); // alle gezeigten haben eine Liste oder kommen aus einer E-Mail-Kampagne
+    const note = view.container.querySelector(".email-leads-note"); expect(note?.textContent).toMatch(/^\d+ Kontakte? aus Meta Ads oder dem Posteingang/);
+    await act(async () => { fireEvent.click(note!.querySelector("button")!); }); await settle(400);
+    expect(herkunft.value).toBe("andere");
+    const row = Array.from(view.container.querySelectorAll(".email-leads-table tbody tr")).find((item) => item.textContent?.includes(String(one.email)))!; expect(row).toBeTruthy();
+    expect(row.querySelector("td.is-liste")?.textContent).toMatch(/^Meta Ads/); // Herkunft steht dran
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLButtonElement>(".email-leads-reset")!); }); await settle(300);
+    expect(herkunft.value).toBe("akquise"); // „Filter entfernen“ stellt den Standard wieder her
+  });
   it("Kontakte: „Alle N auswählen“ über die gezeigten 200 hinaus, Export als CSV und für Google Sheets", async () => {
     await call("leadops.importColdList", { listName: "Viele-Demo", toPipeline: false, rows: Array.from({ length: 205 }, (_, n) => ({ firstName: `Vera${n}`, lastName: "Viel", company: `Viel ${n} GmbH`, email: `vera${n}@viele-demo.example`, phone: `+49 30 7770${String(n).padStart(3, "0")}`, postcode: "01067", city: "Dresden" })) });
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kontakte");

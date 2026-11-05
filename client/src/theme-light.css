@@ -2153,6 +2153,8 @@ html:not(.dark) .cl-f small.cl-today.is-next { background: #f3f6f8 !important; c
 html:not(.dark) .cl-today-plan .is-ai { color: #4b5568 !important; background: #f8fafb !important; border: 1px solid #e8ecf1 !important; }
 html:not(.dark) .cl-today-plan .is-ai:hover { border-color: #d9dfe7 !important; }
 html:not(.dark) .cl-today-plan .is-ai.is-full { color: #8a5a5a !important; }
+html:not(.dark) .xl-origin { color: #8a94a6 !important; }
+html:not(.dark) .email-leads-note { color: #4b5568 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -4346,3 +4348,5 @@ html:not(.dark) .cl-today-plan .is-label { background: transparent !important; b
 html:not(.dark) .cl-today-plan .is-ai { background: #ffffff !important; border-color: #eaecf0 !important; color: #475467 !important; }
 html:not(.dark) .cl-today-plan .is-ai:hover { border-color: #d0d5dd !important; }
 html:not(.dark) .cl-today-plan .is-ai.is-full { background: #fef3f2 !important; border-color: #fecdca !important; color: #b42318 !important; }
+html:not(.dark) .xl-origin { color: #667085 !important; }
+html:not(.dark) .email-leads-note { color: #667085 !important; }

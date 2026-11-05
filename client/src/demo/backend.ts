@@ -1624,7 +1624,10 @@ const procedures: Record<string, Handler> = {
     };
     const source = (input?.source ?? null) as "ads" | "kaltakquise" | "email" | null;
     const inSource = (platform: string | null | undefined) => !source ? true : source === "kaltakquise" ? platform === "kaltakquise" : source === "email" ? platform === "email" : platform !== "kaltakquise" && platform !== "email";
-    const items = T().leads.filter((lead) => lead.kind === "vertrieb" && (input?.withoutEmail ? true : Boolean(lead.email)) && inSource(lead.adPlatform) && (input?.inPipeline === true ? lead.inPipeline !== false : input?.inPipeline === false ? lead.inPipeline === false : true)).map((lead) => {
+    const isOutreach = (lead: unknown) => { const row = lead as { listName?: string | null; adPlatform?: string | null }; return Boolean(row.listName) || row.adPlatform === "kaltakquise" || row.adPlatform === "email"; }; // wie isOutreachContact auf dem Server
+    const inScope = T().leads.filter((lead) => lead.kind === "vertrieb" && (input?.withoutEmail ? true : Boolean(lead.email)) && inSource(lead.adPlatform) && (input?.inPipeline === true ? lead.inPipeline !== false : input?.inPipeline === false ? lead.inPipeline === false : true));
+    const origin = (input?.origin ?? "alle") as "akquise" | "andere" | "alle"; const other = inScope.filter((lead) => !isOutreach(lead)).length;
+    const items = inScope.filter((lead) => origin === "akquise" ? isOutreach(lead) : origin === "andere" ? !isOutreach(lead) : true).map((lead) => {
       const entries = byLead.get(`id:${lead.id}`) ?? (lead.email ? byLead.get(`mail:${String(lead.email).toLowerCase()}`) ?? [] : []);
       const { activity, at } = activityOf(entries);
       const campaigns = Array.from(new Map(entries.map((item) => [item.campaignId, { id: item.campaignId, name: item.campaignName, archived: Boolean(item.campaignArchived), tag: demoCampaignTagById(item.campaignId) }] as const)).values());
@@ -1650,7 +1653,7 @@ const procedures: Record<string, Handler> = {
     counts.angeschrieben = items.filter((item) => item.mails > 0 || item.lastSentAt).length;
     return {
       items: filtered.sort((a, b) => input?.activity === "angeschrieben" ? new Date(b.lastSentAt ?? 0).getTime() - new Date(a.lastSentAt ?? 0).getTime() : (rang[b.activity] ?? 0) - (rang[a.activity] ?? 0) || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime()).slice(0, input?.__all ? Number.MAX_SAFE_INTEGER : 200).map((item) => ({ ...item, calls: demoCallCounter(item.id) })), /* __all: alle Treffer (Auswahl „alle“, Export) */
-      total: filtered.length, counts, blocked: items.filter((item) => item.blocked).length,
+      total: filtered.length, counts, blocked: items.filter((item) => item.blocked).length, other,
       lists: Array.from(new Set(items.map((item) => item.listName).filter(Boolean))).sort(),
       campaigns: Array.from(new Map(items.flatMap((item) => item.campaigns).map((campaign) => [campaign.id, campaign] as const)).values()).sort((a, b) => Number(a.archived) - Number(b.archived) || byCategoryThenName(a, b)),
     };

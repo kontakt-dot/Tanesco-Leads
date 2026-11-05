@@ -1281,7 +1281,13 @@ export type { PipelineSource } from "../shared/sales-pipeline";
 /** Zu welcher Pipeline gehört ein Kontakt? Dieselbe Regel wie im Board (meta-ads.pipelineOverview). */
 export const matchesSource = (adPlatform: string | null | undefined, source: PipelineSource | null | undefined) => !source ? true : source === "kaltakquise" ? adPlatform === "kaltakquise" : source === "email" ? adPlatform === "email" : isCustomSource(source) ? adPlatform === source : adPlatform !== "kaltakquise" && adPlatform !== "email" && !isCustomSource(adPlatform);
 
-export type EmailLeadsFilter = { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivityFilter | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null; blocked?: boolean | null; ids?: number[] | null };
+export type EmailLeadsFilter = { search?: string | null; listName?: string | null; campaignId?: number | null; activity?: EmailLeadActivityFilter | null; stage?: string | null; ownerUserId?: number | "ohne" | null; limit?: number; source?: PipelineSource | null; inPipeline?: boolean | null; withoutEmail?: boolean | null; blocked?: boolean | null; ids?: number[] | null; origin?: "akquise" | "andere" | "alle" | null };
+/**
+ * Akquise-Kontakt = aus einer hochgeladenen Liste (Kaltakquise, Lead-Finder) oder über eine E-Mail-Kampagne gekommen. Alles andere – Meta-Ads-Leads,
+ * aus dem Posteingang angelegte Kontakte, von Hand in der Ads-Pipeline angelegte – kommt von selbst herein und gehört in die Vertriebspipeline;
+ * im Reiter „Kontakte“ der E-Mail-Kampagnen ist es standardmäßig ausgeblendet (Herkunft „Listen & E-Mail-Kampagnen“), damit dort nichts „von allein“ auftaucht.
+ */
+export const isOutreachContact = (lead: { listName?: string | null; adPlatform?: string | null }) => Boolean(lead.listName) || lead.adPlatform === "kaltakquise" || lead.adPlatform === "email";
 export async function emailLeads(db: Db, tenantId: number, options: EmailLeadsFilter = {}, internal: { all?: boolean } = {}) {
   const limit = internal.all ? Number.MAX_SAFE_INTEGER : Math.min(1000, Math.max(10, options.limit ?? 200)); // all: alle Treffer (Auswahl „alle“, Export)
   const onlyIds = options.ids?.length ? new Set(options.ids) : null;
@@ -1320,7 +1326,9 @@ export async function emailLeads(db: Db, tenantId: number, options: EmailLeadsFi
   };
 
   // E-Mail-Akquise: nur Kontakte mit E-Mail-Adresse. Reiter „Kontakte“ der Pipeline: alle Kontakte der gewählten Pipeline, auch ohne E-Mail.
-  const items = rows.filter((lead) => (options.withoutEmail ? true : Boolean(lead.email)) && matchesSource(lead.adPlatform, options.source ?? null) && (options.inPipeline === true ? lead.inPipeline !== false : options.inPipeline === false ? lead.inPipeline === false : true)).map((lead) => {
+  const inScope = rows.filter((lead) => (options.withoutEmail ? true : Boolean(lead.email)) && matchesSource(lead.adPlatform, options.source ?? null) && (options.inPipeline === true ? lead.inPipeline !== false : options.inPipeline === false ? lead.inPipeline === false : true));
+  const origin = options.origin ?? "alle"; const other = inScope.filter((lead) => !isOutreachContact(lead)).length; // Meta Ads, Posteingang & Co. – wie viele davon gibt es (für den Hinweis im Reiter)
+  const items = inScope.filter((lead) => origin === "akquise" ? isOutreachContact(lead) : origin === "andere" ? !isOutreachContact(lead) : true).map((lead) => {
     const entries = byLead.get(`id:${lead.id}`) ?? (lead.email ? byLead.get(`mail:${lead.email.toLowerCase()}`) ?? [] : []);
     const { activity, at } = activityOf(entries);
     const campaigns = Array.from(new Map(entries.map((item) => [item.campaignId, { id: item.campaignId, name: item.campaignName, archived: Boolean(item.campaignArchived), tag: tagOf(item) }])).values());
@@ -1355,7 +1363,7 @@ export async function emailLeads(db: Db, tenantId: number, options: EmailLeadsFi
     : filtered.sort((a, b) => rang[b.activity] - rang[a.activity] || new Date(b.activityAt ?? b.createdAt).getTime() - new Date(a.activityAt ?? a.createdAt).getTime());
   // Anrufzähler je Kontakt (Spalte „Anrufe“ im Reiter Kontakte)
   const page = sortiert.slice(0, limit); const { callCountsMap } = await import("./pipeline-extras"); const callMap = await callCountsMap(db, tenantId, page.map((item) => item.id));
-  return { items: page.map((item) => ({ ...item, calls: callMap.get(item.id) ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } })), total: filtered.length, counts, lists, campaigns, blocked: items.filter((item) => item.blocked).length };
+  return { items: page.map((item) => ({ ...item, calls: callMap.get(item.id) ?? { count: 0, reached: 0, lastAt: null, lastResult: null, lastBy: null } })), total: filtered.length, counts, lists, campaigns, blocked: items.filter((item) => item.blocked).length, other };
 }
 
 /** „Alle N auswählen“ im Reiter „Kontakte“: alle Treffer des Filters (nicht nur die gezeigten) – mit dem, was die Knöpfe brauchen. */
