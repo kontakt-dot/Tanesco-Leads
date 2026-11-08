@@ -1947,3 +1947,7 @@ html:not(.dark) .cl-today-plan .is-ai:hover { border-color: #d0d5dd !important; 
 html:not(.dark) .cl-today-plan .is-ai.is-full { background: #fef3f2 !important; border-color: #fecdca !important; color: #b42318 !important; }
 html:not(.dark) .xl-origin { color: #667085 !important; }
 html:not(.dark) .email-leads-note { color: #667085 !important; }
+
+/* v300 */
+html:not(.dark) .cq-transcription-state.is-ok { color: #15803d !important; }
+html:not(.dark) .cq-transcription-state.is-missing { color: #b45309 !important; }

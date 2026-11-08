@@ -170,3 +170,16 @@ describe("Seitenleiste", () => {
     for (const page of pages) expect(groups.includes(`"${page}"`), `Seite ${page} fehlt in navigationGroups`).toBe(true);
   });
 });
+
+describe("Gespräche – Transkriptionsstand sichtbar", () => {
+  it("zeigt ohne Schlüssel eine Warnung statt nur „(Schlüssel fehlt)“ in der Liste", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    fireEvent.click(view.getByRole("button", { name: /^Dialer & Bewertung$/ }));
+    await settle(300);
+    const state = view.container.querySelector(".cq-transcription-state");
+    expect(state?.textContent).toContain("Kein Transkriptionsdienst eingerichtet");
+    expect(state?.className).toContain("is-missing");
+  });
+});

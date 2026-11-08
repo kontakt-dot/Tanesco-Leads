@@ -4019,3 +4019,8 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 /* v296: Reiter „Kontakte“ – Herkunft von Kontakten ohne Liste (Meta Ads, Posteingang) */
 .xl-origin{font-style:normal;color:#9d99b8}
 .email-leads-note{margin:6px 0 0;font-size:12px;color:#a5a3c4}
+
+/* v300: Transkription – sichtbarer Stand statt nur „(Schlüssel fehlt)“ in der Aufklappliste */
+.cq-transcription-state{font-weight:600;line-height:1.4}
+.cq-transcription-state.is-ok{color:#86efac}
+.cq-transcription-state.is-missing{color:#fcd34d}
