@@ -4024,3 +4024,6 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cq-transcription-state{font-weight:600;line-height:1.4}
 .cq-transcription-state.is-ok{color:#86efac}
 .cq-transcription-state.is-missing{color:#fcd34d}
+/* v301: „Nächster Versand“ – eine eindeutige Zahl je Kampagne */
+.cl-next.is-run .cl-next-main b{color:#fff}
+.cl-next.is-run .cl-next-main small b{color:#c4bfff;font-weight:800}

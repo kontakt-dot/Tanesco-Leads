@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
  * und das Tageslimit für alle Kampagnen zusammen. Darunter die folgenden Tage, im Hinweis (Maus drüber) alle Tage mit Uhrzeit.
  */
 type Stamp = Date | string;
-export type FollowUpView = { total: number; days: Array<{ day: string; first: Stamp; last: Stamp; count: number }>; later: number; approval: { count: number; first: Stamp | null } | null; paused: boolean; delayedByLimit: boolean; perHour: number | null };
+export type FollowUpView = { total: number; days: Array<{ day: string; first: Stamp; last: Stamp; count: number }>; later: number; approval: { count: number; first: Stamp | null } | null; paused: boolean; delayedByLimit: boolean; perHour: number | null; nextRun?: { day: string; first: Stamp; last: Stamp; total: number; firstMails: number; followUps: number } | null };
 
 const ZONE = "Europe/Berlin";
 const dateKey = (value: Date) => value.toLocaleDateString("de-DE", { timeZone: ZONE });
@@ -48,6 +48,21 @@ export default function FollowUpLine({ plan, sentAny, className = "", withApprov
     "Stand jetzt – wer vorher antwortet, bekommt kein Follow-up mehr.",
   ].filter(Boolean).join("\n");
   const approvalLine = approval && withApproval ? <Field tone="is-approval" className={className} icon={<PenLine />} label="Freigabe" title={hint}>{approval.first && new Date(approval.first).getTime() > now.getTime() + 60_000 ? <><span className="nw">{followUps(approval.count)}</span> ab <b>{dayWord(approval.first, now)} {clock(approval.first)} Uhr</b></> : <><span className="nw">{followUps(approval.count)}</span> {approval.count === 1 ? "wartet" : "warten"} auf dich</>}</Field> : null;
+  // „Nächster Versand“: EINE eindeutige Zahl – alles, was am nächsten Versandtag rausgeht (Erst-E-Mails + Follow-ups), Stand jetzt
+  const run = plan.nextRun ?? null;
+  if (run && run.total > 0) {
+    const parts = [run.firstMails ? `${run.firstMails} Erst-E-Mail${run.firstMails === 1 ? "" : "s"}` : "", run.followUps ? followUps(run.followUps) : ""].filter(Boolean).join(" + ");
+    const runHint = [`Nächster Versandtag (${dayWord(run.first, now)}): ${mails(run.total)}${parts && run.firstMails && run.followUps ? ` – ${parts}` : ""}, ${clock(run.first) === clock(run.last) ? `um ${clock(run.first)} Uhr` : `${clock(run.first)}–${clock(run.last)} Uhr`}.`, "Gezählt wird, was freigegeben ist und laut Ablauf, Versandfenster, Drip und Tageslimit an diesem Tag drankommt.", "", hint].join("\n");
+    const running = dayWord(run.first, now) === "heute" && new Date(run.first).getTime() <= now.getTime() + 2 * 60_000;
+    const breakdown = run.firstMails && run.followUps ? <span className="cl-next-more">{parts}</span> : null;
+    const followMore = rest.length > 0 || plan.later > 0 ? <span className="cl-next-more">Follow-ups danach: {rest.slice(0, 3).map((day) => `${dayWord(day.first, now)} (${day.count})`).join(" · ")}{(rest.slice(3).reduce((sum, day) => sum + day.count, 0) + plan.later) > 0 ? `${rest.length ? " · " : ""}+${rest.slice(3).reduce((sum, day) => sum + day.count, 0) + plan.later} später` : ""}</span> : null;
+    return <>
+      {running
+        ? <Field className={`${className} is-run`.trim()} icon={<Clock3 />} label="Versand läuft" title={runHint} more={<>{breakdown}{followMore}</>}><b>heute noch {mails(run.total)}</b>{clock(run.last) !== clock(run.first) ? <small className="nw">bis ca. {clock(run.last)} Uhr</small> : null}</Field>
+        : <Field className={`${className} is-run`.trim()} icon={<Clock3 />} label="Nächster Versand" title={runHint} more={<>{breakdown}{followMore}</>}><b>{dayWord(run.first, now)} ab {clock(run.first)} Uhr</b><small><b>{mails(run.total)}</b></small></Field>}
+      {approvalLine}
+    </>;
+  }
   if (!first) {
     if (approvalLine) return approvalLine;
     if (plan.later > 0) return <Field className={className} icon={<Clock3 />} label="Nächste Follow-ups" title={hint}>erst in mehr als 3 Wochen<small>{mails(plan.later)}</small></Field>;

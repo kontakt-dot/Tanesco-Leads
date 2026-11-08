@@ -32,7 +32,10 @@ export type FollowUpPlan = {
   delayedByLimit: boolean;
   /** Drip: höchstens so viele pro Stunde (null = ohne Drip) */
   perHour: number | null;
+  /** Nächster Versandtag dieser Kampagne: alle E-Mails zusammen (Erst-E-Mails + Follow-ups), die laut Plan an diesem Tag rausgehen */
+  nextRun: NextRun | null;
 };
+export type NextRun = { day: string; first: Date; last: Date; total: number; firstMails: number; followUps: number };
 
 const HOUR = 3_600_000; const DAY = 86_400_000; const STEP = 15 * 60_000;
 const CAP_ZONE = "Europe/Berlin"; // Tageslimit zählt ab Mitternacht deutscher Zeit (wie dayStartIn)
@@ -114,7 +117,7 @@ export function planFollowUps(campaigns: PlanCampaign[], options: { now: Date; t
   const lanes: Lane[] = []; const blocked = new Map<number, number[]>(); // Freigabe nötig: fällig ab …
   for (const campaign of campaigns) {
     const drip = resolveDrip(campaign.window.drip); const perHour = drip.enabled ? effectiveDripPerHour(drip) : null;
-    const plan: FollowUpPlan = { total: 0, days: [], later: 0, approval: campaign.approval ? { count: 0, first: null } : null, paused: campaign.status === "pausiert", delayedByLimit: false, perHour };
+    const plan: FollowUpPlan = { total: 0, days: [], later: 0, approval: campaign.approval ? { count: 0, first: null } : null, paused: campaign.status === "pausiert", delayedByLimit: false, perHour, nextRun: null };
     result.set(campaign.id, plan);
     const intervals = windowIntervals(campaign.window, now, horizonDays + 1);
     const items: Item[] = []; const waitingApproval: number[] = [];
@@ -134,7 +137,7 @@ export function planFollowUps(campaigns: PlanCampaign[], options: { now: Date; t
     lanes.push({ id: campaign.id, intervals, gap, nextAllowed: last && gap ? Math.max(now, last + gap) : now, queue: items });
   }
   // Ablauf wie im Minutentakt: immer die Kampagne, die als Nächste senden darf; das Tageslimit gilt für alle zusammen
-  const sentAt = new Map<number, number[]>(); let capDayEnd = nextDayStart(now); let capLeft = Math.max(0, options.todayLeft); let blockedUntil = capLeft > 0 ? now : capDayEnd;
+  const sentAt = new Map<number, number[]>(); const allAt = new Map<number, Array<{ at: number; followUp: boolean }>>(); let capDayEnd = nextDayStart(now); let capLeft = Math.max(0, options.todayLeft); let blockedUntil = capLeft > 0 ? now : capDayEnd;
   const delayed = new Set<number>();
   if (capLeft <= 0) for (const lane of lanes) { const head = lane.queue.find((item) => item.followUp); const at = head ? slotFrom(Math.max(head.readyAt, lane.nextAllowed), lane.intervals) : null; if (at !== null && at < blockedUntil) delayed.add(lane.id); } // heute schon voll
   for (let guard = 0; guard < 200_000; guard += 1) {
@@ -149,6 +152,7 @@ export function planFollowUps(campaigns: PlanCampaign[], options: { now: Date; t
     if (capLeft <= 0) { blockedUntil = capDayEnd; for (const lane of lanes) if (lane.queue[0] && lane.queue[0].followUp) delayed.add(lane.id); continue; } // Tageslimit voll → morgen weiter
     const item = best.lane.queue.shift()!; capLeft -= 1; best.lane.nextAllowed = best.at + best.lane.gap;
     if (item.followUp) { const list = sentAt.get(item.campaignId) ?? []; list.push(best.at); sentAt.set(item.campaignId, list); }
+    { const list = allAt.get(item.campaignId) ?? []; list.push({ at: best.at, followUp: item.followUp }); allAt.set(item.campaignId, list); }
   }
   for (const [campaignId, plan] of Array.from(result.entries())) {
     const times = sentAt.get(campaignId) ?? []; const byDay = new Map<string, FollowUpDay>();
@@ -156,7 +160,10 @@ export function planFollowUps(campaigns: PlanCampaign[], options: { now: Date; t
     plan.days = Array.from(byDay.values()).sort((a, b) => a.first.getTime() - b.first.getTime());
     plan.later = Math.max(0, plan.total - times.length - (plan.approval?.count ?? 0));
     plan.delayedByLimit = delayed.has(campaignId) && plan.days.length > 0;
-    if (plan.paused) plan.days = []; // pausiert: keine Zeiten – es geht erst weiter, wenn du sie wieder startest
+    // Nächster Versandtag: alle E-Mails dieses Tages zusammen – das ist die Zahl, die „im nächsten Zyklus“ rausgeht
+    const all = (allAt.get(campaignId) ?? []).sort((a, b) => a.at - b.at);
+    if (all.length) { const day = planDayKey(all[0].at); const same = all.filter((entry) => planDayKey(entry.at) === day); plan.nextRun = { day, first: new Date(same[0].at), last: new Date(same[same.length - 1].at), total: same.length, firstMails: same.filter((entry) => !entry.followUp).length, followUps: same.filter((entry) => entry.followUp).length }; }
+    if (plan.paused) { plan.days = []; plan.nextRun = null; } // pausiert: keine Zeiten – es geht erst weiter, wenn du sie wieder startest
   }
   return result;
 }

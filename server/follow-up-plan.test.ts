@@ -84,4 +84,20 @@ describe("Wann gehen die nächsten Follow-ups raus?", () => {
     expect(intervals).toContain("2026-10-30 09:00–11:00"); expect(intervals.filter((item) => item.startsWith("2026-10-30"))).toHaveLength(1);
     expect(intervals.some((item) => item.startsWith("2026-10-31"))).toBe(false); // Samstag: kein Versand
   });
+
+  it("„Nächster Versand“: Erst-E-Mails und Follow-ups des nächsten Versandtags zusammen, Tageslimit beachtet", () => {
+    const due = berlin("2026-10-29T09:00");
+    // 30 freigegebene Erst-E-Mails (noch nie gesendet) + 20 fällige Follow-ups, kein Drip, Limit 80 → 50 am Donnerstag
+    const fresh = Array.from({ length: 30 }, () => ({ id: nextId++, nodeId: null, status: "wartet", sentCount: 0, nextActionAt: null, lastSentAt: null, draftState: "freigegeben" } as PlanRecipient));
+    const result = plan([campaign(1, [...fresh, ...Array.from({ length: 20 }, () => waiting(due))], { window: drip(null) })]);
+    const run = result.get(1)!.nextRun!;
+    expect(run.day).toBe("2026-10-28"); // Erst-E-Mails sind sofort fällig → heute (Mittwoch, im Fenster)
+    expect(run.total).toBe(30); expect(run.firstMails).toBe(30); expect(run.followUps).toBe(0);
+    // Limit 10 → heute nur 10, der Rest morgen zusammen mit den Follow-ups
+    const tight = planFollowUps([campaign(1, [...fresh.map((r) => ({ ...r, id: nextId++ })), ...Array.from({ length: 20 }, () => waiting(due))], { window: drip(null) })], { now, todayLeft: 10, dailyLimit: 10 });
+    const tightRun = tight.get(1)!.nextRun!;
+    expect(tightRun.total).toBe(10); expect(tightRun.day).toBe("2026-10-28");
+    // pausiert → kein nächster Versand
+    expect(plan([campaign(1, fresh.map((r) => ({ ...r, id: nextId++ })), { status: "pausiert", window: drip(null) })]).get(1)!.nextRun).toBeNull();
+  });
 });

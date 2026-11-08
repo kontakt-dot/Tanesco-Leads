@@ -1951,3 +1951,6 @@ html:not(.dark) .email-leads-note { color: #667085 !important; }
 /* v300 */
 html:not(.dark) .cq-transcription-state.is-ok { color: #15803d !important; }
 html:not(.dark) .cq-transcription-state.is-missing { color: #b45309 !important; }
+/* v301 */
+html:not(.dark) .cl-next.is-run .cl-next-main b { color: #0f172a !important; }
+html:not(.dark) .cl-next.is-run .cl-next-main small b { color: #bc001d !important; }
