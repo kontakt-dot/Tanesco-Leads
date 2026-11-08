@@ -4027,3 +4027,28 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 /* v301: „Nächster Versand“ – eine eindeutige Zahl je Kampagne */
 .cl-next.is-run .cl-next-main b{color:#fff}
 .cl-next.is-run .cl-next-main small b{color:#c4bfff;font-weight:800}
+/* v302: Freigabe als klare Kacheln + „Nächster Versand“ breit */
+.cl-approval.is-tiles{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;width:100%;padding:0;border:0;background:transparent;border-radius:0;min-height:0}
+.cl-tile{display:grid;grid-template-columns:auto auto auto;grid-template-rows:auto auto;column-gap:8px;row-gap:2px;align-items:center;min-height:52px;padding:7px 14px 7px 12px;border-radius:12px;border:1px solid rgba(129,120,255,.35);background:rgba(129,120,255,.1);color:#e2e0ff;text-align:left;text-decoration:none!important;cursor:pointer}
+.cl-tile::before{display:none}
+.cl-tile svg{grid-column:1;grid-row:1 / span 2;width:15px;height:15px}
+.cl-tile strong{grid-column:2;grid-row:1;font-size:11.5px;font-weight:700;letter-spacing:.01em;color:#c4bfff;white-space:nowrap}
+.cl-tile b{grid-column:3;grid-row:1;justify-self:start;font-size:20px;line-height:1;font-weight:800;color:#fff;margin-left:4px}
+.cl-tile small{grid-column:2 / -1;grid-row:2;font-size:11px;line-height:1.3;color:#a7a4c9;white-space:nowrap}
+.cl-tile:hover{background:rgba(129,120,255,.2)}
+.cl-tile.is-todo{border-color:rgba(129,120,255,.6);background:rgba(129,120,255,.18)}
+.cl-tile.is-todo.is-empty{opacity:.7;border-style:dashed;background:transparent}
+.cl-tile.is-approved{border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.08)}.cl-tile.is-approved strong,.cl-tile.is-approved svg{color:#6ee7b7}.cl-tile.is-approved:hover{background:rgba(52,211,153,.16)}
+.cl-tile.is-writing{border-color:rgba(255,255,255,.12);background:rgba(255,255,255,.04)}.cl-tile.is-writing strong,.cl-tile.is-writing svg{color:#c7c5e0}
+.cl-tile.is-nodraft,.cl-tile.is-off{border-color:rgba(255,255,255,.12);background:transparent}.cl-tile.is-nodraft strong,.cl-tile.is-off strong{color:#a7a4c9}
+.cl-tile.is-unfit{border-color:rgba(251,113,133,.4);background:rgba(251,113,133,.08)}.cl-tile.is-unfit strong{color:#fda4af}
+.cl-approval-note{align-self:center;font-size:11.5px;color:#8f93af;padding:0 4px;border:0;background:transparent;text-decoration:underline dotted rgba(143,147,175,.6);text-underline-offset:3px;cursor:pointer}.cl-approval-note::before{display:none}
+.cl-next.is-run{flex:1 1 100%;width:100%;min-height:46px;padding:6px 14px 6px 6px;gap:12px}
+.cl-next.is-run .cl-next-label{font-size:12px}
+.cl-next.is-run .cl-next-main{font-size:15px;display:inline-flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.cl-next.is-run .cl-next-main small{font-size:15px}
+.cl-next.is-run .cl-next-main small b{font-size:20px}
+.cl-next.is-run .cl-next-more{display:inline;margin-left:14px;font-size:11.5px}
+.cl-approval-part.cl-tile,.cl-approval-main.cl-tile{display:grid}
+.cl-approval-part.cl-tile svg,.cl-approval-main.cl-tile svg{width:15px;height:15px}
+.cl-approval-part.cl-tile.is-approved{color:#e2e0ff;font-weight:600}

@@ -1954,3 +1954,20 @@ html:not(.dark) .cq-transcription-state.is-missing { color: #b45309 !important; 
 /* v301 */
 html:not(.dark) .cl-next.is-run .cl-next-main b { color: #0f172a !important; }
 html:not(.dark) .cl-next.is-run .cl-next-main small b { color: #bc001d !important; }
+/* v302 */
+html:not(.dark) .cl-approval.is-tiles { background: transparent !important; border: 0 !important; }
+html:not(.dark) .cl-tile { border-color: #fecdd3 !important; background: #fff1f2 !important; color: #0f172a !important; }
+html:not(.dark) .cl-tile strong, html:not(.dark) .cl-tile svg { color: #bc001d !important; }
+html:not(.dark) .cl-tile b { color: #0f172a !important; }
+html:not(.dark) .cl-tile small { color: #5b6473 !important; }
+html:not(.dark) .cl-tile:hover { background: #ffe4e6 !important; }
+html:not(.dark) .cl-tile.is-todo.is-empty { background: transparent !important; border-color: #e2e8f0 !important; }
+html:not(.dark) .cl-tile.is-todo.is-empty strong { color: #667085 !important; }
+html:not(.dark) .cl-tile.is-approved { border-color: #bbf7d0 !important; background: #f0fdf4 !important; }
+html:not(.dark) .cl-tile.is-approved strong, html:not(.dark) .cl-tile.is-approved svg { color: #15803d !important; }
+html:not(.dark) .cl-tile.is-approved:hover { background: #dcfce7 !important; }
+html:not(.dark) .cl-tile.is-writing, html:not(.dark) .cl-tile.is-nodraft, html:not(.dark) .cl-tile.is-off { border-color: #e2e8f0 !important; background: #f8fafc !important; }
+html:not(.dark) .cl-tile.is-writing strong, html:not(.dark) .cl-tile.is-writing svg, html:not(.dark) .cl-tile.is-nodraft strong, html:not(.dark) .cl-tile.is-off strong { color: #475569 !important; }
+html:not(.dark) .cl-tile.is-unfit { border-color: #fecaca !important; background: #fff5f5 !important; }
+html:not(.dark) .cl-tile.is-unfit strong { color: #b91c1c !important; }
+html:not(.dark) .cl-approval-note { color: #667085 !important; }

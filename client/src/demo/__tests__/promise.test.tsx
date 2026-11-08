@@ -292,7 +292,7 @@ describe("Freigabe getrennt nach Erst-E-Mails und Follow-ups (Chat-Build)", () =
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const view = mount(); await settle(300); await settle(300);
     const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.querySelector(".cl-name")?.textContent?.includes("Freigabe-Badge"))!;
-    const part = Array.from(card.querySelectorAll<HTMLButtonElement>(".cl-approval-part")).find((node) => /Follow-up/.test(node.textContent ?? ""))!; expect(part.textContent).toMatch(/^1 Follow-up ab /); // auf der Karte: ab wann zur Freigabe
+    const part = Array.from(card.querySelectorAll<HTMLButtonElement>(".cl-approval-part")).find((node) => /Follow-up/.test(node.textContent ?? ""))!; expect(part.textContent).toMatch(/^ab .*: 1 Follow-up kommt zur Freigabe$/); // auf der Karte: ab wann zur Freigabe
     await act(async () => { fireEvent.click(part); }); await settle(500); await settle(300);
     const dialog = document.querySelector(".review-dialog")!; expect(dialog).toBeTruthy();
     expect(dialog.querySelector(".rv-head p")?.textContent).toContain("1 Follow-ups noch in der Wartezeit");
@@ -308,11 +308,12 @@ describe("Freigabe getrennt nach Erst-E-Mails und Follow-ups (Chat-Build)", () =
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const view = mount(); await settle(300); await settle(300);
     const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.querySelector(".cl-name")?.textContent?.includes("Freigabe-Art"))!; expect(card).toBeTruthy();
-    const pill = card.querySelector(".cl-approval")!; expect(pill).toBeTruthy(); expect(pill.querySelector(".cl-approval-main")?.textContent).toBe("Zur Freigabe");
-    const part = Array.from(pill.querySelectorAll<HTMLButtonElement>(".cl-approval-part")).find((node) => /Erst-E-Mail/.test(node.textContent ?? ""))!; expect(part.textContent).toBe("1 Erst-E-Mail zu prüfen");
-    await act(async () => { fireEvent.click(part); }); await settle(400); await settle(300);
+    const pill = card.querySelector(".cl-approval")!; expect(pill).toBeTruthy(); const main = pill.querySelector<HTMLButtonElement>(".cl-approval-main")!; expect(main.textContent).toBe("Zur Freigabe11 Erst-E-Mail wartet auf dich"); // eine Kachel mit EINER Zahl: was auf dich wartet
+    await act(async () => { fireEvent.click(main); }); await settle(400); await settle(300);
     const dialog = document.querySelector(".review-dialog"); expect(dialog).toBeTruthy(); expect(view.container.querySelector(".ch-title")).toBeNull(); // Fenster über der Übersicht, nicht die geöffnete Kampagne
-    const kindBar = dialog!.querySelector(".cd-filters.is-kind")!; expect(Array.from(kindBar.querySelectorAll("button")).find((node) => node.getAttribute("aria-selected") === "true")?.textContent).toMatch(/^Erst-E-Mails/);
+    // Die Kachel öffnet die Freigabe für alles, was wartet; nur Erst-E-Mails zeigt der Filter „Erst-E-Mails“ im Fenster
+    const kindBar = dialog!.querySelector(".cd-filters.is-kind")!; expect(Array.from(kindBar.querySelectorAll("button")).find((node) => node.getAttribute("aria-selected") === "true")?.textContent).toMatch(/^Alle/);
+    await act(async () => { fireEvent.click(Array.from(kindBar.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.startsWith("Erst-E-Mails"))!); }); await settle(300);
     expect(Array.from(dialog!.querySelectorAll(".rv-list .rv-step .rv-kind")).map((node) => node.textContent?.trim())).toEqual(["Erst-E-Mail"]);
     // „Speichern“ und „Freigeben & weiter“ stehen oben rechts bei den Werkzeugen des Editors – unten nur noch die Wortzahl; dazu das X zum Schließen
     const tools = dialog!.querySelector(".rv-editor-tools .rv-editor-buttons")!; expect(tools).toBeTruthy();
@@ -932,7 +933,7 @@ describe("Kampagnen-Karte: wie viele E-Mails freigegeben sind (Chat-Build)", () 
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const view = mount(); await settle(300); await settle(300);
     const card = Array.from(view.container.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Freigegeben-Demo"))!;
-    const part = card.querySelector<HTMLElement>(".cl-approval-part.is-approved")!; expect(part).toBeTruthy(); expect(part.textContent).toMatch(/^2 freigegeben/); expect(part.getAttribute("title")).toContain("im Versandfenster raus");
+    const part = card.querySelector<HTMLElement>(".cl-approval-part.is-approved")!; expect(part).toBeTruthy(); expect(part.textContent).toBe("Freigegeben2gehen von allein raus"); expect(part.getAttribute("title")).toContain("im Versandfenster");
   });
 });
 
@@ -1108,7 +1109,7 @@ describe("Freigabe: Markierung „Passt nicht?“ (Chat-Build)", () => {
     window.history.replaceState(null, "", "/?page=E-Mail-Kampagnen&ansicht=kampagnen");
     const view = mount(); await settle(300); await settle(300);
     const card = () => Array.from(document.querySelectorAll<HTMLElement>(".cl-card")).find((node) => node.textContent?.includes("Photovoltaik Prüf-Demo"))!;
-    const unfit = card().querySelector<HTMLButtonElement>(".cl-approval-part.is-unfit")!; expect(unfit).toBeTruthy(); expect(unfit.textContent).toBe("1 passt nicht?");
+    const unfit = card().querySelector<HTMLButtonElement>(".cl-approval-part.is-unfit")!; expect(unfit).toBeTruthy(); expect(unfit.textContent).toBe("Passt nicht?1prüfen und löschen");
     await act(async () => { fireEvent.click(unfit); }); await settle(400); await settle(300);
     // Freigabe: nur der markierte Kontakt, mit Grund und „Passt doch“
     expect(document.querySelector(".rv-fit-filter.is-active")?.textContent).toContain("Passt nicht?1");
