@@ -2173,8 +2173,6 @@ html:not(.dark) .cl-tile.is-nodraft strong, html:not(.dark) .cl-tile.is-off stro
 html:not(.dark) .cl-tile.is-unfit strong { color: #8b5a60 !important; }
 html:not(.dark) .cl-approval-note { color: #8a94a6 !important; }
 html:not(.dark) .cl-approval-part.cl-tile.is-approved { color: #0f172a !important; }
-html:not(.dark) .cq-mood { border: 2px solid #e8ecf1 !important; background: #f8fafb !important; }
-html:not(.dark) .cq-mood.is-offen { color: #4b5568 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -4396,8 +4394,4 @@ html:not(.dark) .cl-tile.is-unfit strong { color: #b91c1c !important; }
 html:not(.dark) .cl-approval-note { color: #667085 !important; }
 
 /* v307 */
-html:not(.dark) .cq-mood { border-color: #e2e8f0 !important; background: #f8fafc !important; }
-html:not(.dark) .cq-mood.is-gruen { border-color: #86efac !important; background: #f0fdf4 !important; }
-html:not(.dark) .cq-mood.is-gelb { border-color: #fcd34d !important; background: #fffbeb !important; }
-html:not(.dark) .cq-mood.is-rot { border-color: #fca5a5 !important; background: #fef2f2 !important; }
-html:not(.dark) .cq-mood.is-offen { color: #94a3b8 !important; }
+html:not(.dark) .cq-face { filter: drop-shadow(0 1px 1px rgba(0,0,0,.12)) !important; }
