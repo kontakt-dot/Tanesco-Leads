@@ -4052,3 +4052,12 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cl-approval-part.cl-tile,.cl-approval-main.cl-tile{display:grid}
 .cl-approval-part.cl-tile svg,.cl-approval-main.cl-tile svg{width:15px;height:15px}
 .cl-approval-part.cl-tile.is-approved{color:#e2e0ff;font-weight:600}
+
+/* v307: Ampel mit Smileys statt Punkte */
+.cq-mood{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:999px;border:2px solid rgba(255,255,255,.15);font-size:22px;line-height:1;background:rgba(255,255,255,.04);flex:none}
+.cq-mood.is-lg{width:64px;height:64px;font-size:34px}
+.cq-mood.is-sm{width:30px;height:30px;font-size:16px;border-width:1.5px}
+.cq-mood.is-gruen{border-color:#34d399;background:rgba(52,211,153,.14)}
+.cq-mood.is-gelb{border-color:#fbbf24;background:rgba(251,191,36,.14)}
+.cq-mood.is-rot{border-color:#f87171;background:rgba(248,113,113,.14)}
+.cq-mood.is-offen{color:#94a3b8;font-size:18px}
