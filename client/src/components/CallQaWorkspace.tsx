@@ -30,36 +30,22 @@ export function moodOf(call: { decision?: string | null; verdict?: string | null
   return "offen";
 }
 export const MOOD: Record<Mood, { label: string; hint: string; cls: string; color: string }> = {
-  gruen: { label: "Passt", hint: "Grün: Gespräch passt – alle Vorgaben erfüllt bzw. freigegeben.", cls: "is-gruen", color: "#22c55e" },
-  gelb: { label: "Reinhören", hint: "Gelb: Unklar – bitte selbst reinhören und entscheiden.", cls: "is-gelb", color: "#f59e0b" },
-  rot: { label: "Passt nicht", hint: "Rot: Vorgabe nicht erfüllt bzw. zurückgewiesen.", cls: "is-rot", color: "#ef4444" },
+  gruen: { label: "Passt", hint: "Grün: Gespräch passt – alle Vorgaben erfüllt bzw. freigegeben.", cls: "is-gruen", color: "#16a34a" },
+  gelb: { label: "Reinhören", hint: "Orange: Unklar – bitte selbst reinhören und entscheiden.", cls: "is-gelb", color: "#f97316" },
+  rot: { label: "Passt nicht", hint: "Rot: Vorgabe nicht erfüllt bzw. zurückgewiesen.", cls: "is-rot", color: "#dc2626" },
   offen: { label: "Noch nicht bewertet", hint: "Grau: Noch keine Bewertung – Aufnahme wird noch geholt oder ausgewertet.", cls: "is-offen", color: "#94a3b8" },
 };
-/** Smiley in der Ampelfarbe – eigene Zeichnung mit Verlauf, Glanz und Gesicht: grün strahlt, gelb schaut neutral, rot ist traurig, grau wartet. */
-const FACE_PALETTE: Record<Mood, { light: string; base: string; dark: string; ink: string }> = {
-  gruen: { light: "#86efac", base: "#22c55e", dark: "#15803d", ink: "#064e3b" },
-  gelb: { light: "#fde68a", base: "#f59e0b", dark: "#b45309", ink: "#78350f" },
-  rot: { light: "#fca5a5", base: "#ef4444", dark: "#b91c1c", ink: "#7f1d1d" },
-  offen: { light: "#e2e8f0", base: "#94a3b8", dark: "#64748b", ink: "#334155" },
-};
+/** Smiley in der Ampelfarbe – clean: weißes Gesicht, farbiger Ring, Augen und Mund in der Farbe. Grün lacht, Orange neutral, Rot traurig, Grau wartet. */
+const FACE_COLOR: Record<Mood, string> = { gruen: "#16a34a", gelb: "#f97316", rot: "#dc2626", offen: "#94a3b8" };
 export function Face({ mood, size = 44 }: { mood: Mood; size?: number }) {
-  const c = FACE_PALETTE[mood]; const id = `face-${mood}`;
+  const c = FACE_COLOR[mood];
   return <svg className={`cq-face is-${mood}`} width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
-    <defs>
-      <radialGradient id={`${id}-fill`} cx="35%" cy="30%" r="75%"><stop offset="0%" stopColor={c.light} /><stop offset="55%" stopColor={c.base} /><stop offset="100%" stopColor={c.dark} /></radialGradient>
-      <linearGradient id={`${id}-gloss`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#fff" stopOpacity="0.75" /><stop offset="100%" stopColor="#fff" stopOpacity="0" /></linearGradient>
-    </defs>
-    <circle cx="24" cy="24" r="22" fill={`url(#${id}-fill)`} stroke={c.dark} strokeWidth="1.5" />
-    <ellipse cx="19" cy="13" rx="11" ry="6.5" fill={`url(#${id}-gloss)`} />
-    {mood === "offen" ? <><circle cx="15" cy="25" r="2.8" fill="#fff" /><circle cx="24" cy="25" r="2.8" fill="#fff" /><circle cx="33" cy="25" r="2.8" fill="#fff" /></> : <>
-      {mood === "gruen" && <><ellipse cx="15.5" cy="20.5" rx="3.3" ry="3.8" fill={c.ink} /><ellipse cx="32.5" cy="20.5" rx="3.3" ry="3.8" fill={c.ink} /><circle cx="16.8" cy="19.2" r="1.1" fill="#fff" /><circle cx="33.8" cy="19.2" r="1.1" fill="#fff" />
-        <ellipse cx="11" cy="28" rx="3.2" ry="1.9" fill="#fff" opacity="0.28" /><ellipse cx="37" cy="28" rx="3.2" ry="1.9" fill="#fff" opacity="0.28" />
-        <path d="M14 28.5 C17.5 36.5, 30.5 36.5, 34 28.5 Z" fill={c.ink} /><path d="M17 31.5 C20 34.6, 28 34.6, 31 31.5 C27 33.2, 21 33.2, 17 31.5 Z" fill="#fff" opacity="0.9" /></>}
-      {mood === "gelb" && <><ellipse cx="15.5" cy="21" rx="3.1" ry="3.5" fill={c.ink} /><ellipse cx="32.5" cy="21" rx="3.1" ry="3.5" fill={c.ink} /><circle cx="16.7" cy="19.8" r="1" fill="#fff" /><circle cx="33.7" cy="19.8" r="1" fill="#fff" />
-        <path d="M15 32.5 L33 32.5" stroke={c.ink} strokeWidth="3.6" strokeLinecap="round" /></>}
-      {mood === "rot" && <><path d="M11.5 18.5 L19.5 15.5" stroke={c.ink} strokeWidth="2.6" strokeLinecap="round" /><path d="M36.5 18.5 L28.5 15.5" stroke={c.ink} strokeWidth="2.6" strokeLinecap="round" />
-        <ellipse cx="15.5" cy="23" rx="3.1" ry="3.4" fill={c.ink} /><ellipse cx="32.5" cy="23" rx="3.1" ry="3.4" fill={c.ink} /><circle cx="16.7" cy="21.8" r="1" fill="#fff" /><circle cx="33.7" cy="21.8" r="1" fill="#fff" />
-        <path d="M14.5 35.5 C18 29, 30 29, 33.5 35.5" fill="none" stroke={c.ink} strokeWidth="3.6" strokeLinecap="round" /></>}
+    <circle cx="24" cy="24" r="21" fill="#fff" stroke={c} strokeWidth="3.5" />
+    {mood === "offen" ? <><circle cx="15" cy="25" r="2.6" fill={c} /><circle cx="24" cy="25" r="2.6" fill={c} /><circle cx="33" cy="25" r="2.6" fill={c} /></> : <>
+      <circle cx="16.5" cy="19.5" r="2.9" fill={c} /><circle cx="31.5" cy="19.5" r="2.9" fill={c} />
+      {mood === "gruen" && <path d="M14.5 28 C17.5 34.5, 30.5 34.5, 33.5 28" fill="none" stroke={c} strokeWidth="3.5" strokeLinecap="round" />}
+      {mood === "gelb" && <path d="M15.5 31 L32.5 31" fill="none" stroke={c} strokeWidth="3.5" strokeLinecap="round" />}
+      {mood === "rot" && <path d="M14.5 34 C17.5 27.5, 30.5 27.5, 33.5 34" fill="none" stroke={c} strokeWidth="3.5" strokeLinecap="round" />}
     </>}
   </svg>;
 }

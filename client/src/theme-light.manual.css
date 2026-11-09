@@ -1973,4 +1973,3 @@ html:not(.dark) .cl-tile.is-unfit strong { color: #b91c1c !important; }
 html:not(.dark) .cl-approval-note { color: #667085 !important; }
 
 /* v307 */
-html:not(.dark) .cq-face { filter: drop-shadow(0 1px 1px rgba(0,0,0,.12)) !important; }

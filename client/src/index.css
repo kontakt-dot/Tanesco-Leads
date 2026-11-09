@@ -4055,6 +4055,6 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 
 /* v307: Ampel mit Smileys statt Punkte */
 .cq-mood{display:inline-flex;align-items:center;justify-content:center;flex:none;line-height:0}
-.cq-face{display:block;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
+.cq-face{display:block}
 .cq-ampel-row{display:inline-flex;align-items:center;gap:4px;font-size:15px}
 .cq-ampel-row .cq-face{margin-left:6px}.cq-ampel-row .cq-face:first-child{margin-left:0}
