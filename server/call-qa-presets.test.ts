@@ -3,7 +3,7 @@ import { PV_HAUSKOMPASS_PRESET, presetByKey } from "../shared/call-qa-presets";
 import { answerQuestionsHeuristically, decideByQuestions } from "../shared/call-qualification";
 import { findMediaUrl } from "./call-qa";
 
-const good = `Agent: Guten Tag, hier ist Yilmaz. Sie hatten sich bei HausKompass für eine Photovoltaikanlage eingetragen, richtig?
+const good = `Agent: Guten Tag, hier ist Yilmaz. hier ist Yilmaz von HausKompass. Es geht um eine Photovoltaikanlage für Ihr Haus, richtig?
 Kunde: Ja, genau.
 Agent: Sind Sie der Eigentümer des Hauses und entscheiden Sie das selbst?
 Kunde: Ja, das Haus gehört uns, ich entscheide das mit meiner Frau.
@@ -52,7 +52,7 @@ describe("Datei-Link aus einer Player-Seite", () => {
   });
 
   it("Wärmepumpe zählt wie Photovoltaik – Übergabe an „Photovoltaik Angebotsvergleich“ bleibt richtig", () => {
-    const wp = `Agent: Guten Tag, Sie hatten sich bei HausKompass wegen einer Wärmepumpe eingetragen?\nKunde: Ja, unsere Gasheizung ist alt, wir wollen zeitnah eine Wärmepumpe, am liebsten in den nächsten Monaten.\nAgent: Sind Sie der Eigentümer?\nKunde: Ja, das Haus gehört uns.\nAgent: Dann meldet sich Photovoltaik Angebotsvergleich bei Ihnen – die machen auch Wärmepumpen. Telefonisch erreichbar?\nKunde: Ja, gerne anrufen.`;
+    const wp = `Agent: Guten Tag, hier ist Yilmaz von HausKompass, es geht um eine Wärmepumpe für Ihr Haus.\nKunde: Ja, unsere Gasheizung ist alt, wir wollen zeitnah eine Wärmepumpe, am liebsten in den nächsten Monaten.\nAgent: Sind Sie der Eigentümer?\nKunde: Ja, das Haus gehört uns.\nAgent: Dann meldet sich Photovoltaik Angebotsvergleich bei Ihnen – die machen auch Wärmepumpen. Telefonisch erreichbar?\nKunde: Ja, gerne anrufen.`;
     const answers = answerQuestionsHeuristically(PV_HAUSKOMPASS_PRESET.questions, wp);
     expect(answers.interesse.answer).toBe("ja"); expect(answers.uebergabe_angebotsvergleich.answer).toBe("ja");
     expect(decideByQuestions(PV_HAUSKOMPASS_PRESET.questions, answers).decision).toBe("freigegeben");
