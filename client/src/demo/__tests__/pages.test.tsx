@@ -200,4 +200,19 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
     await act(async () => { fireEvent.click(button); }); await settle(400);
     expect(Array.from(view.container.querySelectorAll(".flux-table tbody tr")).filter((row) => (row.textContent ?? "").includes("Aufnahmen-Test")).length).toBe(2);
   });
+
+  it("löscht ausgewählte Gespräche aus der Liste", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    const before = view.container.querySelectorAll(".flux-table tbody tr").length; expect(before).toBeGreaterThan(1);
+    const box = view.container.querySelector<HTMLInputElement>(".flux-table tbody tr input[type=checkbox]")!;
+    fireEvent.click(box); await settle(100);
+    const button = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-bulk button")).find((node) => /Ausgewählte löschen/.test(node.textContent ?? ""))!;
+    await act(async () => { fireEvent.click(button); }); await settle(300);
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.trim() === "Löschen");
+    if (confirm) { await act(async () => { fireEvent.click(confirm); }); }
+    await settle(500);
+    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBe(before - 1);
+  });
 });

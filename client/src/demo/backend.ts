@@ -2227,6 +2227,8 @@ const procedures: Record<string, Handler> = {
     let campaigns = 0; if (input.allCampaigns) for (const row of T().callQaCampaigns) if (row.tenantId === tenant().id) { row.questions = preset.questions as never; campaigns += 1; }
     return { success: true as const, preset: preset.key, campaigns };
   },
+  "leadops.deleteCall": (input) => { const index = T().callRecords.findIndex((row) => row.id === Number(input.callId)); if (index < 0) fail("Gespräch wurde nicht gefunden."); T().callRecords.splice(index, 1); for (const opt of T().optIns) if ((opt as { callRecordId?: number | null }).callRecordId === Number(input.callId)) (opt as { callRecordId?: number | null }).callRecordId = null; return { success: true as const }; },
+  "leadops.deleteCalls": (input) => { let deleted = 0; for (const id of (input.callIds as number[])) { const index = T().callRecords.findIndex((row) => row.id === id); if (index >= 0) { T().callRecords.splice(index, 1); deleted += 1; } } return { deleted }; },
   "leadops.importRecordingFile": async (input) => {
     const name = String(input.fileName ?? "aufnahme.mp3"); const key = `DATEI-${name}-${String(input.base64 ?? "").length}`;
     const existing = T().callRecords.find((row) => row.externalCallId === key); if (existing && existing.status !== "fehlgeschlagen") return { callId: existing.id, duplicate: true as const };

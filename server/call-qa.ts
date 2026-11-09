@@ -498,6 +498,17 @@ export async function callStatistics(db: Db, tenantId: number) {
 }
 
 /** Aufbewahrung: Transkripte, Aufzeichnungs-Links und Rohdaten älter als retentionDays werden entfernt (Bewertung bleibt). */
+/** Gespräch löschen: Datensatz weg, hochgeladene Datei weg, Opt-in-Verweis gelöst. Der Lead selbst bleibt. */
+export async function deleteCall(db: Db, tenantId: number, callId: number) {
+  const row = (await db.select({ id: callRecords.id, recordingUrl: callRecords.recordingUrl }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.id, callId))).limit(1))[0];
+  if (!row) throw new Error("Gespräch wurde nicht gefunden.");
+  if (row.recordingUrl?.startsWith("file:")) { const name = row.recordingUrl.slice("file:".length).replace(/[^a-zA-Z0-9._-]/g, ""); await fs.unlink(path.resolve(recordingsDir(), name)).catch(() => undefined); }
+  await db.update(optIns).set({ callRecordId: null }).where(and(eq(optIns.tenantId, tenantId), eq(optIns.callRecordId, callId)));
+  await db.delete(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.id, callId)));
+  return { success: true as const };
+}
+export async function deleteCalls(db: Db, tenantId: number, callIds: number[]) { let deleted = 0; for (const id of callIds.slice(0, 200)) { try { await deleteCall(db, tenantId, id); deleted += 1; } catch { /* schon weg */ } } return { deleted }; }
+
 export async function purgeExpiredCalls(db: Db) {
   const configs = await db.select().from(callQaConfigs);
   let purged = 0;
