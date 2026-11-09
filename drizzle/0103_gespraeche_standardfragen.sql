@@ -1,0 +1,1 @@
+ALTER TABLE `callQaConfigs` ADD `defaultQuestions` json;

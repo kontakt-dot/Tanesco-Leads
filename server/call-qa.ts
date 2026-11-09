@@ -21,6 +21,7 @@ import { readPath } from "./outbound-templates";
 
 export type Criterion = { key: string; label: string; weight: number; description: string };
 import { callQaCampaigns } from "../drizzle/schema";
+import { presetByKey } from "../shared/call-qa-presets";
 import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion } from "../shared/call-qualification";
 
 /** Kampagnen mit eigenen Qualifizierungsfragen. Fehlt eine Kampagne, gilt der Standardfragensatz. */
@@ -28,7 +29,8 @@ export async function listCampaigns(db: Db, tenantId: number) {
   const rows = await db.select().from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId)).orderBy(asc(callQaCampaigns.name));
   const fromCalls = await db.select({ campaign: callRecords.campaign }).from(callRecords).where(eq(callRecords.tenantId, tenantId));
   const names = new Set(rows.map((row) => row.name)); const extra = Array.from(new Set(fromCalls.map((row) => row.campaign).filter((name): name is string => Boolean(name) && !names.has(name!))));
-  return [...rows.map((row) => ({ id: row.id, name: row.name, questions: normalizeQuestions(row.questions as QualificationQuestion[] | null), custom: true })), ...extra.map((name) => ({ id: null as number | null, name, questions: DEFAULT_QUALIFICATION_QUESTIONS, custom: false }))];
+  const defaults = await defaultQuestionsFor(db, tenantId);
+  return [...rows.map((row) => ({ id: row.id, name: row.name, questions: normalizeQuestions(row.questions as QualificationQuestion[] | null), custom: true })), ...extra.map((name) => ({ id: null as number | null, name, questions: defaults, custom: false }))];
 }
 export async function saveCampaign(db: Db, tenantId: number, input: { id?: number | null; name: string; questions: Array<Partial<QualificationQuestion>> }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
@@ -39,10 +41,24 @@ export async function saveCampaign(db: Db, tenantId: number, input: { id?: numbe
   const inserted = await db.insert(callQaCampaigns).values({ tenantId, name, questions }); return { id: Number(inserted[0]?.insertId) || 0, questions };
 }
 export async function deleteCampaign(db: Db, tenantId: number, id: number) { await db.delete(callQaCampaigns).where(and(eq(callQaCampaigns.id, id), eq(callQaCampaigns.tenantId, tenantId))); return { success: true as const }; }
+/** Standardfragen des Mandanten (aus einer Vorlage übernommen) – sonst die eingebauten Standardfragen. */
+export async function defaultQuestionsFor(db: Db, tenantId: number): Promise<QualificationQuestion[]> {
+  const row = (await db.select({ defaultQuestions: callQaConfigs.defaultQuestions }).from(callQaConfigs).where(eq(callQaConfigs.tenantId, tenantId)).limit(1))[0];
+  const questions = normalizeQuestions((row?.defaultQuestions as QualificationQuestion[] | null) ?? null); return questions.length ? questions : DEFAULT_QUALIFICATION_QUESTIONS;
+}
 export async function questionsForCampaign(db: Db, tenantId: number, campaign: string | null | undefined): Promise<QualificationQuestion[]> {
-  if (!campaign) return DEFAULT_QUALIFICATION_QUESTIONS;
+  if (!campaign) return defaultQuestionsFor(db, tenantId);
   const row = (await db.select().from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0];
-  const questions = row ? normalizeQuestions(row.questions as QualificationQuestion[] | null) : []; return questions.length ? questions : DEFAULT_QUALIFICATION_QUESTIONS;
+  const questions = row ? normalizeQuestions(row.questions as QualificationQuestion[] | null) : []; return questions.length ? questions : defaultQuestionsFor(db, tenantId);
+}
+/** Vorlage anwenden: Kriterien + Anweisung in die Einstellungen, Prüffragen als Standard – und auf Wunsch in alle vorhandenen Kampagnen-Fragensätze. */
+export async function applyCallQaPreset(db: Db, tenantId: number, input: { preset: string; allCampaigns: boolean }) {
+  const preset = presetByKey(input.preset); if (!preset) throw new Error("Diese Vorlage gibt es nicht.");
+  await ensureCallQaConfig(db, tenantId);
+  await db.update(callQaConfigs).set({ criteria: preset.criteria, instructions: preset.instructions, defaultQuestions: preset.questions }).where(eq(callQaConfigs.tenantId, tenantId));
+  let campaigns = 0;
+  if (input.allCampaigns) { const result = await db.update(callQaCampaigns).set({ questions: preset.questions }).where(eq(callQaCampaigns.tenantId, tenantId)); campaigns = Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0); }
+  return { success: true as const, preset: preset.key, campaigns };
 }
 /** Antworten je Frage: KI (wenn verfügbar) – sonst Stichwort-Regeln. */
 export async function answerQualification(questions: QualificationQuestion[], transcript: string): Promise<Record<string, QualificationAnswer>> {
