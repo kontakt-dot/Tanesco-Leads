@@ -10,6 +10,8 @@
  */
 import { and, asc, desc, eq, gte, inArray, like, lt, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { nanoid } from "nanoid";
 import { callQaConfigs, callRecords, leadStatusEvents, leads, optIns, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
 import { convertRawContact, normalizeRawPhone } from "./raw-data";
@@ -213,15 +215,80 @@ async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typ
   const provider = config.transcriptionProvider === "auto" ? (call.transcript ? "payload" : process.env.OPENAI_API_KEY ? "openai" : process.env.DEEPGRAM_API_KEY ? "deepgram" : "payload") : config.transcriptionProvider;
   if (provider === "payload") { if (call.transcript) return call.transcript; throw new Error("Kein Transkript im Payload und kein Transkriptionsdienst konfiguriert (OPENAI_API_KEY oder DEEPGRAM_API_KEY)."); }
   if (!call.recordingUrl) throw new Error("Keine Aufzeichnungs-URL übergeben.");
+  if (call.recordingUrl.startsWith("file:")) { // hochgeladene Datei (Aufnahmen per Datei testen)
+    const local = await readLocalRecording(call.recordingUrl); return transcribeAudio(config, local.audio, local.contentType, fetchImpl, provider);
+  }
   const headers: Record<string, string> = {};
   if (config.recordingAuthHeader) { const raw = decryptIntegrationSecret(config.recordingAuthHeader); const [name, ...rest] = raw.split(":"); if (rest.length) headers[name.trim().toLowerCase()] = rest.join(":").trim(); else headers.authorization = raw; }
   let audioResponse: Response;
   try { audioResponse = await fetchImpl(call.recordingUrl, { headers }); }
   catch (error) { throw Object.assign(new Error(`Aufzeichnung konnte nicht geladen werden (${error instanceof Error ? error.message : String(error)}).`), { retryable: true }); }
   if (!audioResponse.ok) throw Object.assign(new Error(`Aufzeichnung konnte nicht geladen werden (HTTP ${audioResponse.status}).`), { retryable: audioResponse.status !== 401 && audioResponse.status !== 403 }); // 404/425/5xx: Datei meist noch nicht fertig – später noch einmal
-  const contentType = (audioResponse.headers.get("content-type") ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
-  if (/^text\/html|^application\/(xhtml|json)/i.test(contentType)) throw new Error(`Der Aufnahme-Link liefert keine Audiodatei, sondern eine Webseite (${contentType}). Bitte den direkten Datei-Link (mp3/wav) verwenden.`);
-  const audio = new Uint8Array(await audioResponse.arrayBuffer());
+  let contentType = (audioResponse.headers.get("content-type") ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
+  let audio: Uint8Array<ArrayBuffer>;
+  if (/^text\/html|^application\/xhtml/i.test(contentType)) {
+    // Der Link öffnet eine Player-Seite: darin den eigentlichen Datei-Link suchen (<audio src>, <source src>, Download-Link, .mp3/.wav im Quelltext)
+    const html = await audioResponse.text(); const mediaUrl = findMediaUrl(html, call.recordingUrl);
+    if (!mediaUrl) throw new Error("Der Aufnahme-Link liefert eine Webseite (Player) und darin ist kein Datei-Link zu finden. Bitte die Aufnahme als Datei herunterladen und hochladen – oder den direkten mp3/wav-Link verwenden.");
+    let mediaResponse: Response;
+    try { mediaResponse = await fetchImpl(mediaUrl, { headers: { ...headers, referer: call.recordingUrl } }); } catch (error) { throw Object.assign(new Error(`Aufnahme-Datei hinter der Player-Seite konnte nicht geladen werden (${error instanceof Error ? error.message : String(error)}).`), { retryable: true }); }
+    if (!mediaResponse.ok) throw new Error(`Aufnahme-Datei hinter der Player-Seite konnte nicht geladen werden (HTTP ${mediaResponse.status}, ${mediaUrl.slice(0, 120)}).`);
+    contentType = (mediaResponse.headers.get("content-type") ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
+    if (/^text\/html|^application\/(xhtml|json)/i.test(contentType)) throw new Error("Hinter der Player-Seite kam wieder eine Webseite statt einer Audiodatei. Bitte die Aufnahme als Datei herunterladen und hochladen.");
+    audio = new Uint8Array(await mediaResponse.arrayBuffer());
+  } else if (/^application\/json/i.test(contentType)) throw new Error("Der Aufnahme-Link liefert keine Audiodatei (JSON). Bitte den direkten Datei-Link verwenden oder die Datei hochladen.");
+  else audio = new Uint8Array(await audioResponse.arrayBuffer());
+  return transcribeAudio(config, audio, contentType, fetchImpl, provider);
+}
+
+/** Datei-Link aus einer Player-Seite herauslesen. */
+export function findMediaUrl(html: string, pageUrl: string): string | null {
+  const candidates: string[] = [];
+  const push = (raw: string | undefined) => { if (!raw) return; const value = raw.replace(/&amp;/g, "&").trim(); if (!value || value.startsWith("data:") || value.startsWith("javascript:")) return; try { candidates.push(new URL(value, pageUrl).toString()); } catch { /* ignorieren */ } };
+  for (const match of Array.from(html.matchAll(/<(?:audio|source|video)[^>]+src=["']([^"']+)["']/gi))) push(match[1]);
+  for (const match of Array.from(html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>(?:[^<]*(?:download|herunterladen|indir|mp3|wav)[^<]*)<\/a>/gi))) push(match[1]);
+  for (const match of Array.from(html.matchAll(/<a[^>]+download[^>]*href=["']([^"']+)["']/gi))) push(match[1]);
+  for (const match of Array.from(html.matchAll(/["'(]([^"'()\s]+\.(?:mp3|wav|m4a|ogg|mp4|webm)(?:\?[^"'()\s]*)?)["')]/gi))) push(match[1]);
+  for (const match of Array.from(html.matchAll(/["']([^"']*(?:download|getfile|getsound|stream)[^"']*)["']/gi))) { const value = match[1]; if (/^https?:|^\//.test(value) && value !== pageUrl) push(value); }
+  const unique = Array.from(new Set(candidates)).filter((url) => url !== pageUrl);
+  return unique[0] ?? null;
+}
+
+async function readLocalRecording(ref: string): Promise<{ audio: Uint8Array<ArrayBuffer>; contentType: string }> {
+  const name = ref.slice("file:".length).replace(/[^a-zA-Z0-9._-]/g, ""); const file = path.resolve(recordingsDir(), name);
+  const audio = new Uint8Array(await fs.readFile(file)) as Uint8Array<ArrayBuffer>; const ext = path.extname(name).toLowerCase().replace(".", "");
+  return { audio, contentType: ({ mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", ogg: "audio/ogg", webm: "audio/webm", mp4: "audio/mp4" } as Record<string, string>)[ext] ?? "audio/mpeg" };
+}
+/** Ablage hochgeladener Aufnahmen – NICHT unter uploads/ (das ist öffentlich), sondern daneben; Abruf nur angemeldet über /api/aufnahmen/:id. */
+export const recordingsDir = () => path.resolve(process.env.RECORDINGS_DIR ?? path.resolve(process.env.UPLOAD_DIR ?? "uploads", "..", "aufnahmen"));
+const AUDIO_EXT: Record<string, string> = { "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/ogg": "ogg", "audio/webm": "webm", "video/mp4": "mp4" };
+/** Hochgeladene Aufnahme ablegen und als Gespräch anlegen; Verarbeitung im Hintergrund. */
+export async function importRecordingFile(db: Db, tenantId: number, input: { fileName: string; mimeType: string; base64: string; agentName?: string | null; campaign?: string | null; phone?: string | null; note?: string | null }, options: { fetchImpl?: typeof fetch; waitFor?: boolean } = {}) {
+  const byName = ({ mp3: "mp3", wav: "wav", m4a: "m4a", ogg: "ogg", webm: "webm", mp4: "mp4" } as Record<string, string>)[input.fileName.toLowerCase().split(".").pop() ?? ""];
+  const ext = AUDIO_EXT[input.mimeType.toLowerCase()] ?? byName; if (!ext) throw new Error("Bitte eine Audiodatei hochladen (mp3, wav, m4a, ogg oder webm).");
+  const buffer = Buffer.from(input.base64.replace(/^data:[^;]+;base64,/, ""), "base64"); if (!buffer.length) throw new Error("Die Datei ist leer."); if (buffer.length > 24 * 1024 * 1024) throw new Error("Die Datei ist größer als 24 MB – bitte kürzen oder als mp3 speichern.");
+  const digest = createHash("sha1").update(buffer).digest("hex"); const externalCallId = `DATEI-${digest.slice(0, 16)}`;
+  const existing = (await db.select({ id: callRecords.id, status: callRecords.status }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.externalCallId, externalCallId))).limit(1))[0];
+  if (existing && existing.status !== "fehlgeschlagen") return { callId: existing.id, duplicate: true as const };
+  const dir = recordingsDir(); await fs.mkdir(dir, { recursive: true }); const name = `${tenantId}-${digest.slice(0, 20)}.${ext}`; await fs.writeFile(path.join(dir, name), buffer);
+  const phone = input.phone?.trim() || null;
+  const lead = phone ? (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), eq(leads.phone, phone))).limit(1))[0] : undefined;
+  let callId = existing?.id ?? 0;
+  if (existing) await db.update(callRecords).set({ status: "eingegangen", error: null, recordingUrl: `file:${name}` }).where(eq(callRecords.id, existing.id));
+  else { const inserted = await db.insert(callRecords).values({ tenantId, provider: "datei", externalCallId, leadId: lead?.id ?? null, phone, agentName: input.agentName?.trim() || null, campaign: input.campaign?.trim() || "Aufnahmen-Test", direction: "ausgehend", startedAt: new Date(), durationSeconds: null, recordingUrl: `file:${name}`, consent: true, consentSource: "Datei hochgeladen", status: "eingegangen", payload: { file: input.fileName.slice(0, 200), size: buffer.length, note: input.note ?? null } }); callId = Number(inserted[0]?.insertId) || 0; }
+  const run = processCall(db, callId, options).catch((error) => console.warn("[call-qa] Datei-Import", callId, error instanceof Error ? error.message : error));
+  if (options.waitFor) await run;
+  return { callId, duplicate: false as const };
+}
+/** Hochgeladene Aufnahme zum Abspielen – nur für Gespräche des eigenen Mandanten. */
+export async function localRecordingFile(db: Db, tenantId: number, callId: number): Promise<{ file: string; contentType: string } | null> {
+  const row = (await db.select({ recordingUrl: callRecords.recordingUrl }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.id, callId))).limit(1))[0];
+  if (!row?.recordingUrl?.startsWith("file:")) return null;
+  const name = row.recordingUrl.slice("file:".length).replace(/[^a-zA-Z0-9._-]/g, ""); const ext = path.extname(name).toLowerCase().replace(".", "");
+  return { file: path.resolve(recordingsDir(), name), contentType: ({ mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", ogg: "audio/ogg", webm: "audio/webm", mp4: "video/mp4" } as Record<string, string>)[ext] ?? "application/octet-stream" };
+}
+
+async function transcribeAudio(config: CallQaConfig, audio: Uint8Array<ArrayBuffer>, contentType: string, fetchImpl: typeof fetch, provider: string): Promise<string> {
   if (provider === "openai") {
     const form = new FormData(); form.append("file", new Blob([audio], { type: contentType }), "aufzeichnung.mp3"); form.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL ?? "whisper-1"); form.append("language", config.transcriptionLanguage || "de"); form.append("response_format", "text");
     const response = await fetchImpl("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: form });
@@ -247,7 +314,9 @@ export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" |
   const user = `${context.leadCategory ? `Lead-Kategorie: ${context.leadCategory}\n` : ""}${context.leadName ? `Kunde laut Lead: ${context.leadName}\n` : ""}Transkript:\n"""\n${transcript.slice(0, 60_000)}\n"""`;
   const response = await invokeLLM({ messages: [{ role: "system", content: system }, { role: "user", content: user }], outputSchema: schema, maxTokens: 2500 });
   const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as Partial<Omit<Evaluation, "extracted">> & { extracted?: Array<{ key: string; value: string }> | Record<string, string> };
-  const scored = criteria.map((criterion) => { const found = parsed.criteria?.find((item) => item.key === criterion.key); return { key: criterion.key, score: Math.max(0, Math.min(10, Number(found?.score ?? 0))), evidence: String(found?.evidence ?? "").slice(0, 500) }; });
+  // Die KI liefert „criteria“ meist als Liste – manchmal aber als Objekt {key: {score, evidence}} oder {key: score}; beides annehmen
+  const rawCriteria = parsed.criteria as unknown; const criteriaList: Array<{ key: string; score: number; evidence: string }> = Array.isArray(rawCriteria) ? rawCriteria as Array<{ key: string; score: number; evidence: string }> : rawCriteria && typeof rawCriteria === "object" ? Object.entries(rawCriteria as Record<string, unknown>).map(([key, value]) => (value && typeof value === "object" ? { key, score: Number((value as { score?: unknown }).score ?? 0), evidence: String((value as { evidence?: unknown }).evidence ?? "") } : { key, score: Number(value ?? 0), evidence: "" })) : [];
+  const scored = criteria.map((criterion) => { const found = criteriaList.find((item) => item.key === criterion.key); return { key: criterion.key, score: Math.max(0, Math.min(10, Number(found?.score ?? 0))), evidence: String(found?.evidence ?? "").slice(0, 500) }; });
   const score = Math.round(criteria.reduce((sum, criterion) => sum + (scored.find((item) => item.key === criterion.key)?.score ?? 0) / 10 * criterion.weight, 0) / totalWeight * 100);
   const redFlags = Array.isArray(parsed.redFlags) ? parsed.redFlags.map(String).filter(Boolean).slice(0, 10) : [];
   const verdict = redFlags.length ? "nicht_verkaufbar" : (["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"].includes(parsed.verdict ?? "") ? parsed.verdict! : score >= 70 ? "verkaufbar" : score >= 40 ? "nachfassen" : "nicht_verkaufbar");
@@ -380,21 +449,21 @@ export async function simulateCall(db: Db, tenantId: number, input: { transcript
 /** Prototyp: Aufnahme-Links von Hand einfügen (eine Zeile je Aufnahme, optional „Link | Rufnummer | Notiz“). Jede Aufnahme wird wie ein Dialer-Gespräch geholt, transkribiert und bewertet – im Hintergrund, die Liste füllt sich nach und nach. */
 export async function importRecordingLinks(db: Db, tenantId: number, input: { text: string; agentName?: string | null; campaign?: string | null }, options: { fetchImpl?: typeof fetch; waitFor?: boolean } = {}) {
   const lines = input.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const created: number[] = []; const skipped: string[] = []; const duplicates: number[] = [];
+  const created: number[] = []; const skipped: string[] = []; const duplicates: number[] = []; const retried: number[] = []; // retried: schon da, aber fehlgeschlagen → noch einmal holen
   for (const line of lines.slice(0, 50)) {
     const match = line.match(/https?:\/\/\S+/); if (!match) { skipped.push(line.slice(0, 80)); continue; }
     const url = match[0].replace(/[),.;]+$/, ""); const rest = line.replace(match[0], "").split("|").map((part) => part.trim()).filter(Boolean);
     const phone = rest.find((part) => /\+?\d[\d\s/()-]{5,}/.test(part)) ?? null; const note = rest.find((part) => part !== phone) ?? null;
     const externalCallId = `LINK-${createHash("sha1").update(url).digest("hex").slice(0, 16)}`;
-    const existing = (await db.select({ id: callRecords.id }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.externalCallId, externalCallId))).limit(1))[0];
-    if (existing) { duplicates.push(existing.id); continue; }
+    const existing = (await db.select({ id: callRecords.id, status: callRecords.status }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.externalCallId, externalCallId))).limit(1))[0];
+    if (existing) { if (existing.status === "fehlgeschlagen" || existing.status === "eingegangen") { await db.update(callRecords).set({ status: "eingegangen", error: null }).where(eq(callRecords.id, existing.id)); retried.push(existing.id); } else duplicates.push(existing.id); continue; }
     const lead = phone ? (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), eq(leads.phone, phone))).limit(1))[0] : undefined;
     const inserted = await db.insert(callRecords).values({ tenantId, provider: "link", externalCallId, leadId: lead?.id ?? null, phone, agentName: input.agentName?.trim() || null, campaign: input.campaign?.trim() || "Aufnahmen-Test", direction: "ausgehend", startedAt: new Date(), durationSeconds: null, recordingUrl: url, consent: true, consentSource: "manuell eingefügt", status: "eingegangen", payload: { link: true, note } });
     created.push(Number(inserted[0]?.insertId) || 0);
   }
-  const run = (async () => { for (const callId of created) { try { await processCall(db, callId, options); } catch (error) { console.warn("[call-qa] Link-Import", callId, error instanceof Error ? error.message : error); } } })();
+  const run = (async () => { for (const callId of [...created, ...retried]) { try { await processCall(db, callId, options); } catch (error) { console.warn("[call-qa] Link-Import", callId, error instanceof Error ? error.message : error); } } })();
   if (options.waitFor) await run;
-  return { created: created.length, duplicates: duplicates.length, skipped, callIds: created };
+  return { created: created.length, retried: retried.length, duplicates: duplicates.length, skipped, callIds: [...created, ...retried] };
 }
 
 export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; limit?: number } = {}) {
@@ -419,7 +488,7 @@ export async function getCall(db: Db, tenantId: number, callId: number) {
   const criteria = (Array.isArray(config.criteria) ? config.criteria : DEFAULT_CRITERIA) as Criterion[];
   const scores = Array.isArray(row.call.criteriaScores) ? (row.call.criteriaScores as Evaluation["criteria"]) : [];
   const questions = await questionsForCampaign(db, tenantId, row.call.campaign);
-  return { ...row.call, payload: undefined, questions, qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteria: criteria.map((criterion) => ({ ...criterion, score: scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
+  return { ...row.call, recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, questions, qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteria: criteria.map((criterion) => ({ ...criterion, score: scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
 }
 
 export async function callStatistics(db: Db, tenantId: number) {

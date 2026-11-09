@@ -4,7 +4,9 @@ import { createHash } from "node:crypto";
 import { apiTokens, categoryFields, claimEvents, claims, deliveryStopReasons, deliveryStops, invoices, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, reclamationReasons, supplierInboundMappings, suppliers, metaConnections } from "../drizzle/schema";
 import { deliverLeadNow, loadDeliverySettings, triggerLeadAutomations } from "./lead-pipeline";
 import { checkPhoneNumber, handleWattfoxCallback } from "./partner-accounts";
-import { describeDialerWebhook, ingestDialerCall } from "./call-qa";
+import { describeDialerWebhook, ingestDialerCall, localRecordingFile } from "./call-qa";
+import { authenticateRequest } from "./_core/auth";
+import { ensureTenantForUser } from "./db";
 import { desc, sql } from "drizzle-orm";
 import { getDb } from "./db";
 import { registerContractRoutes } from "./contract-routes";
@@ -202,6 +204,14 @@ export function registerPublicApiRoutes(app: Express) {
   app.get("/api/partner/wattfox/:token", wattfoxHandler);
   app.post("/api/partner/wattfox/:token", wattfoxHandler);
   // ---- Meta Lead Ads: Webhook-Prüfung (GET) und neue Leads (POST), Facebook-Login-Rückruf
+  // Hochgeladene Aufnahmen abspielen – nur angemeldet und nur für den eigenen Mandanten
+  app.get("/api/aufnahmen/:callId", async (req: Request, res: Response) => {
+    try {
+      const user = await authenticateRequest(req); const context = await ensureTenantForUser(user.id); const db = await getDb(); if (!context || !db) return res.status(403).send("Kein Zugriff.");
+      const found = await localRecordingFile(db, context.tenant.id, Number(req.params.callId)); if (!found) return res.status(404).send("Keine hochgeladene Aufnahme.");
+      res.set({ "content-type": found.contentType, "cache-control": "private, max-age=3600", "accept-ranges": "bytes" }); return res.sendFile(found.file);
+    } catch { return res.status(403).send("Bitte anmelden."); }
+  });
   app.get("/api/meta/webhook", async (req: Request, res: Response) => {
     const mode = String(req.query["hub.mode"] ?? ""); const token = String(req.query["hub.verify_token"] ?? ""); const challenge = String(req.query["hub.challenge"] ?? "");
     const db = await getDb(); if (!db || mode !== "subscribe" || !token) return res.status(403).send("Forbidden");

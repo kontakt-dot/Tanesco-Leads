@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PV_HAUSKOMPASS_PRESET, presetByKey } from "../shared/call-qa-presets";
 import { answerQuestionsHeuristically, decideByQuestions } from "../shared/call-qualification";
+import { findMediaUrl } from "./call-qa";
 
 const good = `Agent: Guten Tag, hier ist Yilmaz. Sie hatten sich bei HausKompass für eine Photovoltaikanlage eingetragen, richtig?
 Kunde: Ja, genau.
@@ -38,5 +39,15 @@ describe("Vorlage Photovoltaik – HausKompass", () => {
     expect(answers.umsetzung_6_monate.answer).toBe("nein");
     expect(answers.uebergabe_angebotsvergleich.answer).toBe("nein");
     expect(decideByQuestions(PV_HAUSKOMPASS_PRESET.questions, answers).decision).toBe("zurueckgewiesen");
+  });
+});
+
+describe("Datei-Link aus einer Player-Seite", () => {
+  it("findet <audio src>, Download-Links und mp3-Adressen – relativ zur Seite", () => {
+    const page = "https://download.voicefile.de/getSound.aspx?token=abc&k=sistem&a=1";
+    expect(findMediaUrl(`<html><body><audio controls src="/files/1.mp3?sig=x"></audio></body></html>`, page)).toBe("https://download.voicefile.de/files/1.mp3?sig=x");
+    expect(findMediaUrl(`<a href="getSound.aspx?token=abc&amp;k=sistem&amp;a=1&amp;download=1" class="btn">Datei herunterladen</a>`, page)).toBe("https://download.voicefile.de/getSound.aspx?token=abc&k=sistem&a=1&download=1");
+    expect(findMediaUrl(`<script>var src = "https://cdn.example.com/rec/87346796.wav";</script>`, page)).toBe("https://cdn.example.com/rec/87346796.wav");
+    expect(findMediaUrl(`<html><body><p>Kein Ton hier</p></body></html>`, page)).toBeNull();
   });
 });

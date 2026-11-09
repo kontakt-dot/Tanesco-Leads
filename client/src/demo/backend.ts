@@ -2227,18 +2227,24 @@ const procedures: Record<string, Handler> = {
     let campaigns = 0; if (input.allCampaigns) for (const row of T().callQaCampaigns) if (row.tenantId === tenant().id) { row.questions = preset.questions as never; campaigns += 1; }
     return { success: true as const, preset: preset.key, campaigns };
   },
+  "leadops.importRecordingFile": async (input) => {
+    const name = String(input.fileName ?? "aufnahme.mp3"); const key = `DATEI-${name}-${String(input.base64 ?? "").length}`;
+    const existing = T().callRecords.find((row) => row.externalCallId === key); if (existing && existing.status !== "fehlgeschlagen") return { callId: existing.id, duplicate: true as const };
+    const row = insert(store, "callRecords", { tenantId: tenant().id, provider: "datei", externalCallId: key, leadId: null, phone: input.phone ?? null, agentName: input.agentName ?? null, campaign: input.campaign || "Aufnahmen-Test", direction: "ausgehend", startedAt: new Date(), durationSeconds: 198, recordingUrl: `file:${name}`, consent: true, consentSource: "Datei hochgeladen", status: "transkribiert", transcript: "Agent: Guten Tag, hier ist Yilmaz. Sie hatten sich bei HausKompass für eine Photovoltaikanlage eingetragen, richtig?\nKunde: Ja, genau.\nAgent: Sind Sie der Eigentümer des Hauses?\nKunde: Ja, das Haus gehört uns.\nAgent: Wann möchten Sie umsetzen?\nKunde: In den nächsten drei Monaten.\nAgent: Dann wird sich Photovoltaik Angebotsvergleich bei Ihnen melden.\nKunde: Gerne.", score: null, verdict: null, criteriaScores: [], summary: null, redFlags: [], nextStep: null, decision: "offen", decidedBy: null, reviewedByUserId: null, reviewedAt: null, reviewNote: null, error: null, createdAt: new Date(), updatedAt: new Date() });
+    await evaluateStoredCall(row.id); return { callId: row.id, duplicate: false as const };
+  },
   "leadops.importRecordingLinks": async (input) => {
-    const lines = String(input.text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean); let created = 0; let duplicates = 0; const skipped: string[] = []; const callIds: number[] = [];
+    const lines = String(input.text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean); let created = 0; let duplicates = 0; let retried = 0; const skipped: string[] = []; const callIds: number[] = [];
     for (const line of lines.slice(0, 50)) {
       const match = line.match(/https?:\/\/\S+/); if (!match) { skipped.push(line.slice(0, 80)); continue; }
       const url = match[0]; const rest = line.replace(url, "").split("|").map((part) => part.trim()).filter(Boolean); const phone = rest.find((part) => /\+?\d[\d\s/()-]{5,}/.test(part)) ?? null;
       const externalCallId = `LINK-${url.length}-${url.slice(-12).replace(/[^a-z0-9]/gi, "")}`;
-      if (T().callRecords.some((row) => row.externalCallId === externalCallId)) { duplicates += 1; continue; }
+      const existing = T().callRecords.find((row) => row.externalCallId === externalCallId); if (existing) { if (existing.status === "fehlgeschlagen") { existing.status = "transkribiert"; existing.error = null; retried += 1; await evaluateStoredCall(existing.id); } else duplicates += 1; continue; }
       const lead = phone ? T().leads.find((row) => row.kind === "verkauf" && row.phone === phone) : undefined;
       const row = insert(store, "callRecords", { tenantId: tenant().id, provider: "link", externalCallId, leadId: lead?.id ?? null, phone, agentName: input.agentName ?? null, campaign: input.campaign || "Aufnahmen-Test", direction: "ausgehend", startedAt: new Date(), durationSeconds: 254, recordingUrl: url, consent: true, consentSource: "manuell eingefügt", status: "transkribiert", transcript: "Agent: Guten Tag, hier ist Yilmaz vom Energieservice. Sie hatten sich für eine Photovoltaikanlage interessiert?\nKunde: Ja, genau – wir haben ein Einfamilienhaus mit Südausrichtung und überlegen, im Frühjahr zu starten.\nAgent: Sehr gut. Dann würde ich Ihnen einen kostenlosen Beratungstermin vorschlagen.\nKunde: Gerne, nächste Woche Dienstag passt.", score: null, verdict: null, criteriaScores: [], summary: null, redFlags: [], nextStep: null, decision: "offen", decidedBy: null, reviewedByUserId: null, reviewedAt: null, reviewNote: null, error: null, createdAt: new Date(), updatedAt: new Date() });
       created += 1; callIds.push(row.id); await evaluateStoredCall(row.id);
     }
-    return { created, duplicates, skipped, callIds };
+    return { created, retried, duplicates, skipped, callIds };
   },
   "leadops.simulateCall": async (input) => { const lead = input.publicId ? requireLead(input.publicId) : null; const row = insert(store, "callRecords", { tenantId: tenant().id, provider: "test", externalCallId: `TEST-${randomId(8)}`, leadId: lead?.id ?? null, phone: lead?.phone ?? null, agentName: input.agentName ?? "Test", campaign: "Bewertung testen", direction: "ausgehend", startedAt: new Date(), durationSeconds: Math.round(input.transcript.split(/\s+/).length / 2.5), recordingUrl: null, consent: true, consentSource: "Test", status: "transkribiert", transcript: input.transcript, score: null, verdict: null, criteriaScores: [], summary: null, redFlags: [], nextStep: null, decision: "offen", decidedBy: null, reviewedByUserId: null, reviewedAt: null, reviewNote: null, error: null, createdAt: new Date(), updatedAt: new Date() }); const result = await evaluateStoredCall(row.id); return { callId: row.id, ...result }; },
   // ---- Telefonie / Dialer (Spiegel von server/dialer.ts, Anrufe simuliert)
