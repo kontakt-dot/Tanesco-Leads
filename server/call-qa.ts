@@ -9,6 +9,7 @@
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
 import { and, asc, desc, eq, gte, inArray, like, lt, or } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { callQaConfigs, callRecords, leadStatusEvents, leads, optIns, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
 import { convertRawContact, normalizeRawPhone } from "./raw-data";
@@ -202,8 +203,9 @@ async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typ
   try { audioResponse = await fetchImpl(call.recordingUrl, { headers }); }
   catch (error) { throw Object.assign(new Error(`Aufzeichnung konnte nicht geladen werden (${error instanceof Error ? error.message : String(error)}).`), { retryable: true }); }
   if (!audioResponse.ok) throw Object.assign(new Error(`Aufzeichnung konnte nicht geladen werden (HTTP ${audioResponse.status}).`), { retryable: audioResponse.status !== 401 && audioResponse.status !== 403 }); // 404/425/5xx: Datei meist noch nicht fertig – später noch einmal
+  const contentType = (audioResponse.headers.get("content-type") ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
+  if (/^text\/html|^application\/(xhtml|json)/i.test(contentType)) throw new Error(`Der Aufnahme-Link liefert keine Audiodatei, sondern eine Webseite (${contentType}). Bitte den direkten Datei-Link (mp3/wav) verwenden.`);
   const audio = new Uint8Array(await audioResponse.arrayBuffer());
-  const contentType = audioResponse.headers.get("content-type") ?? "audio/mpeg";
   if (provider === "openai") {
     const form = new FormData(); form.append("file", new Blob([audio], { type: contentType }), "aufzeichnung.mp3"); form.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL ?? "whisper-1"); form.append("language", config.transcriptionLanguage || "de"); form.append("response_format", "text");
     const response = await fetchImpl("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: form });
@@ -357,6 +359,26 @@ export async function simulateCall(db: Db, tenantId: number, input: { transcript
   const callId = Number(inserted[0]?.insertId) || 0;
   const result = await processCall(db, callId, options);
   return { callId, ...result };
+}
+
+/** Prototyp: Aufnahme-Links von Hand einfügen (eine Zeile je Aufnahme, optional „Link | Rufnummer | Notiz“). Jede Aufnahme wird wie ein Dialer-Gespräch geholt, transkribiert und bewertet – im Hintergrund, die Liste füllt sich nach und nach. */
+export async function importRecordingLinks(db: Db, tenantId: number, input: { text: string; agentName?: string | null; campaign?: string | null }, options: { fetchImpl?: typeof fetch; waitFor?: boolean } = {}) {
+  const lines = input.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const created: number[] = []; const skipped: string[] = []; const duplicates: number[] = [];
+  for (const line of lines.slice(0, 50)) {
+    const match = line.match(/https?:\/\/\S+/); if (!match) { skipped.push(line.slice(0, 80)); continue; }
+    const url = match[0].replace(/[),.;]+$/, ""); const rest = line.replace(match[0], "").split("|").map((part) => part.trim()).filter(Boolean);
+    const phone = rest.find((part) => /\+?\d[\d\s/()-]{5,}/.test(part)) ?? null; const note = rest.find((part) => part !== phone) ?? null;
+    const externalCallId = `LINK-${createHash("sha1").update(url).digest("hex").slice(0, 16)}`;
+    const existing = (await db.select({ id: callRecords.id }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.externalCallId, externalCallId))).limit(1))[0];
+    if (existing) { duplicates.push(existing.id); continue; }
+    const lead = phone ? (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), eq(leads.phone, phone))).limit(1))[0] : undefined;
+    const inserted = await db.insert(callRecords).values({ tenantId, provider: "link", externalCallId, leadId: lead?.id ?? null, phone, agentName: input.agentName?.trim() || null, campaign: input.campaign?.trim() || "Aufnahmen-Test", direction: "ausgehend", startedAt: new Date(), durationSeconds: null, recordingUrl: url, consent: true, consentSource: "manuell eingefügt", status: "eingegangen", payload: { link: true, note } });
+    created.push(Number(inserted[0]?.insertId) || 0);
+  }
+  const run = (async () => { for (const callId of created) { try { await processCall(db, callId, options); } catch (error) { console.warn("[call-qa] Link-Import", callId, error instanceof Error ? error.message : error); } } })();
+  if (options.waitFor) await run;
+  return { created: created.length, duplicates: duplicates.length, skipped, callIds: created };
 }
 
 export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; limit?: number } = {}) {

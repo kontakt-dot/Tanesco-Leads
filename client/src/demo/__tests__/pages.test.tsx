@@ -183,3 +183,21 @@ describe("Gespräche – Transkriptionsstand sichtbar", () => {
     expect(state?.className).toContain("is-missing");
   });
 });
+
+describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
+  it("legt je Link ein Gespräch an, bewertet es und zeigt es in der Liste", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    const box = view.container.querySelector<HTMLTextAreaElement>(".cq-links textarea")!; expect(box).toBeTruthy();
+    fireEvent.change(box, { target: { value: "https://download.example.de/getSound.aspx?token=abc&a=1\nkein link\nhttps://download.example.de/getSound.aspx?token=def&a=2 | +49 170 1234567 | Termin" } });
+    const button = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-links button")).find((node) => /Aufnahmen holen/.test(node.textContent ?? ""))!;
+    await act(async () => { fireEvent.click(button); }); await settle(600);
+    const rows = Array.from(view.container.querySelectorAll(".flux-table tbody tr")).map((row) => row.textContent ?? "");
+    expect(rows.filter((text) => text.includes("Aufnahmen-Test")).length).toBe(2);
+    // nochmal dieselben Links → nichts doppelt
+    fireEvent.change(box, { target: { value: "https://download.example.de/getSound.aspx?token=abc&a=1" } });
+    await act(async () => { fireEvent.click(button); }); await settle(400);
+    expect(Array.from(view.container.querySelectorAll(".flux-table tbody tr")).filter((row) => (row.textContent ?? "").includes("Aufnahmen-Test")).length).toBe(2);
+  });
+});
