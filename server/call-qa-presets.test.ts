@@ -50,4 +50,12 @@ describe("Datei-Link aus einer Player-Seite", () => {
     expect(findMediaUrl(`<script>var src = "https://cdn.example.com/rec/87346796.wav";</script>`, page)).toBe("https://cdn.example.com/rec/87346796.wav");
     expect(findMediaUrl(`<html><body><p>Kein Ton hier</p></body></html>`, page)).toBeNull();
   });
+
+  it("Wärmepumpe zählt wie Photovoltaik – Übergabe an „Photovoltaik Angebotsvergleich“ bleibt richtig", () => {
+    const wp = `Agent: Guten Tag, Sie hatten sich bei HausKompass wegen einer Wärmepumpe eingetragen?\nKunde: Ja, unsere Gasheizung ist alt, wir wollen zeitnah eine Wärmepumpe, am liebsten in den nächsten Monaten.\nAgent: Sind Sie der Eigentümer?\nKunde: Ja, das Haus gehört uns.\nAgent: Dann meldet sich Photovoltaik Angebotsvergleich bei Ihnen – die machen auch Wärmepumpen. Telefonisch erreichbar?\nKunde: Ja, gerne anrufen.`;
+    const answers = answerQuestionsHeuristically(PV_HAUSKOMPASS_PRESET.questions, wp);
+    expect(answers.interesse.answer).toBe("ja"); expect(answers.uebergabe_angebotsvergleich.answer).toBe("ja");
+    expect(decideByQuestions(PV_HAUSKOMPASS_PRESET.questions, answers).decision).toBe("freigegeben");
+    expect(PV_HAUSKOMPASS_PRESET.instructions).toContain("Wärmepumpe");
+  });
 });
