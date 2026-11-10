@@ -4234,6 +4234,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       const cfg = (await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0]; expect(cfg.instructions).toBe(PV_HAUSKOMPASS_PRESET.instructions);
       expect((cfg.criteria as Array<{ key: string; weight: number; description: string }>).find((c) => c.key === "hauskompass")).toMatchObject({ weight: 5, description: PV_HAUSKOMPASS_PRESET.criteria[0].description }); // Gewicht des Mandanten bleibt, Text ist neu
       expect(await refreshPresetConfigs(db)).toBe(0); // nichts mehr zu tun
+      // Einmalige Einrichtung „Wattfox PV und WP“: alte Wattfox-Gespräche hängen um, Fragensatz = Vorlage; danach nie wieder (Mandant pflegt selbst)
+      const { ensureWattfoxCampaign, WATTFOX_CAMPAIGN } = await import("./call-qa"); const { callQaCampaigns: cqTable } = await import("../drizzle/schema");
+      await db.update(callsTable).set({ campaign: "Wattfox PV" }).where(eq(callsTable.id, result.callIds[0]));
+      expect(await ensureWattfoxCampaign(db)).toBe(1);
+      expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe(WATTFOX_CAMPAIGN);
+      expect(((await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN))))[0].questions as Array<{ key: string }>).map((q) => q.key)).toContain("uebergabe_angebotsvergleich");
+      expect(await ensureWattfoxCampaign(db)).toBe(0);
+      // Vorlage nur für eine Kampagne
+      expect(await owner.leadops.applyPresetToCampaign({ preset: "pv-hauskompass", campaign: "Nur-Hier" })).toMatchObject({ success: true, questions: PV_HAUSKOMPASS_PRESET.questions.length });
+      await db.update(callsTable).set({ campaign: "Link-Test" }).where(eq(callsTable.id, result.callIds[0]));
       // Kampagne umbenennen: Gespräche hängen um
       const renamed = await owner.leadops.renameCallCampaign({ from: "Link-Test", to: "PV Hessen November" }); expect(renamed.calls).toBe(1);
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe("PV Hessen November");

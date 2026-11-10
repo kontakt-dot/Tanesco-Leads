@@ -521,6 +521,29 @@ export async function refreshPresetConfigs(db: Db): Promise<number> {
   return changed;
 }
 
+/** Einmalige Einrichtung (gewünscht): Kampagne „Wattfox PV und WP“ mit den Regeln der Vorlage – Gespräche aus „Wattfox PV“ hängen um. Nur bei Mandanten, die die Vorlage nutzen. */
+export const WATTFOX_CAMPAIGN = "Wattfox PV und WP";
+export async function ensureWattfoxCampaign(db: Db): Promise<number> {
+  const preset = presetByKey("pv-hauskompass")!; let changed = 0;
+  for (const row of await db.select({ tenantId: callQaConfigs.tenantId, criteria: callQaConfigs.criteria }).from(callQaConfigs)) {
+    const keys = new Set(((Array.isArray(row.criteria) ? row.criteria : []) as Criterion[]).map((c) => c.key)); if (!preset.criteria.every((c) => keys.has(c.key))) continue;
+    const existing = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, row.tenantId), eq(callQaCampaigns.name, WATTFOX_CAMPAIGN))).limit(1))[0];
+    if (existing) continue; // schon eingerichtet – ab hier macht der Mandant es selbst
+    const oldNames = ["Wattfox PV", "Wattfox", "Wattfox WP", "Wattfox PV & WP"];
+    for (const old of oldNames) { const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, row.tenantId), eq(callQaCampaigns.name, old))).limit(1))[0]; if (own) await db.delete(callQaCampaigns).where(eq(callQaCampaigns.id, own.id)); await db.update(callRecords).set({ campaign: WATTFOX_CAMPAIGN }).where(and(eq(callRecords.tenantId, row.tenantId), eq(callRecords.campaign, old))); }
+    await db.insert(callQaCampaigns).values({ tenantId: row.tenantId, name: WATTFOX_CAMPAIGN, questions: preset.questions });
+    changed += 1;
+  }
+  return changed;
+}
+/** Vorlage nur für eine Kampagne übernehmen (eigene Regeln je Kampagne). */
+export async function applyPresetToCampaign(db: Db, tenantId: number, input: { preset: string; campaign: string }) {
+  const preset = presetByKey(input.preset); if (!preset) throw new Error("Diese Vorlage gibt es nicht."); const name = input.campaign.trim(); if (!name) throw new Error("Bitte eine Kampagne wählen.");
+  const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
+  if (own) await db.update(callQaCampaigns).set({ questions: preset.questions }).where(eq(callQaCampaigns.id, own.id)); else await db.insert(callQaCampaigns).values({ tenantId, name, questions: preset.questions });
+  return { success: true as const, questions: preset.questions.length };
+}
+
 export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; limit?: number } = {}) {
   const conditions = [eq(callRecords.tenantId, tenantId)];
   if (filter.decision) conditions.push(eq(callRecords.decision, filter.decision as CallRecord["decision"]));
