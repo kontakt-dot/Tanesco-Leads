@@ -544,6 +544,15 @@ export async function applyPresetToCampaign(db: Db, tenantId: number, input: { p
   return { success: true as const, questions: preset.questions.length };
 }
 
+/** Kampagne löschen: Fragensatz und ALLE Gespräche dieser Kampagne (samt hochgeladener Dateien). Leads/Kontakte bleiben. */
+export async function deleteCallCampaign(db: Db, tenantId: number, input: { name: string }) {
+  const name = input.name.trim(); if (!name) throw new Error("Bitte eine Kampagne wählen.");
+  const ids = (await db.select({ id: callRecords.id }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.campaign, name)))).map((row) => row.id);
+  const { deleted } = await deleteCalls(db, tenantId, ids);
+  await db.delete(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name)));
+  return { deletedCalls: deleted };
+}
+
 export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; limit?: number } = {}) {
   const conditions = [eq(callRecords.tenantId, tenantId)];
   if (filter.decision) conditions.push(eq(callRecords.decision, filter.decision as CallRecord["decision"]));
@@ -585,7 +594,7 @@ export async function deleteCall(db: Db, tenantId: number, callId: number) {
   await db.delete(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.id, callId)));
   return { success: true as const };
 }
-export async function deleteCalls(db: Db, tenantId: number, callIds: number[]) { let deleted = 0; for (const id of callIds.slice(0, 200)) { try { await deleteCall(db, tenantId, id); deleted += 1; } catch { /* schon weg */ } } return { deleted }; }
+export async function deleteCalls(db: Db, tenantId: number, callIds: number[]) { let deleted = 0; for (const id of callIds.slice(0, 5000)) { try { await deleteCall(db, tenantId, id); deleted += 1; } catch { /* schon weg */ } } return { deleted }; }
 
 export async function purgeExpiredCalls(db: Db) {
   const configs = await db.select().from(callQaConfigs);

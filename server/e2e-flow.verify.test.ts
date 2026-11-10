@@ -4247,6 +4247,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       // Kampagne umbenennen: Gespräche hängen um
       const renamed = await owner.leadops.renameCallCampaign({ from: "Link-Test", to: "PV Hessen November" }); expect(renamed.calls).toBe(1);
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe("PV Hessen November");
+      // Kampagne löschen: Gespräche und Fragensatz weg
+      await owner.leadops.applyPresetToCampaign({ preset: "pv-hauskompass", campaign: "PV Hessen November" });
+      expect(await owner.leadops.deleteCallCampaign({ name: "PV Hessen November" })).toMatchObject({ deletedCalls: 1 });
+      expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0]))).length).toBe(0);
+      expect((await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, "PV Hessen November")))).length).toBe(0);
     } finally { S.transcriptVerbose = false; S.transcriptForStub = undefined; S.playerPage = undefined; }
   }, 60000);
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
