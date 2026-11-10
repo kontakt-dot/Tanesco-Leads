@@ -90,3 +90,17 @@ describe("Zeitraum-Filter des Posteingangs", () => {
     expect(periodRange("alle", now)).toEqual({ from: null, to: null });
   });
 });
+
+describe("Zustellfehler und Systemabsender sind keine echten Antworten", () => {
+  it("erkennt Bounce-Betreffe und Mailsystem-Absender", async () => {
+    const { isAutoReply, looksLikeAutoReplySubject, looksLikeBounceSender } = await import("../shared/reply-ai");
+    for (const subject of ["Undeliverable: Ihre Photovoltaik-Anfrage", "Mail delivery failed: returning message to sender", "Unzustellbar: Kurze Frage", "Delivery Status Notification (Failure)", "Returned mail: see transcript for details"]) expect(looksLikeAutoReplySubject(subject)).toBe(true);
+    expect(looksLikeAutoReplySubject("AW: Kurze Frage zu Photovoltaik")).toBe(false);
+    expect(looksLikeBounceSender("MAILER-DAEMON@mail.example.com")).toBe(true);
+    expect(looksLikeBounceSender("postmaster@firma.de")).toBe(true);
+    expect(looksLikeBounceSender("noreply@firma.de")).toBe(true);
+    expect(looksLikeBounceSender("info@firma.de")).toBe(false);
+    expect(isAutoReply(null, "AW: Angebot", "mailer-daemon@googlemail.com")).toBe(true);
+    expect(isAutoReply(null, "AW: Angebot", "max@firma.de")).toBe(false);
+  });
+});

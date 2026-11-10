@@ -441,6 +441,42 @@ export async function onInterestedReply(db: Db, tenantId: number, input: { leadI
  * allgemeine Antwort-Regel in „In Kontakt“/„Kontaktiert“ gelandet sind, kommen nach „Hat Interesse“ – aber nur, wenn seitdem niemand
  * die Karte bewegt, angerufen, notiert oder eine Aufgabe erledigt hat. Ohne Serien-Automatik; mit Rückgängig-Eintrag je Mandant.
  */
+/**
+ * Einmal-Korrektur: Karten, die NUR die allgemeine Antwort-Regel nach „In Kontakt“ geschoben hat, obwohl die „Antwort“ eine Abmeldung,
+ * Beschwerde oder ein Zustellfehler war (Adresse steht auf der Sperrliste / Nachricht ist gesperrt oder als Abmeldung/Beschwerde eingeordnet),
+ * gehen zurück auf die Stufe davor – sofern seitdem niemand von Hand etwas gemacht hat.
+ */
+export const REPLY_UNDO_NOTE = "Zurück: die Antwort war keine echte Antwort (Abmeldung, Beschwerde oder Zustellfehler)";
+export async function undoReplyMovesForNonReplies(db: Db): Promise<number> {
+  const rows = await db.select({ tenantId: inboxMessages.tenantId, leadId: inboxMessages.leadId, recipientId: inboxMessages.campaignRecipientId, fromEmail: inboxMessages.fromEmail }).from(inboxMessages)
+    .where(or(eq(inboxMessages.blocked, true), inArray(inboxMessages.aiKind, ["abmeldung", "beschwerde", "abwesenheit"])));
+  if (!rows.length) return 0;
+  const recipientIds = Array.from(new Set(rows.map((row) => row.recipientId).filter((id): id is number => typeof id === "number")));
+  const leadOfRecipient = new Map<number, number | null>(); if (recipientIds.length) for (const row of await db.select({ id: emailCampaignRecipients.id, leadId: emailCampaignRecipients.leadId }).from(emailCampaignRecipients).where(inArray(emailCampaignRecipients.id, recipientIds))) leadOfRecipient.set(row.id, row.leadId);
+  const byTenant = new Map<number, Set<number>>();
+  for (const row of rows) { const leadId = row.leadId ?? (row.recipientId != null ? leadOfRecipient.get(row.recipientId) ?? null : null); if (!leadId) continue; const set = byTenant.get(row.tenantId) ?? new Set<number>(); set.add(leadId); byTenant.set(row.tenantId, set); }
+  // zusätzlich: Karten, deren Adresse auf der Sperrliste steht
+  for (const sup of await db.select({ tenantId: emailSuppressions.tenantId, email: emailSuppressions.email }).from(emailSuppressions)) {
+    const hits = await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, sup.tenantId), eq(leads.kind, "vertrieb"), eq(leads.email, sup.email)));
+    if (!hits.length) continue; const set = byTenant.get(sup.tenantId) ?? new Set<number>(); for (const hit of hits) set.add(hit.id); byTenant.set(sup.tenantId, set);
+  }
+  let moved = 0;
+  for (const [tenantId, ids] of Array.from(byTenant.entries())) {
+    const settings = await loadSettings(db, tenantId); if (!settings.replyStage) continue;
+    const cards = await db.select({ id: leads.id, stage: leads.pipelineStage, publicId: leads.publicId }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), eq(leads.pipelineStage, settings.replyStage), inArray(leads.id, Array.from(ids))));
+    for (const card of cards) {
+      if (!(await onlyReplyRuleSince(db, tenantId, card.id, card.stage!))) continue;
+      const last = (await db.select({ fromStage: pipelineEvents.fromStage }).from(pipelineEvents).where(and(eq(pipelineEvents.tenantId, tenantId), eq(pipelineEvents.leadId, card.id), eq(pipelineEvents.toStage, card.stage!))).orderBy(desc(pipelineEvents.createdAt)).limit(1))[0];
+      const lead = (await db.select().from(leads).where(eq(leads.id, card.id)).limit(1))[0]; if (!lead) continue;
+      const stages = await stagesOfLead(db, tenantId, lead); const back = last?.fromStage && isStage(last.fromStage, stages) ? last.fromStage : entryStage(stages); if (!back || back === card.stage) continue;
+      await db.update(leads).set({ pipelineStage: back, pipelineUpdatedAt: new Date() }).where(eq(leads.id, card.id));
+      await db.insert(pipelineEvents).values({ tenantId, leadId: card.id, fromStage: card.stage, toStage: back, actorUserId: null, note: REPLY_UNDO_NOTE });
+      moved += 1;
+    }
+    if (moved) await logActivity(db, tenantId, { kind: "pipeline_stufe", title: `${moved} ${moved === 1 ? "Karte" : "Karten"} aus „${stageLabel(settings.replyStage, await stagesOfLead(db, tenantId, (await db.select().from(leads).where(eq(leads.id, cards[0]?.id ?? 0)).limit(1))[0] ?? ({} as never)))}“ zurückgeholt – die Antwort war eine Abmeldung, Beschwerde oder ein Zustellfehler`, count: moved, actorUserId: null }).catch(() => null);
+  }
+  return moved;
+}
 export async function moveInterestedRepliesToInterestStage(db: Db): Promise<number> {
   const interested = await db.select({ tenantId: inboxMessages.tenantId, leadId: inboxMessages.leadId, recipientId: inboxMessages.campaignRecipientId }).from(inboxMessages).where(and(eq(inboxMessages.aiKind, "interessiert"), eq(inboxMessages.aiAction, "markiert"), eq(inboxMessages.blocked, false)));
   if (!interested.length) return 0;

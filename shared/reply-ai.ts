@@ -35,14 +35,19 @@ const COMPLAINT_WEAK = /(unerwünscht|nicht erwünscht|datenschutz|ohne meine (z
  * Zählt diese Mail als echte Antwort? Abwesenheitsnotizen und automatische Antworten nicht – sie stoppen eine Serie nicht
  * (Antwort-Stopp) und werden nicht als „geantwortet“ gewertet. Im Zweifel (unsichere Einordnung) gilt: echte Antwort.
  */
-export function isAutoReply(assessment: { kind: ReplyKind; confidence: number } | null | undefined, subject?: string | null): boolean {
+export function isAutoReply(assessment: { kind: ReplyKind; confidence: number } | null | undefined, subject?: string | null, fromEmail?: string | null): boolean {
   if (assessment?.kind === "abwesenheit" && assessment.confidence >= MARK_CONFIDENCE) return true;
-  return looksLikeAutoReplySubject(subject);
+  return looksLikeAutoReplySubject(subject) || looksLikeBounceSender(fromEmail);
+}
+/** Absender eines Mailsystems (Zustellfehler, Lesebestätigungen): nie eine echte Antwort. */
+export function looksLikeBounceSender(fromEmail: string | null | undefined): boolean {
+  const address = (fromEmail ?? "").trim().toLowerCase(); if (!address) return false;
+  return /^(mailer-daemon|postmaster|mail-daemon|maildaemon|bounce|bounces|no-?reply|noreply|do-?not-?reply|donotreply)[@+.-]/.test(address) || /^(mailer-daemon|postmaster)@/.test(address);
 }
 /** Betreff einer automatischen Antwort (IMAP-Abgleich sieht nur den Umschlag): „Automatische Antwort: …“, „Abwesenheitsnotiz“, „Out of Office“ … */
 export function looksLikeAutoReplySubject(subject: string | null | undefined): boolean {
   const text = (subject ?? "").trim().toLowerCase(); if (!text) return false;
-  return /^(automatische antwort|automatic reply|auto-?reply|autoreply|auto:|abwesenheit|abwesenheitsnotiz|out of office|out-of-office|außer haus|automatische rückantwort|ihre nachricht wurde empfangen|zustellbenachrichtigung|delivery status notification)/.test(text) || /(abwesenheitsnotiz|out of office|out-of-office|automatische antwort|automatic reply|auto-?reply)/.test(text);
+  return /^(automatische antwort|automatic reply|auto-?reply|autoreply|auto:|abwesenheit|abwesenheitsnotiz|out of office|out-of-office|außer haus|automatische rückantwort|ihre nachricht wurde empfangen|zustellbenachrichtigung|delivery status notification|undeliverable|undelivered mail|mail delivery (failed|failure|subsystem)|delivery failure|failure notice|returned mail|unzustellbar|nicht zustellbar|message not delivered|delivery has failed|lesebestätigung|read receipt|gelesen:)/.test(text) || /(abwesenheitsnotiz|out of office|out-of-office|automatische antwort|automatic reply|auto-?reply)/.test(text);
 }
 const OUT_OF_OFFICE = /(abwesenheitsnotiz|abwesenheitsnachricht|out of office|out-of-office|außer haus|nicht im (büro|haus|hause)|im urlaub|in urlaub|bin (ab|bis|erst|vom) .*(wieder|zurück|erreichbar)|automatische antwort|automatic reply|auto-?reply|autoreply|in meiner abwesenheit|wird nicht weitergeleitet|erreichen sie meine vertretung|vertretung erreichen|derzeit nicht erreichbar|elternzeit)/i;
 const INTEREST_STRONG = /(klingt (gut|interessant|spannend)|sehr interessant|(gerne|gern) (ein )?(angebot|termin|gespräch|telefonat|mehr)|angebot (schicken|senden|zukommen|zusenden|machen)|schicken sie (mir )?(ein|das) angebot|termin (vereinbaren|machen|ausmachen|vorschlagen)|rufen sie (mich )?(gerne )?an|können wir (telefonieren|sprechen|reden)|haben interesse|hätten interesse|habe interesse|hätte interesse|wären interessiert|wäre interessiert|sind interessiert|bin interessiert|melden sie sich|weitere (infos|informationen|details) (bitte|wären)|preisliste|konditionen)/i;

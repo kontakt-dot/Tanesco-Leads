@@ -3650,6 +3650,26 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await reply("Anja", interested); expect((await card("Anja")).pipelineStage).toBe("termin"); // nur vorwärts
       await reply("Kurt", interested); expect(await card("Kurt")).toMatchObject({ adPlatform: "kaltakquise", pipelineStage: "kontaktiert" }); // andere Pipeline ohne „Interesse“-Spalte: bleibt dort, normale Antwort-Regel
       await reply("Paula", interested); expect(await card("Paula")).toMatchObject({ inPipeline: true, adPlatform: "email", pipelineStage: "hat_interesse", adCampaignId: `email-${campaign.id}` }); // aus der E-Mail-Akquise direkt nach „Hat Interesse“
+      // Keine echte Antwort → keine Bewegung nach „Kontaktiert“: Abmeldung, Zustellfehler (Betreff/Absender), Abwesenheitsnotiz
+      await owner.leadops.importColdList({ listName: "Keine-Antwort", toPipeline: false, rows: [["Udo", "Unsub"], ["Bodo", "Bounce"], ["Mia", "Mailer"], ["Olaf", "Office"]].map(([firstName, lastName]) => ({ firstName, lastName, company: `${lastName} GmbH`, email: `${firstName.toLowerCase()}@keine-antwort-e2e.example` })) });
+      const c2 = await owner.leadops.saveEmailCampaign({ name: "Keine-Antwort", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "liste", listName: "Keine-Antwort" }, tree: { start: "m1", nodes: [{ id: "m1", type: "send" as const, label: "Erste", subject: "Anfragen für {{firma}}", blocks: starterBlocks("kaltakquise"), next: null }] }, design: starter.design as unknown as Record<string, unknown>, sendWindow: { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" } } as never);
+      await owner.leadops.startEmailCampaign({ id: c2.id }); await owner.leadops.runEmailCampaigns();
+      const card2 = async (first: string) => (await db.select().from(leads).where(eq(leads.email, `${first.toLowerCase()}@keine-antwort-e2e.example`)))[0];
+      for (const first of ["Udo", "Bodo", "Mia", "Olaf"]) expect((await card2(first)).pipelineStage).toBe("versendet");
+      await owner.leadops.storeInboxMessage({ fromEmail: "udo@keine-antwort-e2e.example", fromName: "Udo", subject: "AW: Anfragen für Unsub GmbH", bodyText: "Bitte keine weiteren E-Mails, tragen Sie mich aus dem Verteiler aus.", receivedAt: new Date() });
+      expect((await card2("Udo")).pipelineStage).toBe("versendet"); // Abmeldung: bleibt, wo sie war
+      await owner.leadops.storeInboxMessage({ fromEmail: "bodo@keine-antwort-e2e.example", fromName: "Bodo", subject: "Undeliverable: Anfragen für Bounce GmbH", bodyText: "Delivery has failed to these recipients.", receivedAt: new Date() });
+      expect((await card2("Bodo")).pipelineStage).toBe("versendet"); // Zustellfehler im Betreff
+      await owner.leadops.storeInboxMessage({ fromEmail: "mailer-daemon@keine-antwort-e2e.example", fromName: "Mail Delivery System", subject: "AW: Anfragen für Mailer GmbH", bodyText: "The following address failed: mia@keine-antwort-e2e.example", receivedAt: new Date() });
+      expect((await card2("Mia")).pipelineStage).toBe("versendet"); // Systemabsender
+      await owner.leadops.storeInboxMessage({ fromEmail: "olaf@keine-antwort-e2e.example", fromName: "Olaf", subject: "Automatische Antwort: Anfragen für Office GmbH", bodyText: "Ich bin bis 20.11. nicht im Büro.", receivedAt: new Date() });
+      expect((await card2("Olaf")).pipelineStage).toBe("versendet"); // Abwesenheitsnotiz
+      // Einmal-Korrektur: früher hatte die Regel so eine Karte nach „Kontaktiert“ geschoben → zurück
+      const udo = await card2("Udo"); await db.update(leads).set({ pipelineStage: "kontaktiert" }).where(eq(leads.id, udo.id));
+      await db.insert(pipelineEvents).values({ tenantId: S.tenantId, leadId: udo.id, fromStage: "versendet", toStage: "kontaktiert", actorUserId: null, note: "Antwort auf E-Mail-Serie: „AW: Anfragen für Unsub GmbH“", createdAt: new Date(Date.now() - 3_600_000) });
+      expect(await pipelineExtras.undoReplyMovesForNonReplies(db)).toBeGreaterThanOrEqual(1);
+      expect((await card2("Udo")).pipelineStage).toBe("versendet");
+      expect((await owner.leadops.pipelineHistory({ publicId: udo.publicId }))[0].note).toBe(pipelineExtras.REPLY_UNDO_NOTE);
       // Posteingang: Pipeline und Stufe mit Namen (auch die eigene Stufe „Hat Interesse“)
       const inbox = await owner.leadops.listInbox({ filter: "alle" }); const inaItem = inbox.items.find((item) => item.fromEmail === "ina@interesse-e2e.example")!;
       expect(inaItem.lead).toMatchObject({ stage: "hat_interesse", stageName: "Hat Interesse", pipelineName: "E-Mail-Kampagne", inPipeline: true });
