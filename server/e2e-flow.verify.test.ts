@@ -95,8 +95,9 @@ beforeAll(async () => {
     if (url.includes("aroundhome-d2d")) return new Response(JSON.stringify({ data: [{ uuid: "d2d-1", status: "qualified", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-2", status: "open", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-3", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar", sub_id: "D2D-TEST2", created_at: new Date(Date.now() - 24 * 3_600_000).toISOString() }, { uuid: "d2d-4", status: "qualified", sub_id: "D2D-FREMD", created_at: new Date().toISOString() }] }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("aroundhome-export")) return new Response(JSON.stringify({ data: [{ uuid: S.aroundhomeRef ?? "none", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar" }, { uuid: "ah-unbekannt", status: "cancelled", cancellation_reason: "Dublette" }, { uuid: "ah-ok", status: "confirmed" }] }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("recordings-later/")) return S.recordingReady ? new Response(new Uint8Array([73, 68, 51, 3, 0, 0]), { status: 200, headers: { "content-type": "audio/mpeg" } }) : new Response("not ready", { status: 404 }); // Dialer meldet das Gespräch, bevor die Datei fertig ist
+    if (url.includes("getSound.aspx") && S.playerPage) return new Response(S.playerPage, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
     if (url.includes("recordings/")) return new Response(new Uint8Array([73, 68, 51, 3, 0, 0]), { status: 200, headers: { "content-type": "audio/mpeg" } });
-    if (url.includes("api.openai.com/v1/audio/transcriptions")) return new Response(S.transcriptForStub ?? "Agent: Hallo. Kunde: Ja gerne, ich bin Eigentümer und einverstanden.", { status: 200, headers: { "content-type": "text/plain" } });
+    if (url.includes("api.openai.com/v1/audio/transcriptions")) { const text = S.transcriptForStub ?? "Agent: Hallo. Kunde: Ja gerne, ich bin Eigentümer und einverstanden."; return S.transcriptVerbose ? new Response(JSON.stringify({ text, duration: 187.4, segments: [{ end: 187.4 }] }), { status: 200, headers: { "content-type": "application/json" } }) : new Response(text, { status: 200, headers: { "content-type": "text/plain" } }); }
     if (url.includes("hlrlookup.com")) return new Response(JSON.stringify(url.includes("msisdn=491700000000") ? { status: "valid", network: "Telekom" } : { status: "invalid" }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.startsWith("https://nominatim.openstreetmap.org/")) return new Response(JSON.stringify([{ lat: "50.1109", lon: "8.6821", display_name: "Frankfurt am Main, Hessen, Deutschland" }]), { status: 200, headers: { "content-type": "application/json" } });
     if (url.startsWith("https://overpass-api.de/")) return new Response(JSON.stringify({ elements: [{ type: "node", id: 101, lat: 50.12, lon: 8.69, tags: { name: "Hansen Bedachungen GmbH", craft: "roofer", website: "https://hansen-test.de", phone: "+49 69 5550101", "addr:street": "Hauptstraße", "addr:housenumber": "5", "addr:postcode": "60311", "addr:city": "Frankfurt" } }, { type: "way", id: 202, center: { lat: 50.13, lon: 8.7 }, tags: { name: "Koch Dach e.K.", "addr:city": "Offenbach" } }] }), { status: 200, headers: { "content-type": "application/json" } });
@@ -4213,6 +4214,31 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await post({ call_id: "od-2001", phone: "+49 30 9177 6001", recording_url: "https://dialer.example/recordings-later/2001.mp3", consent: true })).json).toMatchObject({ ok: true, duplicate: true });
   }, 60000);
 
+  it("63zs. Aufnahmen per Link: Player-Seite → Datei-Link, Dauer und Agent aus der Aufnahme, Kampagne umbenennen", async () => {
+    const { importRecordingLinks } = await import("./call-qa"); const { callRecords: callsTable } = await import("../drizzle/schema");
+    S.transcriptVerbose = true; S.transcriptForStub = "Agent: Guten Tag, hier ist Maya Becker von HausKompass. Es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja, gerne – ich bin Eigentümer.";
+    try {
+      // Player-Seite statt Datei: der Datei-Link steht im Quelltext
+      S.playerPage = `<html><body><audio controls src="https://player.e2e.example/recordings/9001.mp3"></audio></body></html>`;
+      const result = await importRecordingLinks(db, S.tenantId, { text: "https://player.e2e.example/getSound.aspx?token=abc&a=9001 | +49 40 5550123 | Testlink", campaign: "Link-Test" }, { waitFor: true });
+      expect(result).toMatchObject({ created: 1, duplicates: 0 });
+      const stored = (await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0];
+      expect(stored.status).toBe("bewertet"); expect(stored.durationSeconds).toBe(187); expect(stored.agentName).toBe("Maya Becker"); expect(stored.campaign).toBe("Link-Test");
+      // Doppelt eingefügt → nicht noch einmal (fertig bewertet)
+      expect(await importRecordingLinks(db, S.tenantId, { text: "https://player.e2e.example/getSound.aspx?token=abc&a=9001" }, { waitFor: true })).toMatchObject({ created: 0, retried: 0, duplicates: 1 });
+      // Vorlage übernehmen → beim Start wird sie automatisch auf die aktuelle Fassung gebracht (auch wenn Texte alt sind), Gewichte bleiben
+      const { refreshPresetConfigs } = await import("./call-qa"); const { callQaConfigs: cfgTable } = await import("../drizzle/schema"); const { PV_HAUSKOMPASS_PRESET } = await import("../shared/call-qa-presets");
+      expect(await owner.leadops.applyCallQaPreset({ preset: "pv-hauskompass", allCampaigns: true })).toMatchObject({ success: true });
+      await db.update(cfgTable).set({ instructions: "alte Anweisung", criteria: PV_HAUSKOMPASS_PRESET.criteria.map((c) => ({ ...c, description: "alt", weight: c.key === "hauskompass" ? 5 : c.weight })) }).where(eq(cfgTable.tenantId, S.tenantId));
+      expect(await refreshPresetConfigs(db)).toBe(1);
+      const cfg = (await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0]; expect(cfg.instructions).toBe(PV_HAUSKOMPASS_PRESET.instructions);
+      expect((cfg.criteria as Array<{ key: string; weight: number; description: string }>).find((c) => c.key === "hauskompass")).toMatchObject({ weight: 5, description: PV_HAUSKOMPASS_PRESET.criteria[0].description }); // Gewicht des Mandanten bleibt, Text ist neu
+      expect(await refreshPresetConfigs(db)).toBe(0); // nichts mehr zu tun
+      // Kampagne umbenennen: Gespräche hängen um
+      const renamed = await owner.leadops.renameCallCampaign({ from: "Link-Test", to: "PV Hessen November" }); expect(renamed.calls).toBe(1);
+      expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe("PV Hessen November");
+    } finally { S.transcriptVerbose = false; S.transcriptForStub = undefined; S.playerPage = undefined; }
+  }, 60000);
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

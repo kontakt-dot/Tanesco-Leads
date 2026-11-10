@@ -23,7 +23,7 @@ import { readPath } from "./outbound-templates";
 
 export type Criterion = { key: string; label: string; weight: number; description: string };
 import { callQaCampaigns } from "../drizzle/schema";
-import { presetByKey } from "../shared/call-qa-presets";
+import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion } from "../shared/call-qualification";
 
 /** Kampagnen mit eigenen Qualifizierungsfragen. Fehlt eine Kampagne, gilt der Standardfragensatz. */
@@ -288,28 +288,46 @@ export async function localRecordingFile(db: Db, tenantId: number, callId: numbe
   return { file: path.resolve(recordingsDir(), name), contentType: ({ mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", ogg: "audio/ogg", webm: "audio/webm", mp4: "video/mp4" } as Record<string, string>)[ext] ?? "application/octet-stream" };
 }
 
+/** Gesprächsdauer aus der letzten Transkription (Whisper „duration“ bzw. Deepgram-Metadaten) – processCall trägt sie ein, wenn der Dialer keine geliefert hat. */
+let lastTranscriptionDuration: number | null = null;
 async function transcribeAudio(config: CallQaConfig, audio: Uint8Array<ArrayBuffer>, contentType: string, fetchImpl: typeof fetch, provider: string): Promise<string> {
+  lastTranscriptionDuration = null;
   if (provider === "openai") {
-    const form = new FormData(); form.append("file", new Blob([audio], { type: contentType }), "aufzeichnung.mp3"); form.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL ?? "whisper-1"); form.append("language", config.transcriptionLanguage || "de"); form.append("response_format", "text");
+    const form = new FormData(); form.append("file", new Blob([audio], { type: contentType }), "aufzeichnung.mp3"); form.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL ?? "whisper-1"); form.append("language", config.transcriptionLanguage || "de"); form.append("response_format", "verbose_json");
     const response = await fetchImpl("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: form });
     const body = await response.text(); if (!response.ok) throw new Error(`Transkription (OpenAI) fehlgeschlagen: HTTP ${response.status} ${body.slice(0, 200)}`);
+    try { const parsed = JSON.parse(body) as { text?: string; duration?: number; segments?: Array<{ end?: number }> }; if (typeof parsed.duration === "number" && parsed.duration > 0) lastTranscriptionDuration = Math.round(parsed.duration); else if (parsed.segments?.length) lastTranscriptionDuration = Math.round(Number(parsed.segments[parsed.segments.length - 1]?.end ?? 0)) || null; if (typeof parsed.text === "string") return parsed.text.trim(); } catch { /* kein JSON (z. B. Test-Stub mit reinem Text) */ }
     return body.trim();
   }
   const response = await fetchImpl(`https://api.deepgram.com/v1/listen?model=nova-2&language=${encodeURIComponent(config.transcriptionLanguage || "de")}&smart_format=true&diarize=true&utterances=true`, { method: "POST", headers: { authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, "content-type": contentType }, body: audio });
   const body = await response.text(); if (!response.ok) throw new Error(`Transkription (Deepgram) fehlgeschlagen: HTTP ${response.status} ${body.slice(0, 200)}`);
-  try { const parsed = JSON.parse(body) as { results?: { utterances?: Array<{ speaker: number; transcript: string }>; channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> } }; const utterances = parsed.results?.utterances; if (utterances?.length) return utterances.map((item) => `Sprecher ${item.speaker + 1}: ${item.transcript}`).join("\n"); return parsed.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ""; } catch { return body; }
+  try { const parsed = JSON.parse(body) as { metadata?: { duration?: number }; results?: { utterances?: Array<{ speaker: number; transcript: string }>; channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> } }; if (typeof parsed.metadata?.duration === "number" && parsed.metadata.duration > 0) lastTranscriptionDuration = Math.round(parsed.metadata.duration); const utterances = parsed.results?.utterances; if (utterances?.length) return utterances.map((item) => `Sprecher ${item.speaker + 1}: ${item.transcript}`).join("\n"); return parsed.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ""; } catch { return body; }
 }
 
 /* ------------------------------------------------------------------ Bewertung */
 
-export type Evaluation = { score: number; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar" | "unklar"; criteria: Array<{ key: string; score: number; evidence: string }>; summary: string; redFlags: string[]; nextStep: string; extracted: Record<string, string> };
+export type Evaluation = { agentName?: string | null; score: number; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar" | "unklar"; criteria: Array<{ key: string; score: number; evidence: string }>; summary: string; redFlags: string[]; nextStep: string; extracted: Record<string, string> };
 
+/** Name des Mitarbeiters aus der Vorstellung am Gesprächsanfang: „hier ist/spricht Maya Becker“, „mein Name ist …“, „ich bin … von HausKompass“, „Maya Becker von …“. */
+export function detectAgentName(transcript: string): string | null {
+  const head = transcript.slice(0, 1500).replace(/\s+/g, " ");
+  const name = "([A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?(?: [A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?){1,2})";
+  const patterns = [new RegExp(`(?:hier ist|hier spricht|am apparat ist|mein name ist|ich bin|ich heiße|sie sprechen mit)\\s+(?:der |die |frau |herr )?${name}`, "i"), new RegExp(`${name}\\s+(?:von|vom|aus dem hause|im auftrag von)\\s+[A-ZÄÖÜ]`)];
+  for (const pattern of patterns) { const match = head.match(pattern); if (match) { const cleaned = cleanAgentName(match[1]); if (cleaned) return cleaned; } }
+  return null;
+}
+const NOT_NAMES = /^(guten|hallo|schönen|ja|nein|vielen|danke|herr|frau|agent|kunde|sprecher|photovoltaik|angebotsvergleich|hauskompass|firma)$/i;
+export function cleanAgentName(raw: string): string | null {
+  const all = raw.replace(/[^A-Za-zÄÖÜäöüß\- ]/g, " ").trim().split(/\s+/).filter(Boolean);
+  const words: string[] = []; for (const word of all) { if (!/^[A-ZÄÖÜ]/.test(word) || NOT_NAMES.test(word)) { if (words.length) break; continue; } words.push(word); } // nur großgeschriebene Wörter am Stück („Maya Becker“, nicht „von“)
+  if (words.length < 1 || words.length > 3) return null; const value = words.join(" "); return value.length >= 3 && value.length <= 60 ? value : null;
+}
 export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" | "instructions"> & Partial<Pick<CallQaConfig, "examples" | "extractFields">>, transcript: string, context: { leadCategory?: string | null; leadName?: string | null }): Promise<Evaluation> {
   const criteria = (Array.isArray(config.criteria) && config.criteria.length ? config.criteria : DEFAULT_CRITERIA) as Criterion[];
   const examples = (Array.isArray(config.examples) ? config.examples : []) as ExampleCase[];
   const extractFields = (Array.isArray(config.extractFields) ? config.extractFields : []) as ExtractField[];
   const totalWeight = criteria.reduce((sum, criterion) => sum + criterion.weight, 0) || 1;
-  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted"], properties: { criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
+  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted", "agentName"], properties: { agentName: { type: "string", description: "Name, mit dem sich der Mitarbeiter/Agent am Anfang vorstellt (z. B. „Maya Becker“); leer, wenn er nicht genannt wird" }, criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
   const system = `Du bewertest Verkaufsgespräche eines Callcenters, das Anfragen (Leads) für Fachbetriebe qualifiziert. Bewerte NUR anhand des Transkripts, erfinde nichts. Bewertungskriterien (0 = gar nicht erfüllt, 10 = vollständig erfüllt), jeweils mit wörtlichem Beleg aus dem Gespräch:\n${criteria.map((criterion) => `- ${criterion.key}: ${criterion.label} – ${criterion.description}`).join("\n")}\nWarnsignale (redFlags), die den Lead unverkäuflich machen: Kunde will nicht kontaktiert werden, widerruft, Daten sind falsch, Gespräch war unzulässig (Werbeanruf ohne Einwilligung), Kunde ist Minderjähriger, Agent hat Druck ausgeübt oder Falsches versprochen.\nUrteil: verkaufbar = Kunde will ein Angebot und die Weitergabe ist erlaubt; nachfassen = Interesse, aber offene Punkte; nicht_verkaufbar = kein Interesse oder Warnsignal; unklar = Transkript unvollständig.${extractFields.length ? `\nZusätzlich beantworte diese Fragen aus dem Gespräch (extracted, leer lassen wenn nicht genannt):\n${extractFields.map((field) => `- ${field.key}: ${field.question}`).join("\n")}` : "\nextracted bleibt eine leere Liste."}\nAntworte ausschließlich auf Deutsch.${config.instructions ? `\nZusätzliche Vorgaben des Mandanten: ${config.instructions}` : ""}${examples.length ? `\nBeispiele für die gewünschte Einordnung:\n${examples.slice(0, 8).map((example, index) => `Beispiel ${index + 1} (${example.title}): Auszug: "${example.transcript.slice(0, 600)}" → Urteil: ${example.verdict}. Begründung: ${example.reason}`).join("\n")}` : ""}`;
   const user = `${context.leadCategory ? `Lead-Kategorie: ${context.leadCategory}\n` : ""}${context.leadName ? `Kunde laut Lead: ${context.leadName}\n` : ""}Transkript:\n"""\n${transcript.slice(0, 60_000)}\n"""`;
   const response = await invokeLLM({ messages: [{ role: "system", content: system }, { role: "user", content: user }], outputSchema: schema, maxTokens: 2500 });
@@ -322,7 +340,8 @@ export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" |
   const verdict = redFlags.length ? "nicht_verkaufbar" : (["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"].includes(parsed.verdict ?? "") ? parsed.verdict! : score >= 70 ? "verkaufbar" : score >= 40 ? "nachfassen" : "nicht_verkaufbar");
   const extracted: Record<string, string> = {};
   const rawExtracted = parsed.extracted; if (Array.isArray(rawExtracted)) for (const item of rawExtracted) if (item?.key && extractFields.some((field) => field.key === item.key) && String(item.value ?? "").trim()) extracted[item.key] = String(item.value).slice(0, 500); else if (rawExtracted && typeof rawExtracted === "object") for (const [key, value] of Object.entries(rawExtracted)) if (extractFields.some((field) => field.key === key) && String(value ?? "").trim()) extracted[key] = String(value).slice(0, 500);
-  return { score, verdict, criteria: scored, summary: String(parsed.summary ?? "").slice(0, 2000), redFlags, nextStep: String(parsed.nextStep ?? "").slice(0, 320), extracted };
+  const agentName = cleanAgentName(String((parsed as { agentName?: unknown }).agentName ?? ""));
+  return { score, verdict, criteria: scored, summary: String(parsed.summary ?? "").slice(0, 2000), redFlags, nextStep: String(parsed.nextStep ?? "").slice(0, 320), extracted, agentName };
 }
 
 /** Entscheidungsregeln des Mandanten (erste passende Regel gewinnt), sonst Schwellenwerte. */
@@ -364,11 +383,16 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
   if (!call) throw new Error("Gespräch wurde nicht gefunden.");
   const config = await ensureCallQaConfig(db, call.tenantId);
   try {
-    const transcript = call.status === "eingegangen" || !call.transcript ? await transcribe(config, call, options.fetchImpl ?? fetch) : call.transcript;
+    const freshTranscript = call.status === "eingegangen" || !call.transcript;
+    const transcript = freshTranscript ? await transcribe(config, call, options.fetchImpl ?? fetch) : call.transcript!;
     if (!transcript.trim()) throw new Error("Transkript ist leer.");
-    await db.update(callRecords).set({ transcript, status: "transkribiert", error: null }).where(eq(callRecords.id, callId));
+    // Dauer aus der Transkription und Name des Mitarbeiters aus der Vorstellung („hier ist Maya Becker …“) – nur, wenn der Dialer nichts geliefert hat
+    const durationSeconds = call.durationSeconds ?? (freshTranscript ? lastTranscriptionDuration : null) ?? null;
+    const agentName = call.agentName?.trim() || detectAgentName(transcript);
+    await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName && !call.agentName ? { agentName } : {}) }).where(eq(callRecords.id, callId));
     const lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
     const evaluation = await evaluateTranscript(config, transcript, { leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : null });
+    if (!agentName && evaluation.agentName) await db.update(callRecords).set({ agentName: evaluation.agentName }).where(eq(callRecords.id, callId));
     const decided = decideCall(config, evaluation, transcript); let decision = decided.decision; const rule = decided.rule;
     const questions = await questionsForCampaign(db, call.tenantId, call.campaign);
     const qualificationAnswers = await answerQualification(questions, transcript);
@@ -464,6 +488,37 @@ export async function importRecordingLinks(db: Db, tenantId: number, input: { te
   const run = (async () => { for (const callId of [...created, ...retried]) { try { await processCall(db, callId, options); } catch (error) { console.warn("[call-qa] Link-Import", callId, error instanceof Error ? error.message : error); } } })();
   if (options.waitFor) await run;
   return { created: created.length, retried: retried.length, duplicates: duplicates.length, skipped, callIds: [...created, ...retried] };
+}
+
+/** Kampagne umbenennen: alle Gespräche mit dem alten Namen und der Fragensatz bekommen den neuen Namen (gibt es den schon, werden die Gespräche dort einsortiert). */
+export async function renameCallCampaign(db: Db, tenantId: number, input: { from: string; to: string }) {
+  const from = input.from.trim(); const to = input.to.trim().slice(0, 160);
+  if (!from || !to) throw new Error("Bitte alten und neuen Namen angeben."); if (from === to) return { calls: 0, merged: false };
+  const existing = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, to))).limit(1))[0];
+  const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, from))).limit(1))[0];
+  if (own) { if (existing) await db.delete(callQaCampaigns).where(eq(callQaCampaigns.id, own.id)); else await db.update(callQaCampaigns).set({ name: to }).where(eq(callQaCampaigns.id, own.id)); }
+  const result = await db.update(callRecords).set({ campaign: to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.campaign, from)));
+  const calls = Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
+  return { calls, merged: Boolean(existing) };
+}
+
+/** Vorlage aktualisieren: Mandanten, die eine Vorlage übernommen haben (Kriterienschlüssel passen), bekommen beim Start die aktuelle Fassung (Texte, Anweisung, Fragen) – Gewichte bleiben, wenn der Mandant sie geändert hat. */
+export async function refreshPresetConfigs(db: Db): Promise<number> {
+  const rows = await db.select({ id: callQaConfigs.id, tenantId: callQaConfigs.tenantId, criteria: callQaConfigs.criteria, instructions: callQaConfigs.instructions }).from(callQaConfigs);
+  let changed = 0;
+  for (const row of rows) {
+    const current = (Array.isArray(row.criteria) ? row.criteria : []) as Criterion[]; const keys = new Set(current.map((c) => c.key));
+    const preset = CALL_QA_PRESETS.find((candidate) => candidate.criteria.every((c) => keys.has(c.key)) && keys.size === candidate.criteria.length); if (!preset) continue;
+    const merged = preset.criteria.map((c) => ({ ...c, weight: current.find((item) => item.key === c.key)?.weight ?? c.weight }));
+    const same = JSON.stringify(merged) === JSON.stringify(current) && row.instructions === preset.instructions; if (same) continue;
+    await db.update(callQaConfigs).set({ criteria: merged, instructions: preset.instructions, defaultQuestions: preset.questions }).where(eq(callQaConfigs.id, row.id));
+    const presetKeys = new Set(preset.questions.map((question) => question.key));
+    for (const campaign of await db.select({ id: callQaCampaigns.id, questions: callQaCampaigns.questions }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, row.tenantId))) {
+      const qs = normalizeQuestions(campaign.questions as QualificationQuestion[] | null); if (qs.length && qs.every((question) => presetKeys.has(question.key))) await db.update(callQaCampaigns).set({ questions: preset.questions }).where(eq(callQaCampaigns.id, campaign.id));
+    }
+    changed += 1;
+  }
+  return changed;
 }
 
 export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; limit?: number } = {}) {

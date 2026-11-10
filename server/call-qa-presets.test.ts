@@ -59,3 +59,13 @@ describe("Datei-Link aus einer Player-Seite", () => {
     expect(PV_HAUSKOMPASS_PRESET.instructions).toContain("Wärmepumpe");
   });
 });
+
+describe("Name des Mitarbeiters aus der Vorstellung", () => {
+  it("erkennt gängige Vorstellungen und ignoriert Floskeln", async () => {
+    const { detectAgentName } = await import("./call-qa");
+    expect(detectAgentName("Agent: Guten Tag, hier ist Maya Becker von HausKompass. Spreche ich mit Herrn Schulz?")).toBe("Maya Becker");
+    expect(detectAgentName("Sprecher 1: Schönen guten Tag, mein Name ist Yilmaz Kaya, ich rufe an wegen Ihrer Photovoltaik-Anfrage.")).toBe("Yilmaz Kaya");
+    expect(detectAgentName("Agent: Hallo, Thomas Müller-Lüdenscheid von HausKompass hier.")).toBe("Thomas Müller-Lüdenscheid");
+    expect(detectAgentName("Kunde: Ja hallo? Agent: Ja, guten Tag.")).toBeNull();
+  });
+});
