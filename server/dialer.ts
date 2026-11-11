@@ -758,7 +758,12 @@ export async function agentReport(db: Db, tenantId: number, input: { period?: Ag
       successRate: pct(appointments + interested, bucket.reached), evaluated: bucket.evaluated, averageScore: bucket.evaluated ? Math.round(bucket.scoreSum / bucket.evaluated) : null,
       approved: bucket.approved, review: bucket.review, rejected: bucket.rejected, verkaufbar: bucket.verkaufbar, nachfassen: bucket.nachfassen, nichtVerkaufbar: bucket.nichtVerkaufbar, lastCallAt: bucket.lastCallAt,
     };
-  }).sort((a, b) => b.appointments - a.appointments || b.interested - a.interested || (b.averageScore ?? -1) - (a.averageScore ?? -1) || b.calls - a.calls);
+  }).sort((a, b) => {
+    // Bester Agent oben: „Ohne Agent“ ganz nach unten; dann meiste grüne (freigegeben), höchster Grün-Anteil, Termine, Interessenten, meiste Anrufe
+    const noAgent = (agent: { userId: number | null; name: string }) => (agent.userId === null && /^ohne agent$/i.test(agent.name) ? 1 : 0);
+    const greenShare = (agent: { approved: number; evaluated: number }) => (agent.evaluated ? agent.approved / agent.evaluated : -1);
+    return noAgent(a) - noAgent(b) || b.approved - a.approved || greenShare(b) - greenShare(a) || b.appointments - a.appointments || b.interested - a.interested || b.calls - a.calls || (b.averageScore ?? -1) - (a.averageScore ?? -1);
+  });
   const sum = (key: "calls" | "reached" | "talkSeconds" | "appointments" | "interested" | "evaluated" | "approved" | "rejected" | "review") => agents.reduce((acc, agent) => acc + agent[key], 0);
   const scored = agents.filter((agent) => agent.averageScore !== null);
   const totals = { agents: agents.length, calls: sum("calls"), reached: sum("reached"), reachRate: pct(sum("reached"), sum("calls")), talkSeconds: sum("talkSeconds"), appointments: sum("appointments"), interested: sum("interested"), successRate: pct(sum("appointments") + sum("interested"), sum("reached")), evaluated: sum("evaluated"), approved: sum("approved"), review: sum("review"), rejected: sum("rejected"), averageScore: scored.length ? Math.round(scored.reduce((acc, agent) => acc + (agent.averageScore ?? 0) * agent.evaluated, 0) / Math.max(1, sum("evaluated"))) : null };

@@ -1966,7 +1966,8 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(me.interested).toBeGreaterThanOrEqual(1); // Test 18: „interessiert“
     expect(me.averageScore).not.toBeNull(); expect(me.evaluated).toBeGreaterThanOrEqual(2); expect(me.approved).toBeGreaterThanOrEqual(1);
     expect(all.totals.calls).toBe(all.agents.reduce((sum, agent) => sum + agent.calls, 0));
-    expect(all.agents[0].appointments).toBeGreaterThanOrEqual(all.agents[all.agents.length - 1].appointments); // nach Terminen sortiert
+    expect(all.agents[0].approved).toBeGreaterThanOrEqual(all.agents[all.agents.length - 1].approved); // nach grünen (freigegebenen) Gesprächen sortiert, „Ohne Agent“ zuletzt
+    if (all.agents.length > 1) expect(/^ohne agent$/i.test(all.agents[0].name)).toBe(false);
     const today = await owner.leadops.dialerAgentReport({ period: "heute" });
     expect(today.totals.calls).toBeLessThanOrEqual(all.totals.calls); expect(today.totals.calls).toBeGreaterThan(0);
     const messe = all.campaigns.find((campaign) => campaign.name === "Messe abtelefonieren")!;
