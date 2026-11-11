@@ -48,7 +48,9 @@ vi.mock("./_core/llm", () => ({
     const text = String(params.messages.find((message) => message.role === "user")?.content ?? "").toLowerCase();
     const good = /gerne|einverstanden|eigentümer/.test(text); const bad = /nicht angerufen|löschen/.test(text);
     const score = bad ? 1 : good ? 9 : 5;
-    const evaluation = { criteria: ["bedarf", "entscheider", "zeitrahmen", "budget", "kontaktdaten", "einwilligung"].map((key) => ({ key, score, evidence: `Beleg ${key}` })), summary: bad ? "Kunde lehnt Kontakt ab." : good ? "Klarer Bedarf, Weitergabe erlaubt." : "Offene Punkte.", redFlags: bad ? ["Kunde möchte nicht kontaktiert werden"] : [], nextStep: good ? "Übergeben" : "Rückruf", verdict: bad ? "nicht_verkaufbar" : good ? "verkaufbar" : "nachfassen" };
+    const systemText = String(params.messages.find((message) => message.role === "system")?.content ?? ""); const listed = Array.from(systemText.matchAll(/^- ([a-z0-9_]+): /gm)).map((match) => match[1]); // Kriterien aus der Anweisung (eigene je Kampagne), sonst Standard
+    const topic = /treppenlift/.test(text) ? "Treppenlift" : "";
+    const evaluation = { topic, criteria: (listed.length ? listed : ["bedarf", "entscheider", "zeitrahmen", "budget", "kontaktdaten", "einwilligung"]).map((key) => ({ key, score, evidence: `Beleg ${key}` })), summary: bad ? "Kunde lehnt Kontakt ab." : good ? "Klarer Bedarf, Weitergabe erlaubt." : "Offene Punkte.", redFlags: bad ? ["Kunde möchte nicht kontaktiert werden"] : [], nextStep: good ? "Übergeben" : "Rückruf", verdict: bad ? "nicht_verkaufbar" : good ? "verkaufbar" : "nachfassen" };
     return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(evaluation) }, finish_reason: "stop" }] };
   }),
   aiHealthView: () => ({ calls: 0, errors: 0, busy: 0, timeouts: 0, avgSeconds: null, lastError: null }),
@@ -4254,6 +4256,47 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0]))).length).toBe(0);
       expect((await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, "PV Hessen November")))).length).toBe(0);
     } finally { S.transcriptVerbose = false; S.transcriptForStub = undefined; S.playerPage = undefined; }
+  }, 60000);
+  it("63zt. Gespräche: Datumsfilter, eigene Kriterien je Kampagne, Lead-Kategorie aus dem Gespräch", async () => {
+    const { importRecordingLinks } = await import("./call-qa"); const { callRecords: callsTable, leadCategories: catTable } = await import("../drizzle/schema");
+    const tenantId = S.tenantId; const dayMs = 86_400_000; const today = new Date();
+    const mk = async (external: string, startedAt: Date, decision: "freigegeben" | "pruefen") => Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: external, phone: "+49 30 1234", agentName: "Filtertest", campaign: "Filter-Kampagne", startedAt, durationSeconds: 100, consent: true, status: "bewertet", score: decision === "freigegeben" ? 88 : 55, verdict: decision === "freigegeben" ? "verkaufbar" : "nachfassen", decision, decidedBy: "automatisch" }))[0].insertId);
+    const idToday = await mk("filter-heute", new Date(today.getTime() - 60_000), "freigegeben"); const idYesterday = await mk("filter-gestern", new Date(today.getTime() - dayMs), "pruefen"); const idOld = await mk("filter-alt", new Date(today.getTime() - 45 * dayMs), "pruefen");
+    try {
+      const ids = (rows: Array<{ id: number }>) => rows.map((row) => row.id).filter((id) => [idToday, idYesterday, idOld].includes(id)).sort();
+      expect(ids(await owner.leadops.listCalls({ period: "heute", campaign: "Filter-Kampagne" }))).toEqual([idToday]);
+      expect(ids(await owner.leadops.listCalls({ period: "gestern", campaign: "Filter-Kampagne" }))).toEqual([idYesterday]);
+      expect(ids(await owner.leadops.listCalls({ period: "7", campaign: "Filter-Kampagne" }))).toEqual([idToday, idYesterday].sort());
+      expect(ids(await owner.leadops.listCalls({ period: "alle", campaign: "Filter-Kampagne" }))).toEqual([idToday, idYesterday, idOld].sort());
+      const day = (date: Date) => date.toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
+      expect(ids(await owner.leadops.listCalls({ from: day(new Date(today.getTime() - 50 * dayMs)), to: day(new Date(today.getTime() - 40 * dayMs)), campaign: "Filter-Kampagne" }))).toEqual([idOld]);
+      // Statistik mit denselben Filtern
+      expect(await owner.leadops.callStatistics({ period: "heute", campaign: "Filter-Kampagne" })).toMatchObject({ total: 1, approved: 1, review: 0 });
+      expect(await owner.leadops.callStatistics({ period: "alle", campaign: "Filter-Kampagne", agentName: "Filtertest" })).toMatchObject({ total: 3, approved: 1, review: 2 });
+      // Eigene Kriterien für eine Kampagne → die KI bewertet genau danach, Prozentzahl aus den Gewichten
+      expect(await owner.leadops.saveCallQaCampaignCriteria({ name: "Treppenlift Nord", criteria: [{ label: "Treppe vermessen", description: "Wurde die Treppe (gerade/kurvig, Stufen) besprochen?", weight: 60 }, { label: "Entscheider", description: "Spricht der Agent mit dem Entscheider?", weight: 40 }], instructions: "Es geht um Treppenlifte, nicht um Photovoltaik." })).toMatchObject({ success: true, criteria: 2, custom: true });
+      S.transcriptForStub = "Agent: Guten Tag, hier ist Lena Roth. Es geht um Ihren Treppenlift. Kunde: Ja gerne, ich bin Eigentümer, die Treppe ist gerade.";
+      const result = await importRecordingLinks(db, tenantId, { text: "https://player.e2e.example/recordings/lift-1.mp3 | +49 40 777 | Treppenlift", campaign: "Treppenlift Nord" }, { waitFor: true }); expect(result.created).toBe(1);
+      const stored = (await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0];
+      expect(stored.status).toBe("bewertet"); expect((stored.criteriaScores as Array<{ key: string }>).map((item) => item.key).sort()).toEqual(["entscheider", "treppe_vermessen"]); expect(stored.score).toBe(90);
+      const detail = await owner.leadops.getCall({ callId: result.callIds[0] }); expect(detail.criteriaCustom).toBe(true); expect(detail.criteria.map((item) => item.label)).toEqual(["Treppe vermessen", "Entscheider"]); expect(detail.criteria[0]).toMatchObject({ score: 9, weight: 60 });
+      const summary = await owner.leadops.callQaCampaignSummary({ campaign: "Treppenlift Nord" }); expect(summary.criteriaCustom).toBe(true); expect(summary.instructions).toBe("Es geht um Treppenlifte, nicht um Photovoltaik.");
+      // Lead-Kategorie aus dem Gespräch: „Treppenlift“ gab es nicht → automatisch angelegt und am Gespräch hinterlegt
+      const created = (await db.select().from(catTable).where(and(eq(catTable.tenantId, tenantId), eq(catTable.name, "Treppenlift"))))[0]; expect(created).toBeTruthy(); expect(stored.leadCategoryId).toBe(created.id);
+      expect(detail.category).toMatchObject({ name: "Treppenlift" });
+      expect((await owner.leadops.callCategoryOptions()).find((item) => item.id === created.id)).toMatchObject({ name: "Treppenlift", count: 1 });
+      expect((await owner.leadops.listCalls({ categoryId: created.id })).map((row) => row.id)).toEqual([result.callIds[0]]);
+      expect(await owner.leadops.callStatistics({ categoryId: created.id })).toMatchObject({ total: 1 });
+      // Zweites Gespräch zum selben Thema → gleiche Kategorie, keine neue
+      S.transcriptForStub = "Agent: Hallo, hier ist Lena Roth, es geht um den Treppenlift. Kunde: Ja gerne.";
+      const second = await importRecordingLinks(db, tenantId, { text: "https://player.e2e.example/recordings/lift-2.mp3", campaign: "Treppenlift Nord" }, { waitFor: true });
+      expect((await db.select().from(callsTable).where(eq(callsTable.id, second.callIds[0])))[0].leadCategoryId).toBe(created.id);
+      expect((await db.select().from(catTable).where(and(eq(catTable.tenantId, tenantId), eq(catTable.name, "Treppenlift")))).length).toBe(1);
+      // Zurück auf Standard
+      expect(await owner.leadops.saveCallQaCampaignCriteria({ name: "Treppenlift Nord", criteria: [], instructions: null })).toMatchObject({ custom: false });
+      expect((await owner.leadops.callQaCampaignSummary({ campaign: "Treppenlift Nord" })).criteriaCustom).toBe(false);
+      expect(await owner.leadops.deleteCallCampaign({ name: "Treppenlift Nord" })).toMatchObject({ deletedCalls: 2 });
+    } finally { S.transcriptForStub = undefined; await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Filter-Kampagne"))); }
   }, 60000);
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");

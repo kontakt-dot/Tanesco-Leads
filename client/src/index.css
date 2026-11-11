@@ -4058,3 +4058,14 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cq-face{display:block}
 .cq-ampel-row{display:inline-flex;align-items:center;gap:4px;font-size:15px}
 .cq-ampel-row .cq-face{margin-left:6px}.cq-ampel-row .cq-face:first-child{margin-left:0}
+
+/* Gespräche: Prozentzahl neben dem Smiley, Datums-/Kategorie-Filter, Kriterien je Kampagne */
+.cq-mood.has-percent{display:inline-flex;flex-direction:column;align-items:center;gap:2px}
+.cq-mood.has-percent .cq-percent{font-size:11px;font-weight:700;line-height:1;letter-spacing:.01em}
+.cq-mood.is-lg.has-percent .cq-percent{font-size:14px}
+.cq-percent-sm{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.cq-filterbar{flex-shrink:0}
+.cq-filterbar input[type="date"]{color-scheme:dark;padding:0 .5rem;min-width:140px}
+:root[data-theme="light"] .cq-filterbar input[type="date"]{color-scheme:light}
+.cq-category{color:#c4b5fd}
+.cq-criterion-row input[type="number"]{text-align:right}

@@ -216,3 +216,45 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
     expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBe(before - 1);
   });
 });
+
+describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter, eigene Kriterien je Kampagne", () => {
+  it("zeigt die Prozentzahl bei bewerteten Gesprächen und filtert nach Zeitraum", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    const percents = Array.from(view.container.querySelectorAll(".flux-table tbody .cq-percent")).map((node) => node.textContent ?? "");
+    expect(percents.length).toBeGreaterThan(0); expect(percents.some((text) => /\d+ %/.test(text))).toBe(true);
+    const all = view.container.querySelectorAll(".flux-table tbody tr").length;
+    const filterbar = view.container.querySelector(".cq-filterbar")!; expect(filterbar).toBeTruthy();
+    const heute = Array.from(filterbar.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Heute")!;
+    await act(async () => { fireEvent.click(heute); }); await settle(400);
+    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBeLessThanOrEqual(all);
+    const from = filterbar.querySelector<HTMLInputElement>("input[aria-label='Datum von']")!;
+    fireEvent.change(from, { target: { value: "2031-01-01" } }); await settle(400);
+    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBe(0);
+    expect(view.container.textContent).toContain("im gewählten Zeitraum");
+    const reset = Array.from(filterbar.querySelectorAll<HTMLButtonElement>("button")).find((node) => /Datum zurücksetzen/.test(node.textContent ?? ""))!;
+    await act(async () => { fireEvent.click(reset); }); await settle(400);
+    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBe(all);
+    expect(view.container.querySelector("select[aria-label='Nach Lead-Kategorie filtern']")).toBeTruthy();
+  });
+
+  it("legt eigene Kriterien für eine Kampagne an und zeigt sie als „eigene“", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    const segment = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".dashboard-segments button")).find((node) => node.textContent && node.textContent !== "Alle" && !/Heute|Gestern|Tage|Gesamt/.test(node.textContent))!;
+    expect(segment).toBeTruthy();
+    await act(async () => { fireEvent.click(segment); }); await settle(400);
+    const box = view.container.querySelector(".cq-criteria-box")!; expect(box).toBeTruthy();
+    expect(box.textContent).toContain("Standard-Kriterien");
+    await act(async () => { fireEvent.click(box.querySelector<HTMLButtonElement>(".cq-edit-criteria")!); }); await settle(200);
+    const rows = box.querySelectorAll(".cq-criterion-row"); expect(rows.length).toBeGreaterThan(0);
+    fireEvent.change(rows[0].querySelector<HTMLInputElement>("input[aria-label='Kriterium']")!, { target: { value: "Treppe vermessen" } });
+    const save = Array.from(box.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Speichern")!;
+    await act(async () => { fireEvent.click(save); }); await settle(500);
+    const after = view.container.querySelector(".cq-criteria-box")!;
+    expect(after.textContent).toContain("eigene Kriterien"); expect(after.textContent).toContain("Treppe vermessen");
+    expect(after.querySelector(".cq-reset-criteria")).toBeTruthy();
+  });
+});

@@ -729,6 +729,20 @@
       "when": 1794900000000,
       "tag": "0103_gespraeche_standardfragen",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "5",
+      "when": 1795000000000,
+      "tag": "0104_gespraeche_kategorie",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "5",
+      "when": 1795100000000,
+      "tag": "0105_gespraeche_kampagnen_kriterien",
+      "breakpoints": true
     }
   ]
 }

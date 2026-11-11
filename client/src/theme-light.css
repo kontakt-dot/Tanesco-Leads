@@ -2173,6 +2173,7 @@ html:not(.dark) .cl-tile.is-nodraft strong, html:not(.dark) .cl-tile.is-off stro
 html:not(.dark) .cl-tile.is-unfit strong { color: #8b5a60 !important; }
 html:not(.dark) .cl-approval-note { color: #8a94a6 !important; }
 html:not(.dark) .cl-approval-part.cl-tile.is-approved { color: #0f172a !important; }
+html:not(.dark) .cq-category { color: #111318 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }

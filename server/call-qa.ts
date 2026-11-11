@@ -8,12 +8,12 @@
  *  5. Entscheidung: ab Freigabe-Schwelle Lead freigeben (und über die Automatisierung ausliefern/verkaufen),
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
-import { and, asc, desc, eq, gte, inArray, like, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, like, lt, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
-import { callQaConfigs, callRecords, leadStatusEvents, leads, optIns, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
+import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, optIns, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
 import { convertRawContact, normalizeRawPhone } from "./raw-data";
 import { invokeLLM } from "./_core/llm";
 import { noteAfterEvaluation } from "./call-notes";
@@ -24,6 +24,9 @@ import { readPath } from "./outbound-templates";
 export type Criterion = { key: string; label: string; weight: number; description: string };
 import { callQaCampaigns } from "../drizzle/schema";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
+import { callPeriodRange, type CallPeriod } from "../shared/call-period";
+import { detectTopic } from "../shared/call-topic";
+export { callPeriodRange, detectTopic, type CallPeriod };
 import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion } from "../shared/call-qualification";
 
 /** Kampagnen mit eigenen Qualifizierungsfragen. Fehlt eine Kampagne, gilt der Standardfragensatz. */
@@ -32,7 +35,8 @@ export async function listCampaigns(db: Db, tenantId: number) {
   const fromCalls = await db.select({ campaign: callRecords.campaign }).from(callRecords).where(eq(callRecords.tenantId, tenantId));
   const names = new Set(rows.map((row) => row.name)); const extra = Array.from(new Set(fromCalls.map((row) => row.campaign).filter((name): name is string => Boolean(name) && !names.has(name!))));
   const defaults = await defaultQuestionsFor(db, tenantId);
-  return [...rows.map((row) => ({ id: row.id, name: row.name, questions: normalizeQuestions(row.questions as QualificationQuestion[] | null), custom: true })), ...extra.map((name) => ({ id: null as number | null, name, questions: defaults, custom: false }))];
+  const campaignCriteria = (row: { criteria: unknown }) => (Array.isArray(row.criteria) && row.criteria.length ? row.criteria as Criterion[] : null);
+  return [...rows.map((row) => ({ id: row.id, name: row.name, questions: normalizeQuestions(row.questions as QualificationQuestion[] | null), criteria: campaignCriteria(row), instructions: row.instructions ?? null, custom: true })), ...extra.map((name) => ({ id: null as number | null, name, questions: defaults, criteria: null as Criterion[] | null, instructions: null as string | null, custom: false }))];
 }
 export async function saveCampaign(db: Db, tenantId: number, input: { id?: number | null; name: string; questions: Array<Partial<QualificationQuestion>> }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
@@ -52,6 +56,28 @@ export async function questionsForCampaign(db: Db, tenantId: number, campaign: s
   if (!campaign) return defaultQuestionsFor(db, tenantId);
   const row = (await db.select().from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0];
   const questions = row ? normalizeQuestions(row.questions as QualificationQuestion[] | null) : []; return questions.length ? questions : defaultQuestionsFor(db, tenantId);
+}
+/** Bewertungskriterien einer Kampagne: eigene, wenn gesetzt – sonst die Standard-Kriterien aus den Einstellungen (zusammen mit der Standard-Anweisung). */
+export async function criteriaForCampaign(db: Db, tenantId: number, campaign: string | null | undefined, config?: Pick<CallQaConfig, "criteria" | "instructions">): Promise<{ criteria: Criterion[]; instructions: string | null; custom: boolean }> {
+  const base = config ?? (await ensureCallQaConfig(db, tenantId));
+  const standard = { criteria: (Array.isArray(base.criteria) && base.criteria.length ? base.criteria : DEFAULT_CRITERIA) as Criterion[], instructions: base.instructions ?? null, custom: false };
+  if (!campaign) return standard;
+  const row = (await db.select({ criteria: callQaCampaigns.criteria, instructions: callQaCampaigns.instructions }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0];
+  const own = Array.isArray(row?.criteria) && row.criteria.length ? (row.criteria as Criterion[]) : null;
+  if (!own) return standard;
+  return { criteria: own, instructions: [standard.instructions, row?.instructions].filter((text): text is string => Boolean(text && text.trim())).join("\n") || null, custom: true };
+}
+/** Eigene Kriterien (und Zusatz-Anweisung) für eine Kampagne speichern; leere Liste = wieder die Standard-Kriterien. */
+export async function saveCampaignCriteria(db: Db, tenantId: number, input: { name: string; criteria: Array<Partial<Criterion>>; instructions?: string | null }) {
+  const name = input.name.trim(); if (!name) throw new Error("Bitte eine Kampagne wählen.");
+  const used = new Set<string>();
+  const criteria: Criterion[] = input.criteria.map((item, index) => { const label = String(item.label ?? "").trim(); let key = String(item.key ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || label.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || `kriterium_${index + 1}`; while (used.has(key)) key += "_2"; used.add(key); return { key, label, description: String(item.description ?? "").trim(), weight: Math.max(0, Math.min(100, Math.round(Number(item.weight ?? 0)))) }; }).filter((item) => item.label);
+  if (criteria.length && criteria.reduce((sum, item) => sum + item.weight, 0) <= 0) throw new Error("Mindestens ein Kriterium braucht ein Gewicht größer als 0.");
+  const instructions = (input.instructions ?? "").trim().slice(0, 4000) || null;
+  const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
+  const values = { criteria: criteria.length ? criteria : null, instructions };
+  if (own) await db.update(callQaCampaigns).set(values).where(eq(callQaCampaigns.id, own.id)); else await db.insert(callQaCampaigns).values({ tenantId, name, questions: await defaultQuestionsFor(db, tenantId), ...values });
+  return { success: true as const, criteria: criteria.length, custom: criteria.length > 0 };
 }
 /** Vorlage anwenden: Kriterien + Anweisung in die Einstellungen, Prüffragen als Standard – und auf Wunsch in alle vorhandenen Kampagnen-Fragensätze. */
 export async function applyCallQaPreset(db: Db, tenantId: number, input: { preset: string; allCampaigns: boolean }) {
@@ -79,7 +105,9 @@ export async function campaignSummary(db: Db, tenantId: number, campaign: string
   const questions = await questionsForCampaign(db, tenantId, campaign);
   const conditions = [eq(callRecords.tenantId, tenantId), eq(callRecords.status, "bewertet")]; if (campaign) conditions.push(eq(callRecords.campaign, campaign));
   const rows = await db.select({ answers: callRecords.qualificationAnswers }).from(callRecords).where(and(...conditions));
-  return { questions, calls: rows.length, summary: summarizeAnswers(rows.map((row) => row.answers as Record<string, QualificationAnswer> | null), questions) };
+  const own = await criteriaForCampaign(db, tenantId, campaign);
+  const ownRow = campaign ? (await db.select({ instructions: callQaCampaigns.instructions }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0] : undefined;
+  return { questions, calls: rows.length, summary: summarizeAnswers(rows.map((row) => row.answers as Record<string, QualificationAnswer> | null), questions), criteria: own.criteria, criteriaCustom: own.custom, instructions: ownRow?.instructions ?? null };
 }
 export async function setQualificationAnswer(db: Db, tenantId: number, callId: number, key: string, answer: QualificationAnswer["answer"], note?: string | null) {
   const record = (await db.select().from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0]; if (!record) throw new Error("Gespräch nicht gefunden.");
@@ -306,7 +334,7 @@ async function transcribeAudio(config: CallQaConfig, audio: Uint8Array<ArrayBuff
 
 /* ------------------------------------------------------------------ Bewertung */
 
-export type Evaluation = { agentName?: string | null; score: number; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar" | "unklar"; criteria: Array<{ key: string; score: number; evidence: string }>; summary: string; redFlags: string[]; nextStep: string; extracted: Record<string, string> };
+export type Evaluation = { agentName?: string | null; topic?: string | null; score: number; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar" | "unklar"; criteria: Array<{ key: string; score: number; evidence: string }>; summary: string; redFlags: string[]; nextStep: string; extracted: Record<string, string> };
 
 /** Name des Mitarbeiters aus der Vorstellung am Gesprächsanfang: „hier ist/spricht Maya Becker“, „mein Name ist …“, „ich bin … von HausKompass“, „Maya Becker von …“. */
 export function detectAgentName(transcript: string): string | null {
@@ -322,12 +350,27 @@ export function cleanAgentName(raw: string): string | null {
   const words: string[] = []; for (const word of all) { if (!/^[A-ZÄÖÜ]/.test(word) || NOT_NAMES.test(word)) { if (words.length) break; continue; } words.push(word); } // nur großgeschriebene Wörter am Stück („Maya Becker“, nicht „von“)
   if (words.length < 1 || words.length > 3) return null; const value = words.join(" "); return value.length >= 3 && value.length <= 60 ? value : null;
 }
+/** Thema → Lead-Kategorie des Mandanten: vorhandene Kategorie mit passendem Namen, sonst neu anlegen (z. B. KI erkennt „Treppenlift“). */
+export async function resolveCallCategory(db: Db, tenantId: number, topic: string | null | undefined): Promise<number | null> {
+  const wanted = (topic ?? "").trim(); if (!wanted) return null;
+  const norm = (value: string) => value.toLowerCase().replace(/[^a-zäöüß&]+/g, " ").replace(/\s+/g, " ").trim();
+  const rows = await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), eq(leadCategories.isTemplate, false)));
+  const target = norm(wanted); const parts = target.split(" & ").map((part) => part.trim()).filter(Boolean);
+  const exact = rows.find((row) => norm(row.name) === target); if (exact) return exact.id;
+  // Gleiche Bestandteile in anderer Reihenfolge/Schreibweise („Photovoltaik & Wärmepumpe“ ~ „Wärmepumpe & Photovoltaik“, „PV & WP“ bleibt außen vor)
+  const sameParts = rows.find((row) => { const own = norm(row.name).split(" & ").map((part) => part.trim()).filter(Boolean); return own.length === parts.length && parts.every((part) => own.some((candidate) => candidate === part || candidate.startsWith(part) || part.startsWith(candidate))); });
+  if (sameParts) return sameParts.id;
+  if (parts.length === 1) { const contains = rows.find((row) => norm(row.name).split(" & ").some((part) => part === parts[0])); if (contains && norm(contains.name).split(" & ").length === 1) return contains.id; }
+  const { createCategoryForSparte } = await import("./vertrieb-category");
+  const created = await createCategoryForSparte(db, tenantId, wanted, { detail: "Automatisch aus einem Gespräch: Die KI hat erkannt, worum es ging, und eine passende Lead-Kategorie angelegt – Name, Kürzel und Emoji kannst du unter Lead-Kategorien anpassen." });
+  return created.id;
+}
 export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" | "instructions"> & Partial<Pick<CallQaConfig, "examples" | "extractFields">>, transcript: string, context: { leadCategory?: string | null; leadName?: string | null }): Promise<Evaluation> {
   const criteria = (Array.isArray(config.criteria) && config.criteria.length ? config.criteria : DEFAULT_CRITERIA) as Criterion[];
   const examples = (Array.isArray(config.examples) ? config.examples : []) as ExampleCase[];
   const extractFields = (Array.isArray(config.extractFields) ? config.extractFields : []) as ExtractField[];
   const totalWeight = criteria.reduce((sum, criterion) => sum + criterion.weight, 0) || 1;
-  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted", "agentName"], properties: { agentName: { type: "string", description: "Name, mit dem sich der Mitarbeiter/Agent am Anfang vorstellt (z. B. „Maya Becker“); leer, wenn er nicht genannt wird" }, criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
+  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted", "agentName", "topic"], properties: { agentName: { type: "string", description: "Name, mit dem sich der Mitarbeiter/Agent am Anfang vorstellt (z. B. „Maya Becker“); leer, wenn er nicht genannt wird" }, topic: { type: "string", description: "Worum geht es im Gespräch – das Produkt/Thema als kurzer Begriff in der Einzahl, z. B. „Photovoltaik“, „Wärmepumpe“, „Alarmanlage“, „Treppenlift“; geht es um zwei Themen, beide mit „ & “ verbinden (z. B. „Photovoltaik & Wärmepumpe“); leer, wenn unklar" }, criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
   const system = `Du bewertest Verkaufsgespräche eines Callcenters, das Anfragen (Leads) für Fachbetriebe qualifiziert. Bewerte NUR anhand des Transkripts, erfinde nichts. Bewertungskriterien (0 = gar nicht erfüllt, 10 = vollständig erfüllt), jeweils mit wörtlichem Beleg aus dem Gespräch:\n${criteria.map((criterion) => `- ${criterion.key}: ${criterion.label} – ${criterion.description}`).join("\n")}\nWarnsignale (redFlags), die den Lead unverkäuflich machen: Kunde will nicht kontaktiert werden, widerruft, Daten sind falsch, Gespräch war unzulässig (Werbeanruf ohne Einwilligung), Kunde ist Minderjähriger, Agent hat Druck ausgeübt oder Falsches versprochen.\nUrteil: verkaufbar = Kunde will ein Angebot und die Weitergabe ist erlaubt; nachfassen = Interesse, aber offene Punkte; nicht_verkaufbar = kein Interesse oder Warnsignal; unklar = Transkript unvollständig.${extractFields.length ? `\nZusätzlich beantworte diese Fragen aus dem Gespräch (extracted, leer lassen wenn nicht genannt):\n${extractFields.map((field) => `- ${field.key}: ${field.question}`).join("\n")}` : "\nextracted bleibt eine leere Liste."}\nAntworte ausschließlich auf Deutsch.${config.instructions ? `\nZusätzliche Vorgaben des Mandanten: ${config.instructions}` : ""}${examples.length ? `\nBeispiele für die gewünschte Einordnung:\n${examples.slice(0, 8).map((example, index) => `Beispiel ${index + 1} (${example.title}): Auszug: "${example.transcript.slice(0, 600)}" → Urteil: ${example.verdict}. Begründung: ${example.reason}`).join("\n")}` : ""}`;
   const user = `${context.leadCategory ? `Lead-Kategorie: ${context.leadCategory}\n` : ""}${context.leadName ? `Kunde laut Lead: ${context.leadName}\n` : ""}Transkript:\n"""\n${transcript.slice(0, 60_000)}\n"""`;
   const response = await invokeLLM({ messages: [{ role: "system", content: system }, { role: "user", content: user }], outputSchema: schema, maxTokens: 2500 });
@@ -341,7 +384,8 @@ export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" |
   const extracted: Record<string, string> = {};
   const rawExtracted = parsed.extracted; if (Array.isArray(rawExtracted)) for (const item of rawExtracted) if (item?.key && extractFields.some((field) => field.key === item.key) && String(item.value ?? "").trim()) extracted[item.key] = String(item.value).slice(0, 500); else if (rawExtracted && typeof rawExtracted === "object") for (const [key, value] of Object.entries(rawExtracted)) if (extractFields.some((field) => field.key === key) && String(value ?? "").trim()) extracted[key] = String(value).slice(0, 500);
   const agentName = cleanAgentName(String((parsed as { agentName?: unknown }).agentName ?? ""));
-  return { score, verdict, criteria: scored, summary: String(parsed.summary ?? "").slice(0, 2000), redFlags, nextStep: String(parsed.nextStep ?? "").slice(0, 320), extracted, agentName };
+  const topic = String((parsed as { topic?: unknown }).topic ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || null;
+  return { score, verdict, criteria: scored, summary: String(parsed.summary ?? "").slice(0, 2000), redFlags, nextStep: String(parsed.nextStep ?? "").slice(0, 320), extracted, agentName, topic };
 }
 
 /** Entscheidungsregeln des Mandanten (erste passende Regel gewinnt), sonst Schwellenwerte. */
@@ -391,8 +435,11 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     const agentName = call.agentName?.trim() || detectAgentName(transcript);
     await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName && !call.agentName ? { agentName } : {}) }).where(eq(callRecords.id, callId));
     const lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
-    const evaluation = await evaluateTranscript(config, transcript, { leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : null });
+    const own = await criteriaForCampaign(db, call.tenantId, call.campaign, config); // Kriterien der Kampagne (sonst Standard)
+    const evaluation = await evaluateTranscript({ ...config, criteria: own.criteria, instructions: own.instructions }, transcript, { leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : null });
     if (!agentName && evaluation.agentName) await db.update(callRecords).set({ agentName: evaluation.agentName }).where(eq(callRecords.id, callId));
+    // Lead-Kategorie: Thema laut KI (sonst Stichwörter) → vorhandene Kategorie oder neue
+    if (!call.leadCategoryId) { const categoryId = await resolveCallCategory(db, call.tenantId, evaluation.topic || detectTopic(transcript)).catch(() => null); if (categoryId) await db.update(callRecords).set({ leadCategoryId: categoryId }).where(eq(callRecords.id, callId)); }
     const decided = decideCall(config, evaluation, transcript); let decision = decided.decision; const rule = decided.rule;
     const questions = await questionsForCampaign(db, call.tenantId, call.campaign);
     const qualificationAnswers = await answerQualification(questions, transcript);
@@ -540,8 +587,8 @@ export async function ensureWattfoxCampaign(db: Db): Promise<number> {
 export async function applyPresetToCampaign(db: Db, tenantId: number, input: { preset: string; campaign: string }) {
   const preset = presetByKey(input.preset); if (!preset) throw new Error("Diese Vorlage gibt es nicht."); const name = input.campaign.trim(); if (!name) throw new Error("Bitte eine Kampagne wählen.");
   const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
-  if (own) await db.update(callQaCampaigns).set({ questions: preset.questions }).where(eq(callQaCampaigns.id, own.id)); else await db.insert(callQaCampaigns).values({ tenantId, name, questions: preset.questions });
-  return { success: true as const, questions: preset.questions.length };
+  if (own) await db.update(callQaCampaigns).set({ questions: preset.questions, criteria: preset.criteria, instructions: null }).where(eq(callQaCampaigns.id, own.id)); else await db.insert(callQaCampaigns).values({ tenantId, name, questions: preset.questions, criteria: preset.criteria });
+  return { success: true as const, questions: preset.questions.length, criteria: preset.criteria.length };
 }
 
 /** Kampagne löschen: Fragensatz und ALLE Gespräche dieser Kampagne (samt hochgeladener Dateien). Leads/Kontakte bleiben. */
@@ -553,37 +600,45 @@ export async function deleteCallCampaign(db: Db, tenantId: number, input: { name
   return { deletedCalls: deleted };
 }
 
-export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; limit?: number } = {}) {
+export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; categoryId?: number | null; limit?: number } & CallPeriod = {}) {
   const conditions = [eq(callRecords.tenantId, tenantId)];
+  const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to));
+  if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
   if (filter.decision) conditions.push(eq(callRecords.decision, filter.decision as CallRecord["decision"]));
   if (filter.agentName) conditions.push(eq(callRecords.agentName, filter.agentName));
   if (filter.status) conditions.push(eq(callRecords.status, filter.status as CallRecord["status"]));
   if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign));
-  const rows = await db.select({ call: callRecords, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).where(and(...conditions)).orderBy(desc(callRecords.createdAt)).limit(filter.limit ?? 200);
+  const rows = await db.select({ call: callRecords, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company, categoryName: leadCategories.name, categoryEmoji: leadCategories.emoji }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).leftJoin(leadCategories, eq(leadCategories.id, callRecords.leadCategoryId)).where(and(...conditions)).orderBy(desc(callRecords.createdAt)).limit(filter.limit ?? 200);
   // Opt-in je Gespräch: der beste Nachweis für den Fachbetrieb zum Lead (gültig > unvollständig > offen)
   const leadIds = Array.from(new Set(rows.map((row) => row.call.leadId).filter((id): id is number => typeof id === "number")));
   const optInRows = leadIds.length ? await db.select({ id: optIns.id, leadId: optIns.leadId, status: optIns.status, kind: optIns.kind, number: optIns.number, buyerName: optIns.buyerName, missing: optIns.missing, callRecordId: optIns.callRecordId }).from(optIns).where(and(eq(optIns.tenantId, tenantId), inArray(optIns.leadId, leadIds), eq(optIns.grantedTo, "kaeufer"))).orderBy(desc(optIns.id)) : [];
   const rank: Record<string, number> = { gueltig: 0, offen: 1, unvollstaendig: 2, abgelehnt: 3, widerrufen: 4 };
   const optInOf = (leadId: number | null, callId: number) => { if (!leadId) return null; const own = optInRows.filter((row) => row.leadId === leadId).sort((a, b) => (a.callRecordId === callId ? -1 : 0) - (b.callRecordId === callId ? -1 : 0) || (rank[a.status] ?? 9) - (rank[b.status] ?? 9)); const best = own[0]; return best ? { id: best.id, status: best.status, kind: best.kind, number: best.number, buyerName: best.buyerName, missing: (best.missing as string[] | null) ?? [] } : null; };
-  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany }) => ({ id: call.id, optIn: optInOf(call.leadId, call.id), externalCallId: call.externalCallId, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
+  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany, categoryName, categoryEmoji }) => ({ id: call.id, optIn: optInOf(call.leadId, call.id), leadCategoryId: call.leadCategoryId, category: categoryName ? { id: call.leadCategoryId!, name: categoryName, emoji: categoryEmoji ?? null } : null, externalCallId: call.externalCallId, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
 }
 
 export async function getCall(db: Db, tenantId: number, callId: number) {
-  const row = (await db.select({ call: callRecords, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company, rawStatus: rawContacts.status }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0];
+  const row = (await db.select({ call: callRecords, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company, rawStatus: rawContacts.status, categoryName: leadCategories.name, categoryEmoji: leadCategories.emoji }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).leftJoin(leadCategories, eq(leadCategories.id, callRecords.leadCategoryId)).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0];
   if (!row) throw new Error("Gespräch wurde nicht gefunden.");
   const config = await ensureCallQaConfig(db, tenantId);
-  const criteria = (Array.isArray(config.criteria) ? config.criteria : DEFAULT_CRITERIA) as Criterion[];
+  const own = await criteriaForCampaign(db, tenantId, row.call.campaign, config); const criteria = own.criteria;
   const scores = Array.isArray(row.call.criteriaScores) ? (row.call.criteriaScores as Evaluation["criteria"]) : [];
   const questions = await questionsForCampaign(db, tenantId, row.call.campaign);
-  return { ...row.call, recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, questions, qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteria: criteria.map((criterion) => ({ ...criterion, score: scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
+  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, questions, qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteria: criteria.map((criterion) => ({ ...criterion, score: scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
 }
 
-export async function callStatistics(db: Db, tenantId: number) {
-  const rows = await db.select({ status: callRecords.status, decision: callRecords.decision, score: callRecords.score }).from(callRecords).where(eq(callRecords.tenantId, tenantId));
+export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null } = {}) {
+  const conditions = [eq(callRecords.tenantId, tenantId)]; const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to)); if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign)); if (filter.agentName) conditions.push(eq(callRecords.agentName, filter.agentName)); if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
+  const rows = await db.select({ status: callRecords.status, decision: callRecords.decision, score: callRecords.score }).from(callRecords).where(and(...conditions));
   const scored = rows.filter((row) => typeof row.score === "number");
   return { total: rows.length, evaluated: rows.filter((row) => row.status === "bewertet").length, approved: rows.filter((row) => row.decision === "freigegeben").length, review: rows.filter((row) => row.decision === "pruefen").length, rejected: rows.filter((row) => row.decision === "zurueckgewiesen").length, noConsent: rows.filter((row) => row.status === "ohne_einwilligung").length, failed: rows.filter((row) => row.status === "fehlgeschlagen").length, averageScore: scored.length ? Math.round(scored.reduce((sum, row) => sum + (row.score ?? 0), 0) / scored.length) : null };
 }
 
+/** Lead-Kategorien, die in Gesprächen vorkommen (für den Filter) – mit Anzahl. */
+export async function callCategoryOptions(db: Db, tenantId: number) {
+  const rows = await db.select({ id: leadCategories.id, name: leadCategories.name, emoji: leadCategories.emoji, count: sql<number>`count(${callRecords.id})` }).from(callRecords).innerJoin(leadCategories, eq(leadCategories.id, callRecords.leadCategoryId)).where(eq(callRecords.tenantId, tenantId)).groupBy(leadCategories.id, leadCategories.name, leadCategories.emoji).orderBy(asc(leadCategories.name));
+  return rows.map((row) => ({ id: row.id, name: row.name, emoji: row.emoji ?? null, count: Number(row.count) }));
+}
 /** Aufbewahrung: Transkripte, Aufzeichnungs-Links und Rohdaten älter als retentionDays werden entfernt (Bewertung bleibt). */
 /** Gespräch löschen: Datensatz weg, hochgeladene Datei weg, Opt-in-Verweis gelöst. Der Lead selbst bleibt. */
 export async function deleteCall(db: Db, tenantId: number, callId: number) {
