@@ -1982,3 +1982,5 @@ html:not(.dark) .cq-crit-card .cq-weight-bar { background: rgba(15, 23, 42, .06)
 html:not(.dark) .cq-crit-card .cq-weight-bar i { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; }
 html:not(.dark) .cq-help-toggle { color: #b91c1c !important; }
 html:not(.dark) .cq-qnum { background: rgba(15, 23, 42, .06) !important; color: #475569 !important; }
+html:not(.dark) .cq-tool { color: #475467 !important; }
+html:not(.dark) .cq-tool:hover { color: #101828 !important; background: #f2f4f7 !important; border-color: #e4e7ec !important; }

@@ -189,10 +189,10 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
     window.history.replaceState(null, "", "/?page=Gespräche");
     const { view } = mount();
     await settle(400);
-    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-secondary-head")).find((node) => /AUFNAHMEN TESTEN/.test(node.textContent ?? ""))!); }); await settle(200); // Import-Bereich ist zweitrangig und eingeklappt
-    const box = view.container.querySelector<HTMLTextAreaElement>(".cq-links textarea")!; expect(box).toBeTruthy();
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-tool")).find((node) => /Aufnahmen testen/.test(node.textContent ?? ""))!); }); await settle(300); // Import ist zweitrangig: kleiner Knopf öffnet ein Fenster
+    const box = document.querySelector<HTMLTextAreaElement>(".cq-links textarea")!; expect(box).toBeTruthy();
     fireEvent.change(box, { target: { value: "https://download.example.de/getSound.aspx?token=abc&a=1\nkein link\nhttps://download.example.de/getSound.aspx?token=def&a=2 | +49 170 1234567 | Termin" } });
-    const button = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-links button")).find((node) => /Aufnahmen holen/.test(node.textContent ?? ""))!;
+    const button = Array.from(document.querySelectorAll<HTMLButtonElement>(".cq-links button")).find((node) => /Aufnahmen holen/.test(node.textContent ?? ""))!;
     await act(async () => { fireEvent.click(button); }); await settle(600);
     const rows = Array.from(view.container.querySelectorAll(".flux-table tbody tr")).map((row) => row.textContent ?? "");
     expect(rows.filter((text) => text.includes("Aufnahmen-Test")).length).toBe(2);
@@ -248,17 +248,17 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     const segment = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".dashboard-segments button")).find((node) => node.textContent && node.textContent !== "Alle" && !/Heute|Gestern|Tage|Gesamt/.test(node.textContent))!;
     expect(segment).toBeTruthy();
     await act(async () => { fireEvent.click(segment); }); await settle(400);
-    expect(view.container.querySelector(".cq-criteria-box")).toBeNull(); // Einstellungen sind eingeklappt – die Liste steht im Fokus
-    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-secondary-head")).find((node) => /KAMPAGNE EINSTELLEN/.test(node.textContent ?? ""))!); }); await settle(300);
-    const box = view.container.querySelector(".cq-criteria-box")!; expect(box).toBeTruthy();
+    expect(view.container.querySelector(".cq-criteria-box")).toBeNull(); // Einstellungen liegen im Fenster – die Liste steht im Fokus
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-tool")).find((node) => /Einstellen/.test(node.textContent ?? ""))!); }); await settle(400);
+    const box = document.querySelector(".cq-criteria-box")!; expect(box).toBeTruthy();
     expect(box.textContent).toContain("Standard-Kriterien");
     await act(async () => { fireEvent.click(box.querySelector<HTMLButtonElement>(".cq-edit-criteria")!); }); await settle(200);
     const rows = box.querySelectorAll(".cq-criterion-row"); expect(rows.length).toBeGreaterThan(0);
     fireEvent.change(rows[0].querySelector<HTMLInputElement>("input[aria-label='Kriterium']")!, { target: { value: "Treppe vermessen" } });
     const save = Array.from(box.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Speichern")!;
     await act(async () => { fireEvent.click(save); }); await settle(500);
-    const after = view.container.querySelector(".cq-criteria-box")!;
-    expect(after.textContent).toMatch(/[Ee]igene Kriterien/); expect(after.textContent).toContain("Treppe vermessen"); expect(view.container.querySelector(".cq-facts")?.textContent).toContain("eigene dieser Kampagne");
+    const after = document.querySelector(".cq-criteria-box")!;
+    expect(after.textContent).toMatch(/[Ee]igene Kriterien/); expect(after.textContent).toContain("Treppe vermessen"); expect(document.querySelector(".cq-facts")?.textContent).toContain("eigene dieser Kampagne");
     expect(after.querySelector(".cq-reset-criteria")).toBeTruthy();
   });
 });
