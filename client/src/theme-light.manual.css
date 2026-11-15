@@ -1973,3 +1973,12 @@ html:not(.dark) .cl-tile.is-unfit strong { color: #b91c1c !important; }
 html:not(.dark) .cl-approval-note { color: #667085 !important; }
 
 /* v307 */
+
+/* Gespräche – Kampagnen-Bereich (hell): rote Akzente statt Lila */
+html:not(.dark) .cq-tabs button.is-active { color: #0f172a !important; border-bottom-color: #dc2626 !important; }
+html:not(.dark) .cq-facts .cq-fact.is-active { border-color: rgba(220, 38, 38, .45) !important; background: rgba(220, 38, 38, .05) !important; }
+html:not(.dark) .cq-crit-card .cq-weight { color: #b91c1c !important; }
+html:not(.dark) .cq-crit-card .cq-weight-bar { background: rgba(15, 23, 42, .06) !important; }
+html:not(.dark) .cq-crit-card .cq-weight-bar i { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; }
+html:not(.dark) .cq-help-toggle { color: #b91c1c !important; }
+html:not(.dark) .cq-qnum { background: rgba(15, 23, 42, .06) !important; color: #475569 !important; }

@@ -254,7 +254,7 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     const save = Array.from(box.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Speichern")!;
     await act(async () => { fireEvent.click(save); }); await settle(500);
     const after = view.container.querySelector(".cq-criteria-box")!;
-    expect(after.textContent).toContain("eigene Kriterien"); expect(after.textContent).toContain("Treppe vermessen");
+    expect(after.textContent).toMatch(/[Ee]igene Kriterien/); expect(after.textContent).toContain("Treppe vermessen"); expect(view.container.querySelector(".cq-facts")?.textContent).toContain("eigene dieser Kampagne");
     expect(after.querySelector(".cq-reset-criteria")).toBeTruthy();
   });
 });

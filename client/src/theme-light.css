@@ -2174,6 +2174,27 @@ html:not(.dark) .cl-tile.is-unfit strong { color: #8b5a60 !important; }
 html:not(.dark) .cl-approval-note { color: #8a94a6 !important; }
 html:not(.dark) .cl-approval-part.cl-tile.is-approved { color: #0f172a !important; }
 html:not(.dark) .cq-category { color: #111318 !important; }
+html:not(.dark) .cq-help-toggle { color: #111318 !important; }
+html:not(.dark) .cq-facts .cq-fact { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .cq-facts .cq-fact:hover { border-color: #e8ecf1 !important; }
+html:not(.dark) .cq-facts .cq-fact.is-active { border-color: #d9dfe7 !important; background: #f8fafb !important; }
+html:not(.dark) .cq-facts .cq-fact strong { color: #0f172a !important; }
+html:not(.dark) .cq-facts .cq-fact span { color: #0f172a !important; }
+html:not(.dark) .cq-facts .cq-fact small { color: #4b5568 !important; }
+html:not(.dark) .cq-tabs { border-bottom: 1px solid #e8ecf1 !important; }
+html:not(.dark) .cq-tabs button { color: #4b5568 !important; }
+html:not(.dark) .cq-tabs button:hover { color: #0f172a !important; }
+html:not(.dark) .cq-tabs button.is-active { color: #0f172a !important; border-bottom-color: #111318 !important; }
+html:not(.dark) .cq-qnum { background: #f8fafb !important; color: #4b5568 !important; }
+html:not(.dark) .cq-crit-card { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .cq-crit-card .cq-weight { color: #0f172a !important; }
+html:not(.dark) .cq-crit-card .cq-weight-bar { background: #f8fafb !important; }
+html:not(.dark) .cq-crit-card .cq-weight-bar i { background: linear-gradient(135deg, #2a2e3a, #111318) !important; }
+html:not(.dark) .cq-qrow { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .cq-rule.is-ko { color: #0f172a !important; background: #ffffff !important; }
+html:not(.dark) .cq-rule.is-required { color: #8b7e4b !important; }
+html:not(.dark) .cq-rule.is-info { color: #0f172a !important; border-color: #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .cq-note { background: #f8fafb !important; border: 1px dashed #e8ecf1 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -4395,3 +4416,12 @@ html:not(.dark) .cl-tile.is-unfit strong { color: #b91c1c !important; }
 html:not(.dark) .cl-approval-note { color: #667085 !important; }
 
 /* v307 */
+
+/* Gespräche – Kampagnen-Bereich (hell): rote Akzente statt Lila */
+html:not(.dark) .cq-tabs button.is-active { color: #0f172a !important; border-bottom-color: #dc2626 !important; }
+html:not(.dark) .cq-facts .cq-fact.is-active { border-color: rgba(220, 38, 38, .45) !important; background: rgba(220, 38, 38, .05) !important; }
+html:not(.dark) .cq-crit-card .cq-weight { color: #b91c1c !important; }
+html:not(.dark) .cq-crit-card .cq-weight-bar { background: rgba(15, 23, 42, .06) !important; }
+html:not(.dark) .cq-crit-card .cq-weight-bar i { background: linear-gradient(90deg, #bc001d, #fb2c36) !important; }
+html:not(.dark) .cq-help-toggle { color: #b91c1c !important; }
+html:not(.dark) .cq-qnum { background: rgba(15, 23, 42, .06) !important; color: #475569 !important; }
