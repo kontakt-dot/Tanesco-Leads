@@ -2195,6 +2195,10 @@ html:not(.dark) .cq-rule.is-ko { color: #0f172a !important; background: #ffffff 
 html:not(.dark) .cq-rule.is-required { color: #8b7e4b !important; }
 html:not(.dark) .cq-rule.is-info { color: #0f172a !important; border-color: #e8ecf1 !important; background: #f8fafb !important; }
 html:not(.dark) .cq-note { background: #f8fafb !important; border: 1px dashed #e8ecf1 !important; }
+html:not(.dark) .cq-secondary-head small { color: #4b5568 !important; }
+html:not(.dark) .cq-secondary-head .cq-chevron { color: #4b5568 !important; }
+html:not(.dark) .cq-secondary-head:hover .cq-chevron { color: #0f172a !important; }
+html:not(.dark) .cq-secondary-body { border-top: 1px solid #e8ecf1 !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }

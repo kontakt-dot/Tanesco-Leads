@@ -189,6 +189,7 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
     window.history.replaceState(null, "", "/?page=Gespräche");
     const { view } = mount();
     await settle(400);
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-secondary-head")).find((node) => /AUFNAHMEN TESTEN/.test(node.textContent ?? ""))!); }); await settle(200); // Import-Bereich ist zweitrangig und eingeklappt
     const box = view.container.querySelector<HTMLTextAreaElement>(".cq-links textarea")!; expect(box).toBeTruthy();
     fireEvent.change(box, { target: { value: "https://download.example.de/getSound.aspx?token=abc&a=1\nkein link\nhttps://download.example.de/getSound.aspx?token=def&a=2 | +49 170 1234567 | Termin" } });
     const button = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-links button")).find((node) => /Aufnahmen holen/.test(node.textContent ?? ""))!;
@@ -222,6 +223,7 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     window.history.replaceState(null, "", "/?page=Gespräche");
     const { view } = mount();
     await settle(400);
+    const panels = Array.from(view.container.querySelectorAll<HTMLElement>("section.operations-panel")); expect(panels[0]?.className).toContain("cq-list-panel"); // Gesprächsliste zuerst
     const percents = Array.from(view.container.querySelectorAll(".flux-table tbody .cq-percent")).map((node) => node.textContent ?? "");
     expect(percents.length).toBeGreaterThan(0); expect(percents.some((text) => /\d+ %/.test(text))).toBe(true);
     const all = view.container.querySelectorAll(".flux-table tbody tr").length;
@@ -246,6 +248,8 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     const segment = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".dashboard-segments button")).find((node) => node.textContent && node.textContent !== "Alle" && !/Heute|Gestern|Tage|Gesamt/.test(node.textContent))!;
     expect(segment).toBeTruthy();
     await act(async () => { fireEvent.click(segment); }); await settle(400);
+    expect(view.container.querySelector(".cq-criteria-box")).toBeNull(); // Einstellungen sind eingeklappt – die Liste steht im Fokus
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-secondary-head")).find((node) => /KAMPAGNE EINSTELLEN/.test(node.textContent ?? ""))!); }); await settle(300);
     const box = view.container.querySelector(".cq-criteria-box")!; expect(box).toBeTruthy();
     expect(box.textContent).toContain("Standard-Kriterien");
     await act(async () => { fireEvent.click(box.querySelector<HTMLButtonElement>(".cq-edit-criteria")!); }); await settle(200);
