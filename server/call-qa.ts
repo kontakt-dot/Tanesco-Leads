@@ -258,7 +258,11 @@ async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typ
   if (/^text\/html|^application\/xhtml/i.test(contentType)) {
     // Der Link öffnet eine Player-Seite: darin den eigentlichen Datei-Link suchen (<audio src>, <source src>, Download-Link, .mp3/.wav im Quelltext)
     const html = await audioResponse.text(); const mediaUrl = findMediaUrl(html, call.recordingUrl);
-    if (!mediaUrl) throw new Error("Der Aufnahme-Link liefert eine Webseite (Player) und darin ist kein Datei-Link zu finden. Bitte die Aufnahme als Datei herunterladen und hochladen – oder den direkten mp3/wav-Link verwenden.");
+    if (!mediaUrl) {
+      // Direkt nach dem Gespräch ist die Aufnahme beim Anbieter oft noch nicht fertig – die Seite enthält dann noch keine Datei. Deshalb später automatisch erneut versuchen.
+      const pageText = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+      throw Object.assign(new Error(`Die Aufnahme ist unter dem Link noch nicht abrufbar: Die Seite enthält (noch) keine Audio-Datei${pageText ? ` – dort steht: „${pageText}“` : ""}. Meist ist die Aufnahme kurz nach dem Gespräch noch nicht fertig.`), { retryable: true });
+    }
     let mediaResponse: Response;
     try { mediaResponse = await fetchImpl(mediaUrl, { headers: { ...headers, referer: call.recordingUrl } }); } catch (error) { throw Object.assign(new Error(`Aufnahme-Datei hinter der Player-Seite konnte nicht geladen werden (${error instanceof Error ? error.message : String(error)}).`), { retryable: true }); }
     if (!mediaResponse.ok) throw new Error(`Aufnahme-Datei hinter der Player-Seite konnte nicht geladen werden (HTTP ${mediaResponse.status}, ${mediaUrl.slice(0, 120)}).`);
@@ -430,7 +434,7 @@ const retrying = new Set<number>();
  */
 export async function retryWaitingRecordings(db: Db, options: { fetchImpl?: typeof fetch; max?: number } = {}): Promise<{ retried: number; done: number }> {
   const since = new Date(Date.now() - 24 * 3_600_000);
-  const rows = await db.select({ id: callRecords.id, error: callRecords.error, updatedAt: callRecords.updatedAt }).from(callRecords).where(and(eq(callRecords.status, "fehlgeschlagen"), gte(callRecords.createdAt, since), like(callRecords.error, "%Neuer Versuch folgt automatisch%"))).orderBy(asc(callRecords.updatedAt)).limit(options.max ?? 10);
+  const rows = await db.select({ id: callRecords.id, error: callRecords.error, updatedAt: callRecords.updatedAt }).from(callRecords).where(and(eq(callRecords.status, "fehlgeschlagen"), gte(callRecords.createdAt, since), or(like(callRecords.error, "%Neuer Versuch folgt automatisch%"), like(callRecords.error, "%liefert eine Webseite (Player)%")))).orderBy(asc(callRecords.updatedAt)).limit(options.max ?? 10);
   let retried = 0; let done = 0;
   for (const row of rows) {
     const attempt = Number(/Versuch (\d+)\//.exec(row.error ?? "")?.[1]) || 1; const waitMs = Math.min(60, 2 ** attempt) * 60_000;

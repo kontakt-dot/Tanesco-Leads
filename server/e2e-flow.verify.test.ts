@@ -4221,6 +4221,17 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const { importRecordingLinks } = await import("./call-qa"); const { callRecords: callsTable } = await import("../drizzle/schema");
     S.transcriptVerbose = true; S.transcriptForStub = "Agent: Guten Tag, hier ist Maya Becker von HausKompass. Es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja, gerne – ich bin Eigentümer.";
     try {
+      // Aufnahme beim Anbieter noch nicht fertig: Player-Seite ohne Datei → später automatisch erneut versuchen, dann klappt es
+      { const { retryWaitingRecordings } = await import("./call-qa"); const { callRecords: waitTable } = await import("../drizzle/schema");
+        S.playerPage = `<html><body><p>Die Aufnahme wird noch verarbeitet.</p></body></html>`;
+        const early = await importRecordingLinks(db, S.tenantId, { text: "https://player.e2e.example/getSound.aspx?token=frueh&a=9002", campaign: "Link-Test" }, { waitFor: true });
+        const waiting = (await db.select().from(waitTable).where(eq(waitTable.id, early.callIds[0])))[0];
+        expect(waiting.status).toBe("fehlgeschlagen"); expect(waiting.error).toContain("noch nicht abrufbar"); expect(waiting.error).toContain("Die Aufnahme wird noch verarbeitet"); expect(waiting.error).toContain("Neuer Versuch folgt automatisch (Versuch 1/");
+        S.playerPage = `<html><body><audio controls src="https://player.e2e.example/recordings/9002.mp3"></audio></body></html>`;
+        await db.update(waitTable).set({ updatedAt: new Date(Date.now() - 10 * 60_000) }).where(eq(waitTable.id, early.callIds[0]));
+        expect((await retryWaitingRecordings(db, { max: 50 })).done).toBeGreaterThanOrEqual(1);
+        expect((await db.select().from(waitTable).where(eq(waitTable.id, early.callIds[0])))[0].status).toBe("bewertet");
+        await db.delete(waitTable).where(eq(waitTable.id, early.callIds[0])); }
       // Player-Seite statt Datei: der Datei-Link steht im Quelltext
       S.playerPage = `<html><body><audio controls src="https://player.e2e.example/recordings/9001.mp3"></audio></body></html>`;
       const result = await importRecordingLinks(db, S.tenantId, { text: "https://player.e2e.example/getSound.aspx?token=abc&a=9001 | +49 40 5550123 | Testlink", campaign: "Link-Test" }, { waitFor: true });
