@@ -262,3 +262,20 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     expect(after.querySelector(".cq-reset-criteria")).toBeTruthy();
   });
 });
+
+describe("Gespräche – „Zurück“ bleibt in Gespräche", () => {
+  it("Gespräch öffnen legt einen eigenen Verlaufsschritt an; Zurück führt zur Gesprächsliste", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    const before = window.history.length;
+    const row = view.container.querySelector<HTMLElement>(".cq-list-panel .flux-table tbody tr td:nth-child(3)")!; expect(row).toBeTruthy();
+    await act(async () => { fireEvent.click(row); }); await settle(400);
+    expect(window.location.search).toContain("callId="); expect(decodeURIComponent(window.location.search)).toContain("page=Gespräche");
+    expect(window.history.length).toBe(before + 1);
+    expect(view.container.querySelector(".cq-list-panel")).toBeNull();
+    await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 120)); }); await settle(300);
+    expect(window.location.search).not.toContain("callId="); expect(decodeURIComponent(window.location.search)).toContain("page=Gespräche");
+    expect(view.container.querySelector(".cq-list-panel")).toBeTruthy();
+  });
+});

@@ -4298,6 +4298,23 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect(await owner.leadops.deleteCallCampaign({ name: "Treppenlift Nord" })).toMatchObject({ deletedCalls: 2 });
     } finally { S.transcriptForStub = undefined; await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Filter-Kampagne"))); }
   }, 60000);
+  it("63zu. Gespräche: ähnlich klingende Agenten-Namen werden zusammengeführt; ähnlich klingender Firmenname und offener Zeitrahmen gehen durch", async () => {
+    const { importRecordingLinks, mergeSimilarAgentNames } = await import("./call-qa"); const { callRecords: callsTable } = await import("../drizzle/schema");
+    const tenantId = S.tenantId;
+    const mk = async (external: string, agentName: string) => Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: external, agentName, campaign: "Namen-Kampagne", startedAt: new Date(), durationSeconds: 60, consent: true, status: "bewertet", score: 80, decision: "freigegeben", decidedBy: "automatisch" }))[0].insertId);
+    try {
+      for (let i = 0; i < 3; i += 1) await mk(`namen-a-${i}`, "Lena Becker");
+      const decker = await mk("namen-b", "Lena Decker"); const pfeil = await mk("namen-c-1", "Tester Pfeil"); await mk("namen-c-2", "Tester Pfeil"); const feiles = await mk("namen-d", "Tester Feiles"); const hagen = await mk("namen-e", "Muster Hagen");
+      expect(await mergeSimilarAgentNames(db, tenantId)).toBeGreaterThanOrEqual(2);
+      const nameOf = async (id: number) => (await db.select({ agentName: callsTable.agentName }).from(callsTable).where(eq(callsTable.id, id)))[0].agentName;
+      expect(await nameOf(decker)).toBe("Lena Becker"); expect(await nameOf(feiles)).toBe("Tester Pfeil"); expect(await nameOf(pfeil)).toBe("Tester Pfeil"); expect(await nameOf(hagen)).toBe("Muster Hagen");
+      expect(await mergeSimilarAgentNames(db, tenantId)).toBe(0); // zweiter Lauf ändert nichts
+      // Neue Aufnahme: anders verstandener Name → wird dem bekannten Agenten zugeordnet
+      S.transcriptForStub = "Agent: Guten Tag, hier ist Lena Decker von Haus Campus. Kunde: Ja gerne, ich bin Eigentümer, eigentlich so schnell wie möglich.";
+      const result = await importRecordingLinks(db, tenantId, { text: "https://player.e2e.example/recordings/namen-1.mp3", campaign: "Namen-Kampagne" }, { waitFor: true }); expect(result.created).toBe(1);
+      expect(await nameOf(result.callIds[0])).toBe("Lena Becker");
+    } finally { S.transcriptForStub = undefined; await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Namen-Kampagne"))); }
+  }, 60000);
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

@@ -26,6 +26,7 @@ import { callQaCampaigns } from "../drizzle/schema";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
 import { detectTopic } from "../shared/call-topic";
+import { agentNameMerges, canonicalAgentName } from "../shared/agent-names";
 export { callPeriodRange, detectTopic, type CallPeriod };
 import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion } from "../shared/call-qualification";
 
@@ -94,7 +95,7 @@ export async function answerQualification(questions: QualificationQuestion[], tr
   if (!process.env.ANTHROPIC_API_KEY) return heuristic;
   try {
     const schema = { name: "qualifizierung", schema: { type: "object", additionalProperties: false, required: ["answers"], properties: { answers: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "answer", "note"], properties: { key: { type: "string" }, answer: { type: "string", enum: ["ja", "nein", "unklar"] }, note: { type: "string" } } } } } } };
-    const response = await invokeLLM({ model: "fast", maxTokens: 900, messages: [{ role: "system", content: `Beantworte die folgenden Fragen zu einem Verkaufsgespräch ausschließlich anhand des Transkripts mit ja, nein oder unklar und einem kurzen Beleg (note). Erfinde nichts.\n${questions.map((question) => `- ${question.key}: ${question.label}${question.hint ? ` (Hinweis: ${question.hint})` : ""}`).join("\n")}` }, { role: "user", content: `Transkript:\n"""\n${transcript.slice(0, 40_000)}\n"""` }], outputSchema: schema });
+    const response = await invokeLLM({ model: "fast", maxTokens: 900, messages: [{ role: "system", content: `Beantworte die folgenden Fragen zu einem Verkaufsgespräch ausschließlich anhand des Transkripts mit ja, nein oder unklar und einem kurzen Beleg (note). Erfinde nichts. Das Transkript stammt aus automatischer Spracherkennung: Firmen- und Eigennamen sind darin oft falsch geschrieben. Wird nach einem Namen gefragt und im Transkript steht etwas, das sich ähnlich anhört (z. B. „Haus Campus“ oder „Hauskompas“ statt „HausKompass“), gilt der Name als genannt – der Gesprächspartner versteht, was gemeint ist. Wird nach einem Zeitrahmen gefragt, muss der Kunde kein genaues Datum nennen: sinngemäße Zusagen wie „so schnell wie möglich“ oder „zeitnah“ zählen als ja.\n${questions.map((question) => `- ${question.key}: ${question.label}${question.hint ? ` (Hinweis: ${question.hint})` : ""}`).join("\n")}` }, { role: "user", content: `Transkript:\n"""\n${transcript.slice(0, 40_000)}\n"""` }], outputSchema: schema });
     const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as { answers?: Array<{ key: string; answer: string; note?: string }> };
     const out: Record<string, QualificationAnswer> = { ...heuristic };
     for (const item of parsed.answers ?? []) if (questions.some((question) => question.key === item.key) && ["ja", "nein", "unklar"].includes(item.answer)) out[item.key] = { answer: item.answer as QualificationAnswer["answer"], note: String(item.note ?? "").slice(0, 240) };
@@ -344,11 +345,28 @@ export function detectAgentName(transcript: string): string | null {
   for (const pattern of patterns) { const match = head.match(pattern); if (match) { const cleaned = cleanAgentName(match[1]); if (cleaned) return cleaned; } }
   return null;
 }
-const NOT_NAMES = /^(guten|hallo|schönen|ja|nein|vielen|danke|herr|frau|agent|kunde|sprecher|photovoltaik|angebotsvergleich|hauskompass|firma)$/i;
+const NOT_NAMES = /^(guten|hallo|schönen|ja|nein|vielen|danke|herr|frau|agent|kunde|sprecher|photovoltaik|angebotsvergleich|hauskompass|firma|woche|wochen|tag|morgen|abend|mittag|heute|moment|bitte|genau|okay|gerne)$/i;
 export function cleanAgentName(raw: string): string | null {
   const all = raw.replace(/[^A-Za-zÄÖÜäöüß\- ]/g, " ").trim().split(/\s+/).filter(Boolean);
   const words: string[] = []; for (const word of all) { if (!/^[A-ZÄÖÜ]/.test(word) || NOT_NAMES.test(word)) { if (words.length) break; continue; } words.push(word); } // nur großgeschriebene Wörter am Stück („Maya Becker“, nicht „von“)
   if (words.length < 1 || words.length > 3) return null; const value = words.join(" "); return value.length >= 3 && value.length <= 60 ? value : null;
+}
+/** Bekannte Agenten-Namen des Mandanten mit Anzahl Gespräche. */
+async function knownAgentNames(db: Db, tenantId: number) {
+  const rows = await db.select({ name: callRecords.agentName, count: sql<number>`count(*)` }).from(callRecords).where(eq(callRecords.tenantId, tenantId)).groupBy(callRecords.agentName);
+  return rows.filter((row): row is { name: string; count: number } => Boolean(row.name && row.name.trim())).map((row) => ({ name: row.name, count: Number(row.count) }));
+}
+/** Aus der Aufnahme erkannter Name → schon bekannter Agent, wenn er nur anders verstanden wurde (Maja Decker → Maja Becker). */
+async function resolveAgentName(db: Db, tenantId: number, name: string | null | undefined): Promise<string | null> {
+  const clean = (name ?? "").trim(); if (!clean) return null;
+  return canonicalAgentName(clean, await knownAgentNames(db, tenantId).catch(() => []));
+}
+/** Aufräumen (beim Start und nach jeder Bewertung): ähnlich klingende Agenten-Namen je Mandant zusammenführen – der häufigste Name bleibt. */
+export async function mergeSimilarAgentNames(db: Db, onlyTenantId?: number): Promise<number> {
+  const tenants = onlyTenantId ? [onlyTenantId] : (await db.selectDistinct({ tenantId: callRecords.tenantId }).from(callRecords)).map((row) => row.tenantId);
+  let changed = 0;
+  for (const tenantId of tenants) for (const merge of agentNameMerges(await knownAgentNames(db, tenantId))) { await db.update(callRecords).set({ agentName: merge.to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.agentName, merge.from))); changed += 1; }
+  return changed;
 }
 /** Thema → Lead-Kategorie des Mandanten: vorhandene Kategorie mit passendem Namen, sonst neu anlegen (z. B. KI erkennt „Treppenlift“). */
 export async function resolveCallCategory(db: Db, tenantId: number, topic: string | null | undefined): Promise<number | null> {
@@ -371,7 +389,7 @@ export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" |
   const extractFields = (Array.isArray(config.extractFields) ? config.extractFields : []) as ExtractField[];
   const totalWeight = criteria.reduce((sum, criterion) => sum + criterion.weight, 0) || 1;
   const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted", "agentName", "topic"], properties: { agentName: { type: "string", description: "Name, mit dem sich der Mitarbeiter/Agent am Anfang vorstellt (z. B. „Maya Becker“); leer, wenn er nicht genannt wird" }, topic: { type: "string", description: "Worum geht es im Gespräch – das Produkt/Thema als kurzer Begriff in der Einzahl, z. B. „Photovoltaik“, „Wärmepumpe“, „Alarmanlage“, „Treppenlift“; geht es um zwei Themen, beide mit „ & “ verbinden (z. B. „Photovoltaik & Wärmepumpe“); leer, wenn unklar" }, criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
-  const system = `Du bewertest Verkaufsgespräche eines Callcenters, das Anfragen (Leads) für Fachbetriebe qualifiziert. Bewerte NUR anhand des Transkripts, erfinde nichts. Bewertungskriterien (0 = gar nicht erfüllt, 10 = vollständig erfüllt), jeweils mit wörtlichem Beleg aus dem Gespräch:\n${criteria.map((criterion) => `- ${criterion.key}: ${criterion.label} – ${criterion.description}`).join("\n")}\nWarnsignale (redFlags), die den Lead unverkäuflich machen: Kunde will nicht kontaktiert werden, widerruft, Daten sind falsch, Gespräch war unzulässig (Werbeanruf ohne Einwilligung), Kunde ist Minderjähriger, Agent hat Druck ausgeübt oder Falsches versprochen.\nUrteil: verkaufbar = Kunde will ein Angebot und die Weitergabe ist erlaubt; nachfassen = Interesse, aber offene Punkte; nicht_verkaufbar = kein Interesse oder Warnsignal; unklar = Transkript unvollständig.${extractFields.length ? `\nZusätzlich beantworte diese Fragen aus dem Gespräch (extracted, leer lassen wenn nicht genannt):\n${extractFields.map((field) => `- ${field.key}: ${field.question}`).join("\n")}` : "\nextracted bleibt eine leere Liste."}\nAntworte ausschließlich auf Deutsch.${config.instructions ? `\nZusätzliche Vorgaben des Mandanten: ${config.instructions}` : ""}${examples.length ? `\nBeispiele für die gewünschte Einordnung:\n${examples.slice(0, 8).map((example, index) => `Beispiel ${index + 1} (${example.title}): Auszug: "${example.transcript.slice(0, 600)}" → Urteil: ${example.verdict}. Begründung: ${example.reason}`).join("\n")}` : ""}`;
+  const system = `Du bewertest Verkaufsgespräche eines Callcenters, das Anfragen (Leads) für Fachbetriebe qualifiziert. Bewerte NUR anhand des Transkripts, erfinde nichts. Das Transkript stammt aus automatischer Spracherkennung: Firmen- und Eigennamen sind darin oft falsch geschrieben. Wird nach einem Namen gefragt und im Transkript steht etwas, das sich ähnlich anhört (z. B. „Haus Campus“ oder „Hauskompas“ statt „HausKompass“), gilt der Name als genannt – der Gesprächspartner versteht, was gemeint ist. Bewertungskriterien (0 = gar nicht erfüllt, 10 = vollständig erfüllt), jeweils mit wörtlichem Beleg aus dem Gespräch:\n${criteria.map((criterion) => `- ${criterion.key}: ${criterion.label} – ${criterion.description}`).join("\n")}\nWarnsignale (redFlags), die den Lead unverkäuflich machen: Kunde will nicht kontaktiert werden, widerruft, Daten sind falsch, Gespräch war unzulässig (Werbeanruf ohne Einwilligung), Kunde ist Minderjähriger, Agent hat Druck ausgeübt oder Falsches versprochen.\nUrteil: verkaufbar = Kunde will ein Angebot und die Weitergabe ist erlaubt; nachfassen = Interesse, aber offene Punkte; nicht_verkaufbar = kein Interesse oder Warnsignal; unklar = Transkript unvollständig.${extractFields.length ? `\nZusätzlich beantworte diese Fragen aus dem Gespräch (extracted, leer lassen wenn nicht genannt):\n${extractFields.map((field) => `- ${field.key}: ${field.question}`).join("\n")}` : "\nextracted bleibt eine leere Liste."}\nAntworte ausschließlich auf Deutsch.${config.instructions ? `\nZusätzliche Vorgaben des Mandanten: ${config.instructions}` : ""}${examples.length ? `\nBeispiele für die gewünschte Einordnung:\n${examples.slice(0, 8).map((example, index) => `Beispiel ${index + 1} (${example.title}): Auszug: "${example.transcript.slice(0, 600)}" → Urteil: ${example.verdict}. Begründung: ${example.reason}`).join("\n")}` : ""}`;
   const user = `${context.leadCategory ? `Lead-Kategorie: ${context.leadCategory}\n` : ""}${context.leadName ? `Kunde laut Lead: ${context.leadName}\n` : ""}Transkript:\n"""\n${transcript.slice(0, 60_000)}\n"""`;
   const response = await invokeLLM({ messages: [{ role: "system", content: system }, { role: "user", content: user }], outputSchema: schema, maxTokens: 2500 });
   const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as Partial<Omit<Evaluation, "extracted">> & { extracted?: Array<{ key: string; value: string }> | Record<string, string> };
@@ -432,12 +450,12 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     if (!transcript.trim()) throw new Error("Transkript ist leer.");
     // Dauer aus der Transkription und Name des Mitarbeiters aus der Vorstellung („hier ist Maya Becker …“) – nur, wenn der Dialer nichts geliefert hat
     const durationSeconds = call.durationSeconds ?? (freshTranscript ? lastTranscriptionDuration : null) ?? null;
-    const agentName = call.agentName?.trim() || detectAgentName(transcript);
+    const agentName = call.agentName?.trim() || (await resolveAgentName(db, call.tenantId, detectAgentName(transcript)));
     await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName && !call.agentName ? { agentName } : {}) }).where(eq(callRecords.id, callId));
     const lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
     const own = await criteriaForCampaign(db, call.tenantId, call.campaign, config); // Kriterien der Kampagne (sonst Standard)
     const evaluation = await evaluateTranscript({ ...config, criteria: own.criteria, instructions: own.instructions }, transcript, { leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : null });
-    if (!agentName && evaluation.agentName) await db.update(callRecords).set({ agentName: evaluation.agentName }).where(eq(callRecords.id, callId));
+    if (!agentName && evaluation.agentName) { const resolved = await resolveAgentName(db, call.tenantId, evaluation.agentName); if (resolved) await db.update(callRecords).set({ agentName: resolved }).where(eq(callRecords.id, callId)); }
     // Lead-Kategorie: Thema laut KI (sonst Stichwörter) → vorhandene Kategorie oder neue
     if (!call.leadCategoryId) { const categoryId = await resolveCallCategory(db, call.tenantId, evaluation.topic || detectTopic(transcript)).catch(() => null); if (categoryId) await db.update(callRecords).set({ leadCategoryId: categoryId }).where(eq(callRecords.id, callId)); }
     const decided = decideCall(config, evaluation, transcript); let decision = decided.decision; const rule = decided.rule;
@@ -560,8 +578,11 @@ export async function refreshPresetConfigs(db: Db): Promise<number> {
     const same = JSON.stringify(merged) === JSON.stringify(current) && row.instructions === preset.instructions; if (same) continue;
     await db.update(callQaConfigs).set({ criteria: merged, instructions: preset.instructions, defaultQuestions: preset.questions }).where(eq(callQaConfigs.id, row.id));
     const presetKeys = new Set(preset.questions.map((question) => question.key));
-    for (const campaign of await db.select({ id: callQaCampaigns.id, questions: callQaCampaigns.questions }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, row.tenantId))) {
+    for (const campaign of await db.select({ id: callQaCampaigns.id, questions: callQaCampaigns.questions, criteria: callQaCampaigns.criteria }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, row.tenantId))) {
       const qs = normalizeQuestions(campaign.questions as QualificationQuestion[] | null); if (qs.length && qs.every((question) => presetKeys.has(question.key))) await db.update(callQaCampaigns).set({ questions: preset.questions }).where(eq(callQaCampaigns.id, campaign.id));
+      // Eigene Kriterien der Kampagne, die aus der Vorlage stammen: Texte mitziehen, Gewichte behalten
+      const own = (Array.isArray(campaign.criteria) ? campaign.criteria : []) as Criterion[]; const ownKeys = new Set(own.map((c) => c.key));
+      if (own.length === preset.criteria.length && preset.criteria.every((c) => ownKeys.has(c.key))) await db.update(callQaCampaigns).set({ criteria: preset.criteria.map((c) => ({ ...c, weight: own.find((item) => item.key === c.key)?.weight ?? c.weight })) }).where(eq(callQaCampaigns.id, campaign.id));
     }
     changed += 1;
   }
