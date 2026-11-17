@@ -4242,8 +4242,24 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await db.update(callsTable).set({ campaign: "Wattfox PV" }).where(eq(callsTable.id, result.callIds[0]));
       expect(await ensureWattfoxCampaign(db)).toBe(1);
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe(WATTFOX_CAMPAIGN);
-      expect(((await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN))))[0].questions as Array<{ key: string }>).map((q) => q.key)).toContain("uebergabe_angebotsvergleich");
+      const wattfoxRow = async () => (await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN))))[0];
+      const wattfoxKeys = async () => ((await wattfoxRow()).questions as Array<{ key: string }>).map((q) => q.key);
+      expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "pv_dachflaeche_20qm", "wp_kein_erdgas"]); // neue Wattfox-Regeln, die alten Fragen sind weg
+      expect(((await wattfoxRow()).criteria as Array<{ key: string }>).map((c) => c.key)).toContain("pv_dachflaeche");
+      expect((await wattfoxRow()).instructions).toContain("Kampagne Wattfox");
+      // Alles vom Dialer landet künftig in dieser Kampagne
+      expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign).toBe(WATTFOX_CAMPAIGN);
+      expect((await owner.leadops.callQaCampaignSummary({ campaign: WATTFOX_CAMPAIGN })).defaultCampaign).toBe(WATTFOX_CAMPAIGN);
       expect(await ensureWattfoxCampaign(db)).toBe(0);
+      // Bestand mit den alten Vorlagen-Fragen wird einmal auf die neuen Regeln umgestellt
+      await db.update(cqTable).set({ questions: PV_HAUSKOMPASS_PRESET.questions, criteria: null, instructions: null }).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
+      expect(await ensureWattfoxCampaign(db)).toBe(1); expect(await wattfoxKeys()).toContain("wp_kein_erdgas"); expect(await ensureWattfoxCampaign(db)).toBe(0);
+      // Vom Mandanten selbst angepasste Fragen bleiben unangetastet
+      await owner.leadops.saveCallQaCampaign({ name: WATTFOX_CAMPAIGN, questions: [{ label: "Eigene Frage des Mandanten?", rule: "ko", onlyFor: "photovoltaik", hint: "Eigener Hinweis" }] });
+      expect(await ensureWattfoxCampaign(db)).toBe(0);
+      expect((await wattfoxRow()).questions).toMatchObject([{ label: "Eigene Frage des Mandanten?", rule: "ko", onlyFor: "photovoltaik", hint: "Eigener Hinweis" }]); // Regel, Hinweis und „nur Photovoltaik“ bleiben beim Speichern erhalten
+      expect(await owner.leadops.setCallQaDefaultCampaign({ campaign: null })).toMatchObject({ defaultCampaign: null }); // für die übrigen Tests wieder: Kampagne laut Dialer
+      await db.delete(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
       // Vorlage nur für eine Kampagne
       expect(await owner.leadops.applyPresetToCampaign({ preset: "pv-hauskompass", campaign: "Nur-Hier" })).toMatchObject({ success: true, questions: PV_HAUSKOMPASS_PRESET.questions.length });
       await db.update(callsTable).set({ campaign: "Link-Test" }).where(eq(callsTable.id, result.callIds[0]));

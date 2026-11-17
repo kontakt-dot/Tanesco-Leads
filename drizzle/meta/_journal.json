@@ -743,6 +743,13 @@
       "when": 1795100000000,
       "tag": "0105_gespraeche_kampagnen_kriterien",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "5",
+      "when": 1795200000000,
+      "tag": "0106_gespraeche_standard_kampagne",
+      "breakpoints": true
     }
   ]
 }

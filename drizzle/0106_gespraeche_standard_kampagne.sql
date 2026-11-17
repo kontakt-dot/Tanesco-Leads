@@ -1,0 +1,1 @@
+ALTER TABLE `callQaConfigs` ADD `defaultCampaign` varchar(160);

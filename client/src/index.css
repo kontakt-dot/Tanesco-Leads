@@ -4104,3 +4104,10 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cq-tool:hover{color:#e2e8f0;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}
 .cq-dialog{width:min(1180px,94vw)!important;max-width:min(1180px,94vw)!important;max-height:90vh;overflow:auto;padding:24px 26px!important;gap:14px!important}
 .cq-dialog .cq-campaign{padding-top:4px}
+
+/* Gespräche: Belege vollständig – zwei Zeilen, Rest aufklappbar */
+.cq-expand{display:block}
+.cq-expand.is-clamped .cq-expand-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cq-expand-toggle{display:inline-block;margin-top:2px;font-size:11px;font-weight:600;color:#a5b4fc;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.qa-question .qa-note{font-size:12px;line-height:1.45;color:#94a3b8;margin-top:2px}
+.qa-question small{display:block;white-space:normal;overflow:visible;text-overflow:clip}
