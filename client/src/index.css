@@ -4113,3 +4113,6 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .qa-question small{display:block;white-space:normal;overflow:visible;text-overflow:clip}
 
 .cq-error-text{color:#fcd34d}
+
+.cq-mood.has-percent .cq-fraction{font-size:9.5px;line-height:1;color:#94a3b8;white-space:nowrap}
+.cq-mood.is-lg.has-percent .cq-fraction{font-size:11px}

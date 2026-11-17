@@ -4255,8 +4255,21 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe(WATTFOX_CAMPAIGN);
       const wattfoxRow = async () => (await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN))))[0];
       const wattfoxKeys = async () => ((await wattfoxRow()).questions as Array<{ key: string }>).map((q) => q.key);
-      expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "pv_dachflaeche_20qm", "wp_kein_erdgas"]); // neue Wattfox-Regeln, die alten Fragen sind weg
-      expect(((await wattfoxRow()).criteria as Array<{ key: string }>).map((c) => c.key)).toContain("pv_dachflaeche");
+      expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]); // neue Wattfox-Regeln, die alten Fragen sind weg
+      expect(((await wattfoxRow()).criteria as Array<{ key: string }>).map((c) => c.key)).toEqual(["interesse", "entscheider", "zeitrahmen", "wp_kein_erdgas", "hauskompass"]);
+      // Stand von gestern (noch mit Dachfläche als Frage und Kriterium, eigene Gewichte) → beim Start fällt die Dachfläche weg, die Vorlagen-Gewichte gelten
+      { const { WATTFOX_PRESET } = await import("../shared/call-qa-presets"); const { refreshCampaignPresets } = await import("./call-qa");
+        await db.update(cqTable).set({ questions: [...WATTFOX_PRESET.questions, { key: "pv_dachflaeche_20qm", label: "Photovoltaik: Ist die Dachfläche größer als 20 m²?", rule: "ko", onlyFor: "photovoltaik" }], criteria: [...WATTFOX_PRESET.criteria.map((c) => ({ ...c, weight: 20 })), { key: "pv_dachflaeche", label: "Photovoltaik: Dachfläche größer als 20 m²", weight: 15, description: "alt" }] }).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
+        expect(await refreshCampaignPresets(db)).toBe(1);
+        expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]);
+        expect(((await wattfoxRow()).criteria as Array<{ key: string; weight: number }>).map((c) => [c.key, c.weight])).toEqual(WATTFOX_PRESET.criteria.map((c) => [c.key, c.weight]));
+        expect(await refreshCampaignPresets(db)).toBe(0); }
+      // Mehrere Gespräche auf einmal neu bewerten (nach geänderten Regeln)
+      { const { reevaluateCalls } = await import("./call-qa");
+        expect(await reevaluateCalls(db, S.tenantId, [result.callIds[0]], { waitFor: true })).toEqual({ queued: 1 });
+        const again = (await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0]; expect(again.status).toBe("bewertet");
+        expect(Object.keys(again.qualificationAnswers as Record<string, unknown>).sort()).toEqual(["eigentuemer_entscheider", "interesse_produkt", "umsetzung_6_monate", "wp_kein_erdgas"]);
+        const listed = (await owner.leadops.listCalls({ campaign: WATTFOX_CAMPAIGN })).find((row) => row.id === result.callIds[0])!; expect(listed.fulfilment).toMatchObject({ total: 4 }); }
       expect((await wattfoxRow()).instructions).toContain("Kampagne Wattfox");
       // Alles vom Dialer landet künftig in dieser Kampagne
       expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign).toBe(WATTFOX_CAMPAIGN);

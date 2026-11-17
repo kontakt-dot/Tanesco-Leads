@@ -1,37 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { answerQuestionsHeuristically, decideByQuestions, isCallback, normalizeQuestions } from "../shared/call-qualification";
+import { answerQuestionsHeuristically, decideByQuestions, isCallback, normalizeQuestions, questionFulfilment } from "../shared/call-qualification";
 import { presetByKey } from "../shared/call-qa-presets";
 
 const preset = presetByKey("wattfox-pv-wp")!;
 const questions = normalizeQuestions(preset.questions);
 
 describe("Wattfox PV und WP – Regeln der Kampagne", () => {
-  it("hat genau die fünf gewünschten K.-o.-Fragen und behält „nur Photovoltaik / nur Wärmepumpe“", () => {
-    expect(questions.map((question) => question.key)).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "pv_dachflaeche_20qm", "wp_kein_erdgas"]);
+  it("hat genau die vier gewünschten K.-o.-Fragen – die Dachfläche ist raus", () => {
+    expect(questions.map((question) => question.key)).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]);
     expect(questions.every((question) => question.rule === "ko")).toBe(true);
-    expect(questions.find((question) => question.key === "pv_dachflaeche_20qm")?.onlyFor).toBe("photovoltaik");
     expect(questions.find((question) => question.key === "wp_kein_erdgas")?.onlyFor).toBe("waermepumpe");
     expect(questions.every((question) => (question.hint ?? "").length > 20)).toBe(true); // Hinweise werden nicht mehr abgeschnitten
+    expect(preset.criteria.map((criterion) => criterion.key)).toEqual(["interesse", "entscheider", "zeitrahmen", "wp_kein_erdgas", "hauskompass"]);
+    expect(preset.criteria.reduce((sum, criterion) => sum + criterion.weight, 0)).toBe(100);
+    expect(preset.instructions).not.toMatch(/Dachfläche ist größer/); expect(preset.instructions).toContain("kostenlos und unverbindlich");
+    expect(preset.retiredQuestionKeys).toEqual(["pv_dachflaeche_20qm"]);
   });
 
-  it("Photovoltaik-Gespräch mit großem Dach: alles erfüllt, Wärmepumpen-Frage entfällt → freigegeben", () => {
-    const transcript = "Agent: Es geht um Ihre Photovoltaikanlage. Kunde: Ja, ich habe Interesse, ich bin Eigentümer, das Dach hat etwa 60 Quadratmeter, eigentlich so schnell wie möglich.";
+  it("nur Photovoltaik reicht als Interesse: alles erfüllt, Wärmepumpen-Frage entfällt → freigegeben (auch mit kleinem Dach)", () => {
+    const transcript = "Agent: Es geht um Ihre Photovoltaikanlage. Kunde: Ja, ich habe Interesse, ich bin Eigentümer, das Dach hat nur 15 qm, eigentlich so schnell wie möglich.";
     const answers = answerQuestionsHeuristically(questions, transcript);
-    expect(answers.pv_dachflaeche_20qm).toMatchObject({ answer: "ja" });
+    expect(answers.interesse_produkt.answer).toBe("ja");
     expect(answers.wp_kein_erdgas).toMatchObject({ answer: "ja" }); expect(answers.wp_kein_erdgas.note).toContain("Entfällt");
     expect(decideByQuestions(questions, answers)?.decision).toBe("freigegeben");
+    expect(questionFulfilment(questions, answers)).toMatchObject({ yes: 4, total: 4, percent: 100 });
   });
 
-  it("Photovoltaik mit zu kleinem Dach → zurückgewiesen", () => {
-    const transcript = "Agent: Es geht um Photovoltaik. Kunde: Ja gerne, ich bin Eigentümer, zeitnah. Das Dach hat aber nur 15 qm.";
-    const answers = answerQuestionsHeuristically(questions, transcript);
-    expect(answers.pv_dachflaeche_20qm.answer).toBe("nein");
-    expect(decideByQuestions(questions, answers)?.decision).toBe("zurueckgewiesen");
-  });
-
-  it("Wärmepumpen-Gespräch: Dachfläche entfällt; Erdgas-Wärmepumpe als Hauptinteresse → zurückgewiesen", () => {
+  it("nur Wärmepumpe reicht als Interesse; Erdgas-Wärmepumpe als Hauptinteresse → zurückgewiesen", () => {
     const ok = answerQuestionsHeuristically(questions, "Agent: Es geht um eine Wärmepumpe. Kunde: Ja, Interesse habe ich, ich bin Eigentümer, so schnell wie möglich.");
-    expect(ok.pv_dachflaeche_20qm.note).toContain("Entfällt"); expect(ok.wp_kein_erdgas.answer).toBe("ja");
+    expect(ok.interesse_produkt.answer).toBe("ja"); expect(ok.wp_kein_erdgas.answer).toBe("ja");
     expect(decideByQuestions(questions, ok)?.decision).toBe("freigegeben");
     const gas = answerQuestionsHeuristically(questions, "Agent: Es geht um eine Wärmepumpe. Kunde: Ja, ich bin Eigentümer, zeitnah, mich interessiert vor allem eine Erdgas-Wärmepumpe.");
     expect(gas.wp_kein_erdgas.answer).toBe("nein");
@@ -48,5 +45,16 @@ describe("Rückruf erkennen – Firmenname muss nicht noch einmal fallen", () =>
   it("normales Erstgespräch ohne Namen bleibt ein Nein", () => {
     const text = "Agent: Guten Tag, es geht um Ihre Photovoltaikanlage. Kunde: Ja?";
     expect(isCallback(text)).toBe(false); expect(answerQuestionsHeuristically(question, text).hauskompass_genannt.answer).toBe("nein");
+  });
+});
+
+describe("Zahl unter dem Smiley: Anteil erfüllter Prüffragen", () => {
+  it("zählt nur entscheidende Fragen (K.-o./Pflicht); alles Ja = 100 %", () => {
+    const all = Object.fromEntries(questions.map((question) => [question.key, { answer: "ja" as const }]));
+    expect(questionFulfilment(questions, all)).toMatchObject({ yes: 4, total: 4, percent: 100 });
+    expect(questionFulfilment(questions, { ...all, umsetzung_6_monate: { answer: "unklar" }, eigentuemer_entscheider: { answer: "nein" } })).toMatchObject({ yes: 2, no: 1, unclear: 1, total: 4, percent: 50 });
+    const mixed = [{ key: "a", label: "A?", rule: "ko" as const }, { key: "b", label: "B?", rule: "info" as const }];
+    expect(questionFulfilment(mixed, { a: { answer: "ja" }, b: { answer: "nein" } })).toMatchObject({ yes: 1, total: 1, percent: 100 }); // Info-Fragen zählen nicht
+    expect(questionFulfilment(questions, null)).toBeNull(); expect(questionFulfilment(questions, {})).toBeNull();
   });
 });

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { agentNameMerges, canonicalAgentName, sameAgentName } from "../shared/agent-names";
 
 describe("Agenten-Namen: ähnlich klingende Namen sind dieselbe Person", () => {
-  it.each([["Maja Becker", "Maja Decker"], ["Maya Becker", "Maja Becker"], ["David Pfeil", "David Feiles"], ["Monika Hansen", "Miriam Hansen"], ["Sabine Hagen", "Sabine Hagn"], ["Vanessa Schiffer", "Wanessa Schiffer"]])("%s = %s", (a, b) => { expect(sameAgentName(a, b)).toBe(true); expect(sameAgentName(b, a)).toBe(true); });
-  it.each([["Maja Becker", "Sabine Hagen"], ["Maja Becker", "David Pfeil"], ["Monika Hansen", "Vanessa Schiffer"], ["Sabine Hagen", "Monika Hansen"], ["Woche", "Maja Becker"], ["David Pfeil", "Daniel Schmidt"], ["Thomas Müller", "Petra Müller"]])("%s ≠ %s", (a, b) => { expect(sameAgentName(a, b)).toBe(false); });
+  it.each([["Maja Becker", "Maja Decker"], ["Maya Becker", "Maja Becker"], ["David Pfeil", "David Feiles"], ["Monika Hansen", "Miriam Hansen"], ["Sabine Hagen", "Sabine Hagn"], ["Vanessa Schiffer", "Wanessa Schiffer"], ["Vanessa Schiffer", "Nesta Schiffer"], ["Thomas Müller", "Petra Müller"]])("%s = %s", (a, b) => { expect(sameAgentName(a, b)).toBe(true); expect(sameAgentName(b, a)).toBe(true); });
+  it.each([["Maja Becker", "Sabine Hagen"], ["Maja Becker", "David Pfeil"], ["Monika Hansen", "Vanessa Schiffer"], ["Sabine Hagen", "Monika Hansen"], ["Woche", "Maja Becker"], ["David Pfeil", "Daniel Schmidt"]])("%s ≠ %s", (a, b) => { expect(sameAgentName(a, b)).toBe(false); });
   it("neuer Name wird dem bekannten zugeordnet, der häufigere gewinnt", () => {
     const known = [{ name: "Maja Becker", count: 6 }, { name: "David Pfeil", count: 2 }, { name: "Monika Hansen", count: 3 }];
     expect(canonicalAgentName("Maja Decker", known)).toBe("Maja Becker"); expect(canonicalAgentName("David Feiles", known)).toBe("David Pfeil"); expect(canonicalAgentName("Miriam Hansen", known)).toBe("Monika Hansen"); expect(canonicalAgentName("Sabine Hagen", known)).toBe("Sabine Hagen");

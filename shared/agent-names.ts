@@ -23,7 +23,7 @@ export function sameAgentName(a: string, b: string): boolean {
   const firstA = sound(partsA[0]); const firstB = sound(partsB[0]); const lastA = sound(partsA[partsA.length - 1]); const lastB = sound(partsB[partsB.length - 1]);
   if (!firstA || !firstB || !lastA || !lastB) return false;
   if (firstA === firstB) return close(lastA, lastB); // gleicher Vorname, Nachname ähnlich (Becker/Decker, Pfeil/Feiles)
-  if (lastA === lastB) return close(firstA, firstB) || firstA[0] === firstB[0]; // gleicher Nachname, Vorname ähnlich oder gleicher Anfangsbuchstabe (Monika/Miriam Hansen)
+  if (lastA === lastB) return true; // gleicher Nachname = immer derselbe Agent (Vanessa/Nesta Schiffer, Monika/Miriam Hansen) – so gewünscht
   return distance(firstA, firstB) <= 1 && distance(lastA, lastB) <= 1; // beides leicht verhört
 }
 
