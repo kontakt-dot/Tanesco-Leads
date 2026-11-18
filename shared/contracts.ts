@@ -3,6 +3,7 @@
  * Unterschriften-Seite (Kunde) und die unterschriebene Fassung mit Nachweis. Server und Chat-Build nutzen dieselbe Datei.
  */
 import { COMPANY_FOOTER, COMPANY_WEBSITE, TANESCO_LOGO_PATH, newBlockId } from "./email-design";
+import { proofEvents } from "./contract-tracking";
 
 export type ContractBlock =
   | { id: string; type: "heading"; text: string }
@@ -25,7 +26,7 @@ export const CONTRACT_EVENT_LABEL: Record<ContractEventKind, string> = { erstell
 /** Werte für Platzhalter: {{firma}}, {{name}}, {{email}}, {{strasse}}, {{plzOrt}}, {{anbieterFirma}}, {{anbieterAdresse}}, {{anbieterVertreter}}, {{datum}}, {{titel}} – plus die Vertragsangaben des Anbieters und die Felder des Kunden ({{key}}). */
 export type ContractValues = Record<string, string>;
 export type ContractSignature = { name: string; image: string | null; signedAt: Date | string; ip?: string | null; userAgent?: string | null; documentHash?: string | null; signedHash?: string | null };
-export type ContractEventView = { kind: ContractEventKind; note?: string | null; ip?: string | null; createdAt: Date | string };
+export type ContractEventView = { kind: ContractEventKind; note?: string | null; ip?: string | null; createdAt: Date | string; userAgent?: string | null; /** Verlauf beim Kunden: wie die Seite erreicht wurde, wie lange gelesen (Sekunden), wie weit (0–100 %) */ source?: string | null; seconds?: number | null; depth?: number | null };
 export type ContractDesign = { primaryColor?: string; logoUrl?: string | null; anbieterUnterschrift?: string | null /* eingebettetes Bild der eigenen Unterschrift */ };
 export const DEFAULT_CONTRACT_DESIGN: Required<Pick<ContractDesign, "primaryColor">> & ContractDesign = { primaryColor: "#bc001d", logoUrl: TANESCO_LOGO_PATH, anbieterUnterschrift: null };
 
@@ -79,76 +80,118 @@ export const DETAIL_PRESETS: Record<string, string[]> = {
   leadart: ["Photovoltaik", "Wärmepumpe", "Photovoltaik und Wärmepumpe", "Photovoltaik mit Speicher"],
   preis: ["49 €", "59 €", "69 €", "79 €", "89 €", "99 €"],
   kennenlernen: ["die ersten 10 Leads sind kostenlos", "die ersten 20 Leads sind kostenlos", "es gibt kein kostenloses Test-Kontingent"],
+  abrechnung: ["wöchentlich", "alle 14 Tage", "monatlich"],
   dauer: ["2 Wochen", "4 Wochen", "6 Wochen", "3 Monate"],
   umfang: ["bis zu 10 Leads", "bis zu 20 Leads", "bis zu 50 Leads"],
   beginn: ["mit Unterzeichnung dieser Vereinbarung", "am Ersten des Folgemonats"],
   konditionen: ["alle Leads in der Testphase sind kostenlos", "die ersten 10 Leads kostenlos, danach 49 € je Lead netto", "halber Preis je Lead während der Testphase"],
-  danach: ["Fortsetzung nur nach schriftlicher Bestätigung beider Seiten", "automatische Fortsetzung zum regulären Preis, jederzeit mit 14 Tagen zum Monatsende kündbar", "die Zusammenarbeit endet ohne weitere Pflichten"],
+  danach: ["Fortsetzung nur nach Bestätigung beider Seiten in Textform", "automatische Fortsetzung zum regulären Preis, jederzeit mit 14 Tagen zum Monatsende kündbar", "die Zusammenarbeit endet ohne weitere Pflichten"],
 };
 export const isRegionDetail = (block: { key: string; label: string }) => block.key === "liefergebiet" || /liefergebiet|region|gebiet/i.test(block.label);
 export type ContractStarterKind = "leadliefervertrag" | "testphase" | "leer";
 export const CONTRACT_STARTERS: Array<{ kind: ContractStarterKind; label: string; hint: string }> = [
-  { kind: "leadliefervertrag", label: "Leadliefervertrag", hint: "Fertiger Rahmen: Leistungen, Liefergebiet, Menge, Preis je Lead, Reklamation, Laufzeit – du trägst die Eckdaten ein, der Kunde unterschreibt nur" },
-  { kind: "testphase", label: "Testphase", hint: "Allgemeine Vereinbarung für eine Testphase: Leistung, Dauer, Umfang, Konditionen und was danach gilt" },
+  { kind: "leadliefervertrag", label: "Leadliefervertrag", hint: "Vollständiger Vertrag in einfacher Sprache: was ein Lead ist, Liefergebiet, Menge, Preis, Reklamation, Datenschutz, Haftung, Kündigung – du trägst die Eckdaten ein, der Kunde unterschreibt nur" },
+  { kind: "testphase", label: "Testphase", hint: "Vereinbarung für eine Testphase: Leistung, Dauer, Umfang, Konditionen, was danach gilt – mit Datenschutz und Haftung" },
   { kind: "leer", label: "Leerer Vertrag", hint: "Logo, Vertragsparteien, ein Textabschnitt, Datum und Unterschriften – den Rest baust du selbst oder lässt ihn von der KI schreiben" },
 ];
 const detail = (key: string, label: string, hint: string, value = ""): ContractBlock => ({ id: newBlockId(), type: "detail", key, label, value, hint });
+const heading = (text: string): ContractBlock => ({ id: newBlockId(), type: "heading", text });
+const text = (...paragraphs: string[]): ContractBlock => ({ id: newBlockId(), type: "text", text: paragraphs.join("\n\n") });
+const bullets = (...items: string[]): ContractBlock => ({ id: newBlockId(), type: "bullets", items });
+/**
+ * Regeln, die in jedem Vertrag zwischen Unternehmen gleich lauten – einfach geschrieben und so gefasst, wie sie üblicherweise
+ * als wirksam gelten (Haftung bei Vorsatz/grober Fahrlässigkeit und wesentlichen Pflichten bleibt, Textform statt Schriftform,
+ * Gerichtsstand nur unter Kaufleuten). Kein Rechtsrat: vor dem Einsatz prüfen (lassen).
+ */
+export const CONTRACT_CLAUSES = {
+  unternehmer: "Der Kunde handelt als Unternehmer (§ 14 BGB) und nicht als Verbraucher.",
+  haftung: [
+    "(1) Der Anbieter haftet unbeschränkt bei Vorsatz und grober Fahrlässigkeit, bei Schäden an Leben, Körper oder Gesundheit und überall dort, wo das Gesetz eine Haftung zwingend vorschreibt.",
+    "(2) Bei leichter Fahrlässigkeit haftet der Anbieter nur, wenn er eine wesentliche Pflicht verletzt. Wesentlich ist eine Pflicht, ohne die der Vertrag nicht durchgeführt werden kann und auf deren Einhaltung der Kunde vertrauen darf. Die Haftung ist dann auf den Schaden begrenzt, der bei einem solchen Vertrag typisch und vorhersehbar ist.",
+    "(3) Darüber hinaus haftet der Anbieter nicht. Das gilt auch für seine Mitarbeiter und Beauftragten.",
+  ],
+  elektronisch: (was: "Dieser Vertrag" | "Diese Vereinbarung") => `${was} wird elektronisch geschlossen. Die elektronische Unterschrift des Kunden wird mit Zeitstempel, IP-Adresse und Prüfsumme des Dokuments protokolliert. Zum Nachweis wird auch festgehalten, wann das Dokument geöffnet wird. Beide Seiten erkennen diese Form als verbindlich an.`,
+  schluss: (was: "Dieser Vertrag" | "Diese Vereinbarung") => { const dieser = was === "Dieser Vertrag" ? "dieses Vertrags" : "dieser Vereinbarung"; return [
+    `(1) ${was} enthält alle Absprachen zu ${was === "Dieser Vertrag" ? "seinem" : "ihrem"} Gegenstand. Geschäftsbedingungen des Kunden gelten nicht – auch dann nicht, wenn der Anbieter ihnen nicht ausdrücklich widerspricht.`,
+    "(2) Änderungen und Ergänzungen brauchen die Textform (zum Beispiel E-Mail). Individuelle Absprachen zwischen den Parteien haben Vorrang.",
+    `(3) Ist eine Regelung ${dieser} unwirksam, bleibt der Rest gültig. An die Stelle der unwirksamen Regelung tritt das Gesetz.`,
+    "(4) Es gilt deutsches Recht. Ist der Kunde Kaufmann, ist der Gerichtsstand der Sitz des Anbieters.",
+    `(5) ${CONTRACT_CLAUSES.elektronisch(was)}`,
+  ]; },
+};
 /** Vorlagen – fertige Rahmen, die du im Builder anpasst. Der Kunde füllt nichts aus: alle Eckdaten sind Vertragsangaben des Anbieters. Kein Rechtsrat: Texte vor dem Einsatz prüfen (lassen). */
 export function contractStarter(kind: ContractStarterKind = "leadliefervertrag"): { title: string; blocks: ContractBlock[] } {
   if (kind === "leer") return { title: "Neuer Vertrag", blocks: [{ id: newBlockId(), type: "logo", src: null, height: 36 }, { id: newBlockId(), type: "heading", text: "Vertrag" }, { id: newBlockId(), type: "parties" }, { id: newBlockId(), type: "text", text: "Text des Vertrags …" }, { id: newBlockId(), type: "date", label: "Datum", mode: "unterschrift", value: null }, { id: newBlockId(), type: "signature", party: "anbieter", label: "Unterschrift Anbieter" }, { id: newBlockId(), type: "signature", party: "kunde", label: "Unterschrift Kunde" }] };
   if (kind === "testphase") return { title: "Vereinbarung über eine Testphase", blocks: [
     { id: newBlockId(), type: "logo", src: null, height: 36 },
-    { id: newBlockId(), type: "heading", text: "Vereinbarung über eine Testphase" },
+    heading("Vereinbarung über eine Testphase"),
     { id: newBlockId(), type: "parties" },
-    { id: newBlockId(), type: "heading", text: "§ 1 Gegenstand" },
-    { id: newBlockId(), type: "text", text: "Der Anbieter stellt dem Kunden die folgende Leistung für eine zeitlich begrenzte Testphase zur Verfügung: {{leistung}}.\n\nZiel der Testphase ist es, Qualität, Ablauf und Zusammenarbeit unverbindlich zu prüfen, bevor beide Seiten über eine dauerhafte Zusammenarbeit entscheiden." },
+    heading("§ 1 Gegenstand"),
+    text("(1) Der Anbieter stellt dem Kunden für eine begrenzte Zeit folgende Leistung zur Verfügung: {{leistung}}.", "(2) Die Testphase soll zeigen, ob Qualität, Ablauf und Zusammenarbeit passen. Erst danach entscheiden beide Seiten, ob sie dauerhaft zusammenarbeiten.", "(3) Der Anbieter schuldet die vereinbarte Leistung. Er schuldet nicht, dass daraus Aufträge oder ein bestimmter Umsatz entstehen.", `(4) ${CONTRACT_CLAUSES.unternehmer}`),
     detail("leistung", "Leistung", "z. B. Lieferung telefonisch qualifizierter Kundenanfragen (Leads) für Photovoltaik"),
-    { id: newBlockId(), type: "heading", text: "§ 2 Dauer und Umfang der Testphase" },
-    { id: newBlockId(), type: "text", text: "Die Testphase beginnt {{beginn}} und dauert {{dauer}}. Sie umfasst {{umfang}}.\n\nFür die Testphase gilt: {{konditionen}}." },
+    heading("§ 2 Dauer und Umfang der Testphase"),
+    text("(1) Die Testphase beginnt {{beginn}} und dauert {{dauer}}. Sie umfasst {{umfang}}.", "(2) Für die Testphase gilt: {{konditionen}}."),
     detail("beginn", "Beginn", "z. B. mit Unterzeichnung oder am 01.12.2026", "mit Unterzeichnung dieser Vereinbarung"),
     detail("dauer", "Dauer", "z. B. 4 Wochen"),
     detail("umfang", "Umfang", "z. B. bis zu 20 Leads"),
     detail("konditionen", "Konditionen in der Testphase", "z. B. die ersten 10 Leads kostenlos, danach 49 € je Lead netto"),
-    { id: newBlockId(), type: "heading", text: "§ 3 Nach der Testphase" },
-    { id: newBlockId(), type: "text", text: "Die Testphase endet automatisch mit Ablauf der vereinbarten Dauer – eine Kündigung ist dafür nicht nötig. Nach der Testphase gilt: {{danach}}.\n\nOhne eine gesonderte Vereinbarung entstehen dem Kunden nach der Testphase keine weiteren Pflichten." },
-    detail("danach", "Nach der Testphase", "z. B. Fortsetzung nur nach schriftlicher Bestätigung beider Seiten, dann 79 € je Lead netto, Kündigung jederzeit mit 14 Tagen zum Monatsende"),
-    { id: newBlockId(), type: "heading", text: "§ 4 Mitwirkung des Kunden" },
-    { id: newBlockId(), type: "bullets", items: ["Zeitnahe Bearbeitung der gelieferten Leistung – übergebene Interessenten werden innerhalb von 24 Stunden kontaktiert", "Rückmeldung zur Qualität innerhalb von 7 Tagen, damit der Anbieter nachsteuern kann", "Keine Weitergabe übergebener Daten an Dritte"] },
-    { id: newBlockId(), type: "heading", text: "§ 5 Vergütung und Abrechnung" },
-    { id: newBlockId(), type: "text", text: "Soweit in der Testphase Kosten anfallen, werden sie nach Lieferung abgerechnet; Vorkasse gibt es nicht. Alle Preise verstehen sich zuzüglich gesetzlicher Umsatzsteuer. Rechnungen sind innerhalb von 14 Tagen nach Zugang ohne Abzug zahlbar." },
-    { id: newBlockId(), type: "heading", text: "§ 6 Datenschutz und Vertraulichkeit" },
-    { id: newBlockId(), type: "text", text: "Die Parteien behandeln alle im Rahmen der Testphase ausgetauschten Informationen vertraulich und halten die datenschutzrechtlichen Vorgaben (insbesondere DSGVO) ein. Übergebene personenbezogene Daten werden ausschließlich für den vereinbarten Zweck verwendet." },
-    { id: newBlockId(), type: "heading", text: "§ 7 Schlussbestimmungen" },
-    { id: newBlockId(), type: "text", text: "Änderungen und Ergänzungen dieser Vereinbarung bedürfen der Textform. Sollte eine Bestimmung unwirksam sein, bleibt die Vereinbarung im Übrigen wirksam. Es gilt deutsches Recht.\n\nDiese Vereinbarung wird elektronisch geschlossen. Die elektronische Unterschrift des Kunden wird mit Zeitstempel, IP-Adresse und Prüfsumme des Dokuments protokolliert." },
+    heading("§ 3 Nach der Testphase"),
+    text("(1) Die Testphase endet von selbst, sobald die vereinbarte Dauer abgelaufen ist. Eine Kündigung ist nicht nötig.", "(2) Nach der Testphase gilt: {{danach}}.", "(3) Ohne eine neue Vereinbarung in Textform entstehen dem Kunden nach der Testphase keine Kosten und keine Pflicht zur Abnahme."),
+    detail("danach", "Nach der Testphase", "z. B. Fortsetzung nur nach Bestätigung beider Seiten in Textform, dann 79 € je Lead netto, Kündigung jederzeit mit 14 Tagen zum Monatsende"),
+    heading("§ 4 Mitwirkung des Kunden"),
+    bullets("Der Kunde bearbeitet die gelieferte Leistung zügig. Übergebene Interessenten ruft er innerhalb von 24 Stunden (an Werktagen) an.", "Der Kunde gibt innerhalb von 7 Tagen eine Rückmeldung zur Qualität, damit der Anbieter nachbessern kann.", "Der Kunde nutzt übergebene Daten nur für die Testphase und gibt sie nicht an Dritte weiter."),
+    heading("§ 5 Vergütung und Abrechnung"),
+    text("(1) Fallen in der Testphase Kosten an, rechnet der Anbieter sie nach der Lieferung ab. Vorkasse gibt es nicht.", "(2) Alle Preise sind Nettopreise zuzüglich gesetzlicher Umsatzsteuer. Rechnungen sind innerhalb von 14 Tagen nach Zugang ohne Abzug zu zahlen."),
+    heading("§ 6 Mängel und Ersatz"),
+    text("Liefert der Anbieter in der Testphase Kundenanfragen (Leads), ersetzt er Anfragen mit falscher Telefonnummer oder außerhalb des vereinbarten Gebiets oder schreibt sie gut. Dafür meldet der Kunde sie innerhalb von 7 Tagen nach der Lieferung in Textform und nennt den Grund."),
+    heading("§ 7 Datenschutz und Vertraulichkeit"),
+    text("(1) Anbieter und Kunde sind jeweils selbst für den Datenschutz verantwortlich (eigene Verantwortliche nach der DSGVO). Der Kunde verarbeitet Daten nicht im Auftrag des Anbieters.", "(2) Übergibt der Anbieter Daten von Interessenten, holt er vorher deren Einwilligung in die Weitergabe und in die Kontaktaufnahme ein und bewahrt den Nachweis auf.", "(3) Der Kunde nutzt die Daten nur für den vereinbarten Zweck. Er informiert die Interessenten beim ersten Kontakt über die Verarbeitung ihrer Daten (Art. 14 DSGVO) und löscht die Daten, sobald er sie nicht mehr braucht und keine gesetzliche Aufbewahrungspflicht besteht. Möchte ein Interessent nicht mehr kontaktiert werden, informieren sich beide Seiten sofort.", "(4) Beide Seiten behandeln den Inhalt dieser Vereinbarung und alle nicht öffentlichen Informationen der anderen Seite vertraulich – auch noch zwei Jahre nach dem Ende der Testphase."),
+    heading("§ 8 Haftung"),
+    text(...CONTRACT_CLAUSES.haftung),
+    heading("§ 9 Schlussbestimmungen"),
+    text(...CONTRACT_CLAUSES.schluss("Diese Vereinbarung")),
     { id: newBlockId(), type: "date", label: "Datum", mode: "unterschrift", value: null },
     { id: newBlockId(), type: "signature", party: "anbieter", label: "Unterschrift Anbieter" },
     { id: newBlockId(), type: "signature", party: "kunde", label: "Unterschrift Kunde" },
   ] };
   return { title: "Leadliefervertrag", blocks: [
     { id: newBlockId(), type: "logo", src: null, height: 36 },
-    { id: newBlockId(), type: "heading", text: "Vertrag über die Lieferung qualifizierter Kundenanfragen (Leads)" },
+    heading("Vertrag über die Lieferung qualifizierter Kundenanfragen (Leads)"),
     { id: newBlockId(), type: "parties" },
-    { id: newBlockId(), type: "heading", text: "§ 1 Vertragsgegenstand" },
-    { id: newBlockId(), type: "text", text: "Der Anbieter liefert dem Kunden Kundenanfragen (Leads) von Interessenten für Photovoltaik- und/oder Wärmepumpenanlagen. Jeder Lead wird vor der Übergabe in der Regel anhand von zehn Fragen telefonisch vorqualifiziert und exklusiv an den Kunden übergeben. Die Übergabe erfolgt in Echtzeit per E-Mail, Schnittstelle oder über das vereinbarte System." },
-    { id: newBlockId(), type: "heading", text: "§ 2 Leistungen des Anbieters" },
-    { id: newBlockId(), type: "bullets", items: ["Eigene Leadgenerierung über Online-Kampagnen", "Telefonische Qualifizierung jedes Interessenten vor der Übergabe", "Exklusive Übergabe – kein Weiterverkauf desselben Leads an Dritte", "Interne Qualitätskontrolle und Reklamationsbearbeitung"] },
-    { id: newBlockId(), type: "heading", text: "§ 3 Liefergebiet und Menge" },
-    { id: newBlockId(), type: "text", text: "Für die Lieferung gelten folgende Eckdaten:" },
+    heading("§ 1 Gegenstand des Vertrags"),
+    text("(1) Der Anbieter liefert dem Kunden Anfragen von Interessenten (Leads) für {{leadart}}. Der Kunde zahlt für jeden gelieferten Lead den vereinbarten Preis.", "(2) Der Anbieter schuldet die Lieferung der Leads. Er schuldet nicht, dass aus einem Lead ein Auftrag wird – ob der Interessent beim Kunden kauft, hat der Anbieter nicht in der Hand.", `(3) ${CONTRACT_CLAUSES.unternehmer}`),
+    heading("§ 2 Was ein Lead ist"),
+    text("(1) Ein Lead ist die Anfrage einer Person, die sich für {{leadart}} interessiert und damit einverstanden ist, dass ein Fachbetrieb sie dazu kontaktiert.", "(2) Jeder Lead enthält mindestens den Namen, die Telefonnummer, die Postleitzahl und die Antworten aus der Vorqualifizierung.", "(3) Jeder Lead wird vor der Übergabe in der Regel anhand von zehn Fragen telefonisch vorqualifiziert."),
+    heading("§ 3 Leistungen des Anbieters"),
+    bullets("Eigene Leadgenerierung über Online-Kampagnen", "Telefonische Vorqualifizierung jedes Interessenten vor der Übergabe", "Exklusive Übergabe: Der Anbieter gibt dieselbe Anfrage an keinen anderen Betrieb weiter", "Einholen der Einwilligung des Interessenten – der Nachweis wird fünf Jahre aufbewahrt und steht auf Anfrage zur Verfügung", "Prüfung von Reklamationen und Ersatz in berechtigten Fällen"),
+    heading("§ 4 Liefergebiet, Menge und Übergabe"),
+    text("Für die Lieferung gelten diese Eckdaten:"),
     detail("liefergebiet", "Liefergebiet", "z. B. Hessen oder PLZ 60–65"),
     detail("menge", "Menge pro Monat", "z. B. 30 Leads"),
     detail("leadart", "Leadart", "Photovoltaik, Wärmepumpe oder beides"),
-    { id: newBlockId(), type: "heading", text: "§ 4 Vergütung und Abrechnung" },
-    { id: newBlockId(), type: "text", text: "Der Preis je geliefertem Lead beträgt {{preis}} zuzüglich gesetzlicher Umsatzsteuer. Die Abrechnung erfolgt nach Lieferung, es besteht keine Vorkasse. Zum Kennenlernen gilt: {{kennenlernen}}.\n\nRechnungen sind innerhalb von 14 Tagen nach Zugang ohne Abzug zahlbar." },
+    text("(1) Die Menge ist ein Ziel, keine Garantie. Der Anbieter bemüht sich, sie zu erreichen. Liefert er weniger, werden nur die gelieferten Leads berechnet; weitere Ansprüche entstehen daraus nicht.", "(2) Der Anbieter übergibt jeden Lead direkt nach der Vorqualifizierung – per E-Mail, über eine Schnittstelle oder über das vereinbarte System. Ein Lead gilt als geliefert, sobald er dem Kunden auf diesem Weg zugegangen ist.", "(3) Der Kunde kann die Lieferung jederzeit pausieren. Dafür genügt eine Nachricht in Textform (zum Beispiel per E-Mail) mit zwei Werktagen Vorlauf. Leads, die bis dahin geliefert werden, werden berechnet."),
+    heading("§ 5 Preis und Abrechnung"),
+    text("(1) Der Preis je geliefertem Lead beträgt {{preis}} zuzüglich gesetzlicher Umsatzsteuer. Zum Kennenlernen gilt: {{kennenlernen}}.", "(2) Der Anbieter rechnet {{abrechnung}} über die gelieferten Leads ab. Vorkasse gibt es nicht. Rechnungen sind innerhalb von 14 Tagen nach Zugang ohne Abzug zu zahlen.", "(3) Zahlt der Kunde eine fällige Rechnung trotz Mahnung nicht, darf der Anbieter die Lieferung aussetzen, bis die Rechnung bezahlt ist. Es gelten die gesetzlichen Verzugszinsen und die gesetzliche Verzugspauschale.", "(4) Der Kunde darf nur mit Forderungen aufrechnen, die unbestritten oder rechtskräftig festgestellt sind.", "(5) Der Anbieter kann den Preis für künftige Lieferungen ändern. Er kündigt das mindestens vier Wochen vorher in Textform an. Der Kunde kann den Vertrag dann bis zum Tag der Änderung ohne Frist kündigen."),
     detail("preis", "Preis je Lead (netto)", "z. B. 79 €"),
     detail("kennenlernen", "Zum Kennenlernen", "z. B. die ersten 20 Leads kostenlos", "die ersten 20 Leads sind kostenlos"),
-    { id: newBlockId(), type: "heading", text: "§ 5 Reklamation" },
-    { id: newBlockId(), type: "text", text: "Leads mit falschen Kontaktdaten, ohne Erreichbarkeit nach drei dokumentierten Versuchen oder außerhalb des vereinbarten Liefergebiets können innerhalb von 7 Tagen nach Lieferung reklamiert werden. Anerkannte Reklamationen werden ersetzt oder gutgeschrieben." },
-    { id: newBlockId(), type: "heading", text: "§ 6 Laufzeit und Kündigung" },
-    { id: newBlockId(), type: "text", text: "Der Vertrag beginnt mit Unterzeichnung und läuft auf unbestimmte Zeit. Er kann von beiden Seiten jederzeit mit einer Frist von 14 Tagen zum Monatsende in Textform gekündigt werden. Eine Mindestabnahme besteht nicht." },
-    { id: newBlockId(), type: "heading", text: "§ 7 Datenschutz" },
-    { id: newBlockId(), type: "text", text: "Die Parteien verpflichten sich, die übergebenen personenbezogenen Daten der Interessenten ausschließlich zur Bearbeitung der Anfrage zu verwenden und die datenschutzrechtlichen Vorgaben (insbesondere DSGVO) einzuhalten. Der Kunde kontaktiert die Interessenten zeitnah nach Übergabe." },
-    { id: newBlockId(), type: "heading", text: "§ 8 Schlussbestimmungen" },
-    { id: newBlockId(), type: "text", text: "Änderungen und Ergänzungen dieses Vertrags bedürfen der Textform. Sollte eine Bestimmung unwirksam sein, bleibt der Vertrag im Übrigen wirksam. Es gilt deutsches Recht; Gerichtsstand ist, soweit zulässig, der Sitz des Anbieters.\n\nDieser Vertrag wird elektronisch geschlossen. Die elektronische Unterschrift des Kunden wird mit Zeitstempel, IP-Adresse und Prüfsumme des Dokuments protokolliert." },
+    detail("abrechnung", "Abrechnung", "wöchentlich, alle 14 Tage oder monatlich", "monatlich"),
+    heading("§ 6 Pflichten des Kunden"),
+    bullets("Der Kunde ruft jeden Interessenten zügig an – möglichst am selben Tag, spätestens innerhalb von 24 Stunden (an Werktagen).", "Erreicht er ihn nicht, versucht er es mindestens dreimal an drei verschiedenen Werktagen und notiert Datum und Uhrzeit.", "Der Kunde nutzt die Leads nur für sein eigenes Angebot zu der Anfrage.", "Der Kunde gibt Leads nicht an Dritte weiter und verkauft sie nicht."),
+    text("Gibt der Kunde Leads schuldhaft an Dritte weiter oder verkauft er sie, zahlt er dem Anbieter für jeden betroffenen Lead eine Vertragsstrafe in Höhe des dreifachen Lead-Preises. Der Anbieter kann einen höheren Schaden verlangen, wenn er ihn nachweist; die Vertragsstrafe wird darauf angerechnet."),
+    heading("§ 7 Reklamation"),
+    text("(1) Der Kunde kann einen Lead nur aus diesen Gründen reklamieren:"),
+    bullets("Die Telefonnummer ist falsch oder existiert nicht.", "Der Interessent ist trotz drei dokumentierter Anrufversuche an drei verschiedenen Werktagen nicht erreichbar.", "Die Person erklärt glaubhaft, nie eine Anfrage gestellt zu haben.", "Der Lead liegt außerhalb des vereinbarten Liefergebiets oder passt nicht zur vereinbarten Leadart.", "Der Anbieter hat dieselbe Person mit derselben Anfrage in den letzten 90 Tagen schon einmal an den Kunden geliefert."),
+    text("(2) Das ist kein Grund für eine Reklamation: Der Interessent hat nach der Übergabe kein Interesse mehr, entscheidet sich für einen anderen Betrieb oder lehnt das Angebot des Kunden ab.", "(3) Die Reklamation muss innerhalb von 7 Tagen nach der Lieferung in Textform beim Anbieter eingehen und den Grund nennen. Bei „nicht erreichbar“ gehören die Anrufversuche mit Datum und Uhrzeit dazu.", "(4) Der Anbieter prüft die Reklamation innerhalb von fünf Werktagen. Ist sie berechtigt, liefert er einen Ersatz-Lead oder schreibt den Preis gut. Weitere Ansprüche wegen dieses Leads bestehen nicht; die Regeln zur Haftung (§ 9) bleiben unberührt.", "(5) Einen reklamierten Lead bearbeitet der Kunde nicht weiter."),
+    heading("§ 8 Datenschutz"),
+    text("(1) Anbieter und Kunde sind jeweils selbst für den Datenschutz verantwortlich (eigene Verantwortliche nach der DSGVO). Der Kunde verarbeitet die Daten nicht im Auftrag des Anbieters.", "(2) Der Anbieter holt vor der Übergabe die Einwilligung des Interessenten ein: in die Weitergabe seiner Daten an den Kunden und in die Kontaktaufnahme per Telefon und E-Mail. Er bewahrt den Nachweis fünf Jahre auf und gibt ihn dem Kunden auf Anfrage.", "(3) Der Kunde nutzt die Daten nur, um die Anfrage zu bearbeiten. Er informiert den Interessenten beim ersten Kontakt über die Verarbeitung seiner Daten (Art. 14 DSGVO), schützt die Daten vor fremdem Zugriff und löscht sie, sobald er sie nicht mehr braucht und keine gesetzliche Aufbewahrungspflicht besteht.", "(4) Widerruft ein Interessent seine Einwilligung oder möchte er nicht mehr kontaktiert werden, informieren sich Anbieter und Kunde gegenseitig sofort. Der Kunde kontaktiert den Interessenten dann nicht mehr.", "(5) Verstößt eine Seite schuldhaft gegen diese Pflichten, steht sie dafür selbst ein. Wird die andere Seite deshalb von Dritten oder Behörden in Anspruch genommen, stellt die verantwortliche Seite sie davon frei. Sie trägt auch die angemessenen Kosten der Rechtsverteidigung."),
+    heading("§ 9 Haftung"),
+    text(...CONTRACT_CLAUSES.haftung),
+    heading("§ 10 Laufzeit und Kündigung"),
+    text("(1) Der Vertrag beginnt mit der Unterschrift beider Seiten und läuft auf unbestimmte Zeit. Eine Mindestabnahme gibt es nicht.", "(2) Beide Seiten können den Vertrag jederzeit mit einer Frist von 14 Tagen zum Monatsende kündigen.", "(3) Das Recht, aus wichtigem Grund fristlos zu kündigen, bleibt bestehen. Für den Anbieter ist das zum Beispiel der Fall, wenn der Kunde trotz Mahnung länger als 14 Tage nicht zahlt oder Leads an Dritte weitergibt.", "(4) Jede Kündigung braucht die Textform (zum Beispiel E-Mail).", "(5) Leads, die bis zum Vertragsende geliefert werden, bezahlt der Kunde. Die Regeln zu Datenschutz, Vertraulichkeit und Haftung gelten auch nach dem Vertragsende weiter."),
+    heading("§ 11 Vertraulichkeit"),
+    text("Beide Seiten behandeln den Inhalt dieses Vertrags – besonders Preise und Mengen – und alle nicht öffentlichen Informationen der anderen Seite vertraulich. Das gilt auch noch zwei Jahre nach dem Vertragsende. Ausgenommen sind Auskünfte, zu denen eine Seite gesetzlich verpflichtet ist, und Auskünfte an Berater, die zur Verschwiegenheit verpflichtet sind."),
+    heading("§ 12 Schlussbestimmungen"),
+    text(...CONTRACT_CLAUSES.schluss("Dieser Vertrag")),
     { id: newBlockId(), type: "date", label: "Datum", mode: "unterschrift", value: null },
     { id: newBlockId(), type: "signature", party: "anbieter", label: "Unterschrift Anbieter" },
     { id: newBlockId(), type: "signature", party: "kunde", label: "Unterschrift Kunde" },
@@ -194,6 +237,8 @@ export type ContractRenderOptions = {
   logoBase?: string | null; // Basis-Adresse für das Standard-Logo (/brand/…)
   token?: string | null; apiBase?: string | null; // Unterschreiben: wohin die Unterschrift geschickt wird
   signerName?: string | null; pdfUrl?: string | null; embedded?: boolean; // embedded: in der App eingebettet (Nachricht statt Neuladen)
+  /** Öffentliche Seite: dieser Aufruf wird mitgezählt – die Seite meldet, wie lange gelesen und wie weit gescrollt wurde */
+  track?: { viewId: number; url: string } | null;
 };
 
 const SIGN_SCRIPT = `
@@ -222,6 +267,20 @@ const SIGN_SCRIPT = `
     fetch(api+'/api/vertrag/'+token+'/sign',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j}})}).then(function(x){if(!x.ok){throw new Error(x.j&&x.j.error||'Fehler')}window.location.reload();}).catch(function(e){btn.disabled=false;btn.textContent='Jetzt unterschreiben';msg(e.message||'Das hat nicht geklappt – bitte noch einmal versuchen.',false);});
   });
   var decline=document.getElementById('decline');if(decline){decline.addEventListener('click',function(){var reason=window.prompt('Möchtest du den Vertrag ablehnen? Du kannst einen Grund angeben (optional):');if(reason===null)return;if(embedded&&window.parent&&window.parent!==window){window.parent.postMessage({type:'tanesco:vertrag-abgelehnt',token:token,reason:reason},'*');return;}fetch(api+'/api/vertrag/'+token+'/decline',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:reason})}).then(function(){window.location.reload();});});}
+})();`;
+
+/** Misst auf der öffentlichen Seite, wie lange der Vertrag sichtbar war und wie weit er gelesen wurde – und meldet es alle paar Sekunden und beim Verlassen. */
+const READ_SCRIPT = `
+(function(){
+  var el=document.getElementById('lesen');if(!el)return;var url=el.getAttribute('data-url');var view=Number(el.getAttribute('data-view'))||0;if(!url||!view)return;
+  var seconds=0,depth=0,last=Date.now(),sent='';
+  function tick(){var now=Date.now();if(document.visibilityState==='visible'){seconds+=Math.min(2,Math.max(0,(now-last)/1000));}last=now;}
+  function measure(){var sheet=document.querySelector('.sheet');if(!sheet)return;var r=sheet.getBoundingClientRect();var d=Math.round(Math.max(0,Math.min(1,(window.innerHeight-r.top)/Math.max(1,r.height)))*100);if(d>depth)depth=d;}
+  function send(fin){tick();measure();var body=JSON.stringify({v:view,s:Math.round(seconds),d:depth});if(body===sent)return;sent=body;try{if(fin&&navigator.sendBeacon){navigator.sendBeacon(url,new Blob([body],{type:'application/json'}));}else{fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:body,keepalive:true}).catch(function(){});}}catch(e){}}
+  setInterval(tick,1000);window.addEventListener('scroll',measure,{passive:true});window.addEventListener('resize',measure);measure();
+  setTimeout(function(){send(false);},5000);setInterval(function(){if(document.visibilityState==='visible')send(false);},15000);
+  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')send(true);else last=Date.now();});
+  window.addEventListener('pagehide',function(){send(true);});
 })();`;
 
 /** Die komplette Seite: Vertrag als weißes Blatt, darunter (je nach Modus) das Unterschriftsfeld oder der Nachweis. */
@@ -261,7 +320,7 @@ export function renderContractHtml(contract: { title: string; blocks: ContractBl
   })())).join("");
   const signPanel = canEdit ? `<section id="sign" class="sign" data-token="${esc(options.token ?? "")}" data-api="${esc(options.apiBase ?? "")}" data-embedded="${options.embedded ? "1" : "0"}">
     <h3>Jetzt unterschreiben</h3>
-    <p class="sign-hint">Bitte Felder prüfen, Namen eintragen und im Feld unterschreiben – mit Maus, Finger oder getippt. Die Unterschrift wird mit Datum, Uhrzeit und IP-Adresse protokolliert.</p>
+    <p class="sign-hint">Bitte Felder prüfen, Namen eintragen und im Feld unterschreiben – mit Maus, Finger oder getippt. Die Unterschrift wird mit Datum, Uhrzeit und IP-Adresse protokolliert. Zum Nachweis wird auch festgehalten, wann dieser Vertrag geöffnet wird.</p>
     <label class="sign-name"><span>Vollständiger Name</span><input id="signer" value="${esc(options.signerName ?? values.name ?? "")}" placeholder="Vor- und Nachname"></label>
     <div class="sign-tabs"><button type="button" class="on" data-sign-tab="zeichnen">Zeichnen</button><button type="button" data-sign-tab="tippen">Tippen</button></div>
     <div id="pad-wrap" class="pad-wrap"><canvas id="pad"></canvas><button type="button" id="clear" class="pad-clear">Löschen</button></div>
@@ -277,7 +336,7 @@ export function renderContractHtml(contract: { title: string; blocks: ContractBl
     ${options.signature.userAgent ? `<dt>Gerät / Browser</dt><dd>${esc(options.signature.userAgent.slice(0, 160))}</dd>` : ""}
     ${options.signature.documentHash ? `<dt>Prüfsumme Dokument (SHA-256)</dt><dd class="mono">${esc(options.signature.documentHash)}</dd>` : ""}
     ${options.signature.signedHash ? `<dt>Prüfsumme Unterschrift (SHA-256)</dt><dd class="mono">${esc(options.signature.signedHash)}</dd>` : ""}
-  </dl>${options.events?.length ? `<ol class="proof-log">${options.events.map((event) => `<li><span>${formatContractStamp(event.createdAt)}</span> ${esc(CONTRACT_EVENT_LABEL[event.kind] ?? event.kind)}${event.note ? ` – ${esc(event.note)}` : ""}${event.ip ? ` <i>(${esc(event.ip)})</i>` : ""}</li>`).join("")}</ol>` : ""}${options.pdfUrl ? `<p class="proof-actions"><a class="btn" href="${esc(options.pdfUrl)}">PDF herunterladen</a> <button type="button" class="btn ghost" onclick="window.print()">Drucken</button></p>` : `<p class="proof-actions"><button type="button" class="btn ghost" onclick="window.print()">Drucken / als PDF sichern</button></p>`}</section>` : "";
+  </dl>${options.events?.length ? `<ol class="proof-log">${proofEvents(options.events).map((event) => `<li><span>${formatContractStamp(event.createdAt)}</span> ${esc(CONTRACT_EVENT_LABEL[event.kind] ?? event.kind)}${event.note ? ` – ${esc(event.note)}` : ""}${event.ip ? ` <i>(${esc(event.ip)})</i>` : ""}</li>`).join("")}</ol>` : ""}${options.pdfUrl ? `<p class="proof-actions"><a class="btn" href="${esc(options.pdfUrl)}">PDF herunterladen</a> <button type="button" class="btn ghost" onclick="window.print()">Drucken</button></p>` : `<p class="proof-actions"><button type="button" class="btn ghost" onclick="window.print()">Drucken / als PDF sichern</button></p>`}</section>` : "";
   const notice = options.mode === "abgelehnt" ? `<section class="proof is-warn"><h3>Dieser Vertrag wurde abgelehnt.</h3><p>Bei Fragen antworte einfach auf die E-Mail, mit der du den Vertrag bekommen hast.</p></section>` : options.mode === "storniert" ? `<section class="proof is-warn"><h3>Dieser Vertrag wurde zurückgezogen.</h3><p>Der Anbieter hat den Vertrag storniert – er kann nicht mehr unterschrieben werden.</p></section>` : "";
   const badge = options.mode === "unterschrieben" ? `<div class="topbar is-ok">Elektronisch unterschrieben am ${formatContractDate(signedAt)}</div>` : options.mode === "unterschreiben" ? `<div class="topbar">Bitte prüfen und unten unterschreiben</div>` : "";
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(contract.title)}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"><style>
@@ -310,7 +369,7 @@ export function renderContractHtml(contract: { title: string; blocks: ContractBl
   .proof-actions{margin:16px 0 0;display:flex;gap:10px}.btn{display:inline-flex;align-items:center;height:40px;padding:0 16px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;font-size:14px;border:0;cursor:pointer;font-family:inherit}.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
   @media (max-width:640px){.sheet{padding:26px 18px;border-radius:14px}.c-parties{grid-template-columns:1fr}.proof dl{grid-template-columns:1fr}.sign{padding:18px}}
   @media print{body{background:#fff}.wrap{padding:0;max-width:none}.sheet{border:0;box-shadow:none;padding:0}.topbar,.sign,.proof-actions{display:none}.proof{break-inside:avoid;border:1px solid #ccc}}
-  </style></head><body><div class="wrap">${badge}<article class="sheet">${body}</article>${signPanel}${proof}${notice}</div>${canEdit ? `<script>${SIGN_SCRIPT}</script>` : ""}</body></html>`;
+  </style></head><body><div class="wrap">${badge}<article class="sheet">${body}</article>${signPanel}${proof}${notice}</div>${options.track ? `<div id="lesen" data-url="${esc(options.track.url)}" data-view="${Number(options.track.viewId) || 0}" hidden></div>` : ""}${canEdit ? `<script>${SIGN_SCRIPT}</script>` : ""}${options.track ? `<script>${READ_SCRIPT}</script>` : ""}</body></html>`;
 }
 
 /* ---------------- KI: Vertrag aus einer Beschreibung ---------------- */
@@ -327,15 +386,32 @@ export const CONTRACT_AI_SCHEMA = { name: "vertrag", strict: false, schema: { ty
     value: { type: "string", description: "detail: der Wert aus der Beschreibung, sonst leer" },
   }, required: ["type"] } },
 }, required: ["title", "sections"] } };
-export const CONTRACT_AI_SYSTEM = `Du schreibst deutsche Geschäftsverträge (B2B) für den Anbieter. Du bekommst eine Beschreibung in Alltagssprache und machst daraus einen sauberen, vollständigen Vertrag.
-Regeln:
-- Gliedere in Paragrafen als Überschriften („§ 1 Vertragsgegenstand“, „§ 2 …“). Übliche Punkte: Gegenstand, Leistungen, Umfang/Dauer, Vergütung und Abrechnung, Laufzeit und Kündigung, Haftung/Reklamation wenn passend, Datenschutz und Vertraulichkeit, Schlussbestimmungen.
-- Klare, verständliche Sprache, keine erfundenen Gesetzesparagrafen, keine Platzhalter wie [XY].
+export const CONTRACT_AI_SYSTEM = `Du schreibst deutsche Verträge zwischen Unternehmen (B2B) für den Anbieter – so sorgfältig wie ein erfahrener Wirtschaftsanwalt, aber in einfacher Sprache. Du bekommst eine Beschreibung in Alltagssprache und machst daraus einen vollständigen Vertrag.
+
+Sprache:
+- Kurze Sätze, Alltagswörter, aktive Verben. Kein Juristendeutsch, keine Schachtelsätze. Ein Fachwort nur, wenn es nötig ist – dann kurz in Klammern erklären.
+- Sprich den Kunden als „der Kunde“ und den Anbieter als „der Anbieter“ an.
+
+Aufbau:
+- Gliedere in Paragrafen als Überschriften („§ 1 Gegenstand des Vertrags“, „§ 2 …“). Längere Paragrafen in nummerierte Absätze teilen: „(1) …“, Leerzeile, „(2) …“.
+- Übliche Reihenfolge: Gegenstand, Leistungen, Umfang oder Dauer, Preis und Abrechnung, Pflichten des Kunden, Mängel oder Reklamation (wenn es passt), Datenschutz, Haftung, Laufzeit und Kündigung, Vertraulichkeit, Schlussbestimmungen.
 - Konkrete Eckdaten (Preise, Mengen, Dauer, Gebiet, Termine …) als Vertragsangaben (type "detail") mit Schlüssel, Bezeichnung und dem Wert aus der Beschreibung. Im Fließtext kannst du sie als {{schlüssel}} einsetzen. Fehlt ein Wert, lass value leer.
+
+Das gehört in jeden Vertrag (in einfachen Worten):
+- Gegenstand: was genau geschuldet ist – und was nicht (kein bestimmter Erfolg oder Umsatz, wenn die Beschreibung nichts anderes sagt). Dazu der Satz: „${CONTRACT_CLAUSES.unternehmer}“
+- Preis: Nettopreise zuzüglich gesetzlicher Umsatzsteuer, Zahlungsfrist, bei Zahlungsverzug gesetzliche Verzugszinsen und das Recht, die Leistung auszusetzen. Aufrechnung nur mit unbestrittenen oder rechtskräftig festgestellten Forderungen.
+- Haftung genau in dieser Form, ohne weitere Ausschlüsse: „${CONTRACT_CLAUSES.haftung.join(" ")}“
+- Datenschutz, wenn personenbezogene Daten fließen: Jede Seite ist selbst verantwortlich (DSGVO), Daten nur für den vereinbarten Zweck nutzen und löschen, wenn sie nicht mehr gebraucht werden.
+- Laufzeit und Kündigung: Beginn, Frist, Textform (E-Mail genügt). Die fristlose Kündigung aus wichtigem Grund bleibt möglich.
+- Vertraulichkeit: Inhalt des Vertrags und nicht öffentliche Informationen bleiben vertraulich, auch zwei Jahre nach dem Vertragsende.
+- Schlussbestimmungen: Geschäftsbedingungen des Kunden gelten nicht. Änderungen brauchen die Textform, individuelle Absprachen haben Vorrang. Ist eine Regelung unwirksam, bleibt der Rest gültig und an ihre Stelle tritt das Gesetz. Es gilt deutsches Recht; Gerichtsstand ist der Sitz des Anbieters, wenn der Kunde Kaufmann ist.
+- Letzter Absatz der Schlussbestimmungen wörtlich: „Dieser Vertrag wird elektronisch geschlossen. Die elektronische Unterschrift des Kunden wird mit Zeitstempel, IP-Adresse und Prüfsumme des Dokuments protokolliert.“
+
+Grenzen:
+- Keine erfundenen Gesetzesparagrafen, keine Platzhalter wie [XY].
+- Regeln müssen für beide Seiten fair bleiben – einseitige oder überraschende Klauseln sind unwirksam. Vertragsstrafen nur, wenn die Beschreibung sie verlangt, und dann maßvoll.
 - Der Kunde füllt nichts aus – er unterschreibt nur. Keine Felder für den Kunden.
-- Vertragsparteien, Logo, Datum und Unterschriften ergänzt die Software selbst – schreibe sie nicht.
-- Letzter Absatz der Schlussbestimmungen: „Dieser Vertrag wird elektronisch geschlossen. Die elektronische Unterschrift des Kunden wird mit Zeitstempel, IP-Adresse und Prüfsumme des Dokuments protokolliert.“
-- Sprich den Kunden als „der Kunde“ und den Anbieter als „der Anbieter“ an.`;
+- Vertragsparteien, Logo, Datum und Unterschriften ergänzt die Software selbst – schreibe sie nicht.`;
 const slugKey = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
 /** KI-Antwort → Bausteine: Logo, Titel, Vertragsparteien, Inhalt, Datum und beide Unterschriften. */
 export function aiDraftToContract(draft: Partial<AiContractDraft> | null | undefined): { title: string; blocks: ContractBlock[] } {
@@ -356,5 +432,5 @@ export function fallbackContractFromPrompt(prompt: string): { title: string; blo
   const text = prompt.toLowerCase();
   if (/test|probe|pilot/.test(text)) return contractStarter("testphase");
   if (/lead|anfrage/.test(text)) return contractStarter("leadliefervertrag");
-  return aiDraftToContract({ title: "Vertrag", sections: [{ type: "heading", text: "§ 1 Vertragsgegenstand" }, { type: "text", text: prompt.trim() }, { type: "heading", text: "§ 2 Schlussbestimmungen" }, { type: "text", text: "Änderungen und Ergänzungen dieses Vertrags bedürfen der Textform. Es gilt deutsches Recht.\n\nDieser Vertrag wird elektronisch geschlossen. Die elektronische Unterschrift des Kunden wird mit Zeitstempel, IP-Adresse und Prüfsumme des Dokuments protokolliert." }] });
+  return aiDraftToContract({ title: "Vertrag", sections: [{ type: "heading", text: "§ 1 Gegenstand des Vertrags" }, { type: "text", text: `${prompt.trim()}\n\n${CONTRACT_CLAUSES.unternehmer}` }, { type: "heading", text: "§ 2 Haftung" }, { type: "text", text: CONTRACT_CLAUSES.haftung.join("\n\n") }, { type: "heading", text: "§ 3 Schlussbestimmungen" }, { type: "text", text: CONTRACT_CLAUSES.schluss("Dieser Vertrag").join("\n\n") }] });
 }

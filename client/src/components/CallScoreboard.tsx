@@ -7,12 +7,38 @@ export { CALL_PERIODS, dayKey, dayLabel, DECISION_LABEL, timeText, type CallRang
 const MOOD_OF_DECISION: Record<CallDecision, Mood> = { freigegeben: "gruen", pruefen: "gelb", zurueckgewiesen: "rot", offen: "offen" };
 const MOOD_WORD: Record<Mood, string> = { gruen: "passt", gelb: "bitte reinhören", rot: "passt nicht", offen: "noch nicht bewertet" };
 
+/** Zeitraum der Gesprächsliste: Heute … Gesamt oder von/bis – klein in der Leiste der Liste. */
+export function CallPeriodControl({ range, onRange }: { range: CallRange; onRange: (range: CallRange) => void }) {
+  const custom = Boolean(range.from || range.to);
+  return <div className="gq-period cq-filterbar">
+    <div className="gq-periods" role="group" aria-label="Zeitraum">{CALL_PERIODS.map(([key, label]) => <button key={key} type="button" className={!custom && range.period === key ? "active" : ""} aria-pressed={!custom && range.period === key} onClick={() => onRange({ period: key, from: "", to: "" })}>{label}</button>)}</div>
+    <div className="gq-dates"><label>von<input type="date" aria-label="Datum von" value={range.from} max={range.to || undefined} onChange={(event) => onRange({ ...range, from: event.target.value })} /></label><label>bis<input type="date" aria-label="Datum bis" value={range.to} min={range.from || undefined} onChange={(event) => onRange({ ...range, to: event.target.value })} /></label>{custom && <button type="button" className="gq-reset" onClick={() => onRange({ period: "alle", from: "", to: "" })}>Datum zurücksetzen</button>}</div>
+  </div>;
+}
+
+/** Zähler je Ergebnis – kleine Knöpfe, die zugleich die Liste filtern (noch einmal klicken hebt den Filter auf). */
+export function CallTally({ overview, decision, onDecision }: { overview: CallOverview | null; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void }) {
+  const counts: Record<CallDecision, number> = { freigegeben: overview?.approved ?? 0, pruefen: overview?.review ?? 0, zurueckgewiesen: overview?.rejected ?? 0, offen: overview?.open ?? 0 };
+  const openHint = overview && (overview.failed || overview.noConsent) ? [overview.failed ? `${overview.failed} fehlgeschlagen` : "", overview.noConsent ? `${overview.noConsent} ohne Einwilligung` : ""].filter(Boolean).join(", ") : MOOD_WORD.offen;
+  return <div className={`gq-tally ${decision ? "has-filter" : ""}`} role="group" aria-label="Liste nach Ergebnis filtern">
+    {(Object.keys(MOOD_OF_DECISION) as CallDecision[]).map((key) => { const mood = MOOD_OF_DECISION[key]; const on = decision === key; const hint = key === "offen" ? openHint : MOOD_WORD[mood]; return <button key={key} type="button" className={`gq-tally-item is-${mood} ${on ? "is-on" : ""}`} aria-pressed={on} title={on ? "Filter aufheben – wieder alle Gespräche zeigen" : `${DECISION_LABEL[key]} (${hint}) – nur diese Gespräche in der Liste zeigen`} onClick={() => onDecision(on ? "" : key)}>
+      <Face mood={mood} size={20} /><b>{DECISION_LABEL[key]}</b><strong>{counts[key].toLocaleString("de-DE")}</strong>
+    </button>; })}
+  </div>;
+}
+
+/** Kurz in Worten für die Leiste: „24 Gespräche, 1 Std 3 Min am Telefon“. */
+export function overviewSummary(overview: CallOverview | null): string {
+  if (!overview) return "Gespräche werden geladen …"; const total = overview.total;
+  return `${total.toLocaleString("de-DE")} ${total === 1 ? "Gespräch" : "Gespräche"}${overview.talkSeconds > 0 ? `, ${talkTimeText(overview.talkSeconds)} am Telefon` : ""}`;
+}
+
 /**
- * Anzeigetafel über der Gesprächsliste: wie viele Gespräche, wie lange telefoniert – und der Verlauf als Tonspur.
- * Jeder Strich ist ein Gespräch (Höhe = Dauer, Farbe = Ampel), ein Klick öffnet es. Die Zähler rechts filtern die Liste.
- * Ein einzelner Tag wird auf einer Uhrzeit-Achse gezeigt (wann wurde telefoniert?), mehrere Tage als Folge je Tag.
+ * Verlauf der Gespräche – aufklappbar über den Knopf „Verlauf“ in der Leiste: wie viele Gespräche, wie lange telefoniert,
+ * und die Tonspur dazu. Jeder Strich ist ein Gespräch (Höhe = Dauer, Farbe = Ampel), ein Klick öffnet es.
+ * Ein einzelner Tag steht auf einer Uhrzeit-Achse (wann wurde telefoniert?), mehrere Tage als Folge je Tag.
  */
-export default function CallScoreboard({ overview, loading, range, onRange, decision, onDecision, onOpen, scope }: { overview: CallOverview | null; loading: boolean; range: CallRange; onRange: (range: CallRange) => void; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void; onOpen: (callId: number) => void; /** eingestellte Filter in Worten, z. B. „Taner Tanesco, Kampagne ‚PV Q4‘“ */ scope?: string }) {
+export default function CallWave({ overview, loading, range, decision, onOpen, scope }: { overview: CallOverview | null; loading: boolean; range: CallRange; decision: DecisionFilter; onOpen: (callId: number) => void; /** eingestellte Filter in Worten, z. B. „Taner Tanesco, Kampagne ‚PV Q4‘“ */ scope?: string }) {
   const timeline = overview?.timeline ?? [];
   const longest = useMemo(() => timeline.reduce((max, entry) => Math.max(max, entry.seconds ?? 0), 0), [timeline]);
   const sequence = useMemo(() => groupTimeline(timeline), [timeline]);
@@ -26,14 +52,13 @@ export default function CallScoreboard({ overview, loading, range, onRange, deci
     const half = 108; const middle = rect.left - host.left + rect.width / 2;
     setTip({ entry, x: Math.max(Math.min(half, host.width / 2), Math.min(Math.max(half, host.width - half), middle)) });
   };
-  const custom = Boolean(range.from || range.to); const total = overview?.total ?? 0; const phrase = periodPhrase(range);
+  const total = overview?.total ?? 0; const phrase = periodPhrase(range);
   const headline = !overview ? "Gespräche werden geladen …" : total === 0 ? `Keine Gespräche ${phrase}` : `${total.toLocaleString("de-DE")} ${total === 1 ? "Gespräch" : "Gespräche"} ${phrase}`;
+  const decided = (overview?.approved ?? 0) + (overview?.review ?? 0) + (overview?.rejected ?? 0);
+  const rate = overview && overview.approvalRate !== null ? ` ${overview.approvalRate} % der ${decided.toLocaleString("de-DE")} entschiedenen Gespräche sind freigegeben.` : "";
   const talk = !overview ? "" : total === 0
     ? `${scope ? `${scope} – s` : "S"}obald der Dialer ein Gespräch meldet, erscheint es hier.`
-    : overview.talkSeconds > 0 ? `${scope ? `${scope} – zusammen` : "Zusammen"} ${talkTimeText(overview.talkSeconds)} am Telefon${overview.averageSeconds ? `, im Schnitt ${clockText(overview.averageSeconds)} Minuten je Gespräch` : ""}.` : scope ? `${scope}.` : "";
-  const counts: Record<CallDecision, number> = { freigegeben: overview?.approved ?? 0, pruefen: overview?.review ?? 0, zurueckgewiesen: overview?.rejected ?? 0, offen: overview?.open ?? 0 };
-  const openHint = overview && (overview.failed || overview.noConsent) ? [overview.failed ? `${overview.failed} fehlgeschlagen` : "", overview.noConsent ? `${overview.noConsent} ohne Einwilligung` : ""].filter(Boolean).join(", ") : MOOD_WORD.offen;
-  const decided = counts.freigegeben + counts.pruefen + counts.zurueckgewiesen;
+    : overview.talkSeconds > 0 ? `${scope ? `${scope} – zusammen` : "Zusammen"} ${talkTimeText(overview.talkSeconds)} am Telefon${overview.averageSeconds ? `, im Schnitt ${clockText(overview.averageSeconds)} Minuten je Gespräch` : ""}.${rate}` : `${scope ? `${scope}.` : ""}${rate}`.trim();
   const density = timeline.length > 140 ? "is-dense" : timeline.length > 70 ? "is-medium" : "";
   const waveKey = `${range.period}|${range.from}|${range.to}|${scope ?? ""}`; // neuer Zeitraum/Filter → die Striche wachsen einmal neu
   const delayOf = (order: number) => `${Math.round(Math.min(order * (460 / Math.max(1, timeline.length)), 460))}ms`;
@@ -44,41 +69,25 @@ export default function CallScoreboard({ overview, loading, range, onRange, deci
   };
   let order = 0;
   const trackLabel = total ? `Verlauf: ${timeline.length} Gespräche in zeitlicher Reihenfolge` : "Verlauf: noch keine Gespräche";
-  return <section className={`gq-stage ${loading ? "is-loading" : ""}`} aria-label="Übersicht der Gespräche">
-    <div className="gq-stage-top cq-filterbar">
-      <div className="gq-periods" role="group" aria-label="Zeitraum">{CALL_PERIODS.map(([key, label]) => <button key={key} type="button" className={!custom && range.period === key ? "active" : ""} aria-pressed={!custom && range.period === key} onClick={() => onRange({ period: key, from: "", to: "" })}>{label}</button>)}</div>
-      <div className="gq-dates"><label>von<input type="date" aria-label="Datum von" value={range.from} max={range.to || undefined} onChange={(event) => onRange({ ...range, from: event.target.value })} /></label><label>bis<input type="date" aria-label="Datum bis" value={range.to} min={range.from || undefined} onChange={(event) => onRange({ ...range, to: event.target.value })} /></label>{custom && <button type="button" className="gq-reset" onClick={() => onRange({ period: "alle", from: "", to: "" })}>Datum zurücksetzen</button>}</div>
+  return <section className={`gq-stage is-inset ${loading ? "is-loading" : ""}`} aria-label="Verlauf der Gespräche">
+    <h2 className="gq-count">{headline}</h2>
+    {talk && <p className="gq-talk">{talk}</p>}
+    <div className={`gq-wave ${clock ? "is-clock" : sequence.byHour ? "is-hours" : "is-days"} ${density} ${decision ? "has-filter" : ""}`} ref={waveRef} onMouseLeave={() => setTip(null)}>
+      {clock ? <div className="gq-wave-track" role="group" aria-label={trackLabel} key={waveKey}>
+        <div className="gq-clock-bars" style={{ ["--gq-clock-w" as string]: `${clock.width / 10}%` } as CSSProperties}>{clock.bars.map((bar, index) => slot(bar.entry, index, { left: `${bar.x / 10}%` }))}</div>
+        {clock.nowX !== null && <span className={`gq-now ${clock.nowX > 93 ? "is-right" : ""}`} style={{ left: `${clock.nowX}%` }} aria-hidden="true"><b>jetzt</b></span>}
+        <div className="gq-clock-ticks" aria-hidden="true">{clock.ticks.map((tick) => <span key={tick.hour} className={`gq-tick ${tick.label ? "" : "is-bare"} ${(tick.hour - clock.start) % 2 ? "is-odd" : ""}`} style={{ left: `${tick.x}%` }}>{tick.label && <b>{tick.hour} Uhr</b>}</span>)}</div>
+      </div> : <div className={`gq-wave-track ${!sequence.byHour && sequence.groups.length <= 12 ? "has-room" : ""}`} role="group" aria-label={trackLabel} key={waveKey} style={{ ["--gq-groups" as string]: Math.max(1, sequence.groups.length) } as CSSProperties}>
+        {sequence.groups.map((group) => <div key={group.key} className="gq-wave-group" style={{ flexGrow: group.entries.length, maxWidth: `max(calc(${group.entries.length} * var(--gq-slot-max)), var(--gq-group-min, 0px))` }}>
+          <div className="gq-wave-bars">{group.entries.map((entry) => slot(entry, order++))}</div>
+          <span className="gq-wave-label" aria-hidden="true"><b>{group.label}</b><i>{group.short}</i></span>
+        </div>)}
+      </div>}
+      {tip && <div className={`gq-tip is-${tip.entry.mood}`} style={{ left: tip.x }} role="status">
+        <b>{tip.entry.at ? `${clock || sequence.byHour ? "" : `${dayLabel(new Date(tip.entry.at))}, `}${timeText(new Date(tip.entry.at))} Uhr` : "Ohne Uhrzeit"}{tip.entry.seconds ? `, ${clockText(tip.entry.seconds)} Min` : ""}</b>
+        <span><i aria-hidden="true" />{DECISION_LABEL[tip.entry.decision]}{tip.entry.agent ? ` – ${tip.entry.agent}` : ""}</span>
+      </div>}
     </div>
-    <div className="gq-stage-main">
-      <div className="gq-lead">
-        <h2 className="gq-count">{headline}</h2>
-        {talk && <p className="gq-talk">{talk}</p>}
-        <div className={`gq-wave ${clock ? "is-clock" : sequence.byHour ? "is-hours" : "is-days"} ${density} ${decision ? "has-filter" : ""}`} ref={waveRef} onMouseLeave={() => setTip(null)}>
-          {clock ? <div className="gq-wave-track" role="group" aria-label={trackLabel} key={waveKey}>
-            <div className="gq-clock-bars" style={{ ["--gq-clock-w" as string]: `${clock.width / 10}%` } as CSSProperties}>{clock.bars.map((bar, index) => slot(bar.entry, index, { left: `${bar.x / 10}%` }))}</div>
-            {clock.nowX !== null && <span className={`gq-now ${clock.nowX > 93 ? "is-right" : ""}`} style={{ left: `${clock.nowX}%` }} aria-hidden="true"><b>jetzt</b></span>}
-            <div className="gq-clock-ticks" aria-hidden="true">{clock.ticks.map((tick) => <span key={tick.hour} className={`gq-tick ${tick.label ? "" : "is-bare"} ${(tick.hour - clock.start) % 2 ? "is-odd" : ""}`} style={{ left: `${tick.x}%` }}>{tick.label && <b>{tick.hour} Uhr</b>}</span>)}</div>
-          </div> : <div className={`gq-wave-track ${!sequence.byHour && sequence.groups.length <= 12 ? "has-room" : ""}`} role="group" aria-label={trackLabel} key={waveKey} style={{ ["--gq-groups" as string]: Math.max(1, sequence.groups.length) } as CSSProperties}>
-            {sequence.groups.map((group) => <div key={group.key} className="gq-wave-group" style={{ flexGrow: group.entries.length, maxWidth: `max(calc(${group.entries.length} * var(--gq-slot-max)), var(--gq-group-min, 0px))` }}>
-              <div className="gq-wave-bars">{group.entries.map((entry) => slot(entry, order++))}</div>
-              <span className="gq-wave-label" aria-hidden="true"><b>{group.label}</b><i>{group.short}</i></span>
-            </div>)}
-          </div>}
-          {tip && <div className={`gq-tip is-${tip.entry.mood}`} style={{ left: tip.x }} role="status">
-            <b>{tip.entry.at ? `${clock || sequence.byHour ? "" : `${dayLabel(new Date(tip.entry.at))}, `}${timeText(new Date(tip.entry.at))} Uhr` : "Ohne Uhrzeit"}{tip.entry.seconds ? `, ${clockText(tip.entry.seconds)} Min` : ""}</b>
-            <span><i aria-hidden="true" />{DECISION_LABEL[tip.entry.decision]}{tip.entry.agent ? ` – ${tip.entry.agent}` : ""}</span>
-          </div>}
-        </div>
-        <p className="gq-wave-note">{total ? <>Jeder Strich ist ein Gespräch: je länger es dauert, desto höher. Ein Klick öffnet es.{overview && overview.timelineHidden > 0 ? ` Zu sehen sind die letzten ${timeline.length} von ${total.toLocaleString("de-DE")}.` : ""}{clock && clock.untimed > 0 ? ` ${clock.untimed} ohne Uhrzeit ${clock.untimed === 1 ? "steht" : "stehen"} nur in der Liste.` : ""}</> : "Hier entsteht der Verlauf – ein Strich je Gespräch."}</p>
-      </div>
-      <div className={`gq-tally ${decision ? "has-filter" : ""}`} role="group" aria-label="Liste nach Ergebnis filtern">
-        {(Object.keys(MOOD_OF_DECISION) as CallDecision[]).map((key) => { const mood = MOOD_OF_DECISION[key]; const on = decision === key; return <button key={key} type="button" className={`gq-tally-item is-${mood} ${on ? "is-on" : ""}`} aria-pressed={on} title={on ? "Filter aufheben – wieder alle Gespräche zeigen" : `Nur „${DECISION_LABEL[key]}“ in der Liste zeigen`} onClick={() => onDecision(on ? "" : key)}>
-          <Face mood={mood} size={30} />
-          <span className="gq-tally-text"><b>{DECISION_LABEL[key]}</b><small>{key === "offen" ? openHint : MOOD_WORD[mood]}</small></span>
-          <strong>{counts[key].toLocaleString("de-DE")}</strong>
-        </button>; })}
-        <p className="gq-rate">{decision ? <button type="button" className="gq-reset" onClick={() => onDecision("")}>Wieder alle Gespräche zeigen</button> : overview && overview.approvalRate !== null ? <>{overview.approvalRate} % der {decided.toLocaleString("de-DE")} entschiedenen Gespräche sind freigegeben.</> : "Ein Klick auf eine Zeile filtert die Liste."}</p>
-      </div>
-    </div>
+    <p className="gq-wave-note">{total ? <>Jeder Strich ist ein Gespräch: je länger es dauert, desto höher. Ein Klick öffnet es.{overview && overview.timelineHidden > 0 ? ` Zu sehen sind die letzten ${timeline.length} von ${total.toLocaleString("de-DE")}.` : ""}{clock && clock.untimed > 0 ? ` ${clock.untimed} ohne Uhrzeit ${clock.untimed === 1 ? "steht" : "stehen"} nur in der Liste.` : ""}</> : "Hier entsteht der Verlauf – ein Strich je Gespräch."}</p>
   </section>;
 }

@@ -1,0 +1,1 @@
+ALTER TABLE `contractTemplates` ADD `starterKind` varchar(32);

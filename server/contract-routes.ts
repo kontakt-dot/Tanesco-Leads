@@ -3,18 +3,37 @@
  * Der Link ist das Geheimnis – ohne gültigen Token gibt es nichts zu sehen.
  */
 import type { Express, Request, Response } from "express";
-import { getDb } from "./db";
+import { ensureTenantForUser, getDb } from "./db";
+import { authenticateRequest } from "./_core/auth";
+import { sourceOf } from "../shared/contract-tracking";
 import * as vertraege from "./contracts";
 
 const clientIp = (req: Request) => { const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0]?.trim(); return (forwarded || req.socket?.remoteAddress || req.ip || "").replace(/^::ffff:/, "").slice(0, 64) || null; };
 const appUrlOf = (req: Request) => (process.env.APP_URL ?? "").replace(/\/+$/, "") || `${req.protocol}://${req.get("host")}`;
 const page = (title: string, text: string) => `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f2f4f7;color:#101828"><div style="max-width:520px;margin:12vh auto;padding:32px;background:#fff;border:1px solid #e4e7ec;border-radius:18px"><h1 style="font-size:20px;margin:0 0 10px">${title}</h1><p style="margin:0;color:#475467;line-height:1.6">${text}</p></div></body></html>`;
 
+const PIXEL = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64");
+/** Ist der Aufrufer in der App angemeldet? Dann schaut jemand aus der eigenen Firma – das zählt nicht als Aufruf des Kunden. */
+async function isInternal(req: Request): Promise<boolean> { try { const user = await authenticateRequest(req); return Boolean(await ensureTenantForUser(user.id)); } catch { return false; } }
+const metaOf = async (req: Request, withSession = true): Promise<vertraege.PublicMeta> => ({ ip: clientIp(req), userAgent: req.get("user-agent") ?? null, method: req.method, source: sourceOf(req.query.m), internal: withSession ? await isInternal(req) : false });
+
+/**
+ * Zusätzlich für den Verlauf: GET /api/vertrag/:token/o.gif (Zählbild in der E-Mail) und POST /api/vertrag/:token/lesen
+ * (die Seite meldet Lesedauer und Lesetiefe). Der Link in der E-Mail trägt ?m=1 (Einladung) bzw. ?m=2 (Erinnerung).
+ */
 export function registerContractRoutes(app: Express) {
+  app.get("/api/vertrag/:token/o.gif", async (req: Request, res: Response) => {
+    try { const db = await getDb(); if (db) await vertraege.trackContractMailOpen(db, String(req.params.token), await metaOf(req, false)); } catch (error) { console.error("[Verträge] Zählbild:", error instanceof Error ? error.message : error); }
+    res.set({ "content-type": "image/gif", "cache-control": "no-store, max-age=0" }); return res.send(PIXEL);
+  });
+  app.post("/api/vertrag/:token/lesen", async (req: Request, res: Response) => {
+    try { const db = await getDb(); const body = (req.body ?? {}) as { v?: number; s?: number; d?: number }; if (db) await vertraege.trackContractReading(db, String(req.params.token), { viewId: Number(body.v), seconds: Number(body.s), depth: Number(body.d) }); } catch (error) { console.error("[Verträge] Lesedauer:", error instanceof Error ? error.message : error); }
+    return res.status(204).end();
+  });
   app.get("/vertrag/:token", async (req: Request, res: Response) => {
     const db = await getDb(); if (!db) return res.status(503).send(page("Gerade nicht erreichbar", "Bitte in ein paar Minuten noch einmal versuchen."));
     try {
-      const html = await vertraege.publicContract(db, String(req.params.token), { ip: clientIp(req), userAgent: req.get("user-agent") ?? null }, appUrlOf(req));
+      const html = await vertraege.publicContract(db, String(req.params.token), await metaOf(req), appUrlOf(req));
       if (!html) return res.status(404).send(page("Vertrag nicht gefunden", "Dieser Link ist ungültig oder der Vertrag wurde zurückgezogen."));
       res.set({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" }); return res.send(html);
     } catch (error) { console.error("[Verträge] Seite:", error instanceof Error ? error.message : error); return res.status(500).send(page("Fehler", "Der Vertrag konnte nicht geladen werden.")); }
@@ -35,7 +54,7 @@ export function registerContractRoutes(app: Express) {
   app.get("/api/vertrag/:token/pdf", async (req: Request, res: Response) => {
     const db = await getDb(); if (!db) return res.status(503).send("Gerade nicht erreichbar.");
     try {
-      const pdf = await vertraege.publicPdf(db, String(req.params.token)); if (!pdf) return res.status(404).send("Nicht gefunden.");
+      const pdf = await vertraege.publicPdf(db, String(req.params.token), await metaOf(req)); if (!pdf) return res.status(404).send("Nicht gefunden.");
       res.set({ "content-type": "application/pdf", "content-disposition": `inline; filename="${pdf.fileName.replace(/"/g, "")}"`, "cache-control": "no-store" }); return res.send(Buffer.from(pdf.buffer));
     } catch (error) { console.error("[Verträge] PDF:", error instanceof Error ? error.message : error); return res.status(500).send("PDF konnte nicht erstellt werden."); }
   });

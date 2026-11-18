@@ -1,0 +1,69 @@
+/*
+ * Bausteine, die von Hand für beide Farbschemata geschrieben sind (werden NICHT automatisch in das helle Schema übersetzt).
+ * Helles Schema: Weiß, Stahlgrau, Anthrazit und das satte Rot der Seite. „Ausgewählt“ ist kräftig – nie blassrot.
+ */
+
+/* ─────────────────────────── Ordner der E-Mail-Kampagnen ───────────────────────────
+   Leiste über Kennzahlen und Liste: „Alle“, die Ordner, „Ohne Ordner“; rechts „Neuer Ordner“.
+   Jeder Ordner ist eine kleine Kachel (Symbol, Name, Anzahl). Der gewählte Ordner ist voll eingefärbt.
+   Beim Ziehen einer Kampagne werden die Ordner zu Ablagen (gestrichelt, die getroffene füllt sich). */
+.cl-folders{
+  --fo-line:rgba(255,255,255,.1);--fo-edge:rgba(255,255,255,.28);--fo-bg:rgba(255,255,255,.035);--fo-ink:#d6d3f3;
+  --fo-plate:rgba(255,255,255,.07);--fo-plate-ink:#b3aee6;--fo-count-bg:rgba(255,255,255,.08);--fo-count:#b6b2e0;--fo-lift:0 12px 22px -14px rgba(0,0,0,.9);
+  --fo-on-bg:linear-gradient(135deg,#8278ff,#6258df);--fo-on-ink:#ffffff;--fo-on-plate:rgba(255,255,255,.18);--fo-on-count-bg:#ffffff;--fo-on-count:#3a32a8;--fo-on-shadow:0 10px 22px -12px rgba(98,88,223,.9);
+  --fo-drop:rgba(160,150,255,.7);--fo-over-bg:#f6f4ff;--fo-over-ink:#17142c;--fo-focus:rgba(160,150,255,.9);--fo-sticky:#17152e;
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 16px;
+}
+html:not(.dark) .cl-folders{
+  --fo-line:#e4e7ec;--fo-edge:#b9c0cb;--fo-bg:#ffffff;--fo-ink:#17130f;
+  --fo-plate:#f2f4f7;--fo-plate-ink:#475467;--fo-count-bg:#f2f4f7;--fo-count:#344054;--fo-lift:0 10px 20px -14px rgba(16,24,40,.4);
+  --fo-on-bg:linear-gradient(90deg,#bc001d,#fb2c36);--fo-on-ink:#ffffff;--fo-on-plate:rgba(255,255,255,.2);--fo-on-count-bg:#ffffff;--fo-on-count:#bc001d;--fo-on-shadow:0 8px 18px -10px rgba(16,24,40,.55);
+  --fo-drop:#98a2b3;--fo-over-bg:#17130f;--fo-over-ink:#ffffff;--fo-focus:#bc001d;--fo-sticky:#ffffff;
+}
+.cl-folder-rail{display:contents} /* Ordner und „Neuer Ordner“ fließen in einer Reihe */
+.cl-folder{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;height:40px;padding:0;border-radius:13px;border:1px solid var(--fo-line);background:var(--fo-bg);color:var(--fo-ink);font-size:13.5px;font-weight:600;line-height:1;transition:border-color .15s,box-shadow .15s,transform .15s}
+button.cl-folder,.cl-folder-pick{display:inline-flex;align-items:center;gap:10px;height:100%;padding:0 12px 0 7px;white-space:nowrap;cursor:pointer}
+.cl-folder-pick{border:0;border-radius:inherit;background:none;color:inherit;font:inherit}
+button.cl-folder{font-family:inherit;height:40px!important;min-height:40px;line-height:normal!important;font-size:13.5px!important} /* „Alle“/„Ohne Ordner“ genauso hoch wie die Ordner – eine allgemeine Button-Regel drückte sie sonst zusammen */
+.cl-folder svg{box-sizing:content-box;width:14px;height:14px;flex:0 0 auto;padding:6px;border-radius:8px;background:var(--fo-plate);color:var(--fo-plate-ink);transition:background-color .15s,color .15s}
+.cl-folder span{max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.cl-folder i{display:inline-grid;place-items:center;min-width:24px;height:22px;padding:0 7px;border-radius:999px;background:var(--fo-count-bg);color:var(--fo-count);font-size:12px;font-style:normal;font-weight:700;font-variant-numeric:tabular-nums;transition:background-color .15s,color .15s}
+.cl-folder:hover{border-color:var(--fo-edge);box-shadow:var(--fo-lift);transform:translateY(-1px)}
+.cl-folder:hover svg{color:var(--fo-ink)}
+.cl-folder.is-active,.cl-folder.is-active:hover{border-color:transparent;background:var(--fo-on-bg);background-origin:border-box;color:var(--fo-on-ink);box-shadow:var(--fo-on-shadow);transform:none}
+.cl-folder.is-active svg,.cl-folder.is-active:hover svg{background:var(--fo-on-plate);color:var(--fo-on-ink)}
+.cl-folder.is-active i{background:var(--fo-on-count-bg);color:var(--fo-on-count)}
+.cl-folder.is-active .cl-folder-pick{padding-right:6px}
+.cl-folder.is-none:not(.is-active){border-style:dashed}
+.cl-folder-more{display:inline-grid;place-items:center;width:28px;height:28px;margin-right:8px;border:0;border-radius:8px;background:transparent;color:inherit;cursor:pointer;transition:background-color .15s}
+.cl-folder-more:hover{background:var(--fo-on-plate)}
+.cl-folder .cl-folder-more svg{width:16px;height:16px;padding:0;border-radius:0;background:none;color:inherit}
+.cl-folder:focus-within{outline:none}
+button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:focus-visible{outline:2px solid var(--fo-focus);outline-offset:2px}
+/* Kampagne wird gezogen: die Leiste bleibt oben sichtbar, auch wenn die Karte weiter unten liegt */
+.cl-folders.is-dragging{position:sticky;top:12px;z-index:40;border-radius:14px;background:var(--fo-sticky);box-shadow:0 0 0 10px var(--fo-sticky),0 18px 34px -14px rgba(0,0,0,.45)}
+.cl-folders.is-dragging .cl-folder{transform:none;box-shadow:none}
+.cl-folders.is-dragging .cl-folder:not(.is-all){border-style:dashed;border-color:var(--fo-drop);background:var(--fo-bg);color:var(--fo-ink)}
+.cl-folders.is-dragging .cl-folder:not(.is-all) svg{background:var(--fo-plate);color:var(--fo-plate-ink)}
+.cl-folders.is-dragging .cl-folder:not(.is-all) i{background:var(--fo-count-bg);color:var(--fo-count)}
+.cl-folders.is-dragging .cl-folder.is-all{opacity:.4}
+.cl-folders.is-dragging .cl-folder *{pointer-events:none} /* sonst flackert die Ablage über Symbol und Zahl */
+.cl-folders.is-dragging .cl-folder.is-over{border-style:solid;border-color:var(--fo-over-bg);background:var(--fo-over-bg);color:var(--fo-over-ink)}
+.cl-folders.is-dragging .cl-folder.is-over svg{background:rgba(127,127,127,.22);color:var(--fo-over-ink)}
+.cl-folders.is-dragging .cl-folder.is-over i{background:rgba(127,127,127,.22);color:var(--fo-over-ink)}
+/* „Neuer Ordner“: leere Kachel mit gestricheltem Rand */
+.cl-folder-actions .cl-folder-act{height:40px;padding:0 14px 0 12px;border-radius:13px;border:1px dashed var(--fo-edge);font-size:13.5px}
+.cl-folder-actions .cl-folder-act:hover{border-style:solid}
+html:not(.dark) .cl-folder-actions .cl-folder-act{border-color:#cfd4dc!important}
+html:not(.dark) .cl-folder-actions .cl-folder-act:hover{border-color:#17130f!important;background:#ffffff!important;color:#17130f!important}
+/* Handy: Ordner in einer Reihe zum Wischen, „Neuer Ordner“ darunter */
+@media(max-width:720px){
+  .cl-folders{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:8px}
+  .cl-folder-rail{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:nowrap;overflow-x:auto;margin:-4px;padding:4px 4px 6px;scrollbar-width:none}.cl-folder-rail::-webkit-scrollbar{display:none}
+  .cl-folder span{max-width:180px}
+  .cl-folder-actions{justify-content:flex-start}
+}
+@media(prefers-reduced-motion:reduce){
+  .cl-folder,.cl-folder svg,.cl-folder i,.cl-folder-more{transition:none}
+  .cl-folder:hover{transform:none}
+}

@@ -31,6 +31,41 @@ describe("Verträge: Vorlagen und KI", () => {
   });
 });
 
+import { CONTRACT_AI_SYSTEM, CONTRACT_CLAUSES, CONTRACT_PLACEHOLDERS, DETAIL_PRESETS, type ContractBlock } from "../shared/contracts";
+describe("Verträge: Vorlagen sind vollständig und einfach geschrieben", () => {
+  const partsOf = (blocks: ContractBlock[]) => blocks.flatMap((block) => block.type === "text" ? block.text.split(/\n{2,}/) : block.type === "bullets" ? block.items : block.type === "heading" ? [block.text] : []);
+  const headings = (blocks: ContractBlock[]) => blocks.filter((block) => block.type === "heading").map((block) => (block as { text: string }).text);
+  it("Leadliefervertrag regelt alles Nötige – in dieser Reihenfolge", () => {
+    const { blocks } = contractStarter("leadliefervertrag");
+    expect(headings(blocks)).toEqual(["Vertrag über die Lieferung qualifizierter Kundenanfragen (Leads)", "§ 1 Gegenstand des Vertrags", "§ 2 Was ein Lead ist", "§ 3 Leistungen des Anbieters", "§ 4 Liefergebiet, Menge und Übergabe", "§ 5 Preis und Abrechnung", "§ 6 Pflichten des Kunden", "§ 7 Reklamation", "§ 8 Datenschutz", "§ 9 Haftung", "§ 10 Laufzeit und Kündigung", "§ 11 Vertraulichkeit", "§ 12 Schlussbestimmungen"]);
+    const all = partsOf(blocks).join("\n");
+    for (const must of ["Der Kunde handelt als Unternehmer (§ 14 BGB) und nicht als Verbraucher.", "Er schuldet nicht, dass aus einem Lead ein Auftrag wird", "Die Menge ist ein Ziel, keine Garantie.", "Der Preis je geliefertem Lead beträgt {{preis}} zuzüglich gesetzlicher Umsatzsteuer.", "Vorkasse gibt es nicht.", "nur aus diesen Gründen reklamieren", "innerhalb von 7 Tagen nach der Lieferung in Textform", "eigene Verantwortliche nach der DSGVO", "Einwilligung des Interessenten", "Art. 14 DSGVO", "Vorsatz und grober Fahrlässigkeit", "wesentliche Pflicht", "typisch und vorhersehbar", "mit einer Frist von 14 Tagen zum Monatsende", "Eine Mindestabnahme gibt es nicht.", "Geschäftsbedingungen des Kunden gelten nicht", "Ist der Kunde Kaufmann, ist der Gerichtsstand der Sitz des Anbieters.", "Dieser Vertrag wird elektronisch geschlossen."]) expect(all).toContain(must);
+    expect(all).not.toMatch(/Schriftform|schriftlich/); // E-Mail genügt (Textform) – eine Schriftform-Pflicht wäre in Vorlagen unwirksam oder unpraktisch
+    expect(all).toMatch(/Vertragsstrafe in Höhe des dreifachen Lead-Preises/); expect(all).toMatch(/schuldhaft an Dritte weiter/); // Vertragsstrafe nur bei Verschulden und in maßvoller Höhe
+  });
+  it("Testphase: endet von selbst, keine Folgekosten ohne neue Vereinbarung – mit Datenschutz, Haftung und Schluss", () => {
+    const { blocks } = contractStarter("testphase"); const all = partsOf(blocks).join("\n");
+    expect(headings(blocks).slice(1)).toEqual(["§ 1 Gegenstand", "§ 2 Dauer und Umfang der Testphase", "§ 3 Nach der Testphase", "§ 4 Mitwirkung des Kunden", "§ 5 Vergütung und Abrechnung", "§ 6 Mängel und Ersatz", "§ 7 Datenschutz und Vertraulichkeit", "§ 8 Haftung", "§ 9 Schlussbestimmungen"]);
+    for (const must of ["Die Testphase endet von selbst", "Eine Kündigung ist nicht nötig.", "keine Kosten und keine Pflicht zur Abnahme", CONTRACT_CLAUSES.unternehmer, CONTRACT_CLAUSES.haftung[0], "Diese Vereinbarung wird elektronisch geschlossen."]) expect(all).toContain(must);
+  });
+  it("jeder Platzhalter im Text hat eine Angabe – und Sätze bleiben kurz", () => {
+    for (const kind of ["leadliefervertrag", "testphase"] as const) {
+      const { blocks } = contractStarter(kind); const keys = new Set(blocks.filter((block) => block.type === "detail").map((block) => (block as { key: string }).key)); const known = new Set(CONTRACT_PLACEHOLDERS.map((item) => item.replace(/[{}]/g, "")));
+      const parts = partsOf(blocks); const used = new Set(parts.flatMap((part) => Array.from(part.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)).map((match) => match[1])));
+      for (const key of used) expect(keys.has(key) || known.has(key), `Platzhalter {{${key}}} in ${kind}`).toBe(true);
+      const sentences = parts.flatMap((part) => part.replace(/^\(\d+\)\s*/, "").split(/(?<=[.!?:;])\s+/)).filter(Boolean); const words = sentences.map((sentence) => sentence.split(/\s+/).length);
+      expect(Math.max(...words), `längster Satz in ${kind}`).toBeLessThanOrEqual(28); expect(words.reduce((sum, value) => sum + value, 0) / words.length).toBeLessThan(14); // einfache Sprache: kurze Sätze
+      expect(new Set(blocks.map((block) => block.id)).size).toBe(blocks.length); // jeder Baustein hat eine eigene Kennung
+    }
+    expect(DETAIL_PRESETS.abrechnung).toContain("monatlich"); expect(contractStarter("leadliefervertrag").blocks.find((block) => block.type === "detail" && block.key === "abrechnung")).toMatchObject({ value: "monatlich" });
+  });
+  it("dieselben Regeln gelten für die KI und für Verträge ohne KI", () => {
+    expect(CONTRACT_AI_SYSTEM).toContain(CONTRACT_CLAUSES.unternehmer); expect(CONTRACT_AI_SYSTEM).toContain(CONTRACT_CLAUSES.haftung[1]); expect(CONTRACT_AI_SYSTEM).toContain("einfacher Sprache"); expect(CONTRACT_AI_SYSTEM).toContain("Dieser Vertrag wird elektronisch geschlossen.");
+    const plain = fallbackContractFromPrompt("Wir vermieten einen Stellplatz an die Firma"); const text = plain.blocks.filter((block) => block.type === "text").map((block) => (block as { text: string }).text).join("\n");
+    expect(text).toContain(CONTRACT_CLAUSES.unternehmer); expect(text).toContain(CONTRACT_CLAUSES.haftung[0]); expect(text).toContain("Geschäftsbedingungen des Kunden gelten nicht");
+  });
+});
+
 import { smoothQualifyPhrase } from "../shared/email-campaigns";
 describe("Formulierung Vorqualifizierung", () => {
   it("glättet „qualifiziert über … Fragen“ in allen Varianten", () => {

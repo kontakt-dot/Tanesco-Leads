@@ -10,14 +10,14 @@ import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
 import { useEffect, useState, useRef } from "react";
-import { ChevronLeft, ChevronRight, FileCheck2, Settings2, Upload, Users } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronLeft, ChevronRight, FileCheck2, Settings2, Upload, Users } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import { Face, FACE_COLOR, MOOD, MoodFace, moodOf } from "@/components/CallMood";
-import CallScoreboard, { dayKey, dayLabel, timeText, DECISION_LABEL, type CallRange, type DecisionFilter } from "@/components/CallScoreboard";
+import CallWave, { CallPeriodControl, CallTally, overviewSummary, dayKey, dayLabel, timeText, DECISION_LABEL, type CallRange, type DecisionFilter } from "@/components/CallScoreboard";
 import { AvatarContent, useAvatarOf } from "@/components/AvatarUpload";
-import { clockText } from "../../../shared/call-overview";
+import { barHeight, clockText } from "../../../shared/call-overview";
 import { initialsOf } from "../../../shared/avatar";
 
 type Settings = inferRouterOutputs<AppRouter>["leadops"]["getCallQaSettings"];
@@ -66,12 +66,12 @@ export default function CallQaWorkspace() {
   const scope = [agent || null, campaign ? `Kampagne „${campaign}“` : null, categoryName ? `Kategorie „${categoryName}“` : null].filter(Boolean).join(", ");
   return <>
     <header className="page-intro compact"><div><span className="eyebrow">CALLCENTER</span><h1>Gespräche</h1><p>Jedes Telefonat aus dem Dialer wird mitgeschnitten, in Text umgewandelt und von der KI bewertet. Was passt, geht von selbst in die Auslieferung.</p></div><div className="people-header-actions"><Button variant={view === "liste" ? "default" : "outline"} className={view === "liste" ? "flux-button" : ""} onClick={() => go("liste", null)}>Gespräche</Button><Button variant={view === "agenten" ? "default" : "outline"} className={view === "agenten" ? "flux-button" : ""} onClick={() => go("agenten", null)}><Users className="h-4 w-4" /> Agenten</Button><Button variant={view === "einstellungen" ? "default" : "outline"} className={view === "einstellungen" ? "flux-button" : ""} onClick={() => go("einstellungen", null)}>Dialer & Bewertung</Button></div></header>
-    {view === "liste" && !selected && <CallScoreboard overview={stats.data ?? null} loading={stats.isFetching} range={range} onRange={setRange} decision={decision} onDecision={setDecision} onOpen={(id) => go("liste", id)} scope={scope} />}
-    {view === "einstellungen" ? <CallQaSettings /> : view === "agenten" ? <AgentReport onShowCalls={(name) => { setAgent(name); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} />}
+    {view === "einstellungen" ? <CallQaSettings /> : view === "agenten" ? <AgentReport onShowCalls={(name) => { setAgent(name); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} overviewLoading={stats.isFetching} scope={scope} />}
   </>;
 }
 
 type Overview = inferRouterOutputs<AppRouter>["leadops"]["callStatistics"];
+const WAVE_KEY = "tanesco-gespraeche-verlauf";
 type DayGroup = { key: string; label: string; sub: string; rows: CallRow[] };
 const LONG_DAY = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "numeric", month: "long" });
 /** Gespräche nach Tagen bündeln: „Heute“, „Gestern“, sonst der ausgeschriebene Tag. */
@@ -92,7 +92,7 @@ const AgentFace = ({ name, avatarUrl }: { name: string; avatarUrl?: string | nul
 const Split = ({ approved, review, rejected, open }: { approved: number; review: number; rejected: number; open: number }) => <span className="gq-split" aria-hidden="true">{approved > 0 && <i className="is-approved" style={{ flexGrow: approved }} />}{review > 0 && <i className="is-review" style={{ flexGrow: review }} />}{rejected > 0 && <i className="is-rejected" style={{ flexGrow: rejected }} />}{open > 0 && <i className="is-open" style={{ flexGrow: open }} />}</span>;
 /** Hinweis unter dem Ergebnis, solange ein Gespräch noch nicht fertig bewertet ist. */
 const statusNote = (status: string): { cls: string; text: string } | null => status === "eingegangen" ? { cls: "is-working", text: "Eingegangen – Text folgt" } : status === "transkribiert" ? { cls: "is-working", text: "Text liegt vor – Bewertung folgt" } : status === "fehlgeschlagen" ? { cls: "is-warn", text: "Fehlgeschlagen" } : status === "ohne_einwilligung" ? { cls: "is-warn", text: "Ohne Einwilligung" } : null;
-function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, categoryId, onCategory, decision, onDecision, overview }: { onOpen: (id: number) => void; agent: string; onAgent: (name: string) => void; campaign: string; onCampaign: (name: string) => void; range: CallRange; categoryId: number | null; onCategory: (id: number | null) => void; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void; overview: Overview | null }) {
+function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange, categoryId, onCategory, decision, onDecision, overview, overviewLoading, scope }: { onOpen: (id: number) => void; agent: string; onAgent: (name: string) => void; campaign: string; onCampaign: (name: string) => void; range: CallRange; onRange: (range: CallRange) => void; categoryId: number | null; onCategory: (id: number | null) => void; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void; overview: Overview | null; overviewLoading: boolean; scope: string }) {
   const categoryOptions = trpc.leadops.callCategoryOptions.useQuery(undefined, { retry: false, staleTime: 30_000 });
   const utils = trpc.useUtils();
   const [linkText, setLinkText] = useState(""); const [linkAgent, setLinkAgent] = useState(""); const [linkCampaign, setLinkCampaign] = useState("");
@@ -137,10 +137,24 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, categor
   const pictureOf = (name: string | null | undefined) => (name ? avatarOf(userIdOf.get(name) ?? null) : null);
   const agentChips = overview?.byAgent ?? []; const extraAgent = agent && !agentChips.some((item) => item.name === agent) ? agent : null;
   const allSelected = Boolean(rows.length) && selected.size === rows.length;
+  const longest = rows.reduce((max, row) => Math.max(max, row.durationSeconds ?? 0), 0); // für den kleinen Dauer-Balken unter der Uhrzeit
+  // Der Verlauf (große Zahl + Tonspur) ist dezent: erst ein Klick auf „Verlauf“ klappt ihn auf – die Wahl bleibt in diesem Browser gemerkt
+  const [showWave, setShowWave] = useState<boolean>(() => { try { return window.localStorage.getItem(WAVE_KEY) === "1"; } catch { return false; } });
+  const toggleWave = () => setShowWave((open) => { try { window.localStorage.setItem(WAVE_KEY, open ? "0" : "1"); } catch { /* ohne Speicher: gilt nur für diese Sitzung */ } return !open; });
   const toggle = (id: number, on: boolean) => setSelected((current) => { const next = new Set(current); if (on) next.add(id); else next.delete(id); return next; });
   return <>
     <section className="surface-panel operations-panel overflow-hidden cq-list-panel">
       <div className="gq-toolbar">
+        <div className="gq-period-row">
+          <span className="gq-label">Zeitraum</span>
+          <CallPeriodControl range={range} onRange={onRange} />
+        </div>
+        <div className="gq-tally-row">
+          <span className="gq-label">Ergebnis</span>
+          <CallTally overview={overview} decision={decision} onDecision={onDecision} />
+          <div className="gq-sum"><span>{overviewSummary(overview)}</span><button type="button" className={`gq-wave-toggle ${showWave ? "is-open" : ""}`} aria-expanded={showWave} title={showWave ? "Verlauf einklappen" : "Verlauf zeigen: jedes Gespräch als Strich – wann telefoniert wurde und wie es ausging"} onClick={toggleWave}><AudioLines aria-hidden="true" /><span>Verlauf</span><ChevronDown className="gq-wave-chevron" aria-hidden="true" /></button></div>
+        </div>
+        {showWave && <CallWave overview={overview} loading={overviewLoading} range={range} decision={decision} onOpen={onOpen} scope={scope} />}
         <div className="cq-campaign-row">
           <span className="gq-label">Kampagne</span>
           <div className="dashboard-segments"><button type="button" className={campaign ? "" : "active"} onClick={() => onCampaign("")}>Alle</button>{(campaigns.data ?? []).map((item) => <button key={item.name} type="button" className={campaign === item.name ? "active" : ""} onClick={() => onCampaign(item.name)}>{item.name}</button>)}</div>
@@ -165,21 +179,24 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, categor
       {rows.length > 0 && <div className="gq-table-wrap"><table className="flux-table no-stack gq-table">
         <thead><tr>
           <th className="gq-col-check"><input type="checkbox" aria-label="Alle auswählen" checked={allSelected} onChange={(event) => setSelected(event.target.checked ? new Set(rows.map((row) => row.id)) : new Set())} /></th>
-          <th className="cq-th-ampel" title="Grün: alle entscheidenden Prüffragen sind mit Ja beantwortet. Orange: mindestens eine ist unklar – bitte reinhören. Rot: mindestens eine wurde mit Nein beantwortet. Die Zahl daneben zeigt, wie viele dieser Fragen erfüllt sind.">Ampel <span className="cq-th-info" aria-hidden="true">ⓘ</span></th>
-          <th>Uhrzeit</th><th>Kontakt</th><th>Kampagne</th><th>Agent</th><th>Ergebnis</th><th>Opt-in</th><th className="gq-col-go"><span className="sr-only">Öffnen</span></th>
+          <th className="cq-th-ampel" title="Grün: alle entscheidenden Prüffragen sind mit Ja beantwortet. Orange: mindestens eine ist unklar – bitte reinhören. Rot: mindestens eine wurde mit Nein beantwortet. Der Ring und die Zahl zeigen, wie viele dieser Fragen erfüllt sind.">Ampel <span className="cq-th-info" aria-hidden="true">ⓘ</span></th>
+          <th>Uhrzeit</th><th>Gespräch</th><th>Agent, Kampagne</th><th>Ergebnis</th><th className="gq-col-go"><span className="sr-only">Öffnen</span></th>
         </tr></thead>
         {days.map((day, dayIndex) => <tbody key={`${day.key}-${dayIndex}`}>
-          <tr className="gq-day"><th colSpan={9} scope="rowgroup"><span className="gq-day-line"><span className="gq-day-name">{day.label}</span>{day.sub && <span className="gq-day-date">{day.sub}</span>}<span className="gq-day-count">{day.rows.length === 1 ? "1 Gespräch" : `${day.rows.length} Gespräche`}</span>{!decision && day.rows.length > 1 && <Split approved={day.rows.filter((row) => row.decision === "freigegeben").length} review={day.rows.filter((row) => row.decision === "pruefen").length} rejected={day.rows.filter((row) => row.decision === "zurueckgewiesen").length} open={day.rows.filter((row) => !["freigegeben", "pruefen", "zurueckgewiesen"].includes(row.decision)).length} />}</span></th></tr>
+          <tr className="gq-day"><th colSpan={7} scope="rowgroup"><span className="gq-day-line"><span className="gq-day-name">{day.label}</span>{day.sub && <span className="gq-day-date">{day.sub}</span>}<span className="gq-day-count">{day.rows.length === 1 ? "1 Gespräch" : `${day.rows.length} Gespräche`}</span>{!decision && day.rows.length > 1 && <Split approved={day.rows.filter((row) => row.decision === "freigegeben").length} review={day.rows.filter((row) => row.decision === "pruefen").length} rejected={day.rows.filter((row) => row.decision === "zurueckgewiesen").length} open={day.rows.filter((row) => !["freigegeben", "pruefen", "zurueckgewiesen"].includes(row.decision)).length} />}</span></th></tr>
           {day.rows.map((call) => { const started = call.startedAt ? new Date(call.startedAt) : null; const contact = call.leadName ?? call.rawContactName ?? null; const note = statusNote(call.status); const error = (call as { error?: string | null }).error ?? null; const optIn = (call as { optIn?: { status: OptInStatus; kind: OptInKind; buyerName: string | null; missing: string[] } | null }).optIn ?? null;
+            // Zweite Zeile: worum es ging (Zusammenfassung der KI) – oder was gerade mit dem Gespräch passiert
+            const gist = call.status === "fehlgeschlagen" && error ? { cls: "is-warn", text: error } : note ? { cls: note.cls, text: note.text } : call.summary ? { cls: "", text: call.summary } : call.nextStep ? { cls: "", text: call.nextStep } : null;
             return <tr key={call.id} className={`gq-call is-${moodOf(call)} ${selected.has(call.id) ? "is-selected" : ""}`} tabIndex={0} aria-label={`Gespräch ${started ? `${day.label}, ${timeText(started)} Uhr` : "ohne Uhrzeit"}${contact ? `, ${contact}` : ""} – öffnen`} onClick={() => onOpen(call.id)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(call.id); } }}>
               <td className="gq-col-check" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label="Gespräch auswählen" checked={selected.has(call.id)} onChange={(event) => toggle(call.id, event.target.checked)} /></td>
               <td className="gq-ampel"><MoodFace call={call} percent layout="row" /></td>
-              <td className="gq-time"><b>{started ? timeText(started) : "–"}</b>{typeof call.durationSeconds === "number" && call.durationSeconds > 0 ? <small>{clockText(call.durationSeconds)} Min</small> : null}</td>
-              <td className="gq-contact"><b>{contact ?? call.phone ?? "Unbekannt"}</b><small>{call.leadPublicId ? <span className="gq-lead-id">{call.leadPublicId}</span> : call.rawContactName ? <span className="gq-raw">Rohdaten</span> : <span>nicht zugeordnet</span>}{contact && call.phone ? <span className="gq-phone">{call.phone}</span> : null}</small></td>
-              <td className="gq-campaign"><span>{call.campaign ?? call.provider}</span>{call.category && <small className="cq-category" title="Lead-Kategorie – von der KI aus dem Gespräch erkannt">{call.category.emoji ? `${call.category.emoji} ` : ""}{call.category.name}</small>}</td>
-              <td className="gq-agent">{call.agentName ? <span className="gq-agent-cell"><AgentFace name={call.agentName} avatarUrl={pictureOf(call.agentName)} /><span>{call.agentName}</span></span> : <span className="gq-none">ohne Agent</span>}</td>
-              <td className="gq-result"><span className={`gq-pill is-${call.decision}`}>{decisionLabel[call.decision]}{call.decidedBy === "manuell" ? <i title="Von Hand entschieden"> · von Hand</i> : null}</span>{note && <span className={`gq-status ${note.cls}`}>{note.text}</span>}{call.status === "fehlgeschlagen" && error ? <small className="cq-error-text" title={error}>{error.slice(0, 140)}{error.length > 140 ? "…" : ""}</small> : null}</td>
-              <td className="gq-optin">{optIn ? <OptInBadge status={optIn.status} kind={optIn.kind} buyerName={optIn.buyerName} missing={optIn.missing} compact /> : call.leadId ? <span className="gq-none" title="Noch keine Einwilligung für den Fachbetrieb – entsteht bei der Freigabe aus der Abschrift oder per SMS">kein Opt-in</span> : <span className="gq-none">–</span>}</td>
+              <td className="gq-time"><b>{started ? timeText(started) : "–"}</b>{typeof call.durationSeconds === "number" && call.durationSeconds > 0 ? <><small>{clockText(call.durationSeconds)} Min</small><i className="gq-dur" aria-hidden="true" style={{ width: `${Math.round(barHeight(call.durationSeconds, longest) * 100)}%` }} /></> : null}</td>
+              <td className="gq-talkcell">
+                <span className="gq-who-line"><b>{contact ?? call.phone ?? "Unbekannt"}</b>{call.leadPublicId ? <span className="gq-lead-id" title="Diesem Lead zugeordnet">{call.leadPublicId}</span> : call.rawContactName ? <span className="gq-raw" title="Kontakt aus den Rohdaten – wird bei Freigabe zum Lead">Rohdaten</span> : null}{contact && call.phone ? <span className="gq-phone">{call.phone}</span> : null}{call.category && <span className="gq-chip is-cat cq-category" title="Lead-Kategorie – von der KI aus dem Gespräch erkannt">{call.category.emoji ? `${call.category.emoji} ` : ""}{call.category.name}</span>}</span>
+                {gist && <span className={`gq-summary ${gist.cls}`} title={gist.text}>{gist.text}</span>}
+              </td>
+              <td className="gq-agent"><span className="gq-agent-cell">{call.agentName ? <AgentFace name={call.agentName} avatarUrl={pictureOf(call.agentName)} /> : <span className="gq-who is-none" aria-hidden="true">–</span>}<span className="gq-agent-lines"><b className={call.agentName ? "" : "gq-none"}>{call.agentName ?? "Ohne Agent"}</b><small title={`Kampagne: ${call.campaign ?? call.provider}`}>{call.campaign ?? call.provider}</small></span></span></td>
+              <td className="gq-result"><span className={`gq-pill is-${call.decision}`}>{decisionLabel[call.decision]}{call.decidedBy === "manuell" ? <i title="Von Hand entschieden"> · von Hand</i> : null}</span>{optIn && <span className="gq-optin"><OptInBadge status={optIn.status} kind={optIn.kind} buyerName={optIn.buyerName} missing={optIn.missing} compact /></span>}</td>
               <td className="gq-col-go" aria-hidden="true"><ChevronRight /></td>
             </tr>; })}
         </tbody>)}

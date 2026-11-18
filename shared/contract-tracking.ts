@@ -112,6 +112,27 @@ export function trackingHint(tracking: ContractTracking, status: ContractStatus,
   if (days >= 2) return `Seit ${days} Tagen nicht geöffnet. Schick eine Erinnerung oder ruf kurz an – vielleicht ist die E-Mail im Spam gelandet.`;
   return null;
 }
+export type FunnelStation = { key: TrackingStepKey; label: string; count: number; /** Anteil an den gesendeten Verträgen (0–100), null ohne gesendete */ share: number | null };
+/**
+ * Wie weit sind die gesendeten Verträge gekommen? Fünf Stationen, jede zählt alle Verträge, die mindestens so weit sind:
+ * Wer unterschrieben hat, hat auch gelesen; wer gelesen hat, hat geöffnet; wer geöffnet hat, hat die E-Mail aufgemacht.
+ */
+export function contractFunnel(rows: Array<{ status: ContractStatus; tracking?: ContractTracking | null }>): { sent: number; stations: FunnelStation[] } {
+  let sent = 0; let mail = 0; let viewed = 0; let read = 0; let signed = 0;
+  for (const row of rows) {
+    const tracking = row.tracking ?? EMPTY_TRACKING; if (!(tracking.sent.count > 0 || (row.status !== "entwurf" && row.status !== "storniert"))) continue; if (row.status === "entwurf") continue; // wieder im Entwurf: liegt nicht mehr beim Kunden
+    const isSigned = row.status === "unterschrieben"; const isRead = isSigned || tracking.reading.seconds >= READ_MIN_SECONDS || tracking.reading.reachedEnd; const isViewed = isRead || tracking.views.count > 0 || row.status === "angesehen"; const isMail = isViewed || tracking.mail.opens > 0;
+    sent += 1; if (isMail) mail += 1; if (isViewed) viewed += 1; if (isRead) read += 1; if (isSigned) signed += 1;
+  }
+  const share = (count: number) => (sent ? Math.round((count / sent) * 100) : null);
+  return { sent, stations: [{ key: "gesendet", label: "Gesendet", count: sent, share: share(sent) }, { key: "mail", label: "E-Mail geöffnet", count: mail, share: share(mail) }, { key: "geoeffnet", label: "Vertrag geöffnet", count: viewed, share: share(viewed) }, { key: "gelesen", label: "Gelesen", count: read, share: share(read) }, { key: "ergebnis", label: "Unterschrieben", count: signed, share: share(signed) }] };
+}
+/** Der offene Vertrag, bei dem sich Nachfassen am meisten lohnt: am häufigsten geöffnet, am längsten gelesen. */
+export function hottestOpen<T extends { status: ContractStatus; tracking?: ContractTracking | null }>(rows: T[]): T | null {
+  const open = rows.filter((row) => row.status === "gesendet" || row.status === "angesehen"); if (!open.length) return null;
+  const heat = (row: T) => { const tracking = row.tracking ?? EMPTY_TRACKING; return tracking.views.count * 1000 + Math.min(900, tracking.reading.seconds) + (tracking.reading.reachedEnd ? 5000 : 0) + tracking.mail.opens; };
+  return [...open].sort((a, b) => heat(b) - heat(a))[0];
+}
 /** Im Nachweis (PDF und Seite) stehen nur die wichtigen Schritte – nicht jedes Öffnen der E-Mail oder jeder weitere Aufruf. */
 export function proofEvents<T extends { kind: ContractEventKind }>(events: T[]): T[] {
   let viewed = false;

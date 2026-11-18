@@ -5,6 +5,7 @@
 import { jsPDF } from "jspdf";
 import { CONTRACT_EVENT_LABEL, detailValues, fillContract, formatContractDate, formatContractStamp, type ContractBlock, type ContractEventView, type ContractSignature, type ContractValues } from "./contracts";
 
+import { proofEvents } from "./contract-tracking";
 const PAGE = { width: 210, height: 297, margin: 20 };
 const FONT = { body: 10.5, heading: 13.5, title: 17, small: 8.5 };
 
@@ -66,7 +67,7 @@ export function buildContractPdf(input: { title: string; blocks: ContractBlock[]
     text("Nachweis der elektronischen Unterschrift", FONT.heading, "bold"); gap(3);
     const rows: Array<[string, string]> = [["Dokument", input.title], ["Unterschrieben von", input.signature.name], ["Zeitpunkt", formatContractStamp(input.signature.signedAt)], ["IP-Adresse", input.signature.ip ?? "–"], ["Gerät / Browser", (input.signature.userAgent ?? "–").slice(0, 160)], ["Prüfsumme Dokument (SHA-256)", input.signature.documentHash ?? "–"], ["Prüfsumme Unterschrift (SHA-256)", input.signature.signedHash ?? "–"]];
     for (const [label, value] of rows) { text(label, FONT.small, "normal", [102, 112, 133]); text(value, FONT.body); gap(1.5); }
-    if (input.events?.length) { gap(3); text("Vorgang", FONT.body, "bold"); gap(1); for (const event of input.events) text(`${formatContractStamp(event.createdAt)} – ${CONTRACT_EVENT_LABEL[event.kind] ?? event.kind}${event.note ? ` – ${event.note}` : ""}${event.ip ? ` (${event.ip})` : ""}`, FONT.small, "normal", [102, 112, 133]); }
+    if (input.events?.length) { gap(3); text("Vorgang", FONT.body, "bold"); gap(1); for (const event of proofEvents(input.events)) text(`${formatContractStamp(event.createdAt)} – ${CONTRACT_EVENT_LABEL[event.kind] ?? event.kind}${event.note ? ` – ${event.note}` : ""}${event.ip ? ` (${event.ip})` : ""}`, FONT.small, "normal", [102, 112, 133]); }
     gap(4); text("Die Prüfsummen erlauben es, nachträglich zu prüfen, dass Dokument und Unterschrift seit der Unterzeichnung unverändert sind.", FONT.small, "italic", [102, 112, 133]);
   }
   const pages = doc.getNumberOfPages();
