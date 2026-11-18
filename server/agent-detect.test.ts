@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentNameMerges, canonicalAgentName, detectAgent, sameAgentName } from "../shared/agent-names";
+import { agentNameMerges, canonicalAgentName, detectAgent, isJunkAgentName, sameAgentName } from "../shared/agent-names";
 
 const name = (text: string, known: string[] = []) => detectAgent(text, known)?.name ?? null;
 
@@ -28,9 +28,34 @@ describe("Agent aus dem Transkript erkennen", () => {
     expect(name("Guten Tag, es geht um Ihre Anfrage.", ["Maja Becker"])).toBeNull();
   });
 
-  it("eine Vermutung ohne Firma und ohne klare Formel ist nicht „sicher“", () => {
-    expect(detectAgent("Hallo, hier ist Becker.")).toMatchObject({ name: "Becker", sure: false });
+  it("eine Vermutung ohne Firma und ohne klare Formel ist nicht „sicher“ – ein einzelnes Wort zählt dann gar nicht", () => {
+    expect(detectAgent("Hallo, hier ist Becker.")).toBeNull();
+    expect(detectAgent("Hallo, hier ist Maja Becker.")).toMatchObject({ name: "Maja Becker", sure: false });
     expect(detectAgent("Guten Tag, hier ist Maja Becker von HausKompass.")).toMatchObject({ sure: true });
+    expect(detectAgent("Hallo, mein Name ist Maja Becker.")).toMatchObject({ name: "Maja Becker", sure: true });
+  });
+
+  it("der Kunde meldet sich zuerst mit Namen – der Agent ist trotzdem der, der sich mit Firma oder klarer Formel vorstellt", () => {
+    expect(name("Ja, hier ist Peter Lange, hallo? Guten Tag Herr Lange, mein Name ist Maja Becker, ich rufe an wegen Ihrer Anfrage.")).toBe("Maja Becker");
+    expect(name("Hier ist Peter Lange. Guten Tag Herr Lange, es geht um Ihre Anfrage zur Photovoltaik.")).toBeNull(); // nur der Kunde nennt seinen Namen
+    expect(name("Lange hier. Hallo Herr Lange, Sabine Hagen von HausKompass.")).toBe("Sabine Hagen");
+  });
+
+  it("Familie, Berufe und Füllwörter sind keine Agenten-Namen", () => {
+    for (const text of ["Ja, hier ist der Sohn, mein Vater ist gerade nicht da.", "Ich bin Rentner und Eigentümer.", "Mein Name ist Programm.".replace("Programm", "Name"), "Hier ist die Zentrale.", "Ich bin Mieterin, das entscheidet der Vermieter."]) expect(name(text)).toBeNull();
+  });
+
+  it("„Mein Name“ und andere Füllwörter gelten nie als bekannter Agent", () => {
+    expect(isJunkAgentName("Mein Name")).toBe(true); expect(isJunkAgentName("Woche")).toBe(true); expect(isJunkAgentName("")).toBe(true); expect(isJunkAgentName(null)).toBe(true);
+    expect(isJunkAgentName("Maja Becker")).toBe(false); expect(isJunkAgentName("Agent 12")).toBe(false); expect(isJunkAgentName("maja.becker")).toBe(false);
+    // Stand ein solcher Eintrag schon in der Liste, wird er nicht mehr in fremden Gesprächen „wiedererkannt“
+    expect(name("Guten Tag. Mein Name ist leider nicht zu verstehen gewesen.", ["Mein Name", "Maja Becker"])).toBeNull();
+    expect(canonicalAgentName("Vanessa Schiffer", [{ name: "Mein Name", count: 50 }])).toBe("Vanessa Schiffer");
+    expect(agentNameMerges([{ name: "Mein Name", count: 9 }, { name: "Maja Becker", count: 2 }])).toEqual([]);
+  });
+
+  it("ein bekannter Agent gewinnt gegen einen früheren, unsicheren Fund", () => {
+    expect(detectAgent("Hallo, hier ist Peter Lange. Ja guten Tag, ich bin Maja Decker, es geht um Ihre Anfrage.", ["Maja Becker"])).toMatchObject({ name: "Maja Decker", sure: true });
   });
 });
 

@@ -91,7 +91,11 @@ export function startRecordingRetry(intervalSeconds = Number(process.env.RECORDI
   let running = false;
   const tick = async () => {
     if (running) return; running = true;
-    try { const db = await getDb(); if (!db) return; const { retryWaitingRecordings } = await import("./call-qa"); const result = await retryWaitingRecordings(db); if (result.retried) console.log(`[Gespräche] Aufnahme nachgeholt: ${result.retried} Versuche, ${result.done} bewertet`); }
+    try { const db = await getDb(); if (!db) return; const { retryWaitingRecordings } = await import("./call-qa"); const result = await retryWaitingRecordings(db); if (result.retried) console.log(`[Gespräche] Aufnahme nachgeholt: ${result.retried} Versuche, ${result.done} bewertet`);
+      // Nebenher (ohne den Takt aufzuhalten): Gespräche ohne Kriterien-Punkte nachbewerten und unsichere Agenten-Namen von der KI prüfen lassen
+      const { rescoreUnscoredCalls, verifyAgentsWithAi } = await import("./call-qa");
+      void rescoreUnscoredCalls(db).then((done) => { if (done.tried) console.log(`[Gespräche] Kriterien nachbewertet: ${done.rescored} von ${done.tried}`); }).catch((error) => console.error("[Gespräche] Kriterien nachbewerten:", error instanceof Error ? error.message : error));
+      void verifyAgentsWithAi(db).then((done) => { if (done.checked) console.log(`[Gespräche] Agenten per KI geprüft: ${done.checked}, geändert ${done.changed}`); }).catch((error) => console.error("[Gespräche] Agenten prüfen:", error instanceof Error ? error.message : error)); }
     catch (error) { console.error("[Gespräche] Aufnahme nachholen:", error instanceof Error ? error.message : error); } finally { running = false; }
   };
   recordingRetryTimer = setInterval(tick, intervalSeconds * 1000); recordingRetryTimer.unref?.();

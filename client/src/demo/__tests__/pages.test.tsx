@@ -219,6 +219,7 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
 });
 
 describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter, eigene Kriterien je Kampagne", () => {
+  afterEach(() => { cleanup(); }); // sonst bleibt das Einstellen-Fenster eines Tests für den nächsten im Dokument stehen
   it("zeigt die Prozentzahl bei bewerteten Gesprächen und filtert nach Zeitraum", async () => {
     window.history.replaceState(null, "", "/?page=Gespräche");
     const { view } = mount();
@@ -250,20 +251,128 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     await act(async () => { fireEvent.click(segment); }); await settle(400);
     expect(view.container.querySelector(".cq-criteria-box")).toBeNull(); // Einstellungen liegen im Fenster – die Liste steht im Fokus
     await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-tool")).find((node) => /Einstellen/.test(node.textContent ?? ""))!); }); await settle(400);
-    const box = document.querySelector(".cq-criteria-box")!; expect(box).toBeTruthy();
+    const dialog = () => Array.from(document.querySelectorAll<HTMLElement>(".cq-dialog")).pop()!;
+    const box = dialog().querySelector(".cq-criteria-box")!; expect(box).toBeTruthy();
     expect(box.textContent).toContain("Standard-Kriterien");
-    await act(async () => { fireEvent.click(box.querySelector<HTMLButtonElement>(".cq-edit-criteria")!); }); await settle(200);
+    // Die Kriterien stehen direkt als Felder da – kein „Bearbeiten“-Klick nötig; „Änderungen speichern“ wird erst mit einer Änderung aktiv
     const rows = box.querySelectorAll(".cq-criterion-row"); expect(rows.length).toBeGreaterThan(0);
-    fireEvent.change(rows[0].querySelector<HTMLInputElement>("input[aria-label='Kriterium']")!, { target: { value: "Treppe vermessen" } });
-    const save = Array.from(box.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Speichern")!;
-    await act(async () => { fireEvent.click(save); }); await settle(500);
-    const after = document.querySelector(".cq-criteria-box")!;
-    expect(after.textContent).toMatch(/[Ee]igene Kriterien/); expect(after.textContent).toContain("Treppe vermessen"); expect(document.querySelector(".cq-facts")?.textContent).toContain("eigene dieser Kampagne");
-    expect(after.querySelector(".cq-reset-criteria")).toBeTruthy();
+    const save = () => dialog().querySelector<HTMLButtonElement>(".cq-save-criteria")!;
+    expect(save().disabled).toBe(true);
+    fireEvent.change(rows[0].querySelector<HTMLInputElement>("input[aria-label='Kriterium']")!, { target: { value: "Treppe vermessen" } }); await settle(100);
+    expect(save().disabled).toBe(false); expect(dialog().querySelector(".cq-savebar")?.textContent).toContain("Ungespeicherte Änderungen");
+    await act(async () => { fireEvent.click(save()); }); await settle(500);
+    const after = dialog().querySelector(".cq-criteria-box")!;
+    expect(after.textContent).toMatch(/[Ee]igene Kriterien/); expect(after.querySelector<HTMLInputElement>("input[aria-label='Kriterium']")?.value).toBe("Treppe vermessen"); expect(dialog().querySelector(".cq-facts")?.textContent).toContain("eigene dieser Kampagne");
+    expect(after.querySelector(".cq-reset-criteria")).toBeTruthy(); expect(save().disabled).toBe(true); expect(dialog().querySelector(".cq-savebar")?.textContent).toContain("Alles gespeichert");
+  });
+
+  it("Kampagne im Einstellen-Fenster umbenennen und Prüffragen samt Regel, Hinweis und Produkt-Bezug ändern", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    const segment = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-campaign-row .dashboard-segments button")).find((node) => node.textContent && node.textContent !== "Alle")!;
+    const oldName = segment.textContent!;
+    await act(async () => { fireEvent.click(segment); }); await settle(300);
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-tool")).find((node) => /Einstellen/.test(node.textContent ?? ""))!); }); await settle(400);
+    const dialog = () => Array.from(document.querySelectorAll<HTMLElement>(".cq-dialog")).pop()!; // das zuletzt geöffnete Fenster (frühere Tests lassen ihres im Dokument stehen)
+    // Name: direkt als Feld, „Name speichern“ erst nach einer Änderung aktiv
+    const nameInput = dialog().querySelector<HTMLInputElement>(".cq-name-input")!; expect(nameInput.value).toBe(oldName);
+    const nameSave = () => dialog().querySelector<HTMLButtonElement>(".cq-name-save")!; expect(nameSave().disabled).toBe(true);
+    fireEvent.change(nameInput, { target: { value: "Solar Frühjahr" } }); await settle(100); expect(nameSave().disabled).toBe(false);
+    await act(async () => { fireEvent.click(nameSave()); }); await settle(600);
+    expect(dialog().querySelector<HTMLInputElement>(".cq-name-input")?.value).toBe("Solar Frühjahr");
+    const chipNames = () => Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-campaign-row .dashboard-segments button")).map((node) => node.textContent);
+    for (let i = 0; i < 15 && !chipNames().includes("Solar Frühjahr"); i += 1) await settle(200); // die Liste lädt nach dem Umbenennen neu
+    expect(chipNames()).toContain("Solar Frühjahr"); expect(chipNames()).not.toContain(oldName);
+    // Prüffragen: Felder direkt änderbar – Text, Regel, „gilt für“ und Hinweis bleiben nach dem Speichern erhalten
+    await act(async () => { fireEvent.click(Array.from(dialog().querySelectorAll<HTMLButtonElement>(".cq-tabs button")).find((node) => /Prüffragen/.test(node.textContent ?? ""))!); }); await settle(300);
+    const firstRow = () => dialog().querySelector(".cq-question-row")!;
+    fireEvent.change(firstRow().querySelector<HTMLInputElement>("input[aria-label='Frage']")!, { target: { value: "Will der Kunde in 6 Monaten umsetzen?" } });
+    fireEvent.change(firstRow().querySelector<HTMLSelectElement>("select[aria-label='Regel']")!, { target: { value: "ko" } });
+    fireEvent.change(firstRow().querySelector<HTMLSelectElement>("select[aria-label='Gilt für']")!, { target: { value: "waermepumpe" } });
+    fireEvent.change(firstRow().querySelector<HTMLTextAreaElement>("textarea[aria-label='Hinweis für die KI']")!, { target: { value: "„So schnell wie möglich“ zählt als Ja." } }); await settle(100);
+    await act(async () => { fireEvent.click(dialog().querySelector<HTMLButtonElement>(".cq-save-questions")!); }); await settle(600);
+    expect(firstRow().querySelector<HTMLInputElement>("input[aria-label='Frage']")?.value).toBe("Will der Kunde in 6 Monaten umsetzen?");
+    expect(firstRow().querySelector<HTMLSelectElement>("select[aria-label='Regel']")?.value).toBe("ko");
+    expect(firstRow().querySelector<HTMLSelectElement>("select[aria-label='Gilt für']")?.value).toBe("waermepumpe");
+    expect(firstRow().querySelector<HTMLTextAreaElement>("textarea[aria-label='Hinweis für die KI']")?.value).toBe("„So schnell wie möglich“ zählt als Ja.");
+    expect(dialog().querySelector<HTMLButtonElement>(".cq-save-questions")?.disabled).toBe(true);
+  });
+});
+
+describe("Gespräche – Einstellen-Fenster verliert keine ungespeicherten Änderungen", () => {
+  beforeEach(() => { cleanup(); }); // Reste früherer Tests (offene Fenster) entfernen
+  afterEach(() => { document.querySelectorAll(".app-confirm-backdrop").forEach((node) => node.remove()); cleanup(); resetStore(); });
+  it("fragt beim Schließen und beim Wechsel der Kampagne nach; ohne Änderungen schließt das Fenster sofort", async () => {
+    resetStore();
+    window.history.replaceState(null, "", "/?page=Gespräche");
+    const { view } = mount();
+    await settle(400);
+    const chips = () => Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-campaign-row .dashboard-segments button")).filter((node) => node.textContent && node.textContent !== "Alle");
+    const first = chips()[0].textContent!; const second = chips()[1].textContent!;
+    await act(async () => { fireEvent.click(chips()[0]); }); await settle(300);
+    const openSettings = async () => { await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-tool")).find((node) => /Einstellen/.test(node.textContent ?? ""))!); }); await settle(400); };
+    const dialog = () => Array.from(document.querySelectorAll<HTMLElement>(".cq-dialog")).pop();
+    const confirmBox = () => document.querySelector<HTMLElement>(".app-confirm");
+    const closeButton = () => dialog()!.querySelector<HTMLButtonElement>("[data-slot='dialog-close']")!;
+    // Ohne Änderung: schließt sofort, keine Rückfrage
+    await openSettings(); expect(dialog()).toBeTruthy();
+    await act(async () => { fireEvent.click(closeButton()); }); await settle(300);
+    expect(confirmBox()).toBeNull(); expect(dialog()).toBeUndefined();
+    // Mit Änderung: Rückfrage – „Abbrechen“ lässt Fenster und Eingabe stehen
+    await openSettings();
+    const criterion = () => dialog()!.querySelector<HTMLInputElement>(".cq-criterion-row input[aria-label='Kriterium']")!;
+    fireEvent.change(criterion(), { target: { value: "Mein eigenes Kriterium" } }); await settle(100);
+    await act(async () => { fireEvent.click(closeButton()); }); await settle(300);
+    expect(confirmBox()?.textContent).toContain("noch nicht gespeichert");
+    await act(async () => { fireEvent.click(confirmBox()!.querySelector<HTMLButtonElement>(".app-confirm-cancel")!); }); await settle(300);
+    expect(confirmBox()).toBeNull(); expect(criterion().value).toBe("Mein eigenes Kriterium");
+    // Kampagne wechseln: ebenfalls Rückfrage – „Abbrechen“ bleibt bei der Kampagne
+    const select = () => dialog()!.querySelector<HTMLSelectElement>(".cq-campaign-select")!;
+    fireEvent.change(select(), { target: { value: second } }); await settle(300);
+    expect(confirmBox()?.textContent).toContain("zur anderen Kampagne wechseln");
+    await act(async () => { fireEvent.click(confirmBox()!.querySelector<HTMLButtonElement>(".app-confirm-cancel")!); }); await settle(300);
+    expect(dialog()!.querySelector<HTMLInputElement>(".cq-name-input")?.value).toBe(first); expect(criterion().value).toBe("Mein eigenes Kriterium");
+    // Namen ändern, solange Kriterien ungespeichert sind: Hinweis statt stillem Verlust
+    fireEvent.change(dialog()!.querySelector<HTMLInputElement>(".cq-name-input")!, { target: { value: "Neuer Name" } }); await settle(100);
+    await act(async () => { fireEvent.click(dialog()!.querySelector<HTMLButtonElement>(".cq-name-save")!); }); await settle(300);
+    expect(document.body.textContent).toContain("Speichere zuerst deine Änderungen"); expect(criterion().value).toBe("Mein eigenes Kriterium");
+    expect(chips().map((node) => node.textContent)).toContain(first);
+    // Schließen bestätigen: Fenster zu, nichts gespeichert
+    await act(async () => { fireEvent.click(closeButton()); }); await settle(300);
+    await act(async () => { fireEvent.click(confirmBox()!.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(400);
+    expect(dialog()).toBeUndefined();
+    await openSettings(); expect(criterion().value).not.toBe("Mein eigenes Kriterium"); expect(dialog()!.querySelector<HTMLInputElement>(".cq-name-input")?.value).toBe(first);
+  });
+});
+
+describe("Gespräche – Kriterien noch nicht bewertet", () => {
+  afterEach(() => { cleanup(); resetStore(); });
+  it("zeigt im Gespräch einen Hinweis statt lauter 0 %", async () => {
+    resetStore();
+    const call = getStore().tables.callRecords.find((item) => item.status === "bewertet")! as Record<string, unknown> & { id: number };
+    Object.assign(call, { score: null, criteriaScores: [{ key: "_hinweis", score: 0, evidence: "Die KI hat für die Kriterien keine lesbaren Punkte geliefert (leere Antwort)." }] });
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`);
+    const { view } = mount();
+    await settle(500);
+    const note = view.container.querySelector(".cq-unscored")!; expect(note).toBeTruthy();
+    expect(note.textContent).toContain("noch nicht bewertet"); expect(note.textContent).toContain("automatisch nach"); expect(note.textContent).toContain("keine lesbaren Punkte");
+    expect(view.container.querySelectorAll(".cq-percent-sm").length).toBe(0); // keine „0 %“ je Kriterium
+    expect(view.container.textContent).not.toContain("Qualitätsnote");
+  });
+  it("ein bewertetes Gespräch zeigt die Punkte je Kriterium und keinen Hinweis", async () => {
+    resetStore();
+    const call = getStore().tables.callRecords.find((item) => item.status === "bewertet" && typeof item.score === "number" && Array.isArray(item.criteriaScores) && item.criteriaScores.length > 0)!; expect(call).toBeTruthy();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`);
+    const { view } = mount();
+    await settle(500);
+    expect(view.container.querySelector(".cq-unscored")).toBeNull();
+    expect(view.container.querySelectorAll(".cq-percent-sm").length).toBeGreaterThan(0);
   });
 });
 
 describe("Gespräche – „Zurück“ bleibt in Gespräche", () => {
+  afterEach(() => { cleanup(); });
   it("Gespräch öffnen legt einen eigenen Verlaufsschritt an; Zurück führt zur Gesprächsliste", async () => {
     window.history.replaceState(null, "", "/?page=Gespräche");
     const { view } = mount();

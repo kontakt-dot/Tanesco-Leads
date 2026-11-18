@@ -57,4 +57,14 @@ describe("Zahl unter dem Smiley: Anteil erfüllter Prüffragen", () => {
     expect(questionFulfilment(mixed, { a: { answer: "ja" }, b: { answer: "nein" } })).toMatchObject({ yes: 1, total: 1, percent: 100 }); // Info-Fragen zählen nicht
     expect(questionFulfilment(questions, null)).toBeNull(); expect(questionFulfilment(questions, {})).toBeNull();
   });
+  it("gleiche Prozentzahl, andere Ampel: 75 % mit einem „Nein“ ist rot (zurückgewiesen), 75 % mit einem „unklar“ ist orange (zur Prüfung) – der Hinweis nennt die Frage", () => {
+    const all = Object.fromEntries(questions.map((question) => [question.key, { answer: "ja" as const }]));
+    const labelOf = (key: string) => questions.find((question) => question.key === key)!.label;
+    const withNo = { ...all, eigentuemer_entscheider: { answer: "nein" as const } }; const withUnclear = { ...all, umsetzung_6_monate: { answer: "unklar" as const } };
+    expect(questionFulfilment(questions, withNo)).toMatchObject({ percent: 75, no: 1, unclear: 0, failed: [labelOf("eigentuemer_entscheider")], open: [] });
+    expect(questionFulfilment(questions, withUnclear)).toMatchObject({ percent: 75, no: 0, unclear: 1, failed: [], open: [labelOf("umsetzung_6_monate")] });
+    expect(decideByQuestions(questions, withNo)?.decision).toBe("zurueckgewiesen");
+    expect(decideByQuestions(questions, withUnclear)?.decision).toBe("pruefen");
+    expect(decideByQuestions(questions, all)?.decision).toBe("freigegeben");
+  });
 });

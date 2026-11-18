@@ -45,13 +45,33 @@ vi.mock("./_core/llm", () => ({
       const verdict = params.outputSchema.schema?.properties?.kategorie ? { kategorie: /großhandel/i.test(firma) ? { passt: "nein", grund: "Laut Webseite reiner Großhandel – keine Montage beim Kunden" } : { passt: "ja", grund: "Fachbetrieb mit Montage laut Webseite" } } : {};
       return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ ...answer, ...verdict }) }, finish_reason: "stop" }] };
     }
+    const reply = (value: unknown, finishReason = "stop") => ({ id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(value) }, finish_reason: finishReason }] });
+    const stubState = globalThis as { __agentAnswer?: string; __answers?: Record<string, string>; __criteriaPlan?: string[]; __llmLog?: string[] };
+    stubState.__llmLog?.push(params.outputSchema?.name ?? "");
+    if (params.outputSchema?.name === "agentenname") return reply({ agentName: stubState.__agentAnswer ?? "" }); // Nachfrage „Wie heißt der anrufende Mitarbeiter?“
+    if (params.outputSchema?.name === "qualifizierung" && stubState.__answers) { // Prüffragen als einzelne Felder (antwort_<schlüssel> / notiz_<schlüssel>) – so antwortet die echte KI
+      const fields = Object.keys(params.outputSchema.schema?.properties ?? {});
+      return reply(Object.fromEntries(fields.map((field) => [field, field.startsWith("antwort_") ? stubState.__answers![field.slice(8)] ?? "ja" : `Beleg laut KI zu ${field.slice(6)}.`])));
+    }
     const text = String(params.messages.find((message) => message.role === "user")?.content ?? "").toLowerCase();
     const good = /gerne|einverstanden|eigentümer/.test(text); const bad = /nicht angerufen|löschen/.test(text);
     const score = bad ? 1 : good ? 9 : 5;
     const systemText = String(params.messages.find((message) => message.role === "system")?.content ?? ""); const listed = Array.from(systemText.matchAll(/^- ([a-z0-9_]+): /gm)).map((match) => match[1]); // Kriterien aus der Anweisung (eigene je Kampagne), sonst Standard
     const topic = /treppenlift/.test(text) ? "Treppenlift" : "";
-    const evaluation = { topic, criteria: (listed.length ? listed : ["bedarf", "entscheider", "zeitrahmen", "budget", "kontaktdaten", "einwilligung"]).map((key) => ({ key, score, evidence: `Beleg ${key}` })), summary: bad ? "Kunde lehnt Kontakt ab." : good ? "Klarer Bedarf, Weitergabe erlaubt." : "Offene Punkte.", redFlags: bad ? ["Kunde möchte nicht kontaktiert werden"] : [], nextStep: good ? "Übergeben" : "Rückruf", verdict: bad ? "nicht_verkaufbar" : good ? "verkaufbar" : "nachfassen" };
-    return { id: "stub", created: 0, model: "stub", choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(evaluation) }, finish_reason: "stop" }] };
+    const keys = listed.length ? listed : ["bedarf", "entscheider", "zeitrahmen", "budget", "kontaktdaten", "einwilligung"];
+    const rest = { topic, summary: bad ? "Kunde lehnt Kontakt ab." : good ? "Klarer Bedarf, Weitergabe erlaubt." : "Offene Punkte.", redFlags: bad ? ["Kunde möchte nicht kontaktiert werden"] : [], nextStep: good ? "Übergeben" : "Rückruf", verdict: bad ? "nicht_verkaufbar" : good ? "verkaufbar" : "nachfassen" };
+    // Form der Kriterien-Antwort je Aufruf (globalThis.__criteriaPlan): „felder“ = einzelne Felder wie verlangt, „text“ = Liste als Text (so kam es in der Praxis vor),
+    // „leer“ = gar keine Punkte; ohne Angabe die alte Listen-Form
+    const shape = params.outputSchema?.name === "gespraechsbewertung" ? stubState.__criteriaPlan?.shift() ?? "liste" : "liste";
+    const list = keys.map((key) => ({ key, score, evidence: `Beleg ${key}` }));
+    if (shape === "leer") return reply(rest);
+    if (shape === "text") return reply({ ...rest, criteria: "```json\n" + JSON.stringify(list.map((item) => ({ kriterium: item.key, punkte: item.score, beleg: item.evidence }))) + "\n```" });
+    if (shape === "felder" || shape === "abgeschnitten") {
+      const fields = Object.keys(params.outputSchema?.schema?.properties ?? {}).filter((field) => /^(punkte|beleg)_/.test(field));
+      const filled = Object.fromEntries((shape === "abgeschnitten" ? fields.slice(0, 4) : fields).map((field) => [field, field.startsWith("punkte_") ? score : `Beleg ${field.slice(6)}`]));
+      return shape === "abgeschnitten" ? reply(filled, "max_tokens") : reply({ ...rest, ...filled }); // „abgeschnitten“: Antwort bricht nach zwei Kriterien ab (Längengrenze erreicht)
+    }
+    return reply({ ...rest, criteria: list });
   }),
   aiHealthView: () => ({ calls: 0, errors: 0, busy: 0, timeouts: 0, avgSeconds: null, lastError: null }),
 }));
@@ -4275,13 +4295,55 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign).toBe(WATTFOX_CAMPAIGN);
       expect((await owner.leadops.callQaCampaignSummary({ campaign: WATTFOX_CAMPAIGN })).defaultCampaign).toBe(WATTFOX_CAMPAIGN);
       expect(await ensureWattfoxCampaign(db)).toBe(0);
-      // Bestand mit den alten Vorlagen-Fragen wird einmal auf die neuen Regeln umgestellt
-      await db.update(cqTable).set({ questions: PV_HAUSKOMPASS_PRESET.questions, criteria: null, instructions: null }).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
+      const marks = async () => (await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].setupMarks as Record<string, string> | null;
+      expect((await marks())?.wattfox).toBeTruthy(); // die Einrichtung ist als „erledigt“ vermerkt – sie läuft nie wieder
+      expect((await wattfoxRow()).presetKey).toBe("wattfox-pv-wp"); expect((await owner.leadops.callQaCampaignSummary({ campaign: WATTFOX_CAMPAIGN })).presetLabel).toBeTruthy();
+      // Bestand mit den alten Vorlagen-Fragen (Einrichtung lief dort noch nie) wird einmal auf die neuen Regeln umgestellt
+      await db.update(cqTable).set({ questions: PV_HAUSKOMPASS_PRESET.questions, criteria: null, instructions: null, presetKey: null }).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
+      await db.update(cfgTable).set({ setupMarks: null }).where(eq(cfgTable.tenantId, S.tenantId));
       expect(await ensureWattfoxCampaign(db)).toBe(1); expect(await wattfoxKeys()).toContain("wp_kein_erdgas"); expect(await ensureWattfoxCampaign(db)).toBe(0);
-      // Vom Mandanten selbst angepasste Fragen bleiben unangetastet
+      // Der Mandant benennt die Kampagne um: Das Ziel für neue Dialer-Gespräche wandert mit – und beim nächsten Start entsteht keine zweite „Wattfox PV und WP“
+      { const moved = await owner.leadops.renameCallCampaign({ from: WATTFOX_CAMPAIGN, to: "Solar und Wärme Nord" }); expect(moved.calls).toBeGreaterThanOrEqual(1);
+        expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign).toBe("Solar und Wärme Nord");
+        expect((await owner.leadops.callQaCampaignSummary({ campaign: "Solar und Wärme Nord" })).defaultCampaign).toBe("Solar und Wärme Nord");
+        expect(await ensureWattfoxCampaign(db)).toBe(0); expect(await wattfoxRow()).toBeUndefined();
+        await db.update(cfgTable).set({ setupMarks: null }).where(eq(cfgTable.tenantId, S.tenantId)); // selbst ohne Vermerk (ältere Daten): umbenannte Kampagne wird erkannt
+        expect(await ensureWattfoxCampaign(db)).toBe(0); expect(await wattfoxRow()).toBeUndefined(); expect((await marks())?.wattfox).toBeTruthy();
+        expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe("Solar und Wärme Nord");
+        // Reparatur für ältere Daten: umbenannt, aber das Dialer-Ziel zeigt noch auf den alten Namen (früher nahm das Umbenennen es nicht mit) →
+        // Ziel und die seither unter dem alten Namen eingegangenen Gespräche ziehen zur umbenannten Kampagne, es entsteht keine zweite
+        await db.update(cfgTable).set({ setupMarks: null, defaultCampaign: WATTFOX_CAMPAIGN }).where(eq(cfgTable.tenantId, S.tenantId));
+        const strayId = Number((await db.insert(callsTable).values({ tenantId: S.tenantId, provider: "ondialer", externalCallId: "wattfox-nachzuegler", campaign: WATTFOX_CAMPAIGN, startedAt: new Date(), durationSeconds: 60, consent: true, status: "bewertet", score: 80, decision: "freigegeben", decidedBy: "manuell" }))[0].insertId);
+        expect(await ensureWattfoxCampaign(db)).toBe(1);
+        expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign).toBe("Solar und Wärme Nord");
+        expect((await db.select().from(callsTable).where(eq(callsTable.id, strayId)))[0].campaign).toBe("Solar und Wärme Nord"); expect(await wattfoxRow()).toBeUndefined();
+        expect(await ensureWattfoxCampaign(db)).toBe(0);
+        await db.delete(callsTable).where(eq(callsTable.id, strayId));
+        await owner.leadops.renameCallCampaign({ from: "Solar und Wärme Nord", to: WATTFOX_CAMPAIGN }); // für die folgenden Schritte wieder der alte Name
+        expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign).toBe(WATTFOX_CAMPAIGN); }
+      // Vom Mandanten selbst angepasste Fragen bleiben unangetastet – auch die Vorlagen-Pflege beim Start fasst sie nicht mehr an
       await owner.leadops.saveCallQaCampaign({ name: WATTFOX_CAMPAIGN, questions: [{ label: "Eigene Frage des Mandanten?", rule: "ko", onlyFor: "photovoltaik", hint: "Eigener Hinweis" }] });
       expect(await ensureWattfoxCampaign(db)).toBe(0);
       expect((await wattfoxRow()).questions).toMatchObject([{ label: "Eigene Frage des Mandanten?", rule: "ko", onlyFor: "photovoltaik", hint: "Eigener Hinweis" }]); // Regel, Hinweis und „nur Photovoltaik“ bleiben beim Speichern erhalten
+      { const { refreshCampaignPresets, refreshPresetConfigs: refreshAll } = await import("./call-qa");
+        expect((await wattfoxRow()).presetKey).toBeNull(); // eigene Fragen → kein Bezug zur Vorlage mehr
+        expect(await refreshCampaignPresets(db)).toBe(0); expect((await wattfoxRow()).questions).toMatchObject([{ label: "Eigene Frage des Mandanten?" }]);
+        // Eigene Kriterien-Texte: bleiben ebenfalls (früher wurden sie bei jedem Start auf den Vorlagen-Text zurückgesetzt)
+        const own = (await wattfoxRow()).criteria as Array<{ key: string; label: string; description: string; weight: number }>;
+        await owner.leadops.saveCallQaCampaignCriteria({ name: WATTFOX_CAMPAIGN, criteria: own.map((c, n) => (n === 0 ? { ...c, description: "Eigene Beschreibung des Mandanten" } : c)), instructions: "Eigene Vorgabe des Mandanten" });
+        expect(await refreshAll(db)).toBe(0);
+        const kept = await wattfoxRow(); expect((kept.criteria as Array<{ description: string }>)[0].description).toBe("Eigene Beschreibung des Mandanten"); expect(kept.instructions).toBe("Eigene Vorgabe des Mandanten");
+        // Standard-Einstellungen: selbst geänderte Vorgaben bleiben; die Standard-Prüffragen lassen sich speichern, ohne dass eine Kampagne „Standard“ entsteht
+        const settings = await owner.leadops.getCallQaSettings();
+        await owner.leadops.saveCallQaSettings({ enabled: settings.enabled, consentRequired: settings.consentRequired, autoApproveThreshold: settings.autoApproveThreshold, autoRejectThreshold: settings.autoRejectThreshold, autoDeliver: settings.autoDeliver, criteria: settings.criteria, instructions: "Eigene Standard-Vorgabe", fieldMapping: settings.fieldMapping, recordingAuthHeader: settings.recordingAuthHeader, transcriptionProvider: settings.transcriptionProvider, transcriptionLanguage: settings.transcriptionLanguage, retentionDays: settings.retentionDays } as never);
+        expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].presetKey).toBeNull();
+        expect(await refreshAll(db)).toBe(0); expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].instructions).toBe("Eigene Standard-Vorgabe");
+        expect(await owner.leadops.saveCallQaDefaultQuestions({ questions: [{ label: "Standardfrage des Mandanten?", rule: "required", hint: "Nur ein Hinweis" }, { label: "Zweite Standardfrage?", rule: "ko" }] })).toMatchObject({ success: true });
+        expect((await owner.leadops.callQaCampaignSummary({})).questions).toMatchObject([{ label: "Standardfrage des Mandanten?", rule: "required", hint: "Nur ein Hinweis" }, { label: "Zweite Standardfrage?", rule: "ko" }]);
+        expect((await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, "Standard")))).length).toBe(0);
+        expect(await refreshAll(db)).toBe(0); expect((await owner.leadops.callQaCampaignSummary({})).questions).toHaveLength(2);
+        // zurück auf die Vorlage, damit die übrigen Tests wie bisher laufen
+        expect(await owner.leadops.applyCallQaPreset({ preset: "pv-hauskompass", allCampaigns: false })).toMatchObject({ success: true }); }
       expect(await owner.leadops.setCallQaDefaultCampaign({ campaign: null })).toMatchObject({ defaultCampaign: null }); // für die übrigen Tests wieder: Kampagne laut Dialer
       await db.delete(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
       // Vorlage nur für eine Kampagne
@@ -4292,7 +4354,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe("PV Hessen November");
       // Kampagne löschen: Gespräche und Fragensatz weg
       await owner.leadops.applyPresetToCampaign({ preset: "pv-hauskompass", campaign: "PV Hessen November" });
+      await owner.leadops.setCallQaDefaultCampaign({ campaign: "PV Hessen November" }); // Ziel für neue Dialer-Gespräche – mit dem Löschen entfällt es (sonst entstünde die Kampagne beim nächsten Gespräch neu)
       expect(await owner.leadops.deleteCallCampaign({ name: "PV Hessen November" })).toMatchObject({ deletedCalls: 1 });
+      expect((await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign).toBeNull();
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0]))).length).toBe(0);
       expect((await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, "PV Hessen November")))).length).toBe(0);
     } finally { S.transcriptVerbose = false; S.transcriptForStub = undefined; S.playerPage = undefined; }
@@ -4376,6 +4440,98 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await reevaluateCalls(db, tenantId, [lastOnly], { waitFor: true }); expect(await nameOf(lastOnly)).toBe("Lena Becker");
     } finally { S.transcriptForStub = undefined; await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Namen-Kampagne"))); }
   }, 60000);
+  it("63zv. Gespräche: Kriterien-Punkte in jeder Form lesbar, sonst „nicht bewertet“ statt 0 % (wird nachgeholt); Füllwörter sind keine Agenten, unsichere Namen prüft die KI", async () => {
+    const { importRecordingLinks, rescoreUnscoredCalls, verifyAgentsWithAi, reassignAgentsFromTranscripts } = await import("./call-qa"); const { callRecords: callsTable } = await import("../drizzle/schema");
+    const tenantId = S.tenantId; const stub = globalThis as { __criteriaPlan?: string[]; __agentAnswer?: string; __answers?: Record<string, string>; __llmLog?: string[] };
+    const row = async (id: number) => (await db.select().from(callsTable).where(eq(callsTable.id, id)))[0];
+    const add = async (name: string) => { const result = await importRecordingLinks(db, tenantId, { text: `https://player.e2e.example/recordings/${name}.mp3`, campaign: "Punkte-Kampagne" }, { waitFor: true }); expect(result.created).toBe(1); return result.callIds[0]; };
+    const insertCall = async (external: string, values: Record<string, unknown>) => Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: external, campaign: "Punkte-Kampagne", startedAt: new Date(), durationSeconds: 90, consent: true, status: "bewertet", score: 80, verdict: "verkaufbar", decision: "freigegeben", decidedBy: "automatisch", ...values } as never))[0].insertId);
+    const keyBefore = process.env.ANTHROPIC_API_KEY;
+    S.transcriptForStub = "Mitarbeiter: Guten Tag, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden.";
+    try {
+      const criteriaKeys = (await owner.leadops.callQaCampaignSummary({ campaign: "Punkte-Kampagne" })).criteria.map((item) => item.key); expect(criteriaKeys.length).toBeGreaterThan(2);
+      const scoresOf = async (id: number) => ((await row(id)).criteriaScores as Array<{ key: string; score: number; evidence: string }>).map((item) => [item.key, item.score, item.evidence]);
+      const expected = criteriaKeys.map((key) => [key, 9, `Beleg ${key}`]);
+      // 1) Einzelne Felder je Kriterium (so fragt die Software jetzt) → Punkte und Belege kommen an
+      stub.__criteriaPlan = ["felder"]; const flat = await add("punkte-felder");
+      expect((await row(flat)).score).toBe(90); expect(await scoresOf(flat)).toEqual(expected);
+      // 2) Liste als Text mit anderen Bezeichnungen (so kam es vor – früher standen dann alle Kriterien auf 0 %) → wird trotzdem gelesen
+      stub.__criteriaPlan = ["text"]; const asText = await add("punkte-text");
+      expect((await row(asText)).score).toBe(90); expect(await scoresOf(asText)).toEqual(expected);
+      // 2b) Antwort mittendrin abgeschnitten (nur zwei Kriterien da) → die Software fragt mit mehr Platz noch einmal und hat dann alle Punkte, Urteil und Zusammenfassung
+      stub.__criteriaPlan = ["abgeschnitten", "felder"]; stub.__llmLog = []; const cut = await add("punkte-abgeschnitten");
+      expect(stub.__llmLog.filter((name) => name === "gespraechsbewertung")).toHaveLength(2); stub.__llmLog = undefined;
+      expect(await row(cut)).toMatchObject({ score: 90, verdict: "verkaufbar", summary: "Klarer Bedarf, Weitergabe erlaubt." }); expect(await scoresOf(cut)).toEqual(expected);
+      // … bleibt es auch im zweiten Anlauf bei einem Teil, zählen die vorhandenen Punkte (kein Kriterium wird als 0 gewertet) und die fehlenden stehen als „offen“ da
+      stub.__criteriaPlan = ["abgeschnitten", "abgeschnitten"]; const partial = await add("punkte-teilweise");
+      expect((await row(partial)).score).toBe(90); expect(await scoresOf(partial)).toEqual(expected.slice(0, 2));
+      { const shown = await owner.leadops.getCall({ callId: partial }); expect(shown.criteriaUnscored).toBe(false); expect(shown.criteria.map((item) => item.score)).toEqual(criteriaKeys.map((_, index) => (index < 2 ? 9 : null))); }
+      await db.delete(callsTable).where(inArray(callsTable.id, [cut, partial])); // für die Durchschnitts-Rechnung weiter unten nicht mitzählen
+      // 3) Gar keine Punkte, auch nicht auf Nachfrage → „nicht bewertet“ (keine 0); entschieden wird trotzdem über die Prüffragen
+      stub.__criteriaPlan = ["leer", "leer"]; stub.__llmLog = []; const empty = await add("punkte-leer");
+      expect(stub.__llmLog.filter((name) => name === "gespraechsbewertung")).toHaveLength(2); stub.__llmLog = undefined; // genau einmal nachgefragt
+      const unscored = await row(empty); expect(unscored.status).toBe("bewertet"); expect(unscored.score).toBeNull(); expect(unscored.decision).not.toBe("offen"); expect(unscored.criteriaScores).toMatchObject([{ key: "_hinweis" }]);
+      const detail = await owner.leadops.getCall({ callId: empty }); expect(detail.criteriaUnscored).toBe(true); expect(detail.score).toBeNull(); expect(detail.criteriaNote).toContain("keine lesbaren Punkte"); expect(detail.criteria.every((item) => item.score === null)).toBe(true);
+      expect((await owner.leadops.getCall({ callId: flat })).criteriaUnscored).toBe(false);
+      // … und wird im Hintergrund nachgeholt: klappt es wieder nicht, bleibt es „nicht bewertet“; beim nächsten Lauf sind die Punkte da – Entscheidung und Antworten bleiben unberührt
+      stub.__criteriaPlan = ["leer", "leer"]; await rescoreUnscoredCalls(db, { tenantId, max: 50 }); expect((await row(empty)).score).toBeNull(); expect((await owner.leadops.getCall({ callId: empty })).criteriaUnscored).toBe(true);
+      stub.__criteriaPlan = undefined; const before = await row(empty);
+      expect((await rescoreUnscoredCalls(db, { tenantId, max: 50 })).rescored).toBeGreaterThanOrEqual(1);
+      const after = await row(empty); expect(after.score).toBe(90); expect(await scoresOf(empty)).toEqual(expected);
+      expect([after.decision, after.decidedBy, JSON.stringify(after.qualificationAnswers), after.leadId, after.verdict]).toEqual([before.decision, before.decidedBy, JSON.stringify(before.qualificationAnswers), before.leadId, before.verdict]);
+      expect((await owner.leadops.getCall({ callId: empty })).criteriaUnscored).toBe(false);
+      // 4) Bestand vom früheren Fehler: „bewertet“ mit 0 Punkten und lauter Kriterien ohne Beleg → gilt als „nicht bewertet“ und wird nachgeholt; ein echtes „0 Punkte“ (mit Beleg) bleibt
+      const legacy = await insertCall("punkte-alt", { score: 0, transcript: S.transcriptForStub, criteriaScores: criteriaKeys.map((key) => ({ key, score: 0, evidence: "" })) });
+      const realZero = await insertCall("punkte-null", { score: 0, verdict: "nicht_verkaufbar", decision: "zurueckgewiesen", transcript: S.transcriptForStub, criteriaScores: criteriaKeys.map((key) => ({ key, score: 0, evidence: "Kunde hat kein Interesse." })) });
+      expect((await owner.leadops.getCall({ callId: legacy })).criteriaUnscored).toBe(true); expect((await owner.leadops.getCall({ callId: realZero })).criteriaUnscored).toBe(false);
+      expect((await owner.leadops.callStatistics({ campaign: "Punkte-Kampagne" })).averageScore).toBe(68); // (90 + 90 + 90 + 0) / 4 – das alte Gespräch ohne Punkte zieht den Schnitt nicht auf 0
+      await rescoreUnscoredCalls(db, { tenantId, max: 50 });
+      expect(await row(legacy)).toMatchObject({ score: 90, decision: "freigegeben", verdict: "verkaufbar" }); expect(await scoresOf(legacy)).toEqual(expected); expect((await row(realZero)).score).toBe(0);
+      // 5) Prüffragen: Die KI antwortet je Frage in einzelnen Feldern – Antwort und Beleg kommen an
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const asked = (await owner.leadops.callQaCampaignSummary({ campaign: "Punkte-Kampagne" })).questions.find((question) => !question.onlyFor)!;
+      stub.__answers = { [asked.key]: "nein" };
+      const answered = await add("punkte-fragen"); const answers = (await row(answered)).qualificationAnswers as Record<string, { answer: string; note?: string }>;
+      expect(answers[asked.key]).toMatchObject({ answer: "nein", note: `Beleg laut KI zu ${asked.key}.` });
+      expect((await owner.leadops.listCalls({ campaign: "Punkte-Kampagne" })).find((item) => item.id === answered)!.fulfilment.no).toBeGreaterThanOrEqual(1);
+      stub.__answers = undefined;
+      // 6) Füllwörter sind kein Agent: Meldet der Dialer „Mein Name“, bleibt der Agent leer (die KI wurde bei der Bewertung gefragt und nennt keinen Namen)
+      const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+      S.transcriptForStub = "Ja hallo? Guten Tag, mein Name ist, äh, ich rufe an wegen Ihrer Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer.";
+      const posted = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: "od-fuellwort-1", phone: "+49 30 9177 6002", agent: "Mein Name", campaign: "Punkte-Kampagne", started_at: new Date().toISOString(), duration: 100, recording_url: "https://dialer.example/recordings/3001.mp3", consent: true }) });
+      expect(posted.status).toBe(200);
+      const fromDialer = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-fuellwort-1")))[0]; expect(fromDialer.status).toBe("bewertet"); expect(fromDialer.agentName).toBeNull(); expect(fromDialer.agentSource).toBe("ki");
+      // … und alte Einträge mit Füllwort werden beim Start geleert (das Transkript nennt keinen eindeutigen Namen)
+      const junk = await insertCall("agent-fuellwort", { agentName: "Mein Name", transcript: "Guten Tag, mein Name ist, äh, es geht um Ihre Anfrage. Kunde: Ja." });
+      expect((await owner.leadops.listCalls({ campaign: "Punkte-Kampagne" })).some((item) => item.agentName === "Mein Name")).toBe(true);
+      expect(await reassignAgentsFromTranscripts(db, tenantId)).toBeGreaterThanOrEqual(1); expect(await row(junk)).toMatchObject({ agentName: null, agentSource: null });
+      expect((await owner.leadops.listCalls({ campaign: "Punkte-Kampagne" })).some((item) => item.agentName === "Mein Name")).toBe(false);
+      // 7) Unsichere Agenten prüft die KI nach (ein paar pro Minute). Nennt sie keinen Namen, bleibt ein vorhandener echter Name stehen – und jedes Gespräch wird nur einmal gefragt
+      const kept = await insertCall("agent-bleibt", { agentName: "Muster Hagen", transcript: "Guten Tag, es geht um Ihre Anfrage zur Wärmepumpe. Kunde: Ja, ich bin Eigentümer." });
+      // Früher als „aus dem Transkript“ vermerkt, obwohl sich der Mitarbeiter dort gar nicht eindeutig vorstellt (hier wird nur der Kunde angesprochen):
+      // beim Start wird der Vermerk gelöst, damit die KI den Namen nachprüft – eine eindeutige Vorstellung behält ihn
+      const formerlySure = await insertCall("agent-frueher-sicher", { agentName: "Muster Hagen", agentSource: "transkript", transcript: "Guten Tag Herr Hagen, es geht um Ihre Anfrage. Kunde: Ja, ich bin Eigentümer." });
+      const stillSure = await insertCall("agent-eindeutig", { agentName: "Muster Hagen", agentSource: "transkript", transcript: "Guten Tag, mein Name ist Muster Hagen von HausKompass. Kunde: Ja." });
+      await reassignAgentsFromTranscripts(db, tenantId);
+      expect(await row(formerlySure)).toMatchObject({ agentName: "Muster Hagen", agentSource: null }); expect(await row(stillSure)).toMatchObject({ agentName: "Muster Hagen", agentSource: "transkript" });
+      stub.__agentAnswer = ""; expect((await verifyAgentsWithAi(db, { tenantId, max: 400 })).checked).toBeGreaterThanOrEqual(3);
+      expect(await row(kept)).toMatchObject({ agentName: "Muster Hagen", agentSource: "ki" }); expect(await row(junk)).toMatchObject({ agentName: null, agentSource: "ki" });
+      expect(await row(formerlySure)).toMatchObject({ agentName: "Muster Hagen", agentSource: "ki" }); expect(await row(stillSure)).toMatchObject({ agentName: "Muster Hagen", agentSource: "transkript" });
+      expect(await verifyAgentsWithAi(db, { tenantId, max: 400 })).toEqual({ checked: 0, changed: 0 });
+      // Nennt die KI einen Namen, gilt er – von Hand gesetzte Agenten bleiben unberührt
+      const named = await insertCall("agent-ki", { agentName: "Woche", transcript: "Hallo, ich melde mich noch einmal wegen der Solaranlage. Kunde: Ja, ich erinnere mich." });
+      const manual = await insertCall("agent-hand", { agentName: "Carla Sommer", agentSource: "manuell", transcript: "Hallo, ich melde mich noch einmal wegen der Solaranlage." });
+      stub.__agentAnswer = "Paula Winter"; expect(await verifyAgentsWithAi(db, { tenantId, max: 400 })).toEqual({ checked: 1, changed: 1 });
+      expect(await row(named)).toMatchObject({ agentName: "Paula Winter", agentSource: "ki" }); expect(await row(manual)).toMatchObject({ agentName: "Carla Sommer", agentSource: "manuell" });
+      // Ohne KI-Zugang wird nichts angefasst
+      delete process.env.ANTHROPIC_API_KEY; const untouched = await insertCall("agent-ohne-ki", { agentName: "Woche", transcript: "Hallo, ich melde mich noch einmal." });
+      expect(await verifyAgentsWithAi(db, { tenantId, max: 400 })).toEqual({ checked: 0, changed: 0 }); expect(await row(untouched)).toMatchObject({ agentName: "Woche", agentSource: null });
+    } finally {
+      if (keyBefore === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keyBefore;
+      stub.__criteriaPlan = undefined; stub.__agentAnswer = undefined; stub.__answers = undefined; stub.__llmLog = undefined; S.transcriptForStub = undefined;
+      await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Punkte-Kampagne")));
+    }
+  }, 90000);
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

@@ -4116,3 +4116,16 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 
 .cq-mood.has-percent .cq-fraction{font-size:9.5px;line-height:1;color:#94a3b8;white-space:nowrap}
 .cq-mood.is-lg.has-percent .cq-fraction{font-size:11px}
+
+/* Gespräche: Einstellen-Fenster – Name, Kriterien und Prüffragen direkt als Felder */
+.cq-field-label{display:block;font-size:12px;font-weight:600;color:#cbd5e1}
+.cq-namebar{padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)}
+.cq-criterion-row,.cq-question-row{padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)}
+.cq-question-row.is-ko{border-left:3px solid rgba(248,113,113,.6)}
+.cq-question-row.is-required{border-left:3px solid rgba(251,191,36,.6)}
+.cq-question-row.is-info{border-left:3px solid rgba(148,163,184,.4)}
+.cq-criterion-row .cq-weight{min-width:42px;text-align:right;font-size:12px;font-weight:700;color:#c7d2fe;font-variant-numeric:tabular-nums}
+.cq-textarea{line-height:1.45;resize:vertical;min-height:44px}
+.cq-savebar{position:sticky;bottom:-24px;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px;padding:10px 0 12px;background:var(--background);border-top:1px solid rgba(255,255,255,.08)}
+.cq-th-ampel{cursor:help}.cq-th-info{opacity:.55;font-size:11px;font-weight:400}
+.cq-unscored{padding:8px 12px;border-radius:10px;border:1px dashed rgba(148,163,184,.4);color:#cbd5e1;background:rgba(148,163,184,.08)}

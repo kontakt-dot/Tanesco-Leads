@@ -2201,6 +2201,12 @@ html:not(.dark) .cq-expand-toggle { color: #111318 !important; }
 html:not(.dark) .qa-question .qa-note { color: #4b5568 !important; }
 html:not(.dark) .cq-error-text { color: #8a742a !important; }
 html:not(.dark) .cq-mood.has-percent .cq-fraction { color: #4b5568 !important; }
+html:not(.dark) .cq-field-label { color: #0f172a !important; }
+html:not(.dark) .cq-namebar { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .cq-criterion-row, html:not(.dark) .cq-question-row { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
+html:not(.dark) .cq-criterion-row .cq-weight { color: #0f172a !important; }
+html:not(.dark) .cq-savebar { border-top: 1px solid #e8ecf1 !important; }
+html:not(.dark) .cq-unscored { color: #0f172a !important; }
 html:not(.dark) .lead-name-button strong { color: #0f172a !important; }
 html:not(.dark) .lead-name-button small svg { color: #111318 !important; }
 html:not(.dark) .lead-name-button:hover strong { color: #4b5568 !important; }
@@ -4438,3 +4444,15 @@ html:not(.dark) .cq-expand-toggle { color: #b91c1c !important; }
 html:not(.dark) .qa-question .qa-note { color: #475467 !important; }
 
 html:not(.dark) .cq-error-text { color: #92400e !important; }
+
+/* Gespräche – Einstellen-Fenster (hell) */
+html:not(.dark) .cq-field-label { color: #344054 !important; }
+html:not(.dark) .cq-namebar, html:not(.dark) .cq-criterion-row, html:not(.dark) .cq-question-row { background: #f9fafb !important; border-color: #e4e7ec !important; }
+html:not(.dark) .cq-question-row.is-ko { border-left-color: #f04438 !important; }
+html:not(.dark) .cq-question-row.is-required { border-left-color: #f79009 !important; }
+html:not(.dark) .cq-question-row.is-info { border-left-color: #98a2b3 !important; }
+html:not(.dark) .cq-criterion-row .cq-weight { color: #b91c1c !important; }
+html:not(.dark) .cq-campaign textarea.cq-textarea { background: #ffffff !important; color: #101828 !important; border-color: #d0d5dd !important; }
+html:not(.dark) .cq-campaign select { background: #ffffff !important; color: #101828 !important; border-color: #d0d5dd !important; }
+html:not(.dark) .cq-savebar { background: #ffffff !important; border-top-color: #e4e7ec !important; }
+html:not(.dark) .cq-unscored { color: #344054 !important; background: #f2f4f7 !important; border-color: #98a2b3 !important; }

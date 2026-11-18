@@ -41,7 +41,7 @@ const byQuality = (x: Known, y: Known) => Number(parts(y.name).length >= 2) - Nu
 /** Den schon bekannten Namen nehmen, wenn der neue nur anders verstanden wurde oder nur ein Teil des Namens fiel. */
 export function canonicalAgentName(name: string, known: Known[]): string {
   const clean = name.trim(); if (!clean) return clean;
-  const others = known.filter((item) => item.name && item.name !== clean);
+  const others = known.filter((item) => item.name && item.name !== clean && !isJunkAgentName(item.name));
   const matches = others.filter((item) => sameAgentName(item.name, clean));
   if (!matches.length) {
     // Nur der Vorname genannt („hier ist die Vanessa“): zuordnen, wenn genau ein bekannter Agent so heißt
@@ -55,7 +55,7 @@ export function canonicalAgentName(name: string, known: Known[]): string {
 
 /** Gruppen ähnlich klingender Namen → je Gruppe die beste Schreibweise (voller Name, meiste Gespräche). Liefert nur die Umbenennungen. */
 export function agentNameMerges(known: Known[]): Array<{ from: string; to: string }> {
-  const sorted = [...known].filter((item) => item.name.trim()).sort(byQuality);
+  const sorted = [...known].filter((item) => item.name.trim() && !isJunkAgentName(item.name)).sort(byQuality);
   const leaders: string[] = []; const merges: Array<{ from: string; to: string }> = [];
   for (const item of sorted) { const leader = leaders.find((candidate) => sameAgentName(candidate, item.name)); if (leader) merges.push({ from: item.name, to: leader }); else leaders.push(item.name); }
   return merges;
@@ -64,7 +64,14 @@ export function agentNameMerges(known: Known[]): Array<{ from: string; to: strin
 /* ------------------------------------------------------------------ Erkennen im Transkript */
 
 /** Großgeschriebene Wörter, die nach „ich bin …“ / „hier ist …“ stehen können, aber keine Namen sind. */
-const NOT_NAMES = new Set(["guten", "gute", "hallo", "schönen", "schön", "ja", "nein", "vielen", "danke", "dank", "herr", "herrn", "frau", "agent", "agentin", "kunde", "kundin", "sprecher", "mitarbeiter", "mitarbeiterin", "photovoltaik", "angebotsvergleich", "hauskompass", "haus", "kompass", "campus", "firma", "woche", "wochen", "tag", "morgen", "abend", "mittag", "heute", "moment", "bitte", "genau", "okay", "ok", "gerne", "eigentümer", "eigentümerin", "mieter", "mieterin", "rentner", "rentnerin", "besitzer", "besitzerin", "inhaber", "inhaberin", "entscheider", "entscheiderin", "interessiert", "zuhause", "hause", "unterwegs", "sie", "ich", "wir", "ihnen", "das", "der", "die", "wärmepumpe", "wärmepumpen", "solar", "solaranlage", "anlage", "energie", "beratung", "telefon", "apparat", "name", "gespräch", "anruf", "rückruf", "thema", "grund", "zeit", "deutschland", "wattfox", "team", "service", "kundenservice", "zufrieden", "einverstanden", "sicher", "richtig", "leider", "super", "alles", "tschüss", "wiederhören", "entschuldigung", "also", "und", "aber", "noch", "nochmal", "gerade", "jetzt", "dann", "hier", "dort", "immer", "schon", "eben", "mal", "ihr", "ihre", "ihrem", "ihren", "mein", "meine", "unser", "unsere", "ein", "eine", "es", "er", "da", "so", "wie", "was", "wer", "wegen", "bezüglich", "zum", "zur", "im", "in", "am", "an", "auf", "mit", "von", "vom", "für"]);
+const NOT_NAMES = new Set(["guten", "gute", "hallo", "schönen", "schön", "ja", "nein", "vielen", "danke", "dank", "herr", "herrn", "frau", "agent", "agentin", "kunde", "kundin", "sprecher", "mitarbeiter", "mitarbeiterin", "photovoltaik", "angebotsvergleich", "hauskompass", "haus", "kompass", "campus", "firma", "woche", "wochen", "tag", "morgen", "abend", "mittag", "heute", "moment", "bitte", "genau", "okay", "ok", "gerne", "eigentümer", "eigentümerin", "mieter", "mieterin", "vermieter", "vermieterin", "rentner", "rentnerin", "besitzer", "besitzerin", "inhaber", "inhaberin", "entscheider", "entscheiderin", "interessiert", "zuhause", "hause", "unterwegs", "sie", "ich", "wir", "ihnen", "das", "der", "die", "wärmepumpe", "wärmepumpen", "solar", "solaranlage", "anlage", "energie", "beratung", "berater", "beraterin", "energieberater", "energieberaterin", "kundenberater", "kundenberaterin", "fachberater", "telefon", "apparat", "name", "namen", "vorname", "nachname", "gespräch", "anruf", "rückruf", "thema", "grund", "zeit", "deutschland", "wattfox", "team", "service", "kundenservice", "zentrale", "büro", "abteilung", "vertrieb", "zufrieden", "einverstanden", "sicher", "richtig", "leider", "super", "alles", "tschüss", "wiederhören", "entschuldigung", "also", "und", "aber", "noch", "nochmal", "gerade", "jetzt", "dann", "hier", "dort", "immer", "schon", "eben", "mal", "ihr", "ihre", "ihrem", "ihren", "mein", "meine", "meinem", "meinen", "unser", "unsere", "ein", "eine", "es", "er", "da", "so", "wie", "was", "wer", "wegen", "bezüglich", "zum", "zur", "im", "in", "am", "an", "auf", "mit", "von", "vom", "für", "mann", "ehemann", "ehefrau", "sohn", "tochter", "vater", "mutter", "bruder", "schwester", "opa", "oma", "partner", "partnerin", "nachbar", "nachbarin", "kollege", "kollegin", "chef", "chefin", "techniker", "monteur", "handwerker", "elektriker", "installateur", "selbstständig", "angestellt", "zusammen", "beide", "unbekannt", "anonym", "niemand", "test"]);
+
+/** Kein Name: leer oder nur Füllwörter („Mein Name“, „Woche“). Solche Einträge gelten als „kein Agent“ und werden nie als bekannter Agent benutzt. */
+export function isJunkAgentName(name: string | null | undefined): boolean {
+  const words = parts(String(name ?? ""));
+  if (!words.length) return true;
+  return words.every((word) => { const plain = word.toLowerCase().replace(/[^a-zäöüßéè0-9]+/g, ""); return plain.length < 2 || NOT_NAMES.has(plain); });
+}
 
 /** Aus einem Fund nur die Namenswörter behalten: großgeschrieben, am Stück, keine Füllwörter („Maja Becker“, nicht „von“). */
 export function cleanAgentName(raw: string): string | null {
@@ -83,26 +90,40 @@ const COMPANY_CUE = /^[,.]?\s*(?:und (?:ich )?(?:rufe|melde)[^.]{0,40}?)?(?:ich 
 export type AgentDetection = { name: string; sure: boolean };
 /**
  * Name des Mitarbeiters aus der Vorstellung am Gesprächsanfang.
- * „sure“ = eindeutige Vorstellung (mit Firma dahinter oder klare Formel ganz am Anfang); sonst nur vermutet.
- * `known` hilft, wenn keine Formel passt: steht ein bekannter Agenten-Name (auch verhört) am Anfang, wird er genommen.
+ *
+ * Jeder Fund bekommt einen Rang – der höchste gewinnt, bei Gleichstand der frühere:
+ *   4 = ein schon bekannter Agent (auch verhört geschrieben)
+ *   3 = Firma direkt dahinter („… von HausKompass“)
+ *   2 = klare Vorstellungsformel („mein Name ist …“, „… am Apparat“, „Sie sprechen mit …“)
+ *   1 = „hier ist … / ich bin …“ mit Vor- und Nachname früh im Gespräch
+ * „sure“ (Rang 2–4) überschreibt einen schon eingetragenen Namen; Rang 1 ist nur eine Vermutung.
+ * Der Kunde wird nicht verwechselt: Wer mit „Herr/Frau …“ angesprochen wird, ist nicht der Agent.
  */
 export function detectAgent(transcript: string, known: string[] = []): AgentDetection | null {
   const head = transcript.slice(0, 2500).replace(/\s+/g, " ");
-  const found: Array<{ index: number; name: string; sure: boolean }> = [];
-  const add = (index: number, raw: string, after: string, formula: boolean, strongFormula: boolean) => {
+  const agents = known.filter((name) => !isJunkAgentName(name));
+  // Angesprochene Kunden („Guten Tag Herr Müller“, „spreche ich mit Frau Lange“) – nicht „hier ist die Frau …“
+  const addressed = new Set<string>();
+  for (const match of Array.from(head.matchAll(new RegExp(`(?:Herr|Herrn|Frau) (${WORD})`, "g")))) {
+    const before = head.slice(Math.max(0, (match.index ?? 0) - 26), match.index ?? 0);
+    if (/(?:ist|spricht|bin|[Ss]ie sprechen mit|[Nn]ame ist|hei(?:ß|ss)e) (?:noch ?mal )?(?:der |die )?$/.test(before)) continue;
+    addressed.add(sound(match[1]));
+  }
+  const found: Array<{ index: number; name: string; rank: number }> = [];
+  const add = (index: number, raw: string, after: string, formula: "strong" | "plain" | null) => {
     const name = cleanAgentName(raw); if (!name) return;
-    const cue = COMPANY_CUE.test(after.slice(0, 90));
-    const single = parts(name).length === 1;
-    // sicher: Firma direkt dahinter – oder eine klare Vorstellungsformel früh im Gespräch (ein einzelnes Wort nur mit „mein Name“/Firma)
-    const sure = cue || (formula && index < 700 && (!single || strongFormula));
-    found.push({ index, name, sure });
+    const words = parts(name); const cue = COMPANY_CUE.test(after.slice(0, 90));
+    const isKnown = agents.some((agent) => sameAgentName(agent, name));
+    if (!cue && !isKnown && addressed.has(sound(words[words.length - 1]))) return; // das ist der Kunde
+    const rank = isKnown ? 4 : cue ? 3 : formula === "strong" ? 2 : formula === "plain" && words.length >= 2 && index < 700 ? 1 : 0;
+    if (rank) found.push({ index, name, rank });
   };
   // A: „hier ist / hier spricht / mein Name ist / ich bin / ich heiße / Sie sprechen mit … NAME“
   const intro = new RegExp(`(?:[Hh]ier ist(?: noch ?mal)?|[Hh]ier spricht|[Mm]ein Name ist|[Mm]ein Name lautet|[Ii]ch hei(?:ß|ss)e|[Ss]ie sprechen mit|[Aa]m Apparat ist|[Ii]ch bin|[Hh]ier (?:ist |spricht )?(?:der|die))\\s+${ARTICLE}${NAME}`, "g");
-  for (const match of Array.from(head.matchAll(intro))) add(match.index ?? 0, match[1], head.slice((match.index ?? 0) + match[0].length), true, /[Mm]ein Name|hei(?:ß|ss)e|sprechen mit|Apparat/.test(match[0]));
+  for (const match of Array.from(head.matchAll(intro))) add(match.index ?? 0, match[1], head.slice((match.index ?? 0) + match[0].length), /[Mm]ein Name|hei(?:ß|ss)e|sprechen mit|Apparat/.test(match[0]) ? "strong" : "plain");
   // B: „NAME mein Name / ist mein Name / am Apparat / hier“
   const outro = new RegExp(`${NAME},? (?:ist )?(?:mein Name|am Apparat|hier(?= |,|\\.|$))`, "g");
-  for (const match of Array.from(head.matchAll(outro))) { const strong = /mein Name|Apparat/.test(match[0]); if (!strong && /\b(?:Herr|Herrn|Frau)\b/.test(match[1])) continue; /* „Herr Müller hier“ = Kunde */ add(match.index ?? 0, match[1], head.slice((match.index ?? 0) + match[0].length), true, strong); }
+  for (const match of Array.from(head.matchAll(outro))) { const strong = /mein Name|Apparat/.test(match[0]); if (!strong && /\b(?:Herr|Herrn|Frau)\b/.test(match[1])) continue; /* „Herr Müller hier“ = Kunde */ add(match.index ?? 0, match[1], head.slice((match.index ?? 0) + match[0].length), strong ? "strong" : "plain"); }
   // C: „NAME von (der Firma) X“ – auch ohne Formel davor
   const company = new RegExp(`${NAME}(?=,? (?:von|vom|aus dem Hause|im Auftrag von) (?:der |dem )?(?:Firma )?[A-ZÄÖÜ])`, "g");
   for (const match of Array.from(head.matchAll(company))) {
@@ -110,18 +131,17 @@ export function detectAgent(transcript: string, known: string[] = []): AgentDete
     // „Guten Tag Herr Müller, …“ ist die Anrede des Kunden – außer es heißt „hier ist die Frau …“
     if (/(?:Herr|Herrn|Frau) $/.test(before) && !/(?:ist|spricht|bin) (?:noch ?mal )?(?:der |die )?(?:Herr|Frau) $/.test(before)) continue;
     if (/\b(?:Herr|Herrn|Frau)\b/.test(match[1])) continue; // „Tag Herr Müller von …“ – ebenfalls Anrede (die Vorstellung „hier ist die Frau …“ deckt Formel A ab)
-    add(index, match[1], head.slice(index + match[0].length), false, false);
+    add(index, match[1], head.slice(index + match[0].length), null);
   }
-  found.sort((x, y) => x.index - y.index);
-  const best = found.find((item) => item.sure) ?? null;
-  if (best) return { name: best.name, sure: true };
-  // Kein eindeutiger Fund: steht ein bekannter Agent (auch verhört) in den ersten Sätzen?
-  const opening = head.slice(0, 700); const words = opening.split(/[^A-Za-zÄÖÜäöüßéè-]+/).filter(Boolean);
-  for (const candidate of known.filter((name) => parts(name).length >= 2)) {
-    const [first, ...rest] = parts(candidate); const last = rest[rest.length - 1]; const soundFirst = sound(first); const soundLast = sound(last);
-    for (let i = 0; i + 1 < words.length; i += 1) if (/^[A-ZÄÖÜ]/.test(words[i]) && /^[A-ZÄÖÜ]/.test(words[i + 1]) && distance(sound(words[i]), soundFirst) <= 1 && distance(sound(words[i + 1]), soundLast) <= 1) return { name: candidate, sure: true };
+  found.sort((x, y) => y.rank - x.rank || x.index - y.index);
+  if (found.length) return { name: found[0].name, sure: found[0].rank >= 2 };
+  // Keine Formel passt: steht ein bekannter Agent (auch verhört) in den ersten Sätzen?
+  const opening = head.slice(0, 700).split(/[^A-Za-zÄÖÜäöüßéè-]+/).filter(Boolean);
+  for (const candidate of agents.filter((name) => parts(name).length >= 2 && cleanAgentName(name) === name)) {
+    const words = parts(candidate); const soundFirst = sound(words[0]); const soundLast = sound(words[words.length - 1]);
+    for (let i = 0; i + 1 < opening.length; i += 1) if (/^[A-ZÄÖÜ]/.test(opening[i]) && /^[A-ZÄÖÜ]/.test(opening[i + 1]) && !NOT_NAMES.has(opening[i].toLowerCase()) && !NOT_NAMES.has(opening[i + 1].toLowerCase()) && distance(sound(opening[i]), soundFirst) <= 1 && distance(sound(opening[i + 1]), soundLast) <= 1) return { name: candidate, sure: true };
   }
-  return found.length ? { name: found[0].name, sure: false } : null;
+  return null;
 }
 /** Kurzform: nur der Name (für ältere Aufrufe). */
 export const detectAgentName = (transcript: string, known: string[] = []): string | null => detectAgent(transcript, known)?.name ?? null;

@@ -20,13 +20,14 @@ import { noteAfterEvaluation } from "./call-notes";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import { triggerLeadAutomations, type Db } from "./lead-pipeline";
 import { readPath } from "./outbound-templates";
+import { describeShape, fieldNames, looseItems, looseStrings, readAnswers, readCriteriaScores } from "./llm-shape";
 
 export type Criterion = { key: string; label: string; weight: number; description: string };
 import { callQaCampaigns } from "../drizzle/schema";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
 import { detectTopic } from "../shared/call-topic";
-import { agentNameMerges, canonicalAgentName, cleanAgentName, detectAgent, detectAgentName, sameAgentName } from "../shared/agent-names";
+import { agentNameMerges, canonicalAgentName, cleanAgentName, detectAgent, detectAgentName, isJunkAgentName, sameAgentName } from "../shared/agent-names";
 export { cleanAgentName, detectAgentName };
 export { callPeriodRange, detectTopic, type CallPeriod };
 import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion, applyQuestionScope, isCallback, questionFulfilment, SCOPE_LABEL } from "../shared/call-qualification";
@@ -40,13 +41,29 @@ export async function listCampaigns(db: Db, tenantId: number) {
   const campaignCriteria = (row: { criteria: unknown }) => (Array.isArray(row.criteria) && row.criteria.length ? row.criteria as Criterion[] : null);
   return [...rows.map((row) => ({ id: row.id, name: row.name, questions: normalizeQuestions(row.questions as QualificationQuestion[] | null), criteria: campaignCriteria(row), instructions: row.instructions ?? null, custom: true })), ...extra.map((name) => ({ id: null as number | null, name, questions: defaults, criteria: null as Criterion[] | null, instructions: null as string | null, custom: false }))];
 }
+/*
+ * Vorlagen-Bezug („presetKey“): Regeln, die unverändert aus einer Vorlage stammen, bekommen deren spätere Verbesserungen automatisch.
+ * Sobald der Mandant selbst etwas ändert und speichert, ist der Bezug weg – eigene Einstellungen werden nie wieder überschrieben.
+ */
+const criteriaTextsEqual = (own: Criterion[], preset: Criterion[]) => own.length === preset.length && preset.every((criterion) => { const mine = own.find((item) => item.key === criterion.key); return Boolean(mine) && mine!.label === criterion.label && (mine!.description ?? "") === (criterion.description ?? ""); });
+const questionsEqual = (own: unknown, preset: unknown) => JSON.stringify(normalizeQuestions(own as QualificationQuestion[] | null)) === JSON.stringify(normalizeQuestions(preset as QualificationQuestion[] | null));
+/** Bleibt der Vorlagen-Bezug nach dem Speichern von Fragen bestehen? Nur, wenn sie noch genau der Vorlage entsprechen. */
+const keptPresetKey = (presetKey: string | null | undefined, questions: QualificationQuestion[]) => { const preset = presetKey ? presetByKey(presetKey) : undefined; return preset && questionsEqual(questions, preset.questions) ? preset.key : null; };
+
 export async function saveCampaign(db: Db, tenantId: number, input: { id?: number | null; name: string; questions: Array<Partial<QualificationQuestion>> }) {
   const name = input.name.trim(); if (!name) throw new Error("Bitte einen Kampagnennamen angeben.");
   const questions = normalizeQuestions(input.questions); if (!questions.length) throw new Error("Bitte mindestens eine Frage angeben.");
-  if (input.id) { await db.update(callQaCampaigns).set({ name, questions }).where(and(eq(callQaCampaigns.id, input.id), eq(callQaCampaigns.tenantId, tenantId))); return { id: input.id, questions }; }
-  const existing = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
-  if (existing) { await db.update(callQaCampaigns).set({ questions }).where(eq(callQaCampaigns.id, existing.id)); return { id: existing.id, questions }; }
+  if (input.id) { const own = (await db.select({ presetKey: callQaCampaigns.presetKey }).from(callQaCampaigns).where(and(eq(callQaCampaigns.id, input.id), eq(callQaCampaigns.tenantId, tenantId))).limit(1))[0]; await db.update(callQaCampaigns).set({ name, questions, presetKey: keptPresetKey(own?.presetKey, questions) }).where(and(eq(callQaCampaigns.id, input.id), eq(callQaCampaigns.tenantId, tenantId))); return { id: input.id, questions }; }
+  const existing = (await db.select({ id: callQaCampaigns.id, presetKey: callQaCampaigns.presetKey }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
+  if (existing) { await db.update(callQaCampaigns).set({ questions, presetKey: keptPresetKey(existing.presetKey, questions) }).where(eq(callQaCampaigns.id, existing.id)); return { id: existing.id, questions }; }
   const inserted = await db.insert(callQaCampaigns).values({ tenantId, name, questions }); return { id: Number(inserted[0]?.insertId) || 0, questions };
+}
+/** Standard-Prüffragen (für Kampagnen ohne eigene Fragen) speichern. */
+export async function saveDefaultQuestions(db: Db, tenantId: number, input: Array<Partial<QualificationQuestion>>) {
+  const questions = normalizeQuestions(input); if (!questions.length) throw new Error("Bitte mindestens eine Frage angeben.");
+  const config = await ensureCallQaConfig(db, tenantId);
+  await db.update(callQaConfigs).set({ defaultQuestions: questions, presetKey: keptPresetKey(config.presetKey, questions) }).where(eq(callQaConfigs.id, config.id));
+  return { success: true as const, questions };
 }
 export async function deleteCampaign(db: Db, tenantId: number, id: number) { await db.delete(callQaCampaigns).where(and(eq(callQaCampaigns.id, id), eq(callQaCampaigns.tenantId, tenantId))); return { success: true as const }; }
 /** Standardfragen des Mandanten (aus einer Vorlage übernommen) – sonst die eingebauten Standardfragen. */
@@ -77,7 +94,7 @@ export async function saveCampaignCriteria(db: Db, tenantId: number, input: { na
   if (criteria.length && criteria.reduce((sum, item) => sum + item.weight, 0) <= 0) throw new Error("Mindestens ein Kriterium braucht ein Gewicht größer als 0.");
   const instructions = (input.instructions ?? "").trim().slice(0, 4000) || null;
   const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
-  const values = { criteria: criteria.length ? criteria : null, instructions };
+  const values = { criteria: criteria.length ? criteria : null, instructions, ...(criteria.length ? { presetKey: null } : {}) }; // eigene Kriterien: ab jetzt keine automatische Angleichung an eine Vorlage mehr
   if (own) await db.update(callQaCampaigns).set(values).where(eq(callQaCampaigns.id, own.id)); else await db.insert(callQaCampaigns).values({ tenantId, name, questions: await defaultQuestionsFor(db, tenantId), ...values });
   return { success: true as const, criteria: criteria.length, custom: criteria.length > 0 };
 }
@@ -85,21 +102,31 @@ export async function saveCampaignCriteria(db: Db, tenantId: number, input: { na
 export async function applyCallQaPreset(db: Db, tenantId: number, input: { preset: string; allCampaigns: boolean }) {
   const preset = presetByKey(input.preset); if (!preset) throw new Error("Diese Vorlage gibt es nicht.");
   await ensureCallQaConfig(db, tenantId);
-  await db.update(callQaConfigs).set({ criteria: preset.criteria, instructions: preset.instructions, defaultQuestions: preset.questions }).where(eq(callQaConfigs.tenantId, tenantId));
+  await db.update(callQaConfigs).set({ criteria: preset.criteria, instructions: preset.instructions, defaultQuestions: preset.questions, presetKey: preset.key }).where(eq(callQaConfigs.tenantId, tenantId));
   let campaigns = 0;
-  if (input.allCampaigns) { const result = await db.update(callQaCampaigns).set({ questions: preset.questions }).where(eq(callQaCampaigns.tenantId, tenantId)); campaigns = Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0); }
+  if (input.allCampaigns) { const result = await db.update(callQaCampaigns).set({ questions: preset.questions, presetKey: preset.key }).where(eq(callQaCampaigns.tenantId, tenantId)); campaigns = Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0); }
   return { success: true as const, preset: preset.key, campaigns };
 }
 /** Antworten je Frage: KI (wenn verfügbar) – sonst Stichwort-Regeln. */
 export async function answerQualification(questions: QualificationQuestion[], transcript: string): Promise<Record<string, QualificationAnswer>> {
   const heuristic = answerQuestionsHeuristically(questions, transcript);
-  if (!process.env.ANTHROPIC_API_KEY) return heuristic;
+  if (!process.env.ANTHROPIC_API_KEY || !questions.length) return heuristic;
   try {
-    const schema = { name: "qualifizierung", schema: { type: "object", additionalProperties: false, required: ["answers"], properties: { answers: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "answer", "note"], properties: { key: { type: "string" }, answer: { type: "string", enum: ["ja", "nein", "unklar"] }, note: { type: "string" } } } } } } };
-    const response = await invokeLLM({ model: "fast", maxTokens: 3000, messages: [{ role: "system", content: `Beantworte die folgenden Fragen zu einem Verkaufsgespräch ausschließlich anhand des Transkripts mit ja, nein oder unklar und einem Beleg (note) in ein bis drei vollständigen Sätzen – nie mitten im Satz abbrechen. Erfinde nichts. Handelt es sich erkennbar um einen Rückruf (Kunde und Mitarbeiter hatten schon Kontakt, z. B. „wie besprochen“, „ich rufe zurück“, „wir hatten ja schon telefoniert“), muss ein Firmenname nicht noch einmal genannt werden – die Frage danach dann mit ja beantworten (note: Rückruf). Fragen mit dem Zusatz [gilt nur bei …] betreffen nur dieses Produkt: Geht es im Gespräch nicht darum, antworte ja mit note „Entfällt“. Das Transkript stammt aus automatischer Spracherkennung: Firmen- und Eigennamen sind darin oft falsch geschrieben. Wird nach einem Namen gefragt und im Transkript steht etwas, das sich ähnlich anhört (z. B. „Haus Campus“ oder „Hauskompas“ statt „HausKompass“), gilt der Name als genannt – der Gesprächspartner versteht, was gemeint ist. Wird nach einem Zeitrahmen gefragt, muss der Kunde kein genaues Datum nennen: sinngemäße Zusagen wie „so schnell wie möglich“ oder „zeitnah“ zählen als ja.\n${questions.map((question) => `- ${question.key}: ${question.label}${question.onlyFor ? ` [gilt nur bei ${SCOPE_LABEL[question.onlyFor]}]` : ""}${question.hint ? ` (Hinweis: ${question.hint})` : ""}`).join("\n")}` }, { role: "user", content: `Transkript:\n"""\n${transcript.slice(0, 40_000)}\n"""` }], outputSchema: schema });
-    const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as { answers?: Array<{ key: string; answer: string; note?: string }> };
+    // Antwort und Beleg je Frage als einzelne Felder (antwort_<schlüssel> / notiz_<schlüssel>) – eine verschachtelte Liste kam gelegentlich als Text zurück und wurde dann still ignoriert
+    const answerFields = fieldNames(questions.map((question) => question.key), "antwort"); const noteFields = fieldNames(questions.map((question) => question.key), "notiz");
+    const properties: Record<string, unknown> = {};
+    questions.forEach((question, index) => { properties[answerFields[index]] = { type: "string", enum: ["ja", "nein", "unklar"], description: `Antwort auf: ${question.label}` }; properties[noteFields[index]] = { type: "string", description: "Beleg zu dieser Antwort in ein bis drei vollständigen Sätzen" }; });
+    const schema = { name: "qualifizierung", schema: { type: "object", additionalProperties: false, required: Object.keys(properties), properties } };
+    const system = `Beantworte die folgenden Fragen zu einem Verkaufsgespräch ausschließlich anhand des Transkripts mit ja, nein oder unklar und einem Beleg (note) in ein bis drei vollständigen Sätzen – nie mitten im Satz abbrechen. Erfinde nichts. Handelt es sich erkennbar um einen Rückruf (Kunde und Mitarbeiter hatten schon Kontakt, z. B. „wie besprochen“, „ich rufe zurück“, „wir hatten ja schon telefoniert“), muss ein Firmenname nicht noch einmal genannt werden – die Frage danach dann mit ja beantworten (note: Rückruf). Fragen mit dem Zusatz [gilt nur bei …] betreffen nur dieses Produkt: Geht es im Gespräch nicht darum, antworte ja mit note „Entfällt“. Das Transkript stammt aus automatischer Spracherkennung: Firmen- und Eigennamen sind darin oft falsch geschrieben. Wird nach einem Namen gefragt und im Transkript steht etwas, das sich ähnlich anhört (z. B. „Haus Campus“ oder „Hauskompas“ statt „HausKompass“), gilt der Name als genannt – der Gesprächspartner versteht, was gemeint ist. Wird nach einem Zeitrahmen gefragt, muss der Kunde kein genaues Datum nennen: sinngemäße Zusagen wie „so schnell wie möglich“ oder „zeitnah“ zählen als ja.\nTrage die Antwort je Frage in das genannte Antwort-Feld und den Beleg in das Notiz-Feld ein – als einzelne Felder, nicht als Liste oder Text:\n${questions.map((question, index) => `- ${question.key}: ${question.label}${question.onlyFor ? ` [gilt nur bei ${SCOPE_LABEL[question.onlyFor]}]` : ""}${question.hint ? ` (Hinweis: ${question.hint})` : ""} → Felder ${answerFields[index]} und ${noteFields[index]}`).join("\n")}`;
+    const ask = async (maxTokens: number): Promise<Record<string, unknown>> => {
+      const response = await invokeLLM({ model: "fast", maxTokens, messages: [{ role: "system", content: system }, { role: "user", content: `Transkript:\n"""\n${transcript.slice(0, 40_000)}\n"""` }], outputSchema: schema });
+      let value: unknown; try { value = JSON.parse(response.choices[0]?.message.content ?? "{}"); } catch { value = {}; }
+      return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    };
+    let read = readAnswers(await ask(3000), questions);
+    if (read.length < questions.length) { const again = readAnswers(await ask(6000).catch(() => ({})), questions); if (again.length > read.length) read = again; } // Antworten fehlen (z. B. abgeschnitten): ein zweiter Anlauf mit mehr Platz – was dann noch fehlt, beantworten die Stichwort-Regeln
     const out: Record<string, QualificationAnswer> = { ...heuristic };
-    for (const item of parsed.answers ?? []) if (questions.some((question) => question.key === item.key) && ["ja", "nein", "unklar"].includes(item.answer)) out[item.key] = { answer: item.answer as QualificationAnswer["answer"], note: String(item.note ?? "").slice(0, 1500) };
+    for (const item of read) out[item.key] = { answer: item.answer, note: item.note };
     return applyQuestionScope(questions, out, transcript);
   } catch { return heuristic; }
 }
@@ -108,8 +135,9 @@ export async function campaignSummary(db: Db, tenantId: number, campaign: string
   const conditions = [eq(callRecords.tenantId, tenantId), eq(callRecords.status, "bewertet")]; if (campaign) conditions.push(eq(callRecords.campaign, campaign));
   const rows = await db.select({ answers: callRecords.qualificationAnswers }).from(callRecords).where(and(...conditions));
   const own = await criteriaForCampaign(db, tenantId, campaign);
-  const ownRow = campaign ? (await db.select({ instructions: callQaCampaigns.instructions }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0] : undefined;
-  return { questions, calls: rows.length, summary: summarizeAnswers(rows.map((row) => row.answers as Record<string, QualificationAnswer> | null), questions), criteria: own.criteria, criteriaCustom: own.custom, instructions: ownRow?.instructions ?? null, defaultCampaign: (await ensureCallQaConfig(db, tenantId)).defaultCampaign ?? null };
+  const summaryConfig = await ensureCallQaConfig(db, tenantId);
+  const ownRow = campaign ? (await db.select({ instructions: callQaCampaigns.instructions, presetKey: callQaCampaigns.presetKey }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0] : undefined;
+  return { questions, calls: rows.length, summary: summarizeAnswers(rows.map((row) => row.answers as Record<string, QualificationAnswer> | null), questions), criteria: own.criteria, criteriaCustom: own.custom, instructions: ownRow?.instructions ?? null, defaultCampaign: summaryConfig.defaultCampaign ?? null, presetLabel: presetByKey((campaign ? ownRow?.presetKey : summaryConfig.presetKey) ?? "")?.label ?? null };
 }
 export async function setQualificationAnswer(db: Db, tenantId: number, callId: number, key: string, answer: QualificationAnswer["answer"], note?: string | null) {
   const record = (await db.select().from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0]; if (!record) throw new Error("Gespräch nicht gefunden.");
@@ -153,7 +181,9 @@ export async function saveCallQaSettings(db: Db, tenantId: number, input: { enab
   const totalWeight = input.criteria.reduce((sum, criterion) => sum + criterion.weight, 0);
   if (!input.criteria.length || totalWeight <= 0) throw new Error("Mindestens ein Kriterium mit Gewicht ist nötig.");
   const authHeader = input.recordingAuthHeader === "••••••••" ? config.recordingAuthHeader : input.recordingAuthHeader.trim() ? encryptIntegrationSecret(input.recordingAuthHeader.trim()) : null;
-  await db.update(callQaConfigs).set({ enabled: input.enabled, consentRequired: input.consentRequired, autoApproveThreshold: input.autoApproveThreshold, autoRejectThreshold: input.autoRejectThreshold, autoDeliver: input.autoDeliver, criteria: input.criteria, instructions: input.instructions, fieldMapping: input.fieldMapping, recordingAuthHeader: authHeader, transcriptionProvider: input.transcriptionProvider, transcriptionLanguage: input.transcriptionLanguage, retentionDays: input.retentionDays, ...(input.decisionRules ? { decisionRules: input.decisionRules } : {}), ...(input.examples ? { examples: input.examples } : {}), ...(input.extractFields ? { extractFields: input.extractFields.filter((field) => field.key && field.question) } : {}) }).where(eq(callQaConfigs.id, config.id));
+  const followed = config.presetKey ? presetByKey(config.presetKey) : undefined; // Texte von Hand geändert → Vorlage wird nicht mehr automatisch nachgezogen
+  const presetKey = followed && criteriaTextsEqual(input.criteria, followed.criteria) && (input.instructions ?? "") === followed.instructions ? followed.key : null;
+  await db.update(callQaConfigs).set({ presetKey, enabled: input.enabled, consentRequired: input.consentRequired, autoApproveThreshold: input.autoApproveThreshold, autoRejectThreshold: input.autoRejectThreshold, autoDeliver: input.autoDeliver, criteria: input.criteria, instructions: input.instructions, fieldMapping: input.fieldMapping, recordingAuthHeader: authHeader, transcriptionProvider: input.transcriptionProvider, transcriptionLanguage: input.transcriptionLanguage, retentionDays: input.retentionDays, ...(input.decisionRules ? { decisionRules: input.decisionRules } : {}), ...(input.examples ? { examples: input.examples } : {}), ...(input.extractFields ? { extractFields: input.extractFields.filter((field) => field.key && field.question) } : {}) }).where(eq(callQaConfigs.id, config.id));
   return { success: true as const };
 }
 
@@ -218,7 +248,7 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
   const rawContact = !lead && phone ? await rawContactByPhone(db, config.tenantId, phone) : undefined;
   const consent = truthy(get("consent")) || !config.consentRequired;
   const startedAtRaw = text(get("startedAt")); const startedAt = startedAtRaw && !Number.isNaN(new Date(startedAtRaw).getTime()) ? new Date(startedAtRaw) : new Date();
-  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: text(get("agent")) || null, campaign: config.defaultCampaign?.trim() || text(get("campaign")) || null, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
+  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: isJunkAgentName(text(get("agent"))) ? null : text(get("agent")), campaign: config.defaultCampaign?.trim() || text(get("campaign")) || null, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
   const callId = Number(inserted[0]?.insertId) || 0;
   if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, evaluated: false, reason: "no consent" } }; }
   const result = await processCall(db, callId, options);
@@ -340,17 +370,19 @@ async function transcribeAudio(config: CallQaConfig, audio: Uint8Array<ArrayBuff
 
 /* ------------------------------------------------------------------ Bewertung */
 
-export type Evaluation = { agentName?: string | null; topic?: string | null; score: number; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar" | "unklar"; criteria: Array<{ key: string; score: number; evidence: string }>; summary: string; redFlags: string[]; nextStep: string; extracted: Record<string, string> };
+/**
+ * „criteria“ enthält nur Kriterien, für die die KI wirklich Punkte geliefert hat.
+ * „unscored“: Die KI hat (auch im zweiten Anlauf) gar keine Punkte geliefert – dann wird nichts als 0 gespeichert, sondern „nicht bewertet“
+ * (die Entscheidung läuft trotzdem über die Prüffragen; die Punkte holt rescoreUnscoredCalls nach).
+ */
+export type Evaluation = { agentName?: string | null; topic?: string | null; score: number; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar" | "unklar"; criteria: Array<{ key: string; score: number; evidence: string }>; summary: string; redFlags: string[]; nextStep: string; extracted: Record<string, string>; unscored?: boolean; note?: string | null };
+/** Eintrag in criteriaScores, der keinen Kriterien-Wert trägt, sondern den Hinweis, warum nichts bewertet wurde. */
+export const CRITERIA_NOTE_KEY = "_hinweis";
 
 /** Bekannte Agenten-Namen des Mandanten mit Anzahl Gespräche. */
 async function knownAgentNames(db: Db, tenantId: number) {
   const rows = await db.select({ name: callRecords.agentName, count: sql<number>`count(*)` }).from(callRecords).where(eq(callRecords.tenantId, tenantId)).groupBy(callRecords.agentName);
-  return rows.filter((row): row is { name: string; count: number } => Boolean(row.name && row.name.trim())).map((row) => ({ name: row.name, count: Number(row.count) }));
-}
-/** Aus der Aufnahme erkannter Name → schon bekannter Agent, wenn er nur anders verstanden wurde (Maja Decker → Maja Becker). */
-async function resolveAgentName(db: Db, tenantId: number, name: string | null | undefined): Promise<string | null> {
-  const clean = (name ?? "").trim(); if (!clean) return null;
-  return canonicalAgentName(clean, await knownAgentNames(db, tenantId).catch(() => []));
+  return rows.filter((row): row is { name: string; count: number } => Boolean(row.name && row.name.trim()) && !isJunkAgentName(row.name)).map((row) => ({ name: row.name, count: Number(row.count) })); // „Mein Name“ & Co. sind keine Agenten
 }
 /** Aufräumen (beim Start und nach jeder Bewertung): ähnlich klingende Agenten-Namen je Mandant zusammenführen – der häufigste Name bleibt. */
 export async function mergeSimilarAgentNames(db: Db, onlyTenantId?: number): Promise<number> {
@@ -370,15 +402,56 @@ export async function reassignAgentsFromTranscripts(db: Db, onlyTenantId?: numbe
     const known = await knownAgentNames(db, tenantId); const names = known.map((item) => item.name);
     const rows = await db.select({ id: callRecords.id, agentName: callRecords.agentName, agentSource: callRecords.agentSource, transcript: callRecords.transcript }).from(callRecords).where(eq(callRecords.tenantId, tenantId));
     for (const row of rows) {
-      if (!row.transcript || row.agentSource === "manuell") continue;
-      const current = row.agentName?.trim() || null; const detected = detectAgent(row.transcript, names);
-      if (!detected || (!detected.sure && current)) continue; // nur eindeutige Vorstellungen überschreiben einen vorhandenen Namen
-      const resolved = canonicalAgentName(detected.name, known); if (!resolved || resolved === current) continue;
-      if (current && sameAgentName(current, resolved)) continue; // gleiche Person, nur andere Schreibweise – das regelt das Zusammenführen
-      await db.update(callRecords).set({ agentName: resolved, agentSource: "transkript" }).where(eq(callRecords.id, row.id)); changed += 1;
+      if (row.agentSource === "manuell") continue;
+      const stored = row.agentName?.trim() || null; const junk = Boolean(stored) && isJunkAgentName(stored); const current = junk ? null : stored; // „Mein Name“, „Woche“ … zählen als „kein Agent“
+      const detected = row.transcript ? detectAgent(row.transcript, names) : null;
+      const usable = detected?.sure ? canonicalAgentName(detected.name, known) : null; // nur eindeutige Vorstellungen zählen hier – alles andere prüft die KI (verifyAgentsWithAi)
+      if (!usable) {
+        if (junk) { await db.update(callRecords).set({ agentName: null, agentSource: null }).where(eq(callRecords.id, row.id)); changed += 1; }
+        else if (row.agentSource === "transkript") await db.update(callRecords).set({ agentSource: null }).where(eq(callRecords.id, row.id)); // früher als „aus dem Transkript“ vermerkt, aus heutiger Sicht nicht eindeutig → die KI prüft den Namen nach
+        continue;
+      }
+      const source = "transkript"; // eindeutig aus der Vorstellung – braucht keine KI-Nachprüfung mehr
+      if (current && (usable === current || sameAgentName(current, usable))) { if (source !== (row.agentSource ?? null)) await db.update(callRecords).set({ agentSource: source }).where(eq(callRecords.id, row.id)); continue; } // gleiche Person (andere Schreibweise regelt das Zusammenführen)
+      await db.update(callRecords).set({ agentName: usable, agentSource: source }).where(eq(callRecords.id, row.id)); changed += 1;
     }
   }
   return changed;
+}
+/** Die KI nach dem Namen des anrufenden Mitarbeiters fragen (nur der Gesprächsanfang). null = nicht fragbar (keine KI), "" = die KI findet keinen Namen. */
+export async function askAgentName(transcript: string): Promise<string | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  const schema = { name: "agentenname", schema: { type: "object", additionalProperties: false, required: ["agentName"], properties: { agentName: { type: "string", description: "Vor- und Nachname des anrufenden Mitarbeiters, so wie er sich vorstellt – leer, wenn er seinen Namen nicht nennt" } } } };
+  const response = await invokeLLM({ model: "fast", maxTokens: 300, messages: [{ role: "system", content: "Du liest den Anfang eines Telefongesprächs (automatisch transkribiert, ohne Kennzeichnung der Sprecher). Ein Callcenter-Mitarbeiter ruft einen Kunden an. Nenne den Namen, mit dem sich der ANRUFENDE MITARBEITER vorstellt: Vor- und Nachname, wenn beide fallen, sonst den genannten Teil. Nicht den Namen des Kunden (der wird meist mit „Herr …“ oder „Frau …“ angesprochen oder meldet sich nur kurz mit seinem Nachnamen) und keinen Firmennamen. Nennt der Mitarbeiter seinen Namen nicht, bleibt das Feld leer – nichts raten." }, { role: "user", content: `Gesprächsanfang:\n"""\n${transcript.slice(0, 3500)}\n"""` }], outputSchema: schema });
+  let parsed: unknown; try { parsed = JSON.parse(response.choices[0]?.message.content ?? "{}"); } catch { parsed = {}; }
+  return cleanAgentName(String((parsed as { agentName?: unknown } | null)?.agentName ?? "")) ?? "";
+}
+const agentCheckAttempts = new Map<number, number>(); let agentCheckRunning = false;
+/**
+ * Gespräche, deren Agent noch nicht eindeutig aus der Vorstellung stammt (kein Name, Füllwort oder Name aus der früheren Erkennung),
+ * von der KI prüfen lassen – ein paar pro Minute, bis alle durch sind. Von Hand gesetzte und eindeutig erkannte Agenten bleiben.
+ */
+export async function verifyAgentsWithAi(db: Db, options: { max?: number; tenantId?: number } = {}): Promise<{ checked: number; changed: number }> {
+  if (agentCheckRunning || !process.env.ANTHROPIC_API_KEY) return { checked: 0, changed: 0 }; agentCheckRunning = true;
+  try {
+    const since = new Date(Date.now() - 60 * 24 * 3_600_000);
+    const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId, agentName: callRecords.agentName, transcript: callRecords.transcript }).from(callRecords).where(and(isNull(callRecords.agentSource), gte(callRecords.createdAt, since), inArray(callRecords.status, ["bewertet", "transkribiert"] as const), ...(options.tenantId ? [eq(callRecords.tenantId, options.tenantId)] : []))).orderBy(desc(callRecords.id)).limit(400);
+    const todo = rows.filter((row) => row.transcript && (agentCheckAttempts.get(row.id) ?? 0) < 2).slice(0, options.max ?? 8);
+    let changed = 0; const touched = new Set<number>();
+    for (const row of todo) {
+      agentCheckAttempts.set(row.id, (agentCheckAttempts.get(row.id) ?? 0) + 1);
+      try {
+        const found = await askAgentName(row.transcript!); if (found === null) break;
+        const stored = row.agentName?.trim() || null; const current = stored && !isJunkAgentName(stored) ? stored : null;
+        const resolved = found ? canonicalAgentName(found, await knownAgentNames(db, row.tenantId)) : null;
+        const next = resolved || current; // findet die KI keinen Namen, bleibt ein vorhandener echter Name stehen
+        await db.update(callRecords).set({ agentName: next, agentSource: "ki" }).where(eq(callRecords.id, row.id));
+        if (next !== stored) { changed += 1; touched.add(row.tenantId); }
+      } catch (error) { console.error("[Gespräche] Agent per KI prüfen:", row.id, error instanceof Error ? error.message : error); }
+    }
+    for (const tenantId of Array.from(touched)) await mergeSimilarAgentNames(db, tenantId).catch(() => 0);
+    return { checked: todo.length, changed };
+  } finally { agentCheckRunning = false; }
 }
 /** Agent eines Gesprächs von Hand festlegen (bleibt bei neuer Bewertung und beim Zusammenführen erhalten); leer = wieder automatisch. */
 export async function setCallAgent(db: Db, tenantId: number, callId: number, agentName: string | null) {
@@ -407,36 +480,63 @@ export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" |
   const criteria = (Array.isArray(config.criteria) && config.criteria.length ? config.criteria : DEFAULT_CRITERIA) as Criterion[];
   const examples = (Array.isArray(config.examples) ? config.examples : []) as ExampleCase[];
   const extractFields = (Array.isArray(config.extractFields) ? config.extractFields : []) as ExtractField[];
-  const totalWeight = criteria.reduce((sum, criterion) => sum + criterion.weight, 0) || 1;
-  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted", "agentName", "topic"], properties: { agentName: { type: "string", description: "Name, mit dem sich der anrufende Mitarbeiter/Agent vorstellt (z. B. „Maya Becker“) – Vor- und Nachname, wenn beide fallen, sonst der genannte Teil. NICHT der Name des Kunden/Angerufenen und kein Firmenname. Leer, wenn der Mitarbeiter seinen Namen nicht nennt" }, topic: { type: "string", description: "Worum geht es im Gespräch – das Produkt/Thema als kurzer Begriff in der Einzahl, z. B. „Photovoltaik“, „Wärmepumpe“, „Alarmanlage“, „Treppenlift“; geht es um zwei Themen, beide mit „ & “ verbinden (z. B. „Photovoltaik & Wärmepumpe“); leer, wenn unklar" }, criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
-  const system = `Du bewertest Verkaufsgespräche eines Callcenters, das Anfragen (Leads) für Fachbetriebe qualifiziert. Bewerte NUR anhand des Transkripts, erfinde nichts. Das Transkript stammt aus automatischer Spracherkennung: Firmen- und Eigennamen sind darin oft falsch geschrieben. Wird nach einem Namen gefragt und im Transkript steht etwas, das sich ähnlich anhört (z. B. „Haus Campus“ oder „Hauskompas“ statt „HausKompass“), gilt der Name als genannt – der Gesprächspartner versteht, was gemeint ist. Handelt es sich erkennbar um einen Rückruf (Kunde und Mitarbeiter hatten schon Kontakt), muss ein Firmenname nicht noch einmal genannt werden – kein Mangel. Schreibe Belege (evidence) vollständig aus, nie mitten im Satz abbrechen. Dass der Service für den Kunden kostenlos und unverbindlich ist, stimmt immer – sagt der Mitarbeiter das, ist es kein Mangel und kein Warnhinweis (redFlag). Bewertungskriterien (0 = gar nicht erfüllt, 10 = vollständig erfüllt), jeweils mit wörtlichem Beleg aus dem Gespräch:\n${criteria.map((criterion) => `- ${criterion.key}: ${criterion.label} – ${criterion.description}`).join("\n")}\nWarnsignale (redFlags), die den Lead unverkäuflich machen: Kunde will nicht kontaktiert werden, widerruft, Daten sind falsch, Gespräch war unzulässig (Werbeanruf ohne Einwilligung), Kunde ist Minderjähriger, Agent hat Druck ausgeübt oder Falsches versprochen.\nUrteil: verkaufbar = Kunde will ein Angebot und die Weitergabe ist erlaubt; nachfassen = Interesse, aber offene Punkte; nicht_verkaufbar = kein Interesse oder Warnsignal; unklar = Transkript unvollständig.${extractFields.length ? `\nZusätzlich beantworte diese Fragen aus dem Gespräch (extracted, leer lassen wenn nicht genannt):\n${extractFields.map((field) => `- ${field.key}: ${field.question}`).join("\n")}` : "\nextracted bleibt eine leere Liste."}\nAntworte ausschließlich auf Deutsch.${config.instructions ? `\nZusätzliche Vorgaben des Mandanten: ${config.instructions}` : ""}${examples.length ? `\nBeispiele für die gewünschte Einordnung:\n${examples.slice(0, 8).map((example, index) => `Beispiel ${index + 1} (${example.title}): Auszug: "${example.transcript.slice(0, 600)}" → Urteil: ${example.verdict}. Begründung: ${example.reason}`).join("\n")}` : ""}`;
+  // Punkte und Belege als einzelne, fest benannte Felder (punkte_<schlüssel> / beleg_<schlüssel>): Eine verschachtelte Liste hat die KI
+  // gelegentlich als Text oder mit eigenen Kennungen geliefert – dann standen alle Kriterien auf 0 %.
+  const scoreFields = fieldNames(criteria.map((criterion) => criterion.key), "punkte"); const evidenceFields = fieldNames(criteria.map((criterion) => criterion.key), "beleg");
+  const properties: Record<string, unknown> = {
+    agentName: { type: "string", description: "Name, mit dem sich der anrufende Mitarbeiter/Agent vorstellt (z. B. „Maya Becker“) – Vor- und Nachname, wenn beide fallen, sonst der genannte Teil. NICHT der Name des Kunden/Angerufenen und kein Firmenname. Leer, wenn der Mitarbeiter seinen Namen nicht nennt" },
+    topic: { type: "string", description: "Worum geht es im Gespräch – das Produkt/Thema als kurzer Begriff in der Einzahl, z. B. „Photovoltaik“, „Wärmepumpe“, „Alarmanlage“, „Treppenlift“; geht es um zwei Themen, beide mit „ & “ verbinden (z. B. „Photovoltaik & Wärmepumpe“); leer, wenn unklar" },
+  };
+  criteria.forEach((criterion, index) => {
+    properties[scoreFields[index]] = { type: "integer", minimum: 0, maximum: 10, description: `Punkte 0–10 für das Kriterium „${criterion.label}“` };
+    properties[evidenceFields[index]] = { type: "string", description: `Beleg aus dem Gespräch für „${criterion.label}“ in ein bis drei vollständigen Sätzen` };
+  });
+  Object.assign(properties, { summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } });
+  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: Object.keys(properties), properties } };
+  const system = `Du bewertest Verkaufsgespräche eines Callcenters, das Anfragen (Leads) für Fachbetriebe qualifiziert. Bewerte NUR anhand des Transkripts, erfinde nichts. Das Transkript stammt aus automatischer Spracherkennung: Firmen- und Eigennamen sind darin oft falsch geschrieben. Wird nach einem Namen gefragt und im Transkript steht etwas, das sich ähnlich anhört (z. B. „Haus Campus“ oder „Hauskompas“ statt „HausKompass“), gilt der Name als genannt – der Gesprächspartner versteht, was gemeint ist. Handelt es sich erkennbar um einen Rückruf (Kunde und Mitarbeiter hatten schon Kontakt), muss ein Firmenname nicht noch einmal genannt werden – kein Mangel. Schreibe Belege (evidence) vollständig aus, nie mitten im Satz abbrechen. Dass der Service für den Kunden kostenlos und unverbindlich ist, stimmt immer – sagt der Mitarbeiter das, ist es kein Mangel und kein Warnhinweis (redFlag). Bewertungskriterien (0 = gar nicht erfüllt, 10 = vollständig erfüllt). Trage für JEDES Kriterium die Punkte und einen wörtlichen Beleg aus dem Gespräch in die beiden genannten Felder ein – als einzelne Felder, nicht als Liste oder Text:\n${criteria.map((criterion, index) => `- ${criterion.key}: ${criterion.label} – ${criterion.description} → Felder ${scoreFields[index]} und ${evidenceFields[index]}`).join("\n")}\nWarnsignale (redFlags), die den Lead unverkäuflich machen: Kunde will nicht kontaktiert werden, widerruft, Daten sind falsch, Gespräch war unzulässig (Werbeanruf ohne Einwilligung), Kunde ist Minderjähriger, Agent hat Druck ausgeübt oder Falsches versprochen.\nUrteil: verkaufbar = Kunde will ein Angebot und die Weitergabe ist erlaubt; nachfassen = Interesse, aber offene Punkte; nicht_verkaufbar = kein Interesse oder Warnsignal; unklar = Transkript unvollständig.${extractFields.length ? `\nZusätzlich beantworte diese Fragen aus dem Gespräch (extracted, leer lassen wenn nicht genannt):\n${extractFields.map((field) => `- ${field.key}: ${field.question}`).join("\n")}` : "\nextracted bleibt eine leere Liste."}\nAntworte ausschließlich auf Deutsch.${config.instructions ? `\nZusätzliche Vorgaben des Mandanten: ${config.instructions}` : ""}${examples.length ? `\nBeispiele für die gewünschte Einordnung:\n${examples.slice(0, 8).map((example, index) => `Beispiel ${index + 1} (${example.title}): Auszug: "${example.transcript.slice(0, 600)}" → Urteil: ${example.verdict}. Begründung: ${example.reason}`).join("\n")}` : ""}`;
   const user = `${context.leadCategory ? `Lead-Kategorie: ${context.leadCategory}\n` : ""}${context.leadName ? `Kunde laut Lead: ${context.leadName}\n` : ""}Transkript:\n"""\n${transcript.slice(0, 60_000)}\n"""`;
-  const response = await invokeLLM({ messages: [{ role: "system", content: system }, { role: "user", content: user }], outputSchema: schema, maxTokens: 2500 });
-  const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as Partial<Omit<Evaluation, "extracted">> & { extracted?: Array<{ key: string; value: string }> | Record<string, string> };
-  // Die KI liefert „criteria“ meist als Liste – manchmal aber als Objekt {key: {score, evidence}} oder {key: score}; beides annehmen
-  const rawCriteria = parsed.criteria as unknown; const criteriaList: Array<{ key: string; score: number; evidence: string }> = Array.isArray(rawCriteria) ? rawCriteria as Array<{ key: string; score: number; evidence: string }> : rawCriteria && typeof rawCriteria === "object" ? Object.entries(rawCriteria as Record<string, unknown>).map(([key, value]) => (value && typeof value === "object" ? { key, score: Number((value as { score?: unknown }).score ?? 0), evidence: String((value as { evidence?: unknown }).evidence ?? "") } : { key, score: Number(value ?? 0), evidence: "" })) : [];
-  const scored = criteria.map((criterion) => { const found = criteriaList.find((item) => item.key === criterion.key); return { key: criterion.key, score: Math.max(0, Math.min(10, Number(found?.score ?? 0))), evidence: String(found?.evidence ?? "").slice(0, 1500) }; });
-  const score = Math.round(criteria.reduce((sum, criterion) => sum + (scored.find((item) => item.key === criterion.key)?.score ?? 0) / 10 * criterion.weight, 0) / totalWeight * 100);
-  const redFlags = Array.isArray(parsed.redFlags) ? parsed.redFlags.map(String).filter(Boolean).slice(0, 10) : [];
-  const verdict = redFlags.length ? "nicht_verkaufbar" : (["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"].includes(parsed.verdict ?? "") ? parsed.verdict! : score >= 70 ? "verkaufbar" : score >= 40 ? "nachfassen" : "nicht_verkaufbar");
+  const ask = async (extra: string | null, maxTokens: number): Promise<{ value: Record<string, unknown>; truncated: boolean }> => {
+    const response = await invokeLLM({ messages: [{ role: "system", content: system }, { role: "user", content: extra ? `${user}\n\n${extra}` : user }], outputSchema: schema, maxTokens });
+    let value: unknown; try { value = JSON.parse(response.choices[0]?.message.content ?? "{}"); } catch { value = {}; }
+    return { value: value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}, truncated: response.choices[0]?.finish_reason === "max_tokens" }; // „max_tokens“ = die Antwort wurde mittendrin abgeschnitten
+  };
+  const first = await ask(null, 4000);
+  let parsed = first.value;
+  let scored = readCriteriaScores(parsed, criteria);
+  if (first.truncated || scored.length < criteria.length) {
+    // Punkte fehlen (ganz oder teilweise) oder die Antwort wurde abgeschnitten: einmal ausdrücklich und mit doppelt so viel Platz nachfragen –
+    // erst wenn auch dann nichts kommt, gilt das Gespräch als „nicht bewertet“
+    const second = await ask(`Wichtig: Fülle für jedes Kriterium die einzelnen Felder aus (${scoreFields.slice(0, 2).join(", ")} … und ${evidenceFields.slice(0, 2).join(", ")} …) und fasse dich bei den Belegen kurz (ein bis zwei Sätze).`, 8000).catch(() => null);
+    if (second) { const again = readCriteriaScores(second.value, criteria); if (again.length > scored.length || (again.length === scored.length && first.truncated && !second.truncated) || !Object.keys(parsed).length) { parsed = second.value; scored = again; } }
+  }
+  const unscored = scored.length === 0;
+  // Gewichtete Note nur über die Kriterien, für die Punkte da sind (ein fehlendes Kriterium zählt nicht als 0)
+  const scoredWeight = criteria.reduce((sum, criterion) => sum + (scored.some((item) => item.key === criterion.key) ? criterion.weight : 0), 0);
+  const score = unscored || !scoredWeight ? 0 : Math.round(scored.reduce((sum, item) => sum + item.score / 10 * (criteria.find((criterion) => criterion.key === item.key)?.weight ?? 0), 0) / scoredWeight * 100);
+  const redFlags = looseStrings(parsed.redFlags).slice(0, 10);
+  const givenVerdict = String(parsed.verdict ?? "").trim().toLowerCase();
+  const verdict = (redFlags.length ? "nicht_verkaufbar" : ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"].includes(givenVerdict) ? givenVerdict : unscored ? "unklar" : score >= 70 ? "verkaufbar" : score >= 40 ? "nachfassen" : "nicht_verkaufbar") as Evaluation["verdict"];
   const extracted: Record<string, string> = {};
-  const rawExtracted = parsed.extracted; if (Array.isArray(rawExtracted)) for (const item of rawExtracted) if (item?.key && extractFields.some((field) => field.key === item.key) && String(item.value ?? "").trim()) extracted[item.key] = String(item.value).slice(0, 500); else if (rawExtracted && typeof rawExtracted === "object") for (const [key, value] of Object.entries(rawExtracted)) if (extractFields.some((field) => field.key === key) && String(value ?? "").trim()) extracted[key] = String(value).slice(0, 500);
-  const agentName = cleanAgentName(String((parsed as { agentName?: unknown }).agentName ?? ""));
-  const topic = String((parsed as { topic?: unknown }).topic ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || null;
-  return { score, verdict, criteria: scored, summary: String(parsed.summary ?? "").slice(0, 2000), redFlags, nextStep: String(parsed.nextStep ?? "").slice(0, 320), extracted, agentName, topic };
+  for (const item of looseItems(parsed.extracted)) { const key = String(item.key ?? ""); const value = String(item.value ?? "").trim(); if (key && value && extractFields.some((field) => field.key === key)) extracted[key] = value.slice(0, 500); }
+  const agentName = cleanAgentName(String(parsed.agentName ?? ""));
+  const topic = String(parsed.topic ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || null;
+  return { score, verdict, criteria: scored, summary: String(parsed.summary ?? "").slice(0, 2000), redFlags, nextStep: String(parsed.nextStep ?? "").slice(0, 320), extracted, agentName, topic, unscored, note: unscored ? `Die KI hat für die Kriterien keine lesbaren Punkte geliefert (${describeShape(parsed)}).` : null };
 }
 
+/** Note als Text für Notizen: ohne Kriterien-Punkte steht dort nicht „0/100“. */
+const scoreText = (evaluation: Pick<Evaluation, "score" | "unscored">) => (evaluation.unscored ? "ohne Kriterien-Punkte" : `${evaluation.score}/100`);
 /** Entscheidungsregeln des Mandanten (erste passende Regel gewinnt), sonst Schwellenwerte. */
 export function decideCall(config: Pick<CallQaConfig, "autoApproveThreshold" | "autoRejectThreshold" | "decisionRules">, evaluation: Evaluation, transcript: string): { decision: "freigegeben" | "pruefen" | "zurueckgewiesen"; rule: DecisionRule | null } {
   const rules = (Array.isArray(config.decisionRules) ? config.decisionRules : []) as DecisionRule[];
   for (const rule of rules.filter((item) => item.active)) {
     let actual: string | number = "";
+    if (evaluation.unscored && (rule.field === "score" || rule.field.startsWith("criterion:"))) continue; // ohne Punkte greift keine Punkte-Regel
     if (rule.field === "score") actual = evaluation.score; else if (rule.field === "verdict") actual = evaluation.verdict; else if (rule.field === "redFlags") actual = evaluation.redFlags.join(" | "); else if (rule.field === "transcript") actual = transcript; else if (rule.field.startsWith("criterion:")) actual = evaluation.criteria.find((item) => item.key === rule.field.slice(10))?.score ?? 0;
     const expectedNumber = Number(rule.value); const actualText = String(actual).toLowerCase(); const expectedText = rule.value.toLowerCase();
     const hit = rule.op === "gte" ? Number(actual) >= expectedNumber : rule.op === "lte" ? Number(actual) <= expectedNumber : rule.op === "eq" ? actualText === expectedText : rule.op === "contains" ? actualText.includes(expectedText) : rule.op === "any" ? actualText.trim().length > 0 : false;
     if (hit) return { decision: rule.decision, rule };
   }
-  const decision = evaluation.redFlags.length || evaluation.score <= config.autoRejectThreshold ? "zurueckgewiesen" : evaluation.score >= config.autoApproveThreshold && evaluation.verdict === "verkaufbar" ? "freigegeben" : "pruefen";
+  const decision = evaluation.redFlags.length ? "zurueckgewiesen" : evaluation.unscored ? "pruefen" : evaluation.score <= config.autoRejectThreshold ? "zurueckgewiesen" : evaluation.score >= config.autoApproveThreshold && evaluation.verdict === "verkaufbar" ? "freigegeben" : "pruefen";
   return { decision, rule: null };
 }
 
@@ -474,13 +574,14 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     const agentManual = call.agentSource === "manuell"; const knownAgents = agentManual ? [] : await knownAgentNames(db, call.tenantId).catch(() => []);
     const detectedAgent = agentManual ? null : detectAgent(transcript, knownAgents.map((item) => item.name));
     let agentName = call.agentName?.trim() || null; let agentSource = call.agentSource ?? null;
-    if (detectedAgent && (detectedAgent.sure || !agentName)) { const resolved = canonicalAgentName(detectedAgent.name, knownAgents); if (resolved) { agentName = resolved; agentSource = "transkript"; } }
+    if (!agentManual && isJunkAgentName(agentName)) agentName = null; // „Mein Name“ & Co. sind kein Agent
+    if (detectedAgent?.sure) { const resolved = canonicalAgentName(detectedAgent.name, knownAgents); if (resolved) { agentName = resolved; agentSource = "transkript"; } } // nur eine eindeutige Vorstellung zählt sofort – sonst entscheidet gleich die KI
     await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName !== (call.agentName ?? null) || agentSource !== (call.agentSource ?? null) ? { agentName, agentSource } : {}) }).where(eq(callRecords.id, callId));
     const lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
     const own = await criteriaForCampaign(db, call.tenantId, call.campaign, config); // Kriterien der Kampagne (sonst Standard)
     const evaluation = await evaluateTranscript({ ...config, criteria: own.criteria, instructions: own.instructions }, transcript, { leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : null });
     // Keine eindeutige Vorstellung per Formel gefunden: Dann gilt der Name, den die KI im Gespräch als Mitarbeiter erkannt hat
-    if (!agentManual && !detectedAgent?.sure && evaluation.agentName) { const resolved = canonicalAgentName(evaluation.agentName, knownAgents); if (resolved && resolved !== agentName) await db.update(callRecords).set({ agentName: resolved, agentSource: "transkript" }).where(eq(callRecords.id, callId)); }
+    if (!agentManual && !detectedAgent?.sure) { const fromAi = evaluation.agentName ? canonicalAgentName(evaluation.agentName, knownAgents) : null; await db.update(callRecords).set({ agentName: fromAi || agentName, agentSource: "ki" }).where(eq(callRecords.id, callId)); } // „ki“ = von der KI geprüft (findet sie keinen Namen, bleibt ein vorhandener echter Name stehen)
     // Lead-Kategorie: Thema laut KI (sonst Stichwörter) → vorhandene Kategorie oder neue
     if (!call.leadCategoryId) { const categoryId = await resolveCallCategory(db, call.tenantId, evaluation.topic || detectTopic(transcript)).catch(() => null); if (categoryId) await db.update(callRecords).set({ leadCategoryId: categoryId }).where(eq(callRecords.id, callId)); }
     const decided = decideCall(config, evaluation, transcript); let decision = decided.decision; const rule = decided.rule;
@@ -490,19 +591,19 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     const strictness = { freigegeben: 0, pruefen: 1, zurueckgewiesen: 2 } as const;
     if (byQuestions) { decision = byQuestions.decision; if (rule && strictness[decided.decision] > strictness[decision]) decision = decided.decision; } // Kampagnenfragen entscheiden; eine ausdrücklich angelegte Entscheidungsregel darf nur strenger machen
     const nextStep = [byQuestions?.reason, rule ? `Regel: ${rule.label}` : null, evaluation.nextStep].filter(Boolean).join(" · ").slice(0, 320);
-    await db.update(callRecords).set({ status: "bewertet", score: evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", error: null }).where(eq(callRecords.id, callId));
+    await db.update(callRecords).set({ status: "bewertet", score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.unscored ? (evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : []) : evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", error: null }).where(eq(callRecords.id, callId));
     let target = lead;
     if (!target && call.rawContactId) {
       // Rohdaten-Kontakt: die Freigabe macht ihn zum Lead (mit Auslieferung über die Regeln), Ablehnung verwirft ihn
-      if (decision === "freigegeben") { const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${evaluation.score}/100` }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
-      else if (decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Gesprächsbewertung ${evaluation.score}/100: ${evaluation.verdict}` }).where(and(eq(rawContacts.id, call.rawContactId), eq(rawContacts.status, "in_liste")));
+      if (decision === "freigegeben") { const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}` }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
+      else if (decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Gesprächsbewertung ${scoreText(evaluation)}: ${evaluation.verdict}` }).where(and(eq(rawContacts.id, call.rawContactId), eq(rawContacts.status, "in_liste")));
     }
     if (target) {
       if (Object.keys(evaluation.extracted).length) { const meta = target.metadata && typeof target.metadata === "object" && !Array.isArray(target.metadata) ? (target.metadata as Record<string, unknown>) : {}; await db.update(leads).set({ metadata: { ...meta, ...evaluation.extracted, callExtractedAt: new Date().toISOString() } }).where(eq(leads.id, target.id)); }
       await applyDecision(db, config, callId, target, decision, evaluation, null);
     }
     await noteAfterEvaluation(db, call.tenantId, callId); // automatische Gesprächsnotiz mit Transkript (Dialer-Anrufe)
-    return { status: "bewertet" as const, score: evaluation.score, verdict: evaluation.verdict, decision, error: null };
+    return { status: "bewertet" as const, score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, decision, error: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unbekannter Fehler";
     // Aufnahme (noch) nicht abrufbar: Dialer melden das Gespräch oft, bevor die Datei fertig ist – bis zu 8 Versuche mit wachsendem Abstand (2 min … 60 min)
@@ -513,8 +614,8 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
   }
 }
 
-async function applyDecision(db: Db, config: CallQaConfig, callId: number, lead: typeof leads.$inferSelect, decision: "freigegeben" | "pruefen" | "zurueckgewiesen", evaluation: Pick<Evaluation, "score" | "verdict" | "summary">, actorUserId: number | null) {
-  const label = `Gesprächsbewertung ${evaluation.score}/100 (${evaluation.verdict.replace("_", " ")})`;
+async function applyDecision(db: Db, config: CallQaConfig, callId: number, lead: typeof leads.$inferSelect, decision: "freigegeben" | "pruefen" | "zurueckgewiesen", evaluation: Pick<Evaluation, "score" | "verdict" | "summary" | "unscored">, actorUserId: number | null) {
+  const label = `Gesprächsbewertung ${scoreText(evaluation)} (${evaluation.verdict.replace("_", " ")})`;
   const current = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0] ?? lead;
   let nextStatus = current.status;
   if (decision === "freigegeben" && ["neu", "hängend", "fehlerhaft"].includes(current.status)) nextStatus = "genehmigt";
@@ -538,7 +639,7 @@ export async function reviewCall(db: Db, tenantId: number, userId: number, input
     if (input.decision === "freigegeben") { const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}` }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
     else if (input.decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Manuell zurückgewiesen${input.note ? `: ${input.note}` : ""}` }).where(and(eq(rawContacts.id, call.rawContactId), inArray(rawContacts.status, ["neu", "in_liste"])));
   }
-  if (lead) await applyDecision(db, config, call.id, lead, input.decision, { score: call.score ?? 0, verdict: call.verdict ?? "unklar", summary: input.note ?? call.summary ?? "" }, userId);
+  if (lead) await applyDecision(db, config, call.id, lead, input.decision, { score: call.score ?? 0, unscored: call.score === null, verdict: call.verdict ?? "unklar", summary: input.note ?? call.summary ?? "" }, userId);
   return { success: true as const };
 }
 
@@ -589,51 +690,89 @@ export async function renameCallCampaign(db: Db, tenantId: number, input: { from
   if (own) { if (existing) await db.delete(callQaCampaigns).where(eq(callQaCampaigns.id, own.id)); else await db.update(callQaCampaigns).set({ name: to }).where(eq(callQaCampaigns.id, own.id)); }
   const result = await db.update(callRecords).set({ campaign: to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.campaign, from)));
   const calls = Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
+  // Landen neue Gespräche vom Dialer in dieser Kampagne, gilt das auch unter dem neuen Namen
+  await db.update(callQaConfigs).set({ defaultCampaign: to }).where(and(eq(callQaConfigs.tenantId, tenantId), eq(callQaConfigs.defaultCampaign, from)));
   return { calls, merged: Boolean(existing) };
 }
 
-/** Vorlage aktualisieren: Mandanten, die eine Vorlage übernommen haben (Kriterienschlüssel passen), bekommen beim Start die aktuelle Fassung (Texte, Anweisung, Fragen) – Gewichte bleiben, wenn der Mandant sie geändert hat. */
+/**
+ * Vorlagen nachziehen: Einstellungen, die unverändert aus einer Vorlage stammen (presetKey), bekommen beim Start die aktuelle Fassung
+ * (Texte, Vorgaben, Fragen) – Gewichte bleiben. Was der Mandant selbst geändert hat, wird nie überschrieben.
+ * Fehlt der Bezug noch (ältere Daten), wird er einmalig gesetzt, wenn der Inhalt genau einer Vorlage entspricht.
+ */
 export async function refreshPresetConfigs(db: Db): Promise<number> {
-  const rows = await db.select({ id: callQaConfigs.id, tenantId: callQaConfigs.tenantId, criteria: callQaConfigs.criteria, instructions: callQaConfigs.instructions }).from(callQaConfigs);
+  const rows = await db.select({ id: callQaConfigs.id, criteria: callQaConfigs.criteria, instructions: callQaConfigs.instructions, defaultQuestions: callQaConfigs.defaultQuestions, presetKey: callQaConfigs.presetKey }).from(callQaConfigs);
   let changed = 0;
   for (const row of rows) {
-    const current = (Array.isArray(row.criteria) ? row.criteria : []) as Criterion[]; const keys = new Set(current.map((c) => c.key));
-    const preset = CALL_QA_PRESETS.find((candidate) => candidate.criteria.every((c) => keys.has(c.key)) && keys.size === candidate.criteria.length); if (!preset) continue;
-    const merged = preset.criteria.map((c) => ({ ...c, weight: current.find((item) => item.key === c.key)?.weight ?? c.weight }));
-    const same = JSON.stringify(merged) === JSON.stringify(current) && row.instructions === preset.instructions; if (same) continue;
-    await db.update(callQaConfigs).set({ criteria: merged, instructions: preset.instructions, defaultQuestions: preset.questions }).where(eq(callQaConfigs.id, row.id));
-    const presetKeys = new Set(preset.questions.map((question) => question.key));
-    for (const campaign of await db.select({ id: callQaCampaigns.id, questions: callQaCampaigns.questions, criteria: callQaCampaigns.criteria }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, row.tenantId))) {
-      const qs = normalizeQuestions(campaign.questions as QualificationQuestion[] | null); if (qs.length && qs.every((question) => presetKeys.has(question.key))) await db.update(callQaCampaigns).set({ questions: preset.questions }).where(eq(callQaCampaigns.id, campaign.id));
-      // Eigene Kriterien der Kampagne, die aus der Vorlage stammen: Texte mitziehen, Gewichte behalten
-      const own = (Array.isArray(campaign.criteria) ? campaign.criteria : []) as Criterion[]; const ownKeys = new Set(own.map((c) => c.key));
-      if (own.length === preset.criteria.length && preset.criteria.every((c) => ownKeys.has(c.key))) await db.update(callQaCampaigns).set({ criteria: preset.criteria.map((c) => ({ ...c, weight: own.find((item) => item.key === c.key)?.weight ?? c.weight })) }).where(eq(callQaCampaigns.id, campaign.id));
+    const current = (Array.isArray(row.criteria) ? row.criteria : []) as Criterion[];
+    let preset = row.presetKey ? presetByKey(row.presetKey) : undefined;
+    if (!row.presetKey) {
+      preset = CALL_QA_PRESETS.find((candidate) => criteriaTextsEqual(current, candidate.criteria) && (row.instructions ?? "") === candidate.instructions && (row.defaultQuestions === null || row.defaultQuestions === undefined || questionsEqual(row.defaultQuestions, candidate.questions)));
+      if (preset) await db.update(callQaConfigs).set({ presetKey: preset.key }).where(eq(callQaConfigs.id, row.id));
     }
+    if (!preset) continue;
+    const merged = preset.criteria.map((criterion) => ({ ...criterion, weight: current.find((item) => item.key === criterion.key)?.weight ?? criterion.weight }));
+    if (JSON.stringify(merged) === JSON.stringify(current) && row.instructions === preset.instructions && questionsEqual(row.defaultQuestions, preset.questions)) continue;
+    await db.update(callQaConfigs).set({ criteria: merged, instructions: preset.instructions, defaultQuestions: preset.questions }).where(eq(callQaConfigs.id, row.id));
     changed += 1;
   }
   return changed + (await refreshCampaignPresets(db));
 }
-/** Kampagnen, deren Fragen bzw. Kriterien genau aus einer Vorlage stammen: Texte der Vorlage nachziehen (Gewichte bleiben). */
+/** Dasselbe für Kampagnen: Fragen, Kriterien-Texte und Vorgaben folgen der Vorlage, solange der Mandant sie nicht selbst geändert hat. */
 export async function refreshCampaignPresets(db: Db): Promise<number> {
   let changed = 0;
-  for (const campaign of await db.select({ id: callQaCampaigns.id, questions: callQaCampaigns.questions, criteria: callQaCampaigns.criteria, instructions: callQaCampaigns.instructions }).from(callQaCampaigns)) {
+  for (const campaign of await db.select({ id: callQaCampaigns.id, questions: callQaCampaigns.questions, criteria: callQaCampaigns.criteria, instructions: callQaCampaigns.instructions, presetKey: callQaCampaigns.presetKey }).from(callQaCampaigns)) {
     const qs = normalizeQuestions(campaign.questions as QualificationQuestion[] | null);
     const own = (Array.isArray(campaign.criteria) ? campaign.criteria : []) as Criterion[];
-    for (const preset of CALL_QA_PRESETS) {
-      const update: { questions?: QualificationQuestion[]; criteria?: Criterion[]; instructions?: string } = {};
-      // Fragen: gleiche Schlüssel wie die Vorlage – gestrichene Fragen der Vorlage dürfen noch dabei sein und fallen dann weg
-      const retiredQ = new Set(preset.retiredQuestionKeys ?? []); const liveQ = qs.filter((question) => !retiredQ.has(question.key)); const liveKeys = new Set(liveQ.map((question) => question.key));
-      if (liveQ.length === preset.questions.length && preset.questions.every((question) => liveKeys.has(question.key)) && JSON.stringify(qs) !== JSON.stringify(normalizeQuestions(preset.questions))) update.questions = preset.questions;
-      // Kriterien: Texte nachziehen, Gewichte des Mandanten behalten – außer ein Kriterium wurde gestrichen (dann die neuen Gewichte der Vorlage)
-      const retiredC = new Set(preset.retiredCriteriaKeys ?? []); const liveC = own.filter((c) => !retiredC.has(c.key)); const cKeys = new Set(liveC.map((c) => c.key)); const dropped = liveC.length !== own.length;
-      if (liveC.length === preset.criteria.length && preset.criteria.every((c) => cKeys.has(c.key))) {
-        const merged = preset.criteria.map((c) => ({ ...c, weight: dropped ? c.weight : liveC.find((item) => item.key === c.key)?.weight ?? c.weight })); if (JSON.stringify(merged) !== JSON.stringify(own)) update.criteria = merged;
-        if (campaign.instructions && campaign.instructions !== preset.instructions && campaign.instructions.split("\n")[0] === preset.instructions.split("\n")[0]) update.instructions = preset.instructions;
-      }
-      if (Object.keys(update).length) { await db.update(callQaCampaigns).set(update).where(eq(callQaCampaigns.id, campaign.id)); changed += 1; }
+    let preset = campaign.presetKey ? presetByKey(campaign.presetKey) : undefined;
+    if (!campaign.presetKey) {
+      preset = CALL_QA_PRESETS.find((candidate) => questionsEqual(qs, candidate.questions) && (!own.length || criteriaTextsEqual(own, candidate.criteria)) && (!campaign.instructions || campaign.instructions === candidate.instructions));
+      if (preset) await db.update(callQaCampaigns).set({ presetKey: preset.key }).where(eq(callQaCampaigns.id, campaign.id));
     }
+    if (!preset) continue;
+    const update: { questions?: QualificationQuestion[]; criteria?: Criterion[]; instructions?: string } = {};
+    if (!questionsEqual(qs, preset.questions)) update.questions = preset.questions;
+    // Kriterien nur anfassen, wenn sie aus dieser Vorlage stammen (gestrichene dürfen noch dabei sein und fallen weg – dann gelten die Gewichte der Vorlage)
+    const presetKeys = new Set(preset.criteria.map((criterion) => criterion.key)); const retired = new Set(preset.retiredCriteriaKeys ?? []);
+    if (own.length && own.every((criterion) => presetKeys.has(criterion.key) || retired.has(criterion.key))) {
+      const dropped = own.some((criterion) => retired.has(criterion.key));
+      const merged = preset.criteria.map((criterion) => ({ ...criterion, weight: dropped ? criterion.weight : own.find((item) => item.key === criterion.key)?.weight ?? criterion.weight }));
+      if (JSON.stringify(merged) !== JSON.stringify(own)) update.criteria = merged;
+      if (campaign.instructions && campaign.instructions !== preset.instructions) update.instructions = preset.instructions;
+    }
+    if (Object.keys(update).length) { await db.update(callQaCampaigns).set(update).where(eq(callQaCampaigns.id, campaign.id)); changed += 1; }
   }
   return changed;
+}
+/** „Bewertet“, aber ohne Kriterien-Punkte: Note fehlt – oder alle Kriterien stehen ohne Beleg auf 0 (so sah der frühere Lesefehler aus). */
+export function criteriaUnscored(row: { score: number | null; criteriaScores: unknown }): boolean {
+  if (row.score === null) return true;
+  const entries = (Array.isArray(row.criteriaScores) ? row.criteriaScores : []).filter((item): item is { key?: string; score?: unknown; evidence?: unknown } => Boolean(item) && typeof item === "object" && (item as { key?: string }).key !== CRITERIA_NOTE_KEY);
+  return row.score === 0 && entries.every((item) => !Number(item.score) && !String(item.evidence ?? "").trim());
+}
+const rescoreAttempts = new Map<number, number>(); let rescoreRunning = false;
+/**
+ * Kriterien-Punkte nachholen: nur Note und Kriterien werden neu berechnet – Entscheidung, Prüffragen und Auslieferung bleiben unberührt.
+ * Läuft im Minutentakt mit ein paar Gesprächen, bis alle nachgezogen sind (höchstens 3 Anläufe je Gespräch).
+ */
+export async function rescoreUnscoredCalls(db: Db, options: { max?: number; tenantId?: number } = {}): Promise<{ tried: number; rescored: number }> {
+  if (rescoreRunning) return { tried: 0, rescored: 0 }; rescoreRunning = true;
+  try {
+    const since = new Date(Date.now() - 30 * 24 * 3_600_000);
+    const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId, campaign: callRecords.campaign, transcript: callRecords.transcript, score: callRecords.score, criteriaScores: callRecords.criteriaScores }).from(callRecords).where(and(eq(callRecords.status, "bewertet"), gte(callRecords.createdAt, since), or(isNull(callRecords.score), eq(callRecords.score, 0)), ...(options.tenantId ? [eq(callRecords.tenantId, options.tenantId)] : []))).orderBy(desc(callRecords.id)).limit(500);
+    const todo = rows.filter((row) => row.transcript && criteriaUnscored(row) && (rescoreAttempts.get(row.id) ?? 0) < 3).slice(0, options.max ?? 6);
+    let rescored = 0;
+    for (const row of todo) {
+      rescoreAttempts.set(row.id, (rescoreAttempts.get(row.id) ?? 0) + 1);
+      try {
+        const config = await ensureCallQaConfig(db, row.tenantId); const own = await criteriaForCampaign(db, row.tenantId, row.campaign, config);
+        const evaluation = await evaluateTranscript({ ...config, criteria: own.criteria, instructions: own.instructions }, row.transcript!, {});
+        if (evaluation.unscored) { await db.update(callRecords).set({ score: null, criteriaScores: evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : [] }).where(eq(callRecords.id, row.id)); continue; }
+        await db.update(callRecords).set({ score: evaluation.score, criteriaScores: evaluation.criteria }).where(eq(callRecords.id, row.id)); rescored += 1;
+      } catch (error) { console.error("[Gespräche] Kriterien nachbewerten:", row.id, error instanceof Error ? error.message : error); }
+    }
+    return { tried: todo.length, rescored };
+  } finally { rescoreRunning = false; }
 }
 /** Mehrere Gespräche neu bewerten (z. B. nach geänderten Regeln): läuft nacheinander im Hintergrund, die Liste zeigt den Fortschritt. */
 export async function reevaluateCalls(db: Db, tenantId: number, callIds: number[], options: { fetchImpl?: typeof fetch; waitFor?: boolean } = {}) {
@@ -670,23 +809,41 @@ export const WATTFOX_CAMPAIGN = "Wattfox PV und WP";
 export async function ensureWattfoxCampaign(db: Db): Promise<number> {
   const old = presetByKey("pv-hauskompass")!; const preset = presetByKey("wattfox-pv-wp")!; let changed = 0;
   const oldKeys = new Set(old.questions.map((question) => question.key));
-  for (const row of await db.select({ id: callQaConfigs.id, tenantId: callQaConfigs.tenantId, provider: callQaConfigs.provider, criteria: callQaConfigs.criteria, defaultCampaign: callQaConfigs.defaultCampaign }).from(callQaConfigs)) {
+  for (const row of await db.select({ id: callQaConfigs.id, tenantId: callQaConfigs.tenantId, provider: callQaConfigs.provider, criteria: callQaConfigs.criteria, defaultCampaign: callQaConfigs.defaultCampaign, setupMarks: callQaConfigs.setupMarks }).from(callQaConfigs)) {
+    // Einmalig je Mandant: Danach gehört die Kampagne ihm – umbenennen, ändern oder löschen wird nie wieder rückgängig gemacht
+    const marks = (row.setupMarks && typeof row.setupMarks === "object" && !Array.isArray(row.setupMarks) ? row.setupMarks : {}) as Record<string, string>;
+    if (marks.wattfox) continue;
+    const done = async () => { await db.update(callQaConfigs).set({ setupMarks: { ...marks, wattfox: new Date().toISOString() } }).where(eq(callQaConfigs.id, row.id)); };
     const keys = new Set(((Array.isArray(row.criteria) ? row.criteria : []) as Criterion[]).map((c) => c.key)); if (!old.criteria.every((c) => keys.has(c.key))) continue; // nur Mandanten mit der HausKompass-Vorlage
-    const existing = (await db.select({ id: callQaCampaigns.id, questions: callQaCampaigns.questions }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, row.tenantId), eq(callQaCampaigns.name, WATTFOX_CAMPAIGN))).limit(1))[0];
-    const rules = { questions: preset.questions, criteria: preset.criteria, instructions: preset.instructions };
+    const campaigns = await db.select({ id: callQaCampaigns.id, name: callQaCampaigns.name, questions: callQaCampaigns.questions, presetKey: callQaCampaigns.presetKey }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, row.tenantId));
+    const existing = campaigns.find((campaign) => campaign.name === WATTFOX_CAMPAIGN);
+    const rules = { questions: preset.questions, criteria: preset.criteria, instructions: preset.instructions, presetKey: preset.key };
     if (existing) {
       // Schon eingerichtet: nur umstellen, solange die Kampagne noch die alten Vorlagen-Fragen hat (danach macht der Mandant es selbst)
       const qs = normalizeQuestions(existing.questions as QualificationQuestion[] | null); const stillOld = qs.length > 0 && qs.every((question) => oldKeys.has(question.key)) && qs.some((question) => !preset.questions.some((item) => item.key === question.key));
-      if (!stillOld) continue;
+      if (!stillOld) { await done(); continue; }
       await db.update(callQaCampaigns).set(rules).where(eq(callQaCampaigns.id, existing.id));
     } else {
+      // Bereits unter anderem Namen eingerichtet (umbenannt) oder eine Ziel-Kampagne gewählt? Dann nichts mehr anlegen oder verschieben.
+      const renamed = campaigns.filter((campaign) => campaign.presetKey === preset.key || questionsEqual(campaign.questions, preset.questions));
+      if (row.defaultCampaign === WATTFOX_CAMPAIGN && renamed.length === 1) {
+        // Reparatur: Früher nahm das Umbenennen das Ziel für neue Dialer-Gespräche nicht mit – sie landeten weiter unter dem alten Namen (ohne Regeln).
+        // Ziel auf den neuen Namen stellen und die seither eingegangenen Gespräche dorthin holen; automatisch entschiedene ohne Lead werden nach den richtigen Regeln neu bewertet.
+        const target = renamed[0].name;
+        const stray = await db.select({ id: callRecords.id, leadId: callRecords.leadId, rawContactId: callRecords.rawContactId, decidedBy: callRecords.decidedBy }).from(callRecords).where(and(eq(callRecords.tenantId, row.tenantId), eq(callRecords.campaign, WATTFOX_CAMPAIGN)));
+        await db.update(callQaConfigs).set({ defaultCampaign: target }).where(eq(callQaConfigs.id, row.id));
+        if (stray.length) { await db.update(callRecords).set({ campaign: target }).where(and(eq(callRecords.tenantId, row.tenantId), eq(callRecords.campaign, WATTFOX_CAMPAIGN))); void reevaluateCalls(db, row.tenantId, stray.filter((call) => !call.leadId && !call.rawContactId && call.decidedBy !== "manuell").map((call) => call.id)).catch(() => undefined); }
+        changed += 1; await done(); continue;
+      }
+      if (row.defaultCampaign || renamed.length) { await done(); continue; }
       const oldNames = ["Wattfox PV", "Wattfox", "Wattfox WP", "Wattfox PV & WP"];
-      for (const name of oldNames) { const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, row.tenantId), eq(callQaCampaigns.name, name))).limit(1))[0]; if (own) await db.delete(callQaCampaigns).where(eq(callQaCampaigns.id, own.id)); await db.update(callRecords).set({ campaign: WATTFOX_CAMPAIGN }).where(and(eq(callRecords.tenantId, row.tenantId), eq(callRecords.campaign, name))); }
+      for (const name of oldNames) { const own = campaigns.find((campaign) => campaign.name === name); if (own) await db.delete(callQaCampaigns).where(eq(callQaCampaigns.id, own.id)); await db.update(callRecords).set({ campaign: WATTFOX_CAMPAIGN }).where(and(eq(callRecords.tenantId, row.tenantId), eq(callRecords.campaign, name))); }
       await db.insert(callQaCampaigns).values({ tenantId: row.tenantId, name: WATTFOX_CAMPAIGN, ...rules });
     }
     // Alles, was vom Dialer kommt, gehört in diese Kampagne: künftige Gespräche (Voreinstellung) und die schon vorhandenen
     if (!row.defaultCampaign) await db.update(callQaConfigs).set({ defaultCampaign: WATTFOX_CAMPAIGN }).where(eq(callQaConfigs.id, row.id));
     await db.update(callRecords).set({ campaign: WATTFOX_CAMPAIGN }).where(and(eq(callRecords.tenantId, row.tenantId), eq(callRecords.provider, row.provider)));
+    await done();
     changed += 1;
   }
   return changed;
@@ -695,7 +852,7 @@ export async function ensureWattfoxCampaign(db: Db): Promise<number> {
 export async function applyPresetToCampaign(db: Db, tenantId: number, input: { preset: string; campaign: string }) {
   const preset = presetByKey(input.preset); if (!preset) throw new Error("Diese Vorlage gibt es nicht."); const name = input.campaign.trim(); if (!name) throw new Error("Bitte eine Kampagne wählen.");
   const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
-  if (own) await db.update(callQaCampaigns).set({ questions: preset.questions, criteria: preset.criteria, instructions: preset.instructions }).where(eq(callQaCampaigns.id, own.id)); else await db.insert(callQaCampaigns).values({ tenantId, name, questions: preset.questions, criteria: preset.criteria, instructions: preset.instructions });
+  if (own) await db.update(callQaCampaigns).set({ questions: preset.questions, criteria: preset.criteria, instructions: preset.instructions, presetKey: preset.key }).where(eq(callQaCampaigns.id, own.id)); else await db.insert(callQaCampaigns).values({ tenantId, name, questions: preset.questions, criteria: preset.criteria, instructions: preset.instructions, presetKey: preset.key });
   return { success: true as const, questions: preset.questions.length, criteria: preset.criteria.length };
 }
 
@@ -705,6 +862,7 @@ export async function deleteCallCampaign(db: Db, tenantId: number, input: { name
   const ids = (await db.select({ id: callRecords.id }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.campaign, name)))).map((row) => row.id);
   const { deleted } = await deleteCalls(db, tenantId, ids);
   await db.delete(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name)));
+  await db.update(callQaConfigs).set({ defaultCampaign: null }).where(and(eq(callQaConfigs.tenantId, tenantId), eq(callQaConfigs.defaultCampaign, name))); // sonst legt das nächste Gespräch die gelöschte Kampagne wieder an
   return { deletedCalls: deleted };
 }
 
@@ -736,13 +894,14 @@ export async function getCall(db: Db, tenantId: number, callId: number) {
   const own = await criteriaForCampaign(db, tenantId, row.call.campaign, config); const criteria = own.criteria;
   const scores = Array.isArray(row.call.criteriaScores) ? (row.call.criteriaScores as Evaluation["criteria"]) : [];
   const questions = await questionsForCampaign(db, tenantId, row.call.campaign);
-  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteria: criteria.map((criterion) => ({ ...criterion, score: scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
+  const unscored = row.call.status === "bewertet" && criteriaUnscored(row.call); // Kriterien-Punkte fehlen (werden automatisch nachgeholt) – nicht als 0 % zeigen
+  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
 }
 
 export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null } = {}) {
   const conditions = [eq(callRecords.tenantId, tenantId)]; const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to)); if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign)); if (filter.agentName) conditions.push(eq(callRecords.agentName, filter.agentName)); if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
-  const rows = await db.select({ status: callRecords.status, decision: callRecords.decision, score: callRecords.score }).from(callRecords).where(and(...conditions));
-  const scored = rows.filter((row) => typeof row.score === "number");
+  const rows = await db.select({ status: callRecords.status, decision: callRecords.decision, score: callRecords.score, criteriaScores: callRecords.criteriaScores }).from(callRecords).where(and(...conditions));
+  const scored = rows.filter((row) => typeof row.score === "number" && !(row.status === "bewertet" && Array.isArray(row.criteriaScores) && row.criteriaScores.length > 0 && criteriaUnscored(row))); // ohne Kriterien-Punkte (werden nachgeholt) nicht als 0 mitzählen
   return { total: rows.length, evaluated: rows.filter((row) => row.status === "bewertet").length, approved: rows.filter((row) => row.decision === "freigegeben").length, review: rows.filter((row) => row.decision === "pruefen").length, rejected: rows.filter((row) => row.decision === "zurueckgewiesen").length, noConsent: rows.filter((row) => row.status === "ohne_einwilligung").length, failed: rows.filter((row) => row.status === "fehlgeschlagen").length, averageScore: scored.length ? Math.round(scored.reduce((sum, row) => sum + (row.score ?? 0), 0) / scored.length) : null };
 }
 

@@ -67,14 +67,14 @@ export function summarizeAnswers(records: Array<Record<string, QualificationAnsw
 export type QuestionDecision = { decision: "freigegeben" | "pruefen" | "zurueckgewiesen"; reason: string } | null;
 /** Entscheidung allein nach den Kampagnenfragen. null = keine entscheidende Frage in der Kampagne (dann greift die allgemeine Bewertung). */
 /** Erfüllung: Wie viele der entscheidenden Prüffragen (K.-o./Pflicht) sind mit Ja beantwortet? Passt zur Ampel: grün = 100 %. Ohne entscheidende Fragen zählen alle Fragen. */
-export type Fulfilment = { yes: number; no: number; unclear: number; total: number; percent: number };
+export type Fulfilment = { yes: number; no: number; unclear: number; total: number; percent: number; /** Fragen mit „Nein“ (für den Hinweis am Smiley) */ failed?: string[]; /** Fragen, die unklar geblieben sind */ open?: string[] };
 export function questionFulfilment(questions: QualificationQuestion[], answers: Record<string, QualificationAnswer> | null | undefined): Fulfilment | null {
   if (!answers || !Object.keys(answers).length) return null;
   const decisive = questions.filter((question) => question.rule === "ko" || question.rule === "required"); const counted = decisive.length ? decisive : questions;
   if (!counted.length) return null;
-  let yes = 0; let no = 0; let unclear = 0;
-  for (const question of counted) { const answer = answers[question.key]?.answer ?? "unklar"; if (answer === "ja") yes += 1; else if (answer === "nein") no += 1; else unclear += 1; }
-  return { yes, no, unclear, total: counted.length, percent: Math.round((yes / counted.length) * 100) };
+  let yes = 0; let no = 0; let unclear = 0; const failed: string[] = []; const open: string[] = [];
+  for (const question of counted) { const answer = answers[question.key]?.answer ?? "unklar"; if (answer === "ja") yes += 1; else if (answer === "nein") { no += 1; failed.push(question.label); } else { unclear += 1; open.push(question.label); } }
+  return { yes, no, unclear, total: counted.length, percent: Math.round((yes / counted.length) * 100), failed, open };
 }
 export function decideByQuestions(questions: QualificationQuestion[], answers: Record<string, QualificationAnswer> | null | undefined): QuestionDecision {
   const decisive = questions.filter((question) => question.rule === "ko" || question.rule === "required");
