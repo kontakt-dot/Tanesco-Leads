@@ -220,6 +220,6 @@ export default function EmailLeadsPanel({ onOpenLead, mode = "email", source = n
       {sheet && <button type="button" className="sheets-csv" onClick={() => downloadCsv(sheet.columns, sheet.rows, sheet.fileName)}>Stattdessen als CSV-Datei herunterladen (in Google Sheets: Datei → Importieren)</button>}
     </DialogContent></Dialog>
     <BlockContactDialog leadIds={blockFor?.ids ?? []} label={blockFor?.label ?? ""} source={pipeline ? "Vertriebspipeline (Kontakte)" : "E-Mail-Kampagnen (Kontakte)"} open={Boolean(blockFor)} onClose={() => setBlockFor(null)} onDone={() => { setPicked([]); data.refetch(); onChanged?.(); }} />
-    {callFor && <CallDialog publicId={callFor.publicId} name={callFor.name} phone={callFor.phone} onDone={() => { setCallFor(null); data.refetch(); onChanged?.(); }} onCancel={() => setCallFor(null)} onPhoneSaved={() => data.refetch()} />}
+    {callFor && <CallDialog portal publicId={callFor.publicId} name={callFor.name} phone={callFor.phone} onDone={() => { setCallFor(null); data.refetch(); onChanged?.(); }} onCancel={() => setCallFor(null)} onPhoneSaved={() => data.refetch()} />}
   </section>;
 }

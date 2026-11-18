@@ -168,6 +168,8 @@ export type PipelineSettings = {
   sourceOrder: PipelineSource[];
   /** Eigene Pipelines (wie Kaltakquise) – Kennung „p-…“ und Name. */
   customPipelines: CustomPipeline[];
+  /** Ins Archiv gelegte Pipelines: oben ausgeblendet – Karten, Stufen, Listen und Verlauf bleiben unverändert und kommen beim Wiederherstellen zurück. */
+  archivedPipelines: PipelineSource[];
   /** Stufe „Versendet“ in der Pipeline „E-Mail-Kampagne“ wurde einmal automatisch angelegt – löscht man sie, kommt sie nicht wieder. */
   sentStageAdded: boolean;
   /** Nachtrag erledigt: Kontakte mit schon vorher versendeter Kampagnen-E-Mail wurden einmal nach „Versendet“ geholt. */
@@ -181,12 +183,22 @@ export function normalizeSourceOrder(value: unknown, custom: CustomPipeline[] = 
   const unique = Array.from(new Set(valid)); for (const source of [...DEFAULT_SOURCE_ORDER, ...custom.map((item) => item.key)]) if (!unique.includes(source)) unique.push(source);
   return unique;
 }
+/** Archivierte Pipelines: nur vorhandene, jede einmal – und nie alle (mindestens eine Pipeline bleibt sichtbar). */
+export function normalizeArchivedPipelines(value: unknown, order: PipelineSource[]): PipelineSource[] {
+  const valid = Array.isArray(value) ? Array.from(new Set((value as unknown[]).filter((item): item is PipelineSource => typeof item === "string" && order.includes(item as PipelineSource)))) : [];
+  return valid.length >= order.length ? valid.slice(0, Math.max(0, order.length - 1)) : valid;
+}
+/** Die Pipelines, die oben zur Auswahl stehen: in der eingestellten Reihenfolge, ohne die archivierten. */
+export function visiblePipelines(settings: { sourceOrder?: PipelineSource[] | null; archivedPipelines?: PipelineSource[] | null } | null | undefined): PipelineSource[] {
+  const order = settings?.sourceOrder?.length ? settings.sourceOrder : DEFAULT_SOURCE_ORDER; const hidden = new Set(settings?.archivedPipelines ?? []);
+  const visible = order.filter((key) => !hidden.has(key)); return visible.length ? visible : order.slice(0, 1);
+}
 export function normalizeCustomPipelines(value: unknown): CustomPipeline[] {
   const out: CustomPipeline[] = [];
   if (Array.isArray(value)) for (const item of value as Array<Record<string, unknown>>) { const key = item?.key; const label = String(item?.label ?? "").trim().slice(0, 40); if (isCustomSource(key) && label && !out.some((row) => row.key === key)) out.push({ key, label }); }
   return out.slice(0, 20);
 }
-export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {}, sourceOrder: ["email", "ads", "kaltakquise"], customPipelines: [], sentStageAdded: false, sentBackfillDone: false };
+export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = { staleDays: DEFAULT_STALE_DAYS, staleCampaignId: null, stageCampaigns: {}, dispositionCampaigns: {}, dispositionTasks: true, replyStage: "kontaktiert", appointmentReminder: "email", appointmentReminderHours: 24, distribution: { mode: "aus", rules: [], fallback: "reihum", shares: [], perPipeline: {} }, dailyTargets: {}, sourceOrder: ["email", "ads", "kaltakquise"], customPipelines: [], archivedPipelines: [], sentStageAdded: false, sentBackfillDone: false };
 const numberOrNull = (value: unknown) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? Math.round(number) : null; };
 const numberMap = (value: unknown) => { const out: Record<string, number> = {}; if (value && typeof value === "object" && !Array.isArray(value)) for (const [key, item] of Object.entries(value as Record<string, unknown>)) { const id = numberOrNull(item); if (id) out[key] = id; } return out; };
 export function normalizePipelineSettings(input: unknown): PipelineSettings {
@@ -215,6 +227,7 @@ export function normalizePipelineSettings(input: unknown): PipelineSettings {
     dailyTargets,
     sourceOrder: normalizeSourceOrder(raw.sourceOrder, normalizeCustomPipelines(raw.customPipelines)),
     customPipelines: normalizeCustomPipelines(raw.customPipelines),
+    archivedPipelines: normalizeArchivedPipelines(raw.archivedPipelines, normalizeSourceOrder(raw.sourceOrder, normalizeCustomPipelines(raw.customPipelines))),
     sentStageAdded: raw.sentStageAdded === true,
     sentBackfillDone: raw.sentBackfillDone === true,
   };

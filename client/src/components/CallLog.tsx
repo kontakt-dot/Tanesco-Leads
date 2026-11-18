@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { Headphones, Phone, PhoneCall, Smartphone } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { callCounterText, CALL_RESULTS, normalizePhone, type CallResult } from "../../../shared/pipeline-extras";
 
@@ -14,10 +15,10 @@ import { callCounterText, CALL_RESULTS, normalizePhone, type CallResult } from "
  *     Karte wandert von selbst (Neu → In Bearbeitung, erreicht → Kontaktiert).
  * Dialer-Anrufe zählen automatisch; dieses Fenster ist der Weg für alle Anrufe ohne Dialer.
  */
-export type CallDialogProps = { publicId: string; name: string; phone?: string | null; onDialer?: (() => void) | null; dialerLabel?: string | null; onDone: () => void; onCancel: () => void; onPhoneSaved?: () => void };
+export type CallDialogProps = { publicId: string; name: string; phone?: string | null; onDialer?: (() => void) | null; dialerLabel?: string | null; onDone: () => void; onCancel: () => void; onPhoneSaved?: () => void; /** Fenster über die ganze Seite legen (aus einer Pipeline-Karte heraus): Sonst liegt es in der Karte gefangen und Nachbarkarten/-spalten verdecken es. */ portal?: boolean };
 const FOLLOW_UPS: Array<[string, (now: Date) => Date]> = [["in 1 Std.", (now) => new Date(now.getTime() + 3_600_000)], ["in 3 Std.", (now) => new Date(now.getTime() + 3 * 3_600_000)], ["morgen 9:00", (now) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 9, 0)], ["in 3 Tagen", (now) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + 3, 9, 0)]];
 const PHONE_KEY = "tanesco-manual-calls"; // zuletzt per Telefon angerufene Karten (nur Hinweis „Anruf läuft“)
-export function CallDialog({ publicId, name, phone, onDialer, dialerLabel, onDone, onCancel, onPhoneSaved }: CallDialogProps) {
+export function CallDialog({ publicId, name, phone, onDialer, dialerLabel, onDone, onCancel, onPhoneSaved, portal }: CallDialogProps) {
   const [result, setResult] = useState<CallResult>("nicht_erreicht"); const [note, setNote] = useState(""); const [followUp, setFollowUp] = useState<number | null>(null);
   const [phoneDraft, setPhoneDraft] = useState(""); const [calling, setCalling] = useState<Date | null>(null); const [, tick] = useState(0);
   useEffect(() => { if (!calling) return; const timer = window.setInterval(() => tick((value) => value + 1), 1000); return () => window.clearInterval(timer); }, [calling]);
@@ -27,7 +28,7 @@ export function CallDialog({ publicId, name, phone, onDialer, dialerLabel, onDon
   const savePhone = trpc.leadops.setPipelineContact.useMutation({ onSuccess: (saved) => { toast.success(`Telefon ${saved.phone} gespeichert.`); utils.leadops.pipelineOverview.invalidate(); utils.leadops.pipelineLeadDetail.invalidate(); onPhoneSaved?.(); }, onError: (error) => toast.error(error.message) });
   const seconds = calling ? Math.max(0, Math.round((Date.now() - calling.getTime()) / 1000)) : 0;
   const telHref = phone ? `tel:${(normalizePhone(phone) ?? phone).replace(/\s+/g, "")}` : null;
-  return <div className="calllog-overlay" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}><div className="calllog-form" role="dialog" aria-label={`Anruf bei ${name}`}>
+  const overlay = <div className="calllog-overlay" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}><div className="calllog-form" role="dialog" aria-label={`Anruf bei ${name}`}>
     <div className="calllog-title"><strong>{name}</strong><small>{phone ? "Anrufen – und nach dem Auflegen das Ergebnis festhalten. Zählt auch ohne Dialer." : "Noch keine Telefonnummer – eintragen, dann anrufen."}</small></div>
     <div className="calllog-dial">
       {telHref ? <a className="calllog-tel" href={telHref} onClick={() => { setCalling(new Date()); try { localStorage.setItem(`${PHONE_KEY}:${publicId}`, String(Date.now())); } catch { /* privater Modus */ } }} title="Öffnet die Telefon-App bzw. das Softphone (Handy, sipgate-App, Tischtelefon mit Click-to-Dial)"><Smartphone className="h-4 w-4" /><span><b>{phone}</b><small>{calling ? `Anruf läuft · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "Mit dem Telefon anrufen"}</small></span></a>
@@ -40,6 +41,9 @@ export function CallDialog({ publicId, name, phone, onDialer, dialerLabel, onDon
     <div className="calllog-followup"><span>Wieder anrufen:</span>{FOLLOW_UPS.map(([label], index) => <button key={label} type="button" className={followUp === index ? "active" : ""} onClick={() => setFollowUp(followUp === index ? null : index)}>{label}</button>)}</div>
     <div className="calllog-actions"><button type="button" className="calllog-cancel" onClick={onCancel}>Abbrechen</button><button type="button" className="calllog-save" disabled={log.isPending} onClick={() => log.mutate({ publicId, result, note: note.trim() || null, followUpAt: followUp === null ? null : FOLLOW_UPS[followUp][1](new Date()) })}>{log.isPending ? "Speichert …" : "Anruf speichern"}</button></div>
   </div></div>;
+  // Aus einer Karte heraus direkt an die Seite hängen: Karten können eine eigene Ebene bilden (z. B. eingeschlafene Karten sind leicht durchscheinend) –
+  // darin läge das Fenster unter den Nachbarkarten und den Spalten rechts daneben.
+  return portal && typeof document !== "undefined" ? createPortal(overlay, document.body) : overlay;
 }
 /** Abwärtskompatibel: das alte Formular ist jetzt das Anruf-Fenster. */
 export const CallLogForm = CallDialog;
@@ -49,7 +53,7 @@ export function CallLogButton({ lead, onLogged, onDialer, dialerLabel, open, onO
   const [own, setOwn] = useState(false); const isOpen = open ?? own; const setOpen = (value: boolean) => { setOwn(value); onOpenChange?.(value); };
   return <div className="pipeline-card-calllog">
     <button type="button" className={`calllog-toggle ${isOpen ? "is-open" : ""}`} title="Anrufen und Ergebnis festhalten – zählt den Versuch, auch ohne Dialer" aria-expanded={isOpen} onClick={() => setOpen(!isOpen)}><Phone className="h-3 w-3" /> <span className="calllog-label">+ Anruf</span>{lead.calls?.count ? <span className="calllog-count"> ({lead.calls.count})</span> : null}</button>
-    {isOpen && <CallDialog publicId={lead.publicId} name={lead.name} phone={lead.phone} onDialer={onDialer} dialerLabel={dialerLabel} onDone={() => { setOpen(false); onLogged(); }} onCancel={() => setOpen(false)} onPhoneSaved={onLogged} />}
+    {isOpen && <CallDialog portal publicId={lead.publicId} name={lead.name} phone={lead.phone} onDialer={onDialer} dialerLabel={dialerLabel} onDone={() => { setOpen(false); onLogged(); }} onCancel={() => setOpen(false)} onPhoneSaved={onLogged} />}
   </div>;
 }
 

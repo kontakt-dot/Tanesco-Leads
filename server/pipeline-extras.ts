@@ -15,8 +15,8 @@ import { DEFAULT_DESIGN, type EmailDesign } from "../shared/email-design";
 import { recipientValues, renderNode, SUPPRESSION_LABELS, type EmailNode, type EmailTree } from "../shared/email-campaigns";
 import { extraFieldsOf } from "../shared/cold-list";
 import { websiteLinkOf } from "../shared/website";
-import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
-import { newCustomSourceKey, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
+import { buildIcs, callResultLabel, CALL_RESULTS, CHANNEL_LABELS, DEFAULT_PIPELINE_SETTINGS, distributionActive, fillMessage, isCallResult, followUpDue, formatAppointment, leadScore, mailReactionOf, messageValues, normalizePhone, normalizePipelineSettings, pickOwner, visiblePipelines, pipelineCsv, SMS_LIMIT, staleInfo, type DistributionRules, type MessageChannel, type PipelineSettings, type TaskKind, type TaskSource, type Temperature } from "../shared/pipeline-extras";
+import { isCustomSource, newCustomSourceKey, pipelineLabel, stagesOf as stagesOfSets } from "../shared/sales-pipeline";
 import { contactedStage, entryStage, interestStage, isStage, lostStage, matchStage, PIPELINE_STAGES, pipelineSourceOf, stageLabel, stagesForLead, unionStages, wonStage, workingStage, type PipelineSource, type StageDef, type StageSets } from "../shared/sales-pipeline";
 import { deliverMail } from "./email-onboarding";
 import { logActivity } from "./activity";
@@ -42,7 +42,7 @@ export async function saveSettings(db: Db, tenantId: number, input: unknown) {
   // Eigene Pipelines werden über eigene Aktionen gepflegt – beim normalen Speichern der Einstellungen bleiben sie erhalten
   const raw = input && typeof input === "object" ? { ...(input as Record<string, unknown>) } : {};
   // Eigene Pipelines und die Merker zur Spalte „Versendet“ bleiben beim normalen Speichern der Einstellungen erhalten
-  const keep = ["customPipelines", "sentStageAdded", "sentBackfillDone"] as const;
+  const keep = ["customPipelines", "archivedPipelines", "sentStageAdded", "sentBackfillDone"] as const;
   if (keep.some((key) => !(key in raw))) { const current = await loadSettings(db, tenantId); for (const key of keep) if (!(key in raw)) raw[key] = current[key]; }
   const settings = normalizePipelineSettings(raw);
   const existing = (await db.select({ id: pipelineSettings.id }).from(pipelineSettings).where(eq(pipelineSettings.tenantId, tenantId)).limit(1))[0];
@@ -72,8 +72,46 @@ export async function deleteCustomPipeline(db: Db, tenantId: number, key: string
   const { pipelineStageSets } = await import("./meta-ads"); const sets = await pipelineStageSets(db, tenantId); const coldStages = stagesOfSets(sets, "kaltakquise"); const ownStages = stagesOfSets(sets, key as PipelineSource);
   for (const row of rows) { const stage = matchStage(row.stage, coldStages, ownStages) ?? entryStage(coldStages); /* gleiche Stufe in der Kaltakquise (Schlüssel, Name oder Rolle), sonst Eingang */ await db.update(leads).set({ adPlatform: "kaltakquise", pipelineStage: stage, pipelineUpdatedAt: new Date() }).where(eq(leads.id, row.id)); await db.insert(pipelineEvents).values({ tenantId, leadId: row.id, fromStage: row.stage, toStage: stage, actorUserId, note: `Pipeline „${pipeline.label}“ gelöscht – Karte in die Kaltakquise verschoben` }); }
   await db.delete(pipelineStageConfigs).where(and(eq(pipelineStageConfigs.tenantId, tenantId), eq(pipelineStageConfigs.source, key)));
-  await saveSettings(db, tenantId, { ...settings, customPipelines: settings.customPipelines.filter((item) => item.key !== key), sourceOrder: settings.sourceOrder.filter((item) => item !== key) });
+  await saveSettings(db, tenantId, { ...settings, customPipelines: settings.customPipelines.filter((item) => item.key !== key), sourceOrder: settings.sourceOrder.filter((item) => item !== key), archivedPipelines: settings.archivedPipelines.filter((item) => item !== key) });
   return { key, moved: rows.length, label: pipeline.label };
+}
+/** Karten je Pipeline zählen (wie auf dem Board: nur Kontakte, die in der Pipeline stehen). */
+async function cardCounts(db: Db, tenantId: number): Promise<Map<PipelineSource, number>> {
+  const rows = await db.select({ adPlatform: leads.adPlatform, adCampaignId: leads.adCampaignId, pipelineStage: leads.pipelineStage, inPipeline: leads.inPipeline }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb")));
+  const counts = new Map<PipelineSource, number>();
+  for (const row of rows) { if (row.inPipeline === false || !(row.adCampaignId || row.adPlatform || row.pipelineStage)) continue; const source = pipelineSourceOf(row.adPlatform); counts.set(source, (counts.get(source) ?? 0) + 1); }
+  return counts;
+}
+/**
+ * Pipeline ins Archiv legen: Sie verschwindet oben aus der Auswahl. Karten, Stufen, Listen und Verlauf bleiben unverändert –
+ * „Wiederherstellen“ bringt alles zurück. Solange sie im Archiv liegt, bekommen ihre Karten keine automatischen E-Mails für „eingeschlafene“ Karten.
+ * Mindestens eine Pipeline bleibt immer sichtbar.
+ */
+export async function archivePipeline(db: Db, tenantId: number, key: string, actorUserId: number | null = null) {
+  const settings = await loadSettings(db, tenantId); const source = key as PipelineSource;
+  if (!settings.sourceOrder.includes(source)) throw new Error("Diese Pipeline gibt es nicht.");
+  const label = pipelineLabel(source, settings.customPipelines); const cards = (await cardCounts(db, tenantId)).get(source) ?? 0;
+  if (settings.archivedPipelines.includes(source)) return { key: source, label, cards, archived: true as const };
+  if (visiblePipelines(settings).length <= 1) throw new Error("Mindestens eine Pipeline muss sichtbar bleiben – hole zuerst eine andere aus dem Archiv.");
+  await saveSettings(db, tenantId, { ...settings, archivedPipelines: [...settings.archivedPipelines, source] });
+  await logActivity(db, tenantId, { kind: "sonstiges", title: `Pipeline „${label}“ archiviert`, detail: `${cards} ${cards === 1 ? "Karte bleibt" : "Karten bleiben"} erhalten – „Wiederherstellen“ bringt die Pipeline zurück.`, actorUserId }).catch(() => undefined);
+  return { key: source, label, cards, archived: true as const };
+}
+/** Pipeline aus dem Archiv holen: Sie steht wieder oben in der Auswahl – an ihrem alten Platz, mit allen Karten. */
+export async function restorePipeline(db: Db, tenantId: number, key: string, actorUserId: number | null = null) {
+  const settings = await loadSettings(db, tenantId); const source = key as PipelineSource;
+  if (!settings.sourceOrder.includes(source)) throw new Error("Diese Pipeline gibt es nicht.");
+  const label = pipelineLabel(source, settings.customPipelines); const cards = (await cardCounts(db, tenantId)).get(source) ?? 0;
+  if (!settings.archivedPipelines.includes(source)) return { key: source, label, cards, archived: false as const };
+  await saveSettings(db, tenantId, { ...settings, archivedPipelines: settings.archivedPipelines.filter((item) => item !== source) });
+  await logActivity(db, tenantId, { kind: "sonstiges", title: `Pipeline „${label}“ aus dem Archiv geholt`, detail: `${cards} ${cards === 1 ? "Karte ist" : "Karten sind"} wieder da.`, actorUserId }).catch(() => undefined);
+  return { key: source, label, cards, archived: false as const };
+}
+/** Archiv: die archivierten Pipelines mit Name und Anzahl Karten. */
+export async function archivedPipelineList(db: Db, tenantId: number) {
+  const settings = await loadSettings(db, tenantId); if (!settings.archivedPipelines.length) return [];
+  const counts = await cardCounts(db, tenantId);
+  return settings.archivedPipelines.map((key) => ({ key, label: pipelineLabel(key, settings.customPipelines), cards: counts.get(key) ?? 0, custom: isCustomSource(key) }));
 }
 async function nextCursor(db: Db, tenantId: number) {
   const existing = (await db.select({ id: pipelineSettings.id, cursor: pipelineSettings.distributionCursor }).from(pipelineSettings).where(eq(pipelineSettings.tenantId, tenantId)).limit(1))[0];
@@ -684,7 +722,8 @@ export async function processAutomations(db: Db, tenantId: number, options: { no
   if (settings.staleCampaignId && settings.staleDays > 0) {
     const openKeys = Array.from(new Set(Object.values(sets).flatMap((list) => list.filter((stage) => stage.fixed !== "won" && stage.fixed !== "lost").map((stage) => stage.key))));
     const rows = (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.pipelineStage, openKeys)))).filter((row) => { const own = stagesForLead(sets, row); const def = own.find((stage) => stage.key === row.pipelineStage); return def && def.fixed !== "won" && def.fixed !== "lost"; });
-    const candidates = rows.filter((row) => row.email && !(metaOf(row).staleEnrolledAt) && (row.adCampaignId || row.adPlatform));
+    const parked = new Set(settings.archivedPipelines); // archivierte Pipelines ruhen: keine automatischen Nachfass-E-Mails an ihre Karten
+    const candidates = rows.filter((row) => row.email && !(metaOf(row).staleEnrolledAt) && (row.adCampaignId || row.adPlatform) && !parked.has(pipelineSourceOf(row.adPlatform)));
     const activity = await lastActivityMap(db, tenantId, candidates.map((row) => row.id));
     for (const row of candidates) {
       const info = staleInfo({ pipelineStage: row.pipelineStage, pipelineUpdatedAt: row.pipelineUpdatedAt, createdAt: row.createdAt, lastActivityAt: activity.get(row.id) ?? null }, now, settings.staleDays, stagesForLead(sets, row)); if (!info.stale) continue;

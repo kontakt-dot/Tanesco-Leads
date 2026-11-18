@@ -300,6 +300,52 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
   });
 });
 
+describe("Vertriebspipeline – Pipeline archivieren und wiederherstellen", () => {
+  beforeEach(() => { cleanup(); resetStore(); });
+  afterEach(() => { document.querySelectorAll(".app-confirm-backdrop").forEach((node) => node.remove()); cleanup(); resetStore(); });
+  it("legt die gewählte Pipeline ins Archiv (oben weg, Karten bleiben) und holt sie über „Archiv“ zurück", async () => {
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=kaltakquise");
+    const { view } = mount();
+    await settle(500);
+    const tabs = () => Array.from(view.container.querySelectorAll<HTMLButtonElement>(".source-cards .source-card")).map((node) => node.querySelector("strong")?.textContent);
+    const active = () => view.container.querySelector(".source-card.is-active strong")?.textContent;
+    expect(active()).toBe("Kaltakquise"); const count = tabs().length; expect(count).toBeGreaterThanOrEqual(3);
+    const cards = getStore().tables.leads.filter((row) => row.adPlatform === "kaltakquise").length; expect(cards).toBeGreaterThan(0);
+    expect(view.container.querySelector(".pipeline-archive-open")).toBeNull(); // noch nichts im Archiv
+    const confirmBox = () => document.querySelector<HTMLElement>(".app-confirm");
+    // Abbrechen: nichts passiert
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLButtonElement>(".pipeline-archive-btn")!); }); await settle(200);
+    expect(confirmBox()?.textContent).toContain("„Kaltakquise“ ins Archiv legen"); expect(confirmBox()?.textContent).toContain("Alle Karten bleiben");
+    await act(async () => { fireEvent.click(confirmBox()!.querySelector<HTMLButtonElement>(".app-confirm-cancel")!); }); await settle(300);
+    expect(tabs()).toContain("Kaltakquise");
+    // Archivieren: Reiter weg, eine andere Pipeline ist gewählt, die Karten sind unverändert da
+    await act(async () => { fireEvent.click(view.container.querySelector<HTMLButtonElement>(".pipeline-archive-btn")!); }); await settle(200);
+    await act(async () => { fireEvent.click(confirmBox()!.querySelector<HTMLButtonElement>(".app-confirm-ok")!); }); await settle(700);
+    expect(tabs()).not.toContain("Kaltakquise"); expect(tabs().length).toBe(count - 1); expect(active()).toBeTruthy(); expect(active()).not.toBe("Kaltakquise");
+    expect(getStore().tables.leads.filter((row) => row.adPlatform === "kaltakquise").length).toBe(cards);
+    expect(document.body.textContent).toContain("liegt im Archiv");
+    // Archiv öffnen → Wiederherstellen: Reiter wieder da, Archiv-Knopf verschwindet
+    const open = view.container.querySelector<HTMLButtonElement>(".pipeline-archive-open")!; expect(open.textContent).toContain("1");
+    await act(async () => { fireEvent.click(open); }); await settle(400);
+    const dialog = document.querySelector<HTMLElement>(".pipeline-archive-dialog")!; expect(dialog.textContent).toContain("Kaltakquise"); expect(dialog.textContent).toMatch(/\d+ Karten?/);
+    await act(async () => { fireEvent.click(dialog.querySelector<HTMLButtonElement>(".pipeline-archive-restore")!); }); await settle(700);
+    expect(tabs()).toContain("Kaltakquise"); expect(tabs().length).toBe(count); expect(view.container.querySelector(".pipeline-archive-open")).toBeNull();
+    expect(getStore().tables.leads.filter((row) => row.adPlatform === "kaltakquise").length).toBe(cards);
+  });
+  it("Anruf-Fenster einer Karte liegt über der ganzen Seite – nicht in der Karte, wo Nachbarspalten es verdecken", async () => {
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const { view } = mount();
+    await settle(600);
+    const toggle = view.container.querySelector<HTMLButtonElement>(".pipeline-card .calllog-toggle")!; expect(toggle).toBeTruthy();
+    await act(async () => { fireEvent.click(toggle); }); await settle(200);
+    const overlay = document.querySelector<HTMLElement>(".calllog-overlay")!; expect(overlay).toBeTruthy();
+    expect(overlay.parentElement).toBe(document.body); expect(overlay.closest(".pipeline-card")).toBeNull(); expect(overlay.closest(".pipeline-column")).toBeNull();
+    expect(overlay.textContent).toContain("Ergebnis festhalten".toUpperCase());
+    await act(async () => { fireEvent.click(overlay.querySelector<HTMLButtonElement>(".calllog-cancel")!); }); await settle(200);
+    expect(document.querySelector(".calllog-overlay")).toBeNull();
+  });
+});
+
 describe("Gespräche – Einstellen-Fenster verliert keine ungespeicherten Änderungen", () => {
   beforeEach(() => { cleanup(); }); // Reste früherer Tests (offene Fenster) entfernen
   afterEach(() => { document.querySelectorAll(".app-confirm-backdrop").forEach((node) => node.remove()); cleanup(); resetStore(); });

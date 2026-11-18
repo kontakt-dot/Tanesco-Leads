@@ -2406,6 +2406,57 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.pipelineOverview({ source: "kaltakquise" })).stages.flatMap((stage) => stage.leads).filter((lead) => ids.has(lead.publicId))).toHaveLength(3);
   }, 30000);
 
+  it("48b. Pipeline archivieren: oben ausgeblendet, Karten bleiben; Wiederherstellen bringt sie zurück; eine bleibt immer sichtbar; archivierte ruhen (keine Aufweck-Serie)", async () => {
+    const { processAutomations } = await import("./pipeline-extras"); const { visiblePipelines } = await import("../shared/pipeline-extras"); const { pipelineEvents: eventsTable } = await import("../drizzle/schema");
+    const created = await owner.leadops.createCustomPipeline({ label: "Trojaner" });
+    await owner.leadops.importColdList({ pipeline: created.key, listName: "Trojaner_Liste", rows: [{ firstName: "Tina", lastName: "Archiv", phone: "+49 40 7002001", email: "tina@archiv-e2e.example" }, { firstName: "Tim", lastName: "Archiv", phone: "+49 40 7002002" }] });
+    const before = await owner.leadops.pipelineSettings();
+    try {
+      expect(before.archivedPipelines).toEqual([]); expect(await owner.leadops.archivedPipelines()).toEqual([]);
+      expect(await owner.leadops.archivePipeline({ key: created.key })).toMatchObject({ key: created.key, label: "Trojaner", cards: 2, archived: true });
+      const settings = await owner.leadops.pipelineSettings();
+      expect(settings.archivedPipelines).toEqual([created.key]); expect(settings.sourceOrder).toContain(created.key); expect(visiblePipelines(settings)).not.toContain(created.key); // der Platz in der Reihenfolge bleibt – sie ist nur ausgeblendet
+      expect(await owner.leadops.archivedPipelines()).toEqual([{ key: created.key, label: "Trojaner", cards: 2, custom: true }]);
+      // Karten, Liste und Stufen bleiben unverändert
+      expect((await owner.leadops.pipelineOverview({ source: created.key })).stages.flatMap((stage) => stage.leads)).toHaveLength(2);
+      expect((await owner.leadops.listColdLists({ pipeline: created.key })).map((list) => list.listName)).toEqual(["Trojaner Liste"]); // Listennamen werden beim Hochladen bereinigt (Unterstrich → Leerzeichen)
+      // noch einmal archivieren ändert nichts; normales Speichern der Einstellungen behält das Archiv
+      expect(await owner.leadops.archivePipeline({ key: created.key })).toMatchObject({ archived: true });
+      await owner.leadops.savePipelineSettings({ ...settings, staleDays: settings.staleDays } as never);
+      expect((await owner.leadops.pipelineSettings()).archivedPipelines).toEqual([created.key]);
+      // auch die eingebauten Pipelines lassen sich archivieren – aber eine bleibt immer sichtbar
+      await owner.leadops.archivePipeline({ key: "ads" }); await owner.leadops.archivePipeline({ key: "kaltakquise" });
+      await expect(owner.leadops.archivePipeline({ key: "email" })).rejects.toThrow(/Mindestens eine Pipeline/);
+      expect(visiblePipelines(await owner.leadops.pipelineSettings())).toEqual(["email"]);
+      await expect(owner.leadops.archivePipeline({ key: "p-gibtsnicht" })).rejects.toThrow(/gibt es nicht/);
+      expect(await owner.leadops.restorePipeline({ key: "ads" })).toMatchObject({ label: "Meta Ads", archived: false }); await owner.leadops.restorePipeline({ key: "kaltakquise" });
+      expect((await owner.leadops.pipelineSettings()).archivedPipelines).toEqual([created.key]);
+      // Archivierte Pipelines ruhen: Die Aufweck-Serie für eingeschlafene Karten lässt ihre Karten aus – nach dem Wiederherstellen greift sie wieder
+      const wake = await owner.leadops.emailCampaignStarter({ kind: "aufwecken" }); const series = await owner.leadops.saveEmailCampaign({ name: "Aufwecken Archivtest", fromName: "Tanesco", fromEmail: "vertrieb@tanesco-test.example", audience: { source: "alle" }, tree: wake.tree, design: wake.design as unknown as Record<string, unknown> });
+      await owner.leadops.savePipelineSettings({ ...settings, staleDays: 5, staleCampaignId: series.id } as never);
+      const tina = (await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.email, "tina@archiv-e2e.example"))))[0]; const longAgo = new Date(Date.now() - 30 * 86_400_000);
+      await db.update(leads).set({ createdAt: longAgo, pipelineUpdatedAt: longAgo }).where(eq(leads.id, tina.id)); await db.update(eventsTable).set({ createdAt: longAgo }).where(eq(eventsTable.leadId, tina.id));
+      const enrolledAt = async () => ((await leadRow(tina.publicId)).metadata as Record<string, unknown> | null)?.staleEnrolledAt;
+      await processAutomations(db, S.tenantId); expect(await enrolledAt()).toBeUndefined();
+      expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, series.id))).length).toBe(0);
+      // Wiederherstellen: wieder in der Auswahl, an ihrem alten Platz, mit allen Karten – und die Automatik greift wieder
+      expect(await owner.leadops.restorePipeline({ key: created.key })).toMatchObject({ key: created.key, label: "Trojaner", cards: 2, archived: false });
+      const restored = await owner.leadops.pipelineSettings(); expect(restored.archivedPipelines).toEqual([]); expect(visiblePipelines(restored)).toEqual(settings.sourceOrder); expect(await owner.leadops.archivedPipelines()).toEqual([]);
+      await processAutomations(db, S.tenantId); expect(await enrolledAt()).toBeTruthy();
+      expect((await db.select().from(emailCampaignRecipients).where(eq(emailCampaignRecipients.campaignId, series.id))).map((row) => row.email)).toEqual(["tina@archiv-e2e.example"]);
+      await db.update(emailCampaignRecipients).set({ status: "fertig" }).where(eq(emailCampaignRecipients.campaignId, series.id)); await db.update(emailCampaigns).set({ status: "pausiert" }).where(eq(emailCampaigns.id, series.id));
+      // Eine archivierte eigene Pipeline löschen: sie verschwindet auch aus dem Archiv
+      await owner.leadops.archivePipeline({ key: created.key });
+      expect((await owner.leadops.deleteCustomPipeline({ key: created.key })).moved).toBe(2);
+      const after = await owner.leadops.pipelineSettings(); expect(after.archivedPipelines).toEqual([]); expect(after.customPipelines.some((item) => item.key === created.key)).toBe(false);
+    } finally {
+      const now = await owner.leadops.pipelineSettings();
+      for (const key of now.archivedPipelines) await owner.leadops.restorePipeline({ key });
+      await owner.leadops.savePipelineSettings({ ...before } as never); // Einstellungen wie vor dem Test (Aufweck-Serie, Tage)
+      if ((await owner.leadops.pipelineSettings()).customPipelines.some((item) => item.key === created.key)) await owner.leadops.deleteCustomPipeline({ key: created.key });
+    }
+  }, 60000);
+
   it("49. Tracking ganz genau: Personen vs. Mails, Scanner zählen nicht, Klick = geöffnet, Kontakte außerhalb der Zielgruppe entfernen", async () => {
     const outreach = await import("./sales-outreach");
     await owner.leadops.importColdList({ listName: "Tracking-Genau", toPipeline: false, rows: [{ firstName: "Ada", lastName: "Auf", email: "ada@track-genau.example" }, { firstName: "Ben", lastName: "Bot", email: "ben@track-genau.example" }, { firstName: "Cem", lastName: "Klick", email: "cem@track-genau.example" }, { firstName: "Test", lastName: "Kontakt", email: "test@track-genau.example" }] });

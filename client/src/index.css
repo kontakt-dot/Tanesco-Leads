@@ -2047,7 +2047,7 @@ body.has-pipeline-dialer .content-area{padding-bottom:360px}
 .pipeline-card-calllog{position:relative;padding:0 10px 8px}
 .calllog-toggle{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 9px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#c9c5f5;font-size:11px;font-weight:600;cursor:pointer}
 .calllog-toggle:hover,.calllog-toggle.is-open{border-color:#9b93ff;background:rgba(129,120,255,.18);color:#fff}
-.calllog-overlay{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:16px;background:rgba(5,4,16,.55);backdrop-filter:blur(2px)}
+.calllog-overlay{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:16px;background:rgba(5,4,16,.55);backdrop-filter:blur(2px);pointer-events:auto;cursor:default}
 .calllog-form{display:grid;gap:10px;width:min(380px,100%);padding:14px;border:1px solid rgba(141,133,255,.4);border-radius:14px;background:rgba(19,17,40,.98);box-shadow:0 20px 50px rgba(0,0,0,.5)}
 .calllog-title{display:grid;gap:2px}.calllog-title strong{color:#fff;font-size:14px}.calllog-title small{color:#8f93af;font-size:11.5px}
 .calllog-results{display:flex;flex-wrap:wrap;gap:4px}
@@ -2195,12 +2195,12 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 .territory-svg{max-height:680px}
 .territory-state{fill:rgba(255,255,255,.05);stroke:rgba(255,255,255,.28);stroke-width:1}
 /* PLZ-Gebiete (2-stellig) mit Nummer */
-.territory-region{fill-opacity:.16;stroke:rgba(255,255,255,.22);stroke-width:.45;transition:fill-opacity .15s}.territory-region:hover{fill-opacity:.32}
+.territory-region{fill-opacity:.07;stroke:rgba(255,255,255,.16);stroke-width:.45;transition:fill-opacity .15s}.territory-region:hover{fill-opacity:.2}
 .territory-state-outline{fill:none;stroke:rgba(255,255,255,.55);stroke-width:1.1;pointer-events:none}
-.territory-region-label{font-size:7px;font-weight:700;fill:rgba(255,255,255,.72);text-anchor:middle;dominant-baseline:middle;pointer-events:none;paint-order:stroke;stroke:rgba(0,0,0,.45);stroke-width:1.6px;stroke-linejoin:round}
+.territory-region-label{font-size:7px;font-weight:700;fill:rgba(255,255,255,.5);text-anchor:middle;dominant-baseline:middle;pointer-events:none;paint-order:stroke;stroke:rgba(0,0,0,.45);stroke-width:1.6px;stroke-linejoin:round}
 .territory-regions-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#c9c5f5}.territory-regions-toggle .territory-switch{transform:scale(.8);transform-origin:left center}
 .territory-tooltip small{display:block;color:#9a9ec0;font-size:11px}
-.territory-dot{opacity:.82;transition:opacity .15s}.territory-dot.is-overlap{stroke:rgba(0,0,0,.55);stroke-width:.8;opacity:.95}.territory-dot.is-dim{opacity:.12}
+.territory-dot{opacity:1;stroke:rgba(9,9,24,.6);stroke-width:.4;transition:opacity .15s}.territory-dot.is-overlap{stroke:rgba(0,0,0,.7);stroke-width:.8;opacity:1}.territory-dot.is-dim{opacity:.12;stroke:none}
 .territory-tooltip{position:absolute;transform:translate(-50%,-115%);display:grid;gap:2px;min-width:160px;max-width:260px;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(17,18,40,.96);font-size:12px;color:#e5e1fd;pointer-events:none;z-index:5;box-shadow:0 10px 30px rgba(0,0,0,.35)}
 .territory-tooltip strong{color:#fff}.territory-tooltip span{display:inline-flex;align-items:center;gap:6px}.territory-tooltip span i{width:9px;height:9px;border-radius:999px;display:inline-block}.territory-tooltip em{font-style:normal;color:#fde68a}
 .territory-empty{position:absolute;inset:40% 0 auto;text-align:center;font-size:13px;color:#9a9ec0}
@@ -2308,6 +2308,21 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 
 /* Einstellungen: Reihenfolge der Pipelines */
 .pipeline-order{margin-bottom:12px}
+/* Pipeline archivieren: dezente Knöpfe hinter den Pipeline-Reitern, Archiv-Fenster mit „Wiederherstellen“ */
+.pipeline-archive-tools{display:inline-flex;align-items:center;gap:4px}
+.pipeline-archive-btn,.pipeline-archive-open{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 9px;border-radius:9px;border:1px solid transparent;background:transparent;color:#8f93b8;font-size:12px;font-weight:500;transition:color .15s,background .15s,border-color .15s}
+.pipeline-archive-btn:hover,.pipeline-archive-open:hover{color:#f1effe;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}
+.pipeline-archive-btn:disabled{opacity:.5;cursor:default}
+.pipeline-archive-open{color:#c9c5f5;border-color:rgba(255,255,255,.1)}
+.pipeline-archive-open i{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:rgba(129,120,255,.22);color:#e5e1fd;font-size:10.5px;font-weight:700;font-style:normal;font-variant-numeric:tabular-nums}
+.pipeline-archive-list{display:grid;gap:6px;list-style:none;padding:0;margin:0}
+.pipeline-archive-list li{display:flex;align-items:center;gap:10px;padding:9px 10px 9px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02);color:#c9c5f5}
+.pipeline-archive-list li>span{flex:1;min-width:0;display:grid}
+.pipeline-archive-list strong{font-size:13.5px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pipeline-archive-list small{font-size:11.5px;color:#8f93b8}
+.pipeline-archive-dialog{max-width:520px}
+.pipeline-order-archived{margin-top:16px;max-width:460px}
+@media(max-width:760px){.pipeline-archive-tools{margin-top:6px}.pipeline-archive-btn span{display:inline}}
 .pipeline-order-list{display:grid;gap:6px;margin-top:12px;list-style:none;padding:0;max-width:460px}
 .pipeline-order-list li{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02);color:#c9c5f5}
 .pipeline-order-list strong{flex:1;font-size:13px;color:#fff}
@@ -2487,7 +2502,10 @@ html:not(.dark) .campaign-lists-leftover p{color:#92400e!important}
 .pipeline-page .pipeline-column{border:1px solid rgba(255,255,255,.06);border-radius:16px;background:linear-gradient(180deg,color-mix(in srgb,var(--stage) 9%,transparent) 0,rgba(255,255,255,.015) 120px);box-shadow:inset 0 2px 0 color-mix(in srgb,var(--stage) 70%,transparent)}
 .pipeline-page .pipeline-column header{gap:6px;padding:2px 2px 0}
 .pipeline-page .pipeline-column header strong{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;letter-spacing:-.01em;color:#f5f3ff}
-.pipeline-page .pipeline-column header strong::before{content:"";flex:0 0 auto;width:8px;height:8px;border-radius:999px;background:var(--stage);box-shadow:0 0 0 3px color-mix(in srgb,var(--stage) 22%,transparent)}
+.pipeline-page .pipeline-column header strong::before{content:"";flex:0 0 auto;width:8px;height:8px;border-radius:999px;background:var(--stage);box-shadow:0 0 0 3px color-mix(in srgb,var(--stage) 22%,transparent);animation:stage-dot-blink 2.6s ease-in-out infinite}
+@keyframes stage-dot-blink{0%,100%{opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--stage) 22%,transparent)}50%{opacity:.45;box-shadow:0 0 0 6px color-mix(in srgb,var(--stage) 0%,transparent)}}
+.pipeline-page .pipeline-column:nth-child(2) header strong::before{animation-delay:0.18s}.pipeline-page .pipeline-column:nth-child(3) header strong::before{animation-delay:0.36s}.pipeline-page .pipeline-column:nth-child(4) header strong::before{animation-delay:0.54s}.pipeline-page .pipeline-column:nth-child(5) header strong::before{animation-delay:0.72s}.pipeline-page .pipeline-column:nth-child(6) header strong::before{animation-delay:0.90s}.pipeline-page .pipeline-column:nth-child(7) header strong::before{animation-delay:1.08s}.pipeline-page .pipeline-column:nth-child(8) header strong::before{animation-delay:1.26s}.pipeline-page .pipeline-column:nth-child(9) header strong::before{animation-delay:1.44s}.pipeline-page .pipeline-column:nth-child(10) header strong::before{animation-delay:1.62s}.pipeline-page .pipeline-column:nth-child(11) header strong::before{animation-delay:1.80s}.pipeline-page .pipeline-column:nth-child(12) header strong::before{animation-delay:1.98s}
+@media (prefers-reduced-motion:reduce){.pipeline-page .pipeline-column header strong::before{animation:none}}
 .pipeline-page .pipeline-column header>span:last-child{background:color-mix(in srgb,var(--stage) 20%,transparent);color:color-mix(in srgb,var(--stage) 65%,#fff);font-variant-numeric:tabular-nums}
 .pipeline-page .pipeline-column-dial,.pipeline-page .pipeline-column-fold{border-radius:8px}
 .pipeline-page .pipeline-hint{color:#8a8fab;font-size:10.5px}
