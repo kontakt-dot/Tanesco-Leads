@@ -612,3 +612,97 @@ describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", ()
     expect(Array.from(root.querySelectorAll(".gq-day-name")).map((node) => node.textContent)).toEqual(callRows(root).length ? ["Heute"] : []);
   });
 });
+
+describe("Verträge – Stand, Spur, die fünf Schritte und Vorlagen", () => {
+  beforeEach(() => { cleanup(); resetStore(); });
+  afterEach(() => { document.querySelectorAll(".app-confirm-backdrop").forEach((node) => node.remove()); cleanup(); resetStore(); });
+  const open = async () => { window.history.replaceState(null, "", "/?page=Verträge"); const { view } = mount(); await settle(600); return view.container; };
+  const rowsOf = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLElement>(".vt-list .vt-row"));
+  const click = async (node: Element | null | undefined, wait = 500) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.click(node!); }); await settle(wait); };
+  const confirm = async () => { await click(document.querySelector(".app-confirm .app-confirm-ok"), 600); };
+  const waitingRow = (root: HTMLElement) => rowsOf(root).find((row) => row.classList.contains("is-angesehen") || row.classList.contains("is-gesendet"))!;
+
+  it("Übersicht: Stand der gesendeten Verträge, je Vertrag eine Spur aus fünf Punkten und eine Zeile in Worten", async () => {
+    const root = await open();
+    const stand = root.querySelector<HTMLElement>(".vt-stand")!; expect(stand).toBeTruthy();
+    expect(stand.querySelector("h2")?.textContent).toMatch(/^(\d+ Verträge warten|1 Vertrag wartet) auf Unterschrift$/);
+    expect(Array.from(stand.querySelectorAll(".vt-station > span")).map((node) => node.textContent)).toEqual(["Gesendet", "E-Mail geöffnet", "Vertrag geöffnet", "Gelesen", "Unterschrieben"]);
+    const counts = Array.from(stand.querySelectorAll(".vt-station strong")).map((node) => Number(node.textContent)); expect(counts[0]).toBeGreaterThan(0);
+    for (let index = 1; index < counts.length; index += 1) expect(counts[index]).toBeLessThanOrEqual(counts[index - 1]); // jede Station zählt alle, die mindestens so weit sind
+    const rows = rowsOf(root); expect(rows.length).toBeGreaterThanOrEqual(3);
+    for (const row of rows) expect(row.querySelectorAll(".vt-track i").length).toBe(5);
+    const signed = rows.find((row) => row.classList.contains("is-unterschrieben"))!; expect(signed.querySelectorAll(".vt-track i.is-done").length).toBe(5); expect(signed.querySelector(".vt-row-line")?.textContent).toMatch(/^unterschrieben .+ von /);
+    const draft = rows.find((row) => row.classList.contains("is-entwurf"))!; expect(draft.querySelectorAll(".vt-track i.is-done").length).toBe(0); expect(draft.querySelector(".vt-row-line")?.textContent).toBe("Entwurf – noch nicht gesendet");
+    const waiting = waitingRow(root);
+    expect(waiting.querySelector(".vt-row-line")?.textContent).toMatch(/geöffnet/); expect(waiting.querySelector(".vt-nudge")?.textContent).toBe("Nachfassen lohnt sich");
+    expect(waiting.querySelector(".vt-track i.is-ergebnis")?.className).toContain("is-todo"); expect(waiting.querySelector(".vt-track")?.getAttribute("aria-label")).toContain("Gesendet: erledigt");
+    // Filter „Beim Kunden“ zeigt nur die wartenden
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".vt-toolbar .dashboard-segments button")).find((node) => /^Beim Kunden/.test(node.textContent ?? "")));
+    expect(rowsOf(root).length).toBeGreaterThan(0); expect(rowsOf(root).every((row) => row.classList.contains("is-angesehen") || row.classList.contains("is-gesendet"))).toBe(true);
+    // der Hinweis im Stand führt zu dem Vertrag, bei dem sich Nachfassen lohnt
+    expect(stand.querySelector("p")?.textContent).toMatch(/Anruf|nach/); await click(stand.querySelector(".vt-stand-open"), 900);
+    expect(root.querySelector(".vt-tracker")).toBeTruthy();
+  });
+
+  it("Ein Vertrag: fünf Schritte mit einem Satz je Schritt, Tipp zum Nachfassen und Verlauf mit Gerät und Lesezeit", async () => {
+    const root = await open();
+    await click(waitingRow(root).querySelector(".vt-row-main"), 900);
+    const steps = Array.from(root.querySelectorAll<HTMLElement>(".vt-steps .vt-step")); expect(steps.map((step) => step.querySelector("strong")?.textContent)).toEqual(["Gesendet", "E-Mail geöffnet", "Link angeklickt, Vertrag geöffnet", "Gelesen", "Unterschrift"]);
+    expect(steps.slice(0, 3).every((step) => step.classList.contains("is-done"))).toBe(true); expect(steps[4].classList.contains("is-todo")).toBe(true);
+    expect(steps[2].querySelector("small")?.textContent).toMatch(/geöffnet/); expect(steps[4].querySelector("small")?.textContent).toBe("noch nicht unterschrieben");
+    expect(root.querySelector(".vt-hint")?.textContent).toMatch(/noch nicht unterschrieben|nach/);
+    expect(root.querySelector(".vt-tracker-note")?.textContent).toContain("Näherungswert");
+    const entries = Array.from(root.querySelectorAll<HTMLElement>(".vt-timeline > li:not(.vt-tl-more)")); expect(entries.length).toBeGreaterThan(3);
+    expect(entries.map((entry) => entry.querySelector("strong")?.textContent)).toEqual(expect.arrayContaining(["Vertrag geöffnet", "E-Mail geöffnet", "Zur Unterschrift gesendet"]));
+    const viewed = entries.filter((entry) => entry.classList.contains("is-angesehen")); expect(viewed.length).toBeGreaterThan(0);
+    expect(viewed.some((entry) => /gelesen/.test(entry.textContent ?? ""))).toBe(true); expect(viewed.every((entry) => (entry.querySelector(".vt-tl-meta")?.textContent ?? "").length > 3)).toBe(true); // Gerät und IP-Adresse
+    await click(root.querySelector(".vt-back"), 600); expect(root.querySelector(".vt-list")).toBeTruthy();
+    // unterschrieben: letzter Schritt erledigt, kein Tipp mehr
+    await click(rowsOf(root).find((row) => row.classList.contains("is-unterschrieben"))?.querySelector(".vt-row-main"), 900);
+    const done = Array.from(root.querySelectorAll<HTMLElement>(".vt-steps .vt-step")); expect(done[4].querySelector("strong")?.textContent).toBe("Unterschrieben"); expect(done[4].classList.contains("is-done")).toBe(true);
+    expect(root.querySelector(".vt-hint")).toBeNull();
+    // Entwurf: noch nichts gesendet – die Schritte erscheinen erst mit dem Versand
+    await click(root.querySelector(".vt-back"), 600);
+    await click(rowsOf(root).find((row) => row.classList.contains("is-entwurf"))?.querySelector(".vt-row-main"), 900);
+    expect(root.querySelector(".vt-detail-head h1")).toBeTruthy(); expect(root.querySelector(".vt-tracker")).toBeNull();
+  });
+
+  it("Vorlagen: mitgelieferte ansehen, anpassen und zurücksetzen; eigene anlegen, bearbeiten und löschen", async () => {
+    const root = await open();
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".vt-head-actions .dashboard-segments button")).find((node) => /^Vorlagen/.test(node.textContent ?? "")));
+    const starter = (kind: string) => root.querySelector<HTMLElement>(`.vt-tpl[data-kind="${kind}"]`)!;
+    expect(["leadliefervertrag", "testphase", "leer"].every((kind) => Boolean(starter(kind)))).toBe(true);
+    expect(starter("leadliefervertrag").querySelectorAll(".vt-paper li").length).toBeGreaterThan(4); expect(starter("leadliefervertrag").querySelector(".vt-paper")?.textContent).toContain("§ 1");
+    expect(starter("testphase").querySelector(".vt-tag")?.textContent).toBe("mitgeliefert");
+    const button = (card: HTMLElement, label: string) => Array.from(card.querySelectorAll<HTMLButtonElement>("button")).find((node) => (node.textContent ?? "").trim() === label);
+    // mitgelieferte Vorlage anpassen
+    await click(button(starter("testphase"), "Bearbeiten"), 900);
+    expect(root.querySelector("h1")?.textContent).toBe("Vorlage „Testphase“ anpassen"); expect(root.textContent).not.toContain("Speichern & senden"); expect(root.querySelector(".vt-template-name")).toBeNull();
+    const title = Array.from(root.querySelectorAll<HTMLLabelElement>(".ct-field")).find((node) => node.querySelector("span")?.textContent === "Titel des Vertrags")!.querySelector("input")!;
+    await act(async () => { fireEvent.change(title, { target: { value: "Testphase für Wärmepumpen-Leads" } }); }); await settle(100);
+    await click(root.querySelector(".vt-save-template"), 900);
+    expect(starter("testphase").querySelector(".vt-tag")?.textContent).toBe("von dir angepasst"); expect(starter("testphase").querySelector(".vt-paper strong")?.textContent).toBe("Testphase für Wärmepumpen-Leads");
+    expect(getStore().tables.contractTemplates.some((row: any) => row.starterKind === "testphase")).toBe(true);
+    // zurücksetzen holt den Lieferzustand zurück
+    await click(button(starter("testphase"), "Zurücksetzen"), 300); await confirm();
+    expect(starter("testphase").querySelector(".vt-tag")?.textContent).toBe("mitgeliefert"); expect(button(starter("testphase"), "Zurücksetzen")).toBeUndefined();
+    expect(getStore().tables.contractTemplates.some((row: any) => row.starterKind === "testphase")).toBe(false);
+    // eigene Vorlage anlegen …
+    const own = () => Array.from(root.querySelectorAll<HTMLElement>(".vt-tpl.is-own")); const before = own().length;
+    await click(root.querySelector(".vt-tpl.is-new button"), 900); expect(root.querySelector("h1")?.textContent).toBe("Neue Vorlage");
+    await click(root.querySelector(".vt-save-template"), 300); expect(root.querySelector("h1")?.textContent).toBe("Neue Vorlage"); // ohne Namen wird nicht gespeichert
+    await act(async () => { fireEvent.change(root.querySelector<HTMLInputElement>(".vt-template-name")!, { target: { value: "Rahmenvertrag Hausnotruf" } }); }); await settle(100);
+    await click(root.querySelector(".vt-save-template"), 900);
+    expect(own().length).toBe(before + 1); const card = own().find((node) => node.querySelector(".vt-tpl-name")?.textContent?.includes("Rahmenvertrag Hausnotruf"))!; expect(card).toBeTruthy();
+    // … bearbeiten (Name ändern) …
+    await click(button(card, "Bearbeiten"), 900); expect(root.querySelector("h1")?.textContent).toBe("Vorlage bearbeiten");
+    await act(async () => { fireEvent.change(root.querySelector<HTMLInputElement>(".vt-template-name")!, { target: { value: "Rahmenvertrag Hausnotruf 2027" } }); }); await settle(100);
+    await click(root.querySelector(".vt-save-template"), 900);
+    expect(own().length).toBe(before + 1); const renamed = own().find((node) => node.querySelector(".vt-tpl-name")?.textContent?.includes("Rahmenvertrag Hausnotruf 2027"))!; expect(renamed).toBeTruthy();
+    // … und löschen
+    await click(renamed.querySelector(".vt-btn.is-icon"), 300); await confirm();
+    expect(own().length).toBe(before);
+    // aus einer Vorlage entsteht ein neuer Vertrag
+    await click(button(starter("leadliefervertrag"), "Vertrag daraus"), 900); expect(root.querySelector("h1")?.textContent).toBe("Neuer Vertrag");
+  });
+});
