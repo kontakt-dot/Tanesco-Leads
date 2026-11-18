@@ -2457,6 +2457,48 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     }
   }, 60000);
 
+  it("48c. Profilbilder: eigenes Bild setzen, ersetzen und entfernen; Administrator setzt es für Mitglieder; Abruf über die Bild-Adresse; nur echte Bilder", async () => {
+    const { userAvatars } = await import("../drizzle/schema");
+    const image = (head: number[], fill: number) => Buffer.concat([Buffer.from(head), Buffer.alloc(fill, 9)]);
+    const jpeg = image([0xff, 0xd8, 0xff, 0xe0], 500); const png = image([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 700);
+    const asUrl = (data: Buffer, mime = "image/jpeg") => `data:${mime};base64,${data.toString("base64")}`;
+    const keyOf = async (userId: number) => (await db.select({ avatarKey: users.avatarKey }).from(users).where(eq(users.id, userId)))[0].avatarKey;
+    try {
+      expect(await keyOf(ownerUserId)).toBeNull(); expect(await owner.leadops.avatarDirectory()).toEqual([]);
+      // Eigenes Bild setzen → Adresse, Abruf liefert genau dieses Bild (dauerhaft zwischenspeicherbar, Art aus dem Inhalt)
+      const first = await owner.auth.setAvatar({ dataUrl: asUrl(jpeg) }); expect(first.avatarUrl).toMatch(/^\/api\/avatar\/[A-Za-z0-9_-]{20,40}$/);
+      expect(first.avatarUrl).toBe(`/api/avatar/${await keyOf(ownerUserId)}`);
+      const got = await fetch(`${apiBase}${first.avatarUrl}`); expect(got.status).toBe(200); expect(got.headers.get("content-type")).toContain("image/jpeg"); expect(got.headers.get("cache-control")).toContain("immutable"); expect(got.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Buffer.from(await got.arrayBuffer()).equals(jpeg)).toBe(true);
+      expect(await owner.leadops.avatarDirectory()).toEqual([{ userId: ownerUserId, avatarUrl: first.avatarUrl }]);
+      expect((await owner.leadops.listMembers()).find((member) => member.userId === ownerUserId)?.avatarUrl).toBe(first.avatarUrl);
+      // Ersetzen: neue Adresse, die alte führt ins Leere (kein altes Bild mehr irgendwo) – als „JPEG“ ausgegeben, erkannt wird PNG
+      const second = await owner.auth.setAvatar({ dataUrl: asUrl(png, "image/jpeg") }); expect(second.avatarUrl).not.toBe(first.avatarUrl);
+      expect((await fetch(`${apiBase}${first.avatarUrl}`)).status).toBe(404);
+      const gotPng = await fetch(`${apiBase}${second.avatarUrl}`); expect(gotPng.headers.get("content-type")).toContain("image/png"); expect(Buffer.from(await gotPng.arrayBuffer()).equals(png)).toBe(true);
+      expect((await db.select().from(userAvatars).where(eq(userAvatars.userId, ownerUserId))).length).toBe(1);
+      // Unbekannte oder kaputte Schlüssel → 404
+      expect((await fetch(`${apiBase}/api/avatar/gibtesnichtgibtesnicht1234`)).status).toBe(404); expect((await fetch(`${apiBase}/api/avatar/..%2F..%2Fetc`)).status).toBe(404);
+      // Nur echte Bilder: SVG (auch als JPEG getarnt), Text und zu große Dateien werden abgelehnt – das vorhandene Bild bleibt
+      await expect(owner.auth.setAvatar({ dataUrl: asUrl(Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>" + " ".repeat(200))) })).rejects.toThrow(/Bildformat geht nicht/);
+      await expect(owner.auth.setAvatar({ dataUrl: "kein bild" })).rejects.toThrow(/kein Bild/);
+      await expect(owner.auth.setAvatar({ dataUrl: asUrl(image([0xff, 0xd8, 0xff, 0xe0], 450_000)) })).rejects.toThrow(/zu groß/);
+      expect(await keyOf(ownerUserId)).toBe(second.avatarUrl!.split("/").pop());
+      // Administrator setzt das Bild eines Mitglieds (z. B. eines Vertrieblers) – es erscheint bei den Vertrieblern der Pipeline
+      const members = await owner.leadops.listMembers(); const other = members.find((member) => member.userId !== ownerUserId)!; expect(other).toBeTruthy();
+      const theirs = await owner.leadops.setMemberAvatar({ membershipId: other.membershipId, dataUrl: asUrl(jpeg) }); expect(theirs.avatarUrl).toMatch(/^\/api\/avatar\//);
+      expect((await owner.leadops.getMemberDetail({ membershipId: other.membershipId })).user.avatarUrl).toBe(theirs.avatarUrl);
+      expect((await owner.leadops.avatarDirectory()).map((row) => row.userId).sort((a, b) => a - b)).toEqual([ownerUserId, other.userId].sort((a, b) => a - b));
+      const owners = await owner.leadops.pipelineOwners(); for (const row of owners) expect(row.avatarUrl ?? null).toBe(row.userId === ownerUserId ? second.avatarUrl : row.userId === other.userId ? theirs.avatarUrl : null);
+      await expect(owner.leadops.setMemberAvatar({ membershipId: 987_654, dataUrl: asUrl(jpeg) })).rejects.toThrow(/gehört nicht zu diesem Lead-Bereich/);
+      // Entfernen: Schlüssel weg, Bild gelöscht, Adresse führt ins Leere
+      expect(await owner.leadops.setMemberAvatar({ membershipId: other.membershipId, dataUrl: null })).toEqual({ avatarUrl: null });
+      expect(await keyOf(other.userId)).toBeNull(); expect((await fetch(`${apiBase}${theirs.avatarUrl}`)).status).toBe(404); expect((await db.select().from(userAvatars).where(eq(userAvatars.userId, other.userId))).length).toBe(0);
+      expect(await owner.auth.setAvatar({ dataUrl: null })).toEqual({ avatarUrl: null });
+      expect(await keyOf(ownerUserId)).toBeNull(); expect(await owner.leadops.avatarDirectory()).toEqual([]); expect((await fetch(`${apiBase}${second.avatarUrl}`)).status).toBe(404);
+    } finally { await db.delete(userAvatars); await db.update(users).set({ avatarKey: null }); }
+  }, 30000);
+
   it("49. Tracking ganz genau: Personen vs. Mails, Scanner zählen nicht, Klick = geöffnet, Kontakte außerhalb der Zielgruppe entfernen", async () => {
     const outreach = await import("./sales-outreach");
     await owner.leadops.importColdList({ listName: "Tracking-Genau", toPipeline: false, rows: [{ firstName: "Ada", lastName: "Auf", email: "ada@track-genau.example" }, { firstName: "Ben", lastName: "Bot", email: "ben@track-genau.example" }, { firstName: "Cem", lastName: "Klick", email: "cem@track-genau.example" }, { firstName: "Test", lastName: "Kontakt", email: "test@track-genau.example" }] });

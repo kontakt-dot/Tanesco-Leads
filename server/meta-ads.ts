@@ -6,6 +6,7 @@
  * Webhook-Adresse (bei Meta eintragen): APP_URL/api/meta/webhook – Verify-Token steht in der Plattform.
  */
 import { extraFieldsOf } from "../shared/cold-list";
+import { avatarUrlOf } from "../shared/avatar";
 import { websiteLinkOf } from "../shared/website";
 import { and, desc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import crypto from "node:crypto";
@@ -316,9 +317,9 @@ export async function leadsByCampaignIds(db: Db, tenantId: number, campaignIds: 
 
 /** Vertriebler, denen Leads gehören können: interne Mitglieder (Admin/Team) des Mandanten. */
 export async function pipelineOwners(db: Db, tenantId: number) {
-  const rows = await db.select({ userId: users.id, name: users.name, email: users.email, partnerType: memberships.partnerType, role: memberships.role, team: teams.name }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).leftJoin(teams, eq(teams.id, memberships.teamId)).where(and(eq(memberships.tenantId, tenantId), eq(memberships.status, "aktiv")));
+  const rows = await db.select({ userId: users.id, name: users.name, email: users.email, avatarKey: users.avatarKey, partnerType: memberships.partnerType, role: memberships.role, team: teams.name }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).leftJoin(teams, eq(teams.id, memberships.teamId)).where(and(eq(memberships.tenantId, tenantId), eq(memberships.status, "aktiv")));
   const internal = rows.filter((row) => row.partnerType === "intern"); const sales = internal.filter((row) => row.role === "vertrieb" || /vertrieb|sales/i.test(row.team ?? ""));
-  return (sales.length ? sales : internal).map((row) => { const first = (row.name ?? row.email ?? `Benutzer ${row.userId}`).split(/\s+/)[0]; return { userId: row.userId, name: first, initials: first.slice(0, 2).toUpperCase() }; });
+  return (sales.length ? sales : internal).map((row) => { const first = (row.name ?? row.email ?? `Benutzer ${row.userId}`).split(/\s+/)[0]; return { userId: row.userId, name: first, initials: first.slice(0, 2).toUpperCase(), avatarUrl: avatarUrlOf(row.avatarKey) }; });
 }
 export async function assignOwner(db: Db, tenantId: number, input: { publicIds: string[]; ownerUserId: number | null; actorUserId: number | null }) {
   const rows = await db.select({ id: leads.id, publicId: leads.publicId, ownerUserId: leads.ownerUserId }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "vertrieb"), inArray(leads.publicId, input.publicIds)));

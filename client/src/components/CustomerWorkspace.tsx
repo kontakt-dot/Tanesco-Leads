@@ -3,6 +3,7 @@
  * „Als Benutzer einloggen“ als dieser Kunde anmeldet (gelbes Banner mit „← Zurück zum Admin“).
  */
 import { useAuth } from "@/_core/hooks/useAuth";
+import { AvatarContent } from "@/components/AvatarUpload";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +46,7 @@ export default function CustomerWorkspace({ access }: { access: Access }) {
   useEyebrowIcons();
   const navigate = (next: CustomerPage) => { setPage(next); setSidebarOpen(false); window.history.replaceState(null, "", `/?page=${encodeURIComponent(next)}`); };
   const initials = (access.name || access.company).split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const meForAvatar = trpc.auth.me.useQuery(undefined, { retry: false, staleTime: 60_000 }); // Profilbild (setzt der Administrator auf der Benutzerseite)
   return <div className="flux-shell customer-shell">
     {passwordDialogOpen && <PasswordDialog onClose={() => setPasswordDialogOpen(false)} />}
     <aside className={`flux-sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
@@ -59,7 +61,7 @@ export default function CustomerWorkspace({ access }: { access: Access }) {
     </aside>
     <main className="workspace">
       {user?.impersonatedBy && <div className="impersonation-banner" role="status"><span className="flex items-center gap-2"><UserRoundCog className="h-4 w-4" /><span>Du siehst die Plattform als <strong>{access.company}</strong>.</span></span><button type="button" onClick={() => stopImpersonation.mutate()} disabled={stopImpersonation.isPending}>← Zurück zum Admin</button></div>}
-      <header className="workspace-top"><button className="menu-button" onClick={() => setSidebarOpen((open) => !open)}><Menu /></button><div className="flex-1" /><div className="top-actions"><AppearanceMenu /><HelpButton /><button type="button" aria-label={showNumbers ? "Zahlen ausblenden" : "Zahlen anzeigen"} title={showNumbers ? "Zahlen ausblenden" : "Zahlen anzeigen"} aria-pressed={showNumbers} onClick={() => setShowNumbers((value) => !value)}>{showNumbers ? <Eye /> : <EyeOff />}</button><span className="top-divider" /><div className="profile-orb" role="button" onClick={() => navigate("Einstellungen")}><div className="text-right"><strong>{access.company}</strong><small>{access.name}{access.email ? ` · ${access.email}` : ""}</small></div><span>{initials}</span></div></div></header>
+      <header className="workspace-top"><button className="menu-button" onClick={() => setSidebarOpen((open) => !open)}><Menu /></button><div className="flex-1" /><div className="top-actions"><AppearanceMenu /><HelpButton /><button type="button" aria-label={showNumbers ? "Zahlen ausblenden" : "Zahlen anzeigen"} title={showNumbers ? "Zahlen ausblenden" : "Zahlen anzeigen"} aria-pressed={showNumbers} onClick={() => setShowNumbers((value) => !value)}>{showNumbers ? <Eye /> : <EyeOff />}</button><span className="top-divider" /><div className="profile-orb" role="button" onClick={() => navigate("Einstellungen")}><div className="text-right"><strong>{access.company}</strong><small>{access.name}{access.email ? ` · ${access.email}` : ""}</small></div><span><AvatarContent avatarUrl={(meForAvatar.data as { avatarUrl?: string | null } | null | undefined)?.avatarUrl ?? null} initials={initials} /></span></div></div></header>
       <div className="content-area">
         {page === "Dashboard" && <DashboardPage access={access} showNumbers={showNumbers} onOpenLeads={() => navigate("Leads")} />}
         {page === "Leads" && <LeadsPage access={access} showNumbers={showNumbers} />}

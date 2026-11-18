@@ -3,6 +3,7 @@
  * Ansicht, Lieferant (Provision, Token, eingehende Mappings), Guthaben und Aktivität je Mitglied.
  */
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { avatarUrlOf } from "../shared/avatar";
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { apiTokens, balanceTransactions, claims, impersonationSessions, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, reclamationReasons, supplierInboundMappings, suppliers, users } from "../drizzle/schema";
@@ -49,7 +50,7 @@ export async function getMemberDetail(db: Db, tenantId: number, membershipId: nu
   const { passwordHash: _hash, ...safeUser } = user;
   return {
     membership: { id: membership.id, role: membership.role, partnerType: membership.partnerType, status: membership.status, integrationId: membership.integrationId, teamId: membership.teamId, createdAt: membership.createdAt },
-    user: safeUser,
+    user: { ...safeUser, avatarUrl: avatarUrlOf(safeUser.avatarKey) },
     settings,
     supplier: supplier ? { id: supplier.id, name: supplier.name, email: supplier.email, status: supplier.status } : null,
     token: activeToken ? { id: activeToken.id, createdAt: activeToken.createdAt, lastUsedAt: activeToken.lastUsedAt } : null,

@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { AvatarContent } from "@/components/AvatarUpload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
@@ -32,7 +33,7 @@ export default function MemberDirectory() {
     <section className="surface-panel operations-panel overflow-hidden"><div className="table-wrap wrap-cells"><table className="flux-table"><thead><tr><th>ID</th><th>Benutzer</th><th>Rolle</th><th>Zahlungsart</th><th>Guthaben & Zahlung</th><th>Rechnung offen</th><th>Registriert am</th><th>Aktionen</th></tr></thead><tbody>
       {rows.map((member) => { const owner = member.role === "inhaber"; return <tr key={member.membershipId}>
         <td><button type="button" className="font-mono text-xs text-violet-200 hover:underline" onClick={() => openMember(member.membershipId)}>{shortId(member.membershipId)}</button></td>
-        <td><button type="button" className="text-left text-slate-100 hover:underline" onClick={() => openMember(member.membershipId)}>{member.name ?? "—"}</button>{member.company && <div className="text-xs text-slate-400">{member.company}</div>}<div className="text-xs text-slate-500">{member.email ?? "—"}</div></td>
+        <td><div className="member-cell"><span className="member-pic" aria-hidden="true"><AvatarContent avatarUrl={(member as { avatarUrl?: string | null }).avatarUrl ?? null} initials={(member.name ?? member.email ?? "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()} /></span><div className="min-w-0"><button type="button" className="text-left text-slate-100 hover:underline" onClick={() => openMember(member.membershipId)}>{member.name ?? "—"}</button>{member.company && <div className="text-xs text-slate-400">{member.company}</div>}<div className="text-xs text-slate-500">{member.email ?? "—"}</div></div></div></td>
         <td><Badge variant="outline" className="border-white/15 text-slate-200">{roleLabel(member.role, member.partnerType)}</Badge>{member.supplierActive && <Badge variant="outline" className="ml-1 border-amber-400/25 bg-amber-500/10 text-amber-200">Lieferant</Badge>}</td>
         <td>{owner ? "—" : <Badge variant="outline" className="border-cyan-400/25 bg-cyan-500/10 text-cyan-200">{paymentLabel(member.paymentMode)}</Badge>}</td>
         <td>{owner ? "—" : euro(member.prepaidBalance)}</td>

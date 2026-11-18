@@ -11,6 +11,7 @@ import { desc, sql } from "drizzle-orm";
 import { getDb } from "./db";
 import { registerContractRoutes } from "./contract-routes";
 import { registerOptInRoutes } from "./opt-in-routes";
+import { registerAvatarRoutes } from "./avatars";
 import * as metaAds from "./meta-ads";
 import * as outreach from "./sales-outreach";
 import * as pipelineExtras from "./pipeline-extras";
@@ -42,6 +43,7 @@ const text = (value: unknown) => (typeof value === "string" ? value.trim() : typ
 export function registerPublicApiRoutes(app: Express) {
   registerContractRoutes(app); // Verträge: öffentliche Unterschriften-Seite
   registerOptInRoutes(app); // Opt-in: Bestätigung per SMS-Link, Nachweis-PDF für Käufer
+  registerAvatarRoutes(app); // Profilbilder: /api/avatar/<Schlüssel>
   app.post("/api/v1/leads", async (req: Request, res: Response) => {
     const auth = await verifyBearer(req, "leads:write"); if (!auth) return res.status(401).json({ error: "Unauthorized" });
     if (auth.membershipId && rateLimited(auth.tokenId)) return res.status(429).json({ error: "rate limited (120 imports per minute)" });

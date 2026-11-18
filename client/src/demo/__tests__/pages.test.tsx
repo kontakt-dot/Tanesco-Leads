@@ -6,6 +6,10 @@ import DemoApp from "../App.demo";
 import { localDemoLink } from "../link";
 import { getStore, resetStore } from "../backend";
 
+// Profilbild: Das Klein-Rechnen im Browser braucht eine Zeichenfläche (gibt es in der Testumgebung nicht) – hier kommt stattdessen ein festes kleines Bild zurück
+const { TEST_AVATAR } = vi.hoisted(() => ({ TEST_AVATAR: `data:image/jpeg;base64,${btoa(String.fromCharCode(0xff, 0xd8, 0xff, 0xe0) + "x".repeat(240))}` }));
+vi.mock("@/lib/avatar-image", () => ({ fileToAvatarDataUrl: vi.fn(async (file: File) => { if (/kaputt/.test(file.name)) throw new Error("Dieses Bild kann der Browser nicht lesen. Bitte ein Foto als JPG oder PNG wählen."); return TEST_AVATAR; }) }));
+
 const routes = [
   "page=Dashboard", "page=Statistik", "page=Statistik&view=Käufer", "page=Statistik&view=Lieferanten", "page=Statistik&view=Lieferketten", "page=Statistik&view=Integrationen",
   "page=Leads", "page=Lead-Kategorien", "page=Lead-Kategorien&library=1", "page=Lead-Kategorien&builder=1", "page=Tags",
@@ -297,6 +301,71 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     expect(firstRow().querySelector<HTMLSelectElement>("select[aria-label='Gilt für']")?.value).toBe("waermepumpe");
     expect(firstRow().querySelector<HTMLTextAreaElement>("textarea[aria-label='Hinweis für die KI']")?.value).toBe("„So schnell wie möglich“ zählt als Ja.");
     expect(dialog().querySelector<HTMLButtonElement>(".cq-save-questions")?.disabled).toBe(true);
+  });
+});
+
+describe("Profilbild – hochladen, überall sehen, entfernen", () => {
+  beforeEach(() => { cleanup(); resetStore(); });
+  afterEach(() => { cleanup(); resetStore(); });
+  const photo = (name = "ich.jpg") => new File(["foto"], name, { type: "image/jpeg" });
+  it("oben rechts über das Profil-Menü: Bild erscheint im Kreis und im Menü; „entfernen“ zeigt wieder die Initialen", async () => {
+    window.history.replaceState(null, "", "/?page=Dashboard");
+    const { view } = mount();
+    await settle(500);
+    const orb = () => view.container.querySelector<HTMLButtonElement>(".profile-orb")!;
+    const initials = orb().querySelector("span")!.textContent!; expect(initials).toMatch(/^[A-ZÄÖÜ]{1,2}$/); expect(orb().querySelector(".avatar-img")).toBeNull();
+    await act(async () => { fireEvent.click(orb()); }); await settle(200);
+    const menu = () => view.container.querySelector<HTMLElement>(".profile-menu");
+    expect(menu()!.textContent).toContain("Profilbild hochladen"); expect(menu()!.textContent).not.toContain("Profilbild entfernen");
+    const input = () => view.container.querySelector<HTMLInputElement>(".profile-orb-wrap .avatar-file")!; expect(input().accept).toBe("image/*");
+    // Unlesbare Datei: verständliche Meldung, nichts ändert sich
+    await act(async () => { fireEvent.change(input(), { target: { files: [photo("kaputt.heic")] } }); }); await settle(300);
+    expect(document.body.textContent).toContain("kann der Browser nicht lesen"); expect(orb().querySelector(".avatar-img")).toBeNull();
+    // Foto wählen → Bild oben rechts und im Menü
+    await act(async () => { fireEvent.change(input(), { target: { files: [photo()] } }); }); await settle(700);
+    expect(orb().querySelector<HTMLImageElement>(".avatar-img")?.getAttribute("src")).toBe(TEST_AVATAR);
+    expect((getStore().tables.users[0] as { avatarUrl?: string | null }).avatarUrl).toBe(TEST_AVATAR);
+    if (!menu()) { await act(async () => { fireEvent.click(orb()); }); await settle(200); }
+    expect(menu()!.querySelector<HTMLImageElement>(".profile-menu-pic .avatar-img")?.getAttribute("src")).toBe(TEST_AVATAR);
+    expect(menu()!.textContent).toContain("Profilbild ändern"); expect(menu()!.textContent).toContain("Profilbild entfernen");
+    // Entfernen → wieder die Initialen
+    await act(async () => { fireEvent.click(menu()!.querySelector<HTMLButtonElement>(".profile-menu-avatar-remove")!); }); await settle(700);
+    expect(orb().querySelector(".avatar-img")).toBeNull(); expect(orb().querySelector("span")!.textContent).toBe(initials);
+    expect((getStore().tables.users[0] as { avatarUrl?: string | null }).avatarUrl ?? null).toBeNull();
+  });
+  it("Einstellungen → Profil und Benutzerseite: Bild eines Vertrieblers erscheint an seinen Karten in der Pipeline", async () => {
+    // eigenes Bild in den Einstellungen
+    window.history.replaceState(null, "", "/?page=Einstellungen&setting=Profil");
+    const first = mount();
+    await settle(500);
+    const box = first.view.container.querySelector<HTMLElement>(".settings-avatar")!; expect(box).toBeTruthy(); expect(box.textContent).toContain("Profilbild hochladen");
+    await act(async () => { fireEvent.change(box.querySelector<HTMLInputElement>(".avatar-file")!, { target: { files: [photo()] } }); }); await settle(700);
+    expect(first.view.container.querySelector<HTMLImageElement>(".settings-avatar .avatar-upload-face .avatar-img")?.getAttribute("src")).toBe(TEST_AVATAR);
+    expect(first.view.container.querySelector(".settings-avatar")!.textContent).toContain("Anderes Bild wählen"); expect(first.view.container.querySelector(".settings-avatar .avatar-upload-remove")).toBeTruthy();
+    cleanup();
+    // Administrator setzt das Bild eines Vertrieblers auf dessen Benutzerseite
+    const repUser = getStore().tables.users.find((row) => /^Taner/.test(String(row.name)))!; const rep = getStore().tables.memberships.find((row) => row.userId === repUser.id)!; expect(rep.role).toBe("vertrieb");
+    window.history.replaceState(null, "", `/?page=Benutzer&member=${rep.id}`);
+    const second = mount();
+    await settle(600);
+    const upload = second.view.container.querySelector<HTMLElement>(".avatar-upload")!; expect(upload).toBeTruthy(); expect(upload.querySelector(".avatar-img")).toBeNull();
+    await act(async () => { fireEvent.change(upload.querySelector<HTMLInputElement>(".avatar-file")!, { target: { files: [photo("vertriebler.png")] } }); }); await settle(700);
+    expect(second.view.container.querySelector<HTMLImageElement>(".avatar-upload .avatar-img")?.getAttribute("src")).toBe(TEST_AVATAR);
+    expect((getStore().tables.users.find((row) => row.id === rep.userId) as { avatarUrl?: string | null }).avatarUrl).toBe(TEST_AVATAR);
+    cleanup();
+    // In der Benutzerliste und in der Pipeline ist das Bild zu sehen
+    window.history.replaceState(null, "", "/?page=Benutzer");
+    const list = mount();
+    await settle(600);
+    expect(list.view.container.querySelectorAll(".member-pic .avatar-img").length).toBe(2); expect(list.view.container.querySelectorAll(".member-pic").length).toBeGreaterThan(2);
+    cleanup();
+    window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
+    const board = mount();
+    await settle(800);
+    const chips = Array.from(board.view.container.querySelectorAll<HTMLElement>(".dashboard-filters .owner-dot"));
+    const firstName = String(repUser.name).split(" ")[0];
+    const repChip = chips.find((node) => node.parentElement?.textContent?.includes(firstName))!; expect(repChip).toBeTruthy(); expect(repChip.querySelector<HTMLImageElement>(".avatar-img")?.getAttribute("src")).toBe(TEST_AVATAR);
+    expect(chips.filter((node) => !node.querySelector(".avatar-img")).length).toBeGreaterThan(0); // andere Vertriebler behalten ihr Kürzel
   });
 });
 
