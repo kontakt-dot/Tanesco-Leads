@@ -20,8 +20,8 @@ export type ContractBlock =
 export type ContractBlockType = ContractBlock["type"];
 export type ContractStatus = "entwurf" | "gesendet" | "angesehen" | "unterschrieben" | "abgelehnt" | "storniert";
 export const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = { entwurf: "Entwurf", gesendet: "Gesendet", angesehen: "Angesehen", unterschrieben: "Unterschrieben", abgelehnt: "Abgelehnt", storniert: "Storniert" };
-export type ContractEventKind = "erstellt" | "geaendert" | "gesendet" | "erinnert" | "angesehen" | "unterschrieben" | "abgelehnt" | "storniert";
-export const CONTRACT_EVENT_LABEL: Record<ContractEventKind, string> = { erstellt: "Erstellt", geaendert: "Geändert", gesendet: "Zur Unterschrift gesendet", erinnert: "Erinnerung gesendet", angesehen: "Vom Kunden geöffnet", unterschrieben: "Elektronisch unterschrieben", abgelehnt: "Abgelehnt", storniert: "Storniert" };
+export type ContractEventKind = "erstellt" | "geaendert" | "gesendet" | "erinnert" | "angesehen" | "unterschrieben" | "abgelehnt" | "storniert" | "mail_geoeffnet" | "pdf_geladen";
+export const CONTRACT_EVENT_LABEL: Record<ContractEventKind, string> = { erstellt: "Erstellt", geaendert: "Geändert", gesendet: "Zur Unterschrift gesendet", erinnert: "Erinnerung gesendet", angesehen: "Vertrag geöffnet", unterschrieben: "Elektronisch unterschrieben", abgelehnt: "Abgelehnt", storniert: "Storniert", mail_geoeffnet: "E-Mail geöffnet", pdf_geladen: "PDF heruntergeladen" };
 /** Werte für Platzhalter: {{firma}}, {{name}}, {{email}}, {{strasse}}, {{plzOrt}}, {{anbieterFirma}}, {{anbieterAdresse}}, {{anbieterVertreter}}, {{datum}}, {{titel}} – plus die Vertragsangaben des Anbieters und die Felder des Kunden ({{key}}). */
 export type ContractValues = Record<string, string>;
 export type ContractSignature = { name: string; image: string | null; signedAt: Date | string; ip?: string | null; userAgent?: string | null; documentHash?: string | null; signedHash?: string | null };

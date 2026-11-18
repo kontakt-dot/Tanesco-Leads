@@ -771,6 +771,13 @@
       "when": 1795500000000,
       "tag": "0109_profilbilder",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "5",
+      "when": 1795600000000,
+      "tag": "0110_vertrag_verlauf",
+      "breakpoints": true
     }
   ]
 }
