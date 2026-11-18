@@ -27,6 +27,7 @@ import { callQaCampaigns } from "../drizzle/schema";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
 import { detectTopic } from "../shared/call-topic";
+import { summarizeCalls } from "../shared/call-overview";
 import { agentNameMerges, canonicalAgentName, cleanAgentName, detectAgent, detectAgentName, isJunkAgentName, sameAgentName } from "../shared/agent-names";
 export { cleanAgentName, detectAgentName };
 export { callPeriodRange, detectTopic, type CallPeriod };
@@ -899,10 +900,13 @@ export async function getCall(db: Db, tenantId: number, callId: number) {
 }
 
 export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null } = {}) {
-  const conditions = [eq(callRecords.tenantId, tenantId)]; const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to)); if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign)); if (filter.agentName) conditions.push(eq(callRecords.agentName, filter.agentName)); if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
-  const rows = await db.select({ status: callRecords.status, decision: callRecords.decision, score: callRecords.score, criteriaScores: callRecords.criteriaScores }).from(callRecords).where(and(...conditions));
-  const scored = rows.filter((row) => typeof row.score === "number" && !(row.status === "bewertet" && Array.isArray(row.criteriaScores) && row.criteriaScores.length > 0 && criteriaUnscored(row))); // ohne Kriterien-Punkte (werden nachgeholt) nicht als 0 mitzählen
-  return { total: rows.length, evaluated: rows.filter((row) => row.status === "bewertet").length, approved: rows.filter((row) => row.decision === "freigegeben").length, review: rows.filter((row) => row.decision === "pruefen").length, rejected: rows.filter((row) => row.decision === "zurueckgewiesen").length, noConsent: rows.filter((row) => row.status === "ohne_einwilligung").length, failed: rows.filter((row) => row.status === "fehlgeschlagen").length, averageScore: scored.length ? Math.round(scored.reduce((sum, row) => sum + (row.score ?? 0), 0) / scored.length) : null };
+  // Der Agent-Filter wird erst beim Zusammenzählen angewandt: Zahlen und Verlauf gelten für den gewählten Agenten, die Agenten-Leiste zeigt weiter alle
+  const conditions = [eq(callRecords.tenantId, tenantId)]; const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to)); if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign)); if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
+  // Die Kriterien-Punkte (großes JSON) braucht es nur bei Note 0: dort ist zu klären, ob wirklich 0 Punkte vergeben wurden oder die Punkte noch fehlen. Die Tafel lädt sich regelmäßig neu – deshalb so schlank wie möglich.
+  const zeroScores = sql<unknown>`case when ${callRecords.score} = 0 then ${callRecords.criteriaScores} else null end`;
+  const rows = await db.select({ id: callRecords.id, status: callRecords.status, decision: callRecords.decision, verdict: callRecords.verdict, score: callRecords.score, criteriaScores: zeroScores, agentName: callRecords.agentName, startedAt: callRecords.startedAt, durationSeconds: callRecords.durationSeconds }).from(callRecords).where(and(...conditions));
+  const asList = (value: unknown): unknown[] | null => { if (Array.isArray(value)) return value; if (typeof value !== "string" || !value) return null; try { const parsed: unknown = JSON.parse(value); return Array.isArray(parsed) ? parsed : null; } catch { return null; } };
+  return summarizeCalls(rows.map(({ criteriaScores, ...row }) => { const scores = asList(criteriaScores); return { ...row, unscored: row.status === "bewertet" && Boolean(scores?.length) && criteriaUnscored({ score: row.score, criteriaScores: scores }) }; }), { agentName: filter.agentName ?? null }); // ohne Kriterien-Punkte (werden nachgeholt) nicht als 0 in den Schnitt
 }
 
 /** Lead-Kategorien, die in Gesprächen vorkommen (für den Filter) – mit Anzahl. */

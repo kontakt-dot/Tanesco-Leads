@@ -7,6 +7,7 @@ import DemoApp from "./demo/App.demo";
 import { localDemoLink } from "./demo/link";
 import "./index.css";
 import "./theme-light.css";
+import "./gespraeche.css"; // Gespräche: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
 

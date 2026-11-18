@@ -198,27 +198,27 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
     fireEvent.change(box, { target: { value: "https://download.example.de/getSound.aspx?token=abc&a=1\nkein link\nhttps://download.example.de/getSound.aspx?token=def&a=2 | +49 170 1234567 | Termin" } });
     const button = Array.from(document.querySelectorAll<HTMLButtonElement>(".cq-links button")).find((node) => /Aufnahmen holen/.test(node.textContent ?? ""))!;
     await act(async () => { fireEvent.click(button); }); await settle(600);
-    const rows = Array.from(view.container.querySelectorAll(".flux-table tbody tr")).map((row) => row.textContent ?? "");
+    const rows = Array.from(view.container.querySelectorAll(".flux-table tbody tr.gq-call")).map((row) => row.textContent ?? "");
     expect(rows.filter((text) => text.includes("Aufnahmen-Test")).length).toBe(2);
     // nochmal dieselben Links → nichts doppelt
     fireEvent.change(box, { target: { value: "https://download.example.de/getSound.aspx?token=abc&a=1" } });
     await act(async () => { fireEvent.click(button); }); await settle(400);
-    expect(Array.from(view.container.querySelectorAll(".flux-table tbody tr")).filter((row) => (row.textContent ?? "").includes("Aufnahmen-Test")).length).toBe(2);
+    expect(Array.from(view.container.querySelectorAll(".flux-table tbody tr.gq-call")).filter((row) => (row.textContent ?? "").includes("Aufnahmen-Test")).length).toBe(2);
   });
 
   it("löscht ausgewählte Gespräche aus der Liste", async () => {
     window.history.replaceState(null, "", "/?page=Gespräche");
     const { view } = mount();
     await settle(400);
-    const before = view.container.querySelectorAll(".flux-table tbody tr").length; expect(before).toBeGreaterThan(1);
-    const box = view.container.querySelector<HTMLInputElement>(".flux-table tbody tr input[type=checkbox]")!;
+    const before = view.container.querySelectorAll(".flux-table tbody tr.gq-call").length; expect(before).toBeGreaterThan(1);
+    const box = view.container.querySelector<HTMLInputElement>(".flux-table tbody tr.gq-call input[type=checkbox]")!;
     fireEvent.click(box); await settle(100);
     const button = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-bulk button")).find((node) => /Ausgewählte löschen/.test(node.textContent ?? ""))!;
     await act(async () => { fireEvent.click(button); }); await settle(300);
     const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.trim() === "Löschen");
     if (confirm) { await act(async () => { fireEvent.click(confirm); }); }
     await settle(500);
-    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBe(before - 1);
+    expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBe(before - 1);
   });
 });
 
@@ -231,18 +231,18 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     const panels = Array.from(view.container.querySelectorAll<HTMLElement>("section.operations-panel")); expect(panels[0]?.className).toContain("cq-list-panel"); // Gesprächsliste zuerst
     const percents = Array.from(view.container.querySelectorAll(".flux-table tbody .cq-percent")).map((node) => node.textContent ?? "");
     expect(percents.length).toBeGreaterThan(0); expect(percents.some((text) => /\d+ %/.test(text))).toBe(true);
-    const all = view.container.querySelectorAll(".flux-table tbody tr").length;
+    const all = view.container.querySelectorAll(".flux-table tbody tr.gq-call").length;
     const filterbar = view.container.querySelector(".cq-filterbar")!; expect(filterbar).toBeTruthy();
     const heute = Array.from(filterbar.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Heute")!;
     await act(async () => { fireEvent.click(heute); }); await settle(400);
-    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBeLessThanOrEqual(all);
+    expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBeLessThanOrEqual(all);
     const from = filterbar.querySelector<HTMLInputElement>("input[aria-label='Datum von']")!;
     fireEvent.change(from, { target: { value: "2031-01-01" } }); await settle(400);
-    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBe(0);
+    expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBe(0);
     expect(view.container.textContent).toContain("im gewählten Zeitraum");
     const reset = Array.from(filterbar.querySelectorAll<HTMLButtonElement>("button")).find((node) => /Datum zurücksetzen/.test(node.textContent ?? ""))!;
     await act(async () => { fireEvent.click(reset); }); await settle(400);
-    expect(view.container.querySelectorAll(".flux-table tbody tr").length).toBe(all);
+    expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBe(all);
     expect(view.container.querySelector("select[aria-label='Nach Lead-Kategorie filtern']")).toBeTruthy();
   });
 
@@ -493,7 +493,7 @@ describe("Gespräche – „Zurück“ bleibt in Gespräche", () => {
     const { view } = mount();
     await settle(400);
     const before = window.history.length;
-    const row = view.container.querySelector<HTMLElement>(".cq-list-panel .flux-table tbody tr td:nth-child(3)")!; expect(row).toBeTruthy();
+    const row = view.container.querySelector<HTMLElement>(".cq-list-panel .flux-table tbody tr.gq-call td:nth-child(3)")!; expect(row).toBeTruthy();
     await act(async () => { fireEvent.click(row); }); await settle(400);
     expect(window.location.search).toContain("callId="); expect(decodeURIComponent(window.location.search)).toContain("page=Gespräche");
     expect(window.history.length).toBe(before + 1);
@@ -501,5 +501,77 @@ describe("Gespräche – „Zurück“ bleibt in Gespräche", () => {
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 120)); }); await settle(300);
     expect(window.location.search).not.toContain("callId="); expect(decodeURIComponent(window.location.search)).toContain("page=Gespräche");
     expect(view.container.querySelector(".cq-list-panel")).toBeTruthy();
+  });
+});
+
+describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", () => {
+  beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
+  const callRows = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLElement>(".flux-table tbody tr.gq-call"));
+  const tally = (root: HTMLElement, label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-tally-item")).find((node) => node.querySelector("b")?.textContent === label)!;
+  const open = async () => { window.history.replaceState(null, "", "/?page=Gespräche"); const { view } = mount(); await settle(500); return view; };
+
+  it("zeigt Überschrift, Verlauf und Zähler; ein Klick auf einen Zähler filtert Liste und Verlauf", async () => {
+    const view = await open(); const root = view.container;
+    const stage = root.querySelector<HTMLElement>(".gq-stage")!; expect(stage).toBeTruthy();
+    const total = callRows(root).length; expect(total).toBeGreaterThan(5);
+    expect(stage.querySelector(".gq-count")?.textContent).toBe(`${total} Gespräche insgesamt`);
+    expect(stage.querySelector(".gq-talk")?.textContent).toMatch(/^Zusammen .+ am Telefon, im Schnitt \d+:\d\d Minuten je Gespräch\.$/);
+    expect(stage.querySelectorAll(".gq-slot").length).toBe(total); // ein Strich je Gespräch
+    const counts = ["Freigegeben", "Zur Prüfung", "Zurückgewiesen", "Offen"].map((label) => Number(tally(root, label).querySelector("strong")?.textContent));
+    expect(counts.reduce((sum, value) => sum + value, 0)).toBe(total); expect(counts[1]).toBeGreaterThan(0);
+    expect(root.querySelectorAll(".gq-day").length).toBeGreaterThan(1); // die Liste ist nach Tagen gebündelt
+    expect(root.querySelector(".cq-ampel-row")).toBeNull(); expect(root.textContent).not.toContain("Bewertet"); // die sechs Kacheln von früher sind weg
+    // Zähler „Zur Prüfung“ → nur diese Gespräche; im Verlauf treten die anderen zurück, die Tafel zählt weiter alle
+    await act(async () => { fireEvent.click(tally(root, "Zur Prüfung")); }); await settle(400);
+    expect(tally(root, "Zur Prüfung").getAttribute("aria-pressed")).toBe("true");
+    expect(callRows(root).length).toBe(counts[1]); expect(callRows(root).every((row) => /^Zur Prüfung/.test(row.querySelector(".gq-pill")?.textContent ?? ""))).toBe(true);
+    expect(stage.querySelectorAll(".gq-slot").length).toBe(total); expect(stage.querySelectorAll(".gq-slot.is-dim").length).toBe(total - counts[1]);
+    expect(stage.querySelector(".gq-count")?.textContent).toBe(`${total} Gespräche insgesamt`);
+    expect(root.querySelector(".gq-result-line")?.textContent).toContain("„Zur Prüfung“");
+    // derselbe Zähler noch einmal hebt den Filter auf
+    await act(async () => { fireEvent.click(tally(root, "Zur Prüfung")); }); await settle(400);
+    expect(callRows(root).length).toBe(total); expect(stage.querySelectorAll(".gq-slot.is-dim").length).toBe(0); expect(root.querySelector(".gq-result-line")).toBeNull();
+  });
+
+  it("ein Strich im Verlauf öffnet das Gespräch – oben mit Ergebnis und Aufnahme, zurück geht es zur Liste", async () => {
+    const view = await open(); const root = view.container;
+    const slot = root.querySelector<HTMLButtonElement>(".gq-slot")!; expect(slot.getAttribute("aria-label")).toMatch(/^Gespräch .+ – öffnen$/);
+    await act(async () => { fireEvent.click(slot); }); await settle(500);
+    expect(window.location.search).toContain("callId=");
+    const stage = root.querySelector<HTMLElement>(".gq-call-stage")!; expect(stage).toBeTruthy();
+    expect(root.querySelector(".gq-tally")).toBeNull(); // die Anzeigetafel gehört zur Liste, nicht zum einzelnen Gespräch
+    expect(stage.querySelector(".gq-count")?.textContent).toMatch(/^(Passt|Reinhören|Passt nicht|Noch nicht bewertet)$/);
+    expect(stage.querySelector(".gq-player")?.textContent).toContain("Aufnahme anhören");
+    expect(Array.from(stage.querySelectorAll(".gq-call-facts dt")).map((node) => node.textContent)).toEqual(expect.arrayContaining(["Agent", "Kampagne", "Einwilligung zur Aufnahme"]));
+    await act(async () => { fireEvent.click(root.querySelector<HTMLButtonElement>(".gq-back")!); await new Promise((resolve) => setTimeout(resolve, 150)); }); await settle(300);
+    expect(root.querySelector(".cq-list-panel")).toBeTruthy(); expect(window.location.search).not.toContain("callId=");
+  });
+
+  it("ein Agent lässt sich auswählen: Liste und Zahlen gelten dann für ihn, die Auswahl bleibt vollständig", async () => {
+    const view = await open(); const root = view.container;
+    const chips = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-agent-chip:not(.is-all)"));
+    const before = chips().length; expect(before).toBeGreaterThan(1); const total = callRows(root).length;
+    const name = chips()[0].querySelector("b")!.textContent!; const count = Number(chips()[0].querySelector("em")!.textContent); expect(count).toBeGreaterThan(0); expect(count).toBeLessThan(total);
+    await act(async () => { fireEvent.click(chips()[0]); }); await settle(500);
+    expect(callRows(root).length).toBe(count); expect(callRows(root).every((row) => row.querySelector(".gq-agent-cell > span:last-child")?.textContent === name)).toBe(true);
+    expect(root.querySelector(".gq-count")?.textContent).toBe(`${count} ${count === 1 ? "Gespräch" : "Gespräche"} insgesamt`);
+    expect(root.querySelector(".gq-talk")?.textContent).toContain(`${name} – zusammen`);
+    expect(root.querySelectorAll(".gq-slot").length).toBe(count);
+    expect(chips().length).toBe(before); expect(chips()[0].getAttribute("aria-pressed")).toBe("true"); // die anderen Agenten bleiben wählbar
+    await act(async () => { fireEvent.click(root.querySelector<HTMLButtonElement>(".gq-agent-chip.is-all")!); }); await settle(400);
+    expect(callRows(root).length).toBe(total);
+  });
+
+  it("ein einzelner Tag zeigt den Tagesverlauf auf einer Uhrzeit-Achse mit „jetzt“", async () => {
+    const view = await open(); const root = view.container;
+    expect(root.querySelector(".gq-wave")?.className).toContain("is-days"); expect(root.querySelector(".gq-now")).toBeNull();
+    const heute = Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-periods button")).find((node) => node.textContent === "Heute")!;
+    await act(async () => { fireEvent.click(heute); }); await settle(500);
+    const wave = root.querySelector<HTMLElement>(".gq-wave")!; expect(wave.className).toContain("is-clock"); expect(heute.getAttribute("aria-pressed")).toBe("true");
+    const labels = Array.from(wave.querySelectorAll(".gq-tick b")).map((node) => node.textContent ?? ""); expect(labels.length).toBeGreaterThan(3); expect(labels.every((label) => /^\d+ Uhr$/.test(label))).toBe(true);
+    expect(wave.querySelector(".gq-now")?.textContent).toBe("jetzt");
+    expect(root.querySelector(".gq-count")?.textContent).toMatch(/ heute$/);
+    expect(wave.querySelectorAll(".gq-slot").length).toBe(callRows(root).length);
+    expect(Array.from(root.querySelectorAll(".gq-day-name")).map((node) => node.textContent)).toEqual(callRows(root).length ? ["Heute"] : []);
   });
 });

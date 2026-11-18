@@ -4470,6 +4470,16 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       // Statistik mit denselben Filtern
       expect(await owner.leadops.callStatistics({ period: "heute", campaign: "Filter-Kampagne" })).toMatchObject({ total: 1, approved: 1, review: 0 });
       expect(await owner.leadops.callStatistics({ period: "alle", campaign: "Filter-Kampagne", agentName: "Filtertest" })).toMatchObject({ total: 3, approved: 1, review: 2 });
+      // Anzeigetafel: Verlauf (ältestes zuerst), Gesprächszeit und Quote – die Agenten-Leiste zeigt alle Agenten, auch wenn nach einem gefiltert wird
+      const idOther = Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: "filter-anderer", phone: "+49 30 1235", agentName: "Zweiter Agent", campaign: "Filter-Kampagne", startedAt: new Date(today.getTime() - 120_000), durationSeconds: 40, consent: true, status: "eingegangen", decision: "offen" }))[0].insertId);
+      const board = await owner.leadops.callStatistics({ period: "alle", campaign: "Filter-Kampagne" });
+      expect(board).toMatchObject({ total: 4, evaluated: 3, approved: 1, review: 2, rejected: 0, open: 1, approvalRate: 33, talkSeconds: 340, averageSeconds: 85, timelineHidden: 0 });
+      expect(board.timeline.map((entry) => entry.id)).toEqual([idOld, idYesterday, idOther, idToday]);
+      expect(board.timeline.map((entry) => [entry.mood, entry.decision])).toEqual([["gelb", "pruefen"], ["gelb", "pruefen"], ["offen", "offen"], ["gruen", "freigegeben"]]);
+      expect(board.timeline[3]).toMatchObject({ seconds: 100, agent: "Filtertest" }); expect(typeof board.timeline[3].at).toBe("string");
+      expect(board.byAgent).toEqual([{ name: "Filtertest", total: 3, approved: 1, review: 2, rejected: 0, open: 0, talkSeconds: 300 }, { name: "Zweiter Agent", total: 1, approved: 0, review: 0, rejected: 0, open: 1, talkSeconds: 40 }]);
+      const onlyFirst = await owner.leadops.callStatistics({ period: "alle", campaign: "Filter-Kampagne", agentName: "Filtertest" });
+      expect(onlyFirst).toMatchObject({ total: 3, approved: 1, review: 2, open: 0, approvalRate: 33, talkSeconds: 300 }); expect(onlyFirst.timeline).toHaveLength(3); expect(onlyFirst.byAgent).toEqual(board.byAgent);
       // Eigene Kriterien für eine Kampagne → die KI bewertet genau danach, Prozentzahl aus den Gewichten
       expect(await owner.leadops.saveCallQaCampaignCriteria({ name: "Treppenlift Nord", criteria: [{ label: "Treppe vermessen", description: "Wurde die Treppe (gerade/kurvig, Stufen) besprochen?", weight: 60 }, { label: "Entscheider", description: "Spricht der Agent mit dem Entscheider?", weight: 40 }], instructions: "Es geht um Treppenlifte, nicht um Photovoltaik." })).toMatchObject({ success: true, criteria: 2, custom: true });
       S.transcriptForStub = "Agent: Guten Tag, hier ist Lena Roth. Es geht um Ihren Treppenlift. Kunde: Ja gerne, ich bin Eigentümer, die Treppe ist gerade.";

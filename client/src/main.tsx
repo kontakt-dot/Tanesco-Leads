@@ -9,6 +9,7 @@ import App from "./App";
 import { startLogin } from "./const";
 import "./index.css";
 import "./theme-light.css";
+import "./gespraeche.css"; // Gespräche: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
 
 const queryClient = new QueryClient();
 
