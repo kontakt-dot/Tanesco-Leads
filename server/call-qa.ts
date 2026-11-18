@@ -8,7 +8,7 @@
  *  5. Entscheidung: ab Freigabe-Schwelle Lead freigeben (und über die Automatisierung ausliefern/verkaufen),
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
-import { and, asc, desc, eq, gte, inArray, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -26,7 +26,8 @@ import { callQaCampaigns } from "../drizzle/schema";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
 import { detectTopic } from "../shared/call-topic";
-import { agentNameMerges, canonicalAgentName } from "../shared/agent-names";
+import { agentNameMerges, canonicalAgentName, cleanAgentName, detectAgent, detectAgentName, sameAgentName } from "../shared/agent-names";
+export { cleanAgentName, detectAgentName };
 export { callPeriodRange, detectTopic, type CallPeriod };
 import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion, applyQuestionScope, isCallback, questionFulfilment, SCOPE_LABEL } from "../shared/call-qualification";
 
@@ -341,20 +342,6 @@ async function transcribeAudio(config: CallQaConfig, audio: Uint8Array<ArrayBuff
 
 export type Evaluation = { agentName?: string | null; topic?: string | null; score: number; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar" | "unklar"; criteria: Array<{ key: string; score: number; evidence: string }>; summary: string; redFlags: string[]; nextStep: string; extracted: Record<string, string> };
 
-/** Name des Mitarbeiters aus der Vorstellung am Gesprächsanfang: „hier ist/spricht Maya Becker“, „mein Name ist …“, „ich bin … von HausKompass“, „Maya Becker von …“. */
-export function detectAgentName(transcript: string): string | null {
-  const head = transcript.slice(0, 1500).replace(/\s+/g, " ");
-  const name = "([A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?(?: [A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?){1,2})";
-  const patterns = [new RegExp(`(?:hier ist|hier spricht|am apparat ist|mein name ist|ich bin|ich heiße|sie sprechen mit)\\s+(?:der |die |frau |herr )?${name}`, "i"), new RegExp(`${name}\\s+(?:von|vom|aus dem hause|im auftrag von)\\s+[A-ZÄÖÜ]`)];
-  for (const pattern of patterns) { const match = head.match(pattern); if (match) { const cleaned = cleanAgentName(match[1]); if (cleaned) return cleaned; } }
-  return null;
-}
-const NOT_NAMES = /^(guten|hallo|schönen|ja|nein|vielen|danke|herr|frau|agent|kunde|sprecher|photovoltaik|angebotsvergleich|hauskompass|firma|woche|wochen|tag|morgen|abend|mittag|heute|moment|bitte|genau|okay|gerne)$/i;
-export function cleanAgentName(raw: string): string | null {
-  const all = raw.replace(/[^A-Za-zÄÖÜäöüß\- ]/g, " ").trim().split(/\s+/).filter(Boolean);
-  const words: string[] = []; for (const word of all) { if (!/^[A-ZÄÖÜ]/.test(word) || NOT_NAMES.test(word)) { if (words.length) break; continue; } words.push(word); } // nur großgeschriebene Wörter am Stück („Maya Becker“, nicht „von“)
-  if (words.length < 1 || words.length > 3) return null; const value = words.join(" "); return value.length >= 3 && value.length <= 60 ? value : null;
-}
 /** Bekannte Agenten-Namen des Mandanten mit Anzahl Gespräche. */
 async function knownAgentNames(db: Db, tenantId: number) {
   const rows = await db.select({ name: callRecords.agentName, count: sql<number>`count(*)` }).from(callRecords).where(eq(callRecords.tenantId, tenantId)).groupBy(callRecords.agentName);
@@ -369,8 +356,37 @@ async function resolveAgentName(db: Db, tenantId: number, name: string | null | 
 export async function mergeSimilarAgentNames(db: Db, onlyTenantId?: number): Promise<number> {
   const tenants = onlyTenantId ? [onlyTenantId] : (await db.selectDistinct({ tenantId: callRecords.tenantId }).from(callRecords)).map((row) => row.tenantId);
   let changed = 0;
-  for (const tenantId of tenants) for (const merge of agentNameMerges(await knownAgentNames(db, tenantId))) { await db.update(callRecords).set({ agentName: merge.to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.agentName, merge.from))); changed += 1; }
+  for (const tenantId of tenants) for (const merge of agentNameMerges(await knownAgentNames(db, tenantId))) { await db.update(callRecords).set({ agentName: merge.to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.agentName, merge.from), or(isNull(callRecords.agentSource), ne(callRecords.agentSource, "manuell")))); changed += 1; }
   return changed;
+}
+/**
+ * Alle vorhandenen Gespräche noch einmal gegen ihr Transkript prüfen: Stellt sich der Mitarbeiter dort eindeutig vor, gilt dieser Name
+ * (auch wenn vorher ein anderer eingetragen war). Von Hand gesetzte Agenten bleiben. Danach werden ähnliche Namen zusammengeführt.
+ */
+export async function reassignAgentsFromTranscripts(db: Db, onlyTenantId?: number): Promise<number> {
+  const tenants = onlyTenantId ? [onlyTenantId] : (await db.selectDistinct({ tenantId: callRecords.tenantId }).from(callRecords)).map((row) => row.tenantId);
+  let changed = 0;
+  for (const tenantId of tenants) {
+    const known = await knownAgentNames(db, tenantId); const names = known.map((item) => item.name);
+    const rows = await db.select({ id: callRecords.id, agentName: callRecords.agentName, agentSource: callRecords.agentSource, transcript: callRecords.transcript }).from(callRecords).where(eq(callRecords.tenantId, tenantId));
+    for (const row of rows) {
+      if (!row.transcript || row.agentSource === "manuell") continue;
+      const current = row.agentName?.trim() || null; const detected = detectAgent(row.transcript, names);
+      if (!detected || (!detected.sure && current)) continue; // nur eindeutige Vorstellungen überschreiben einen vorhandenen Namen
+      const resolved = canonicalAgentName(detected.name, known); if (!resolved || resolved === current) continue;
+      if (current && sameAgentName(current, resolved)) continue; // gleiche Person, nur andere Schreibweise – das regelt das Zusammenführen
+      await db.update(callRecords).set({ agentName: resolved, agentSource: "transkript" }).where(eq(callRecords.id, row.id)); changed += 1;
+    }
+  }
+  return changed;
+}
+/** Agent eines Gesprächs von Hand festlegen (bleibt bei neuer Bewertung und beim Zusammenführen erhalten); leer = wieder automatisch. */
+export async function setCallAgent(db: Db, tenantId: number, callId: number, agentName: string | null) {
+  const call = (await db.select({ id: callRecords.id }).from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0];
+  if (!call) throw new Error("Gespräch wurde nicht gefunden.");
+  const name = (agentName ?? "").replace(/\s+/g, " ").trim().slice(0, 160) || null;
+  await db.update(callRecords).set({ agentName: name, agentSource: name ? "manuell" : null }).where(eq(callRecords.id, callId));
+  return { success: true as const, agentName: name };
 }
 /** Thema → Lead-Kategorie des Mandanten: vorhandene Kategorie mit passendem Namen, sonst neu anlegen (z. B. KI erkennt „Treppenlift“). */
 export async function resolveCallCategory(db: Db, tenantId: number, topic: string | null | undefined): Promise<number | null> {
@@ -392,7 +408,7 @@ export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" |
   const examples = (Array.isArray(config.examples) ? config.examples : []) as ExampleCase[];
   const extractFields = (Array.isArray(config.extractFields) ? config.extractFields : []) as ExtractField[];
   const totalWeight = criteria.reduce((sum, criterion) => sum + criterion.weight, 0) || 1;
-  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted", "agentName", "topic"], properties: { agentName: { type: "string", description: "Name, mit dem sich der Mitarbeiter/Agent am Anfang vorstellt (z. B. „Maya Becker“); leer, wenn er nicht genannt wird" }, topic: { type: "string", description: "Worum geht es im Gespräch – das Produkt/Thema als kurzer Begriff in der Einzahl, z. B. „Photovoltaik“, „Wärmepumpe“, „Alarmanlage“, „Treppenlift“; geht es um zwei Themen, beide mit „ & “ verbinden (z. B. „Photovoltaik & Wärmepumpe“); leer, wenn unklar" }, criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
+  const schema = { name: "gespraechsbewertung", schema: { type: "object", additionalProperties: false, required: ["criteria", "summary", "redFlags", "nextStep", "verdict", "extracted", "agentName", "topic"], properties: { agentName: { type: "string", description: "Name, mit dem sich der anrufende Mitarbeiter/Agent vorstellt (z. B. „Maya Becker“) – Vor- und Nachname, wenn beide fallen, sonst der genannte Teil. NICHT der Name des Kunden/Angerufenen und kein Firmenname. Leer, wenn der Mitarbeiter seinen Namen nicht nennt" }, topic: { type: "string", description: "Worum geht es im Gespräch – das Produkt/Thema als kurzer Begriff in der Einzahl, z. B. „Photovoltaik“, „Wärmepumpe“, „Alarmanlage“, „Treppenlift“; geht es um zwei Themen, beide mit „ & “ verbinden (z. B. „Photovoltaik & Wärmepumpe“); leer, wenn unklar" }, criteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "score", "evidence"], properties: { key: { type: "string" }, score: { type: "integer", minimum: 0, maximum: 10 }, evidence: { type: "string" } } } }, summary: { type: "string" }, redFlags: { type: "array", items: { type: "string" } }, nextStep: { type: "string" }, verdict: { type: "string", enum: ["verkaufbar", "nachfassen", "nicht_verkaufbar", "unklar"] }, extracted: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } } } } };
   const system = `Du bewertest Verkaufsgespräche eines Callcenters, das Anfragen (Leads) für Fachbetriebe qualifiziert. Bewerte NUR anhand des Transkripts, erfinde nichts. Das Transkript stammt aus automatischer Spracherkennung: Firmen- und Eigennamen sind darin oft falsch geschrieben. Wird nach einem Namen gefragt und im Transkript steht etwas, das sich ähnlich anhört (z. B. „Haus Campus“ oder „Hauskompas“ statt „HausKompass“), gilt der Name als genannt – der Gesprächspartner versteht, was gemeint ist. Handelt es sich erkennbar um einen Rückruf (Kunde und Mitarbeiter hatten schon Kontakt), muss ein Firmenname nicht noch einmal genannt werden – kein Mangel. Schreibe Belege (evidence) vollständig aus, nie mitten im Satz abbrechen. Dass der Service für den Kunden kostenlos und unverbindlich ist, stimmt immer – sagt der Mitarbeiter das, ist es kein Mangel und kein Warnhinweis (redFlag). Bewertungskriterien (0 = gar nicht erfüllt, 10 = vollständig erfüllt), jeweils mit wörtlichem Beleg aus dem Gespräch:\n${criteria.map((criterion) => `- ${criterion.key}: ${criterion.label} – ${criterion.description}`).join("\n")}\nWarnsignale (redFlags), die den Lead unverkäuflich machen: Kunde will nicht kontaktiert werden, widerruft, Daten sind falsch, Gespräch war unzulässig (Werbeanruf ohne Einwilligung), Kunde ist Minderjähriger, Agent hat Druck ausgeübt oder Falsches versprochen.\nUrteil: verkaufbar = Kunde will ein Angebot und die Weitergabe ist erlaubt; nachfassen = Interesse, aber offene Punkte; nicht_verkaufbar = kein Interesse oder Warnsignal; unklar = Transkript unvollständig.${extractFields.length ? `\nZusätzlich beantworte diese Fragen aus dem Gespräch (extracted, leer lassen wenn nicht genannt):\n${extractFields.map((field) => `- ${field.key}: ${field.question}`).join("\n")}` : "\nextracted bleibt eine leere Liste."}\nAntworte ausschließlich auf Deutsch.${config.instructions ? `\nZusätzliche Vorgaben des Mandanten: ${config.instructions}` : ""}${examples.length ? `\nBeispiele für die gewünschte Einordnung:\n${examples.slice(0, 8).map((example, index) => `Beispiel ${index + 1} (${example.title}): Auszug: "${example.transcript.slice(0, 600)}" → Urteil: ${example.verdict}. Begründung: ${example.reason}`).join("\n")}` : ""}`;
   const user = `${context.leadCategory ? `Lead-Kategorie: ${context.leadCategory}\n` : ""}${context.leadName ? `Kunde laut Lead: ${context.leadName}\n` : ""}Transkript:\n"""\n${transcript.slice(0, 60_000)}\n"""`;
   const response = await invokeLLM({ messages: [{ role: "system", content: system }, { role: "user", content: user }], outputSchema: schema, maxTokens: 2500 });
@@ -454,12 +470,17 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     if (!transcript.trim()) throw new Error("Transkript ist leer.");
     // Dauer aus der Transkription und Name des Mitarbeiters aus der Vorstellung („hier ist Maya Becker …“) – nur, wenn der Dialer nichts geliefert hat
     const durationSeconds = call.durationSeconds ?? (freshTranscript ? lastTranscriptionDuration : null) ?? null;
-    const agentName = call.agentName?.trim() || (await resolveAgentName(db, call.tenantId, detectAgentName(transcript)));
-    await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName && !call.agentName ? { agentName } : {}) }).where(eq(callRecords.id, callId));
+    // Agent: Die Vorstellung im Transkript gilt (auch gegenüber einem schon eingetragenen Namen) – außer der Agent wurde von Hand gesetzt
+    const agentManual = call.agentSource === "manuell"; const knownAgents = agentManual ? [] : await knownAgentNames(db, call.tenantId).catch(() => []);
+    const detectedAgent = agentManual ? null : detectAgent(transcript, knownAgents.map((item) => item.name));
+    let agentName = call.agentName?.trim() || null; let agentSource = call.agentSource ?? null;
+    if (detectedAgent && (detectedAgent.sure || !agentName)) { const resolved = canonicalAgentName(detectedAgent.name, knownAgents); if (resolved) { agentName = resolved; agentSource = "transkript"; } }
+    await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName !== (call.agentName ?? null) || agentSource !== (call.agentSource ?? null) ? { agentName, agentSource } : {}) }).where(eq(callRecords.id, callId));
     const lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
     const own = await criteriaForCampaign(db, call.tenantId, call.campaign, config); // Kriterien der Kampagne (sonst Standard)
     const evaluation = await evaluateTranscript({ ...config, criteria: own.criteria, instructions: own.instructions }, transcript, { leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : null });
-    if (!agentName && evaluation.agentName) { const resolved = await resolveAgentName(db, call.tenantId, evaluation.agentName); if (resolved) await db.update(callRecords).set({ agentName: resolved }).where(eq(callRecords.id, callId)); }
+    // Keine eindeutige Vorstellung per Formel gefunden: Dann gilt der Name, den die KI im Gespräch als Mitarbeiter erkannt hat
+    if (!agentManual && !detectedAgent?.sure && evaluation.agentName) { const resolved = canonicalAgentName(evaluation.agentName, knownAgents); if (resolved && resolved !== agentName) await db.update(callRecords).set({ agentName: resolved, agentSource: "transkript" }).where(eq(callRecords.id, callId)); }
     // Lead-Kategorie: Thema laut KI (sonst Stichwörter) → vorhandene Kategorie oder neue
     if (!call.leadCategoryId) { const categoryId = await resolveCallCategory(db, call.tenantId, evaluation.topic || detectTopic(transcript)).catch(() => null); if (categoryId) await db.update(callRecords).set({ leadCategoryId: categoryId }).where(eq(callRecords.id, callId)); }
     const decided = decideCall(config, evaluation, transcript); let decision = decided.decision; const rule = decided.rule;

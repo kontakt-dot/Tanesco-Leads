@@ -4353,6 +4353,27 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       S.transcriptForStub = "Agent: Guten Tag, hier ist Lena Decker von Haus Campus. Kunde: Ja gerne, ich bin Eigentümer, eigentlich so schnell wie möglich.";
       const result = await importRecordingLinks(db, tenantId, { text: "https://player.e2e.example/recordings/namen-1.mp3", campaign: "Namen-Kampagne" }, { waitFor: true }); expect(result.created).toBe(1);
       expect(await nameOf(result.callIds[0])).toBe("Lena Becker");
+      // Falsch eingetragener Agent: Das Transkript nennt den Namen eindeutig → beim Nachprüfen und beim Neu-Bewerten gilt das Transkript
+      const { reassignAgentsFromTranscripts, reevaluateCalls } = await import("./call-qa");
+      const wrong = Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: "namen-falsch", agentName: "Muster Hagen", campaign: "Namen-Kampagne", startedAt: new Date(), durationSeconds: 60, consent: true, status: "bewertet", score: 80, decision: "freigegeben", decidedBy: "automatisch", transcript: "Ja hallo? Guten Tag Herr Weber, Tester Feiles am Apparat von HausKompass, Sie hatten sich informiert." }))[0].insertId);
+      const lastOnly = Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: "namen-nachname", agentName: null, campaign: "Namen-Kampagne", startedAt: new Date(), durationSeconds: 60, consent: true, status: "bewertet", score: 80, decision: "freigegeben", decidedBy: "automatisch", transcript: "Guten Tag, hier spricht die Frau Becker von HausKompass." }))[0].insertId);
+      const customerOnly = Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: "namen-kunde", agentName: "Muster Hagen", campaign: "Namen-Kampagne", startedAt: new Date(), durationSeconds: 60, consent: true, status: "bewertet", score: 80, decision: "freigegeben", decidedBy: "automatisch", transcript: "Guten Tag Herr Weber, es geht um Ihre Anfrage. Kunde: Ja, ich bin Eigentümer." }))[0].insertId);
+      expect(await reassignAgentsFromTranscripts(db, tenantId)).toBe(2);
+      expect(await nameOf(wrong)).toBe("Tester Pfeil"); // verhörter Name → bekannter Agent
+      expect(await nameOf(lastOnly)).toBe("Lena Becker"); // nur Nachname → Agent mit diesem Nachnamen
+      expect(await nameOf(customerOnly)).toBe("Muster Hagen"); // keine Vorstellung im Transkript → bleibt
+      expect(await reassignAgentsFromTranscripts(db, tenantId)).toBe(0);
+      // Von Hand gesetzt bleibt fest – auch beim Nachprüfen, Zusammenführen und Neu-Bewerten
+      expect(await owner.leadops.setCallAgent({ callId: wrong, agentName: "Carla Sommer" })).toMatchObject({ agentName: "Carla Sommer" });
+      expect(await reassignAgentsFromTranscripts(db, tenantId)).toBe(0); await mergeSimilarAgentNames(db, tenantId);
+      await reevaluateCalls(db, tenantId, [wrong], { waitFor: true });
+      expect(await nameOf(wrong)).toBe("Carla Sommer"); expect((await owner.leadops.getCall({ callId: wrong })).agentSource).toBe("manuell");
+      // Zurück auf automatisch: beim Neu-Bewerten kommt der Name wieder aus dem Transkript
+      await owner.leadops.setCallAgent({ callId: wrong, agentName: null }); expect(await nameOf(wrong)).toBeNull();
+      await reevaluateCalls(db, tenantId, [wrong], { waitFor: true }); expect(await nameOf(wrong)).toBe("Tester Pfeil");
+      // Neu-Bewerten korrigiert auch einen falsch eingetragenen Namen
+      await db.update(callsTable).set({ agentName: "Muster Hagen", agentSource: null }).where(eq(callsTable.id, lastOnly));
+      await reevaluateCalls(db, tenantId, [lastOnly], { waitFor: true }); expect(await nameOf(lastOnly)).toBe("Lena Becker");
     } finally { S.transcriptForStub = undefined; await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Namen-Kampagne"))); }
   }, 60000);
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
