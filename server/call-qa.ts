@@ -13,8 +13,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
-import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, optIns, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
-import { convertRawContact, normalizeRawPhone } from "./raw-data";
+import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, optIns, rawBatches, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
+import { batchCategoryIds, convertRawContact, normalizeRawPhone } from "./raw-data";
+import { CONTACT_MAPPING, dialerInfo, extractDialerContact, mergeDialerData, type DialerContact } from "../shared/dialer-contact";
 import { invokeLLM } from "./_core/llm";
 import { noteAfterEvaluation } from "./call-notes";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
@@ -157,10 +158,12 @@ export const DEFAULT_CRITERIA: Criterion[] = [
   { key: "kontaktdaten", label: "Kontaktdaten bestätigt", weight: 15, description: "Name, Telefonnummer, Adresse und Erreichbarkeit wurden bestätigt oder korrigiert." },
   { key: "einwilligung", label: "Weitergabe erlaubt", weight: 15, description: "Der Kunde ist ausdrücklich einverstanden, dass ein Fachbetrieb/Partner ihn kontaktiert." },
 ];
-export type DecisionRule = { id: string; label: string; field: "score" | "verdict" | "redFlags" | "transcript" | `criterion:${string}`; op: "gte" | "lte" | "eq" | "contains" | "any"; value: string; decision: "freigegeben" | "pruefen" | "zurueckgewiesen"; active: boolean };
+export type DecisionRule = { id: string; label: string; field: "score" | "verdict" | "redFlags" | "transcript" | "dialerResult" | `criterion:${string}`; op: "gte" | "lte" | "eq" | "contains" | "any"; value: string; decision: "freigegeben" | "pruefen" | "zurueckgewiesen"; active: boolean };
 export type ExampleCase = { title: string; transcript: string; verdict: "verkaufbar" | "nachfassen" | "nicht_verkaufbar"; reason: string };
 export type ExtractField = { key: string; label: string; question: string };
-export const DEFAULT_MAPPING = { callId: "call_id", leadId: "lead_id", phone: "phone", agent: "agent", campaign: "campaign", direction: "direction", startedAt: "started_at", duration: "duration", recordingUrl: "recording_url", transcript: "transcript", consent: "consent" };
+/** Felder zum Gespräch – und (seit der Dialer den ganzen Kontakt mitschicken kann) die Felder zum Kontakt. */
+const CALL_MAPPING = { callId: "call_id", leadId: "lead_id", phone: "phone", agent: "agent", campaign: "campaign", direction: "direction", startedAt: "started_at", duration: "duration", recordingUrl: "recording_url", transcript: "transcript", consent: "consent" };
+export const DEFAULT_MAPPING = { ...CALL_MAPPING, ...CONTACT_MAPPING };
 
 const normalizePhone = (value: string) => value.replace(/[^\d+]/g, "").replace(/^\+/, "00").replace(/^0049/, "0").replace(/^00/, "");
 
@@ -220,16 +223,93 @@ async function rawContactByPhone(db: Db, tenantId: number, phone: string) {
   const rows = await db.select({ id: rawContacts.id, phone: rawContacts.phone, status: rawContacts.status, leadId: rawContacts.leadId }).from(rawContacts).where(and(eq(rawContacts.tenantId, tenantId), inArray(rawContacts.status, ["neu", "in_liste"]), or(...variants.map((value) => eq(rawContacts.phone, value))))).orderBy(desc(rawContacts.createdAt)).limit(5);
   return rows.find((row) => row.phone && normalizeRawPhone(row.phone) === normalized && !row.leadId) ?? rows.find((row) => !row.leadId);
 }
+/** Lead oder Rohdaten-Kontakt zur Meldung: erst unsere Lead-Nummer, dann die Rufnummer. */
+async function findDialerTarget(db: Db, tenantId: number, leadRef: string, phone: string) {
+  let lead = leadRef ? (await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), or(eq(leads.publicId, leadRef), ...(Number.isInteger(Number(leadRef)) && Number(leadRef) > 0 ? [eq(leads.id, Number(leadRef))] : [])))).limit(1))[0] : undefined;
+  if (!lead && phone) {
+    // Rufnummern stehen in vielen Schreibweisen im Bestand (+49 40 …, 040-…, 0049…) – verglichen wird ohne Trennzeichen, in jeder gängigen Form
+    const digits = normalizePhone(phone); const e164 = normalizeRawPhone(phone);
+    const forms = e164 ? Array.from(new Set([e164, e164.replace(/^\+/, "00"), e164.replace(/^\+49/, "0"), e164.replace(/^\+/, "")])) : [];
+    const bare = sql`REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${leads.phone}, ' ', ''), '-', ''), '/', ''), '(', ''), ')', ''), '.', '')`;
+    const candidates = await db.select().from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), or(eq(leads.phone, phone), eq(leads.phone, `+${digits}`), eq(leads.phone, `0${digits.replace(/^49/, "")}`), ...(forms.length ? [inArray(bare, forms)] : [])))).orderBy(desc(leads.createdAt)).limit(5);
+    lead = candidates.find((row) => row.phone && normalizePhone(row.phone) === digits) ?? candidates[0];
+  }
+  // Kein Lead zur Nummer, aber ein Rohdaten-Kontakt (hochgeladene Callcenter-Liste): merken – „freigegeben“ macht ihn zum Lead, „zurückgewiesen“ verwirft ihn
+  const rawContact = !lead && phone ? await rawContactByPhone(db, tenantId, phone) : undefined;
+  return { lead, rawContact };
+}
+
+/* Der Dialer schickt den ganzen Kontakt mit: unbekannte Rufnummern werden als Kontakt in einer eigenen Liste angelegt (Freigabe macht ihn zum Lead),
+   bekannte Kontakte und Leads werden ergänzt – vorhandene Angaben bleiben stehen. */
+const DIALER_BATCH_MARK = "dialer";
+const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const isDialerBatch = (batch: { mapping: unknown }) => plainObject(batch.mapping) && batch.mapping.auto === DIALER_BATCH_MARK;
+/** Die Liste, in der Kontakte aus Meldungen des Dialers landen – wird beim ersten Kontakt angelegt (alle Kategorien erlaubt). */
+async function ensureDialerBatch(db: Db, config: Pick<CallQaConfig, "tenantId" | "provider">) {
+  const existing = (await db.select().from(rawBatches).where(eq(rawBatches.tenantId, config.tenantId))).find(isDialerBatch); if (existing) return existing;
+  const categories = await db.select({ id: leadCategories.id }).from(leadCategories).where(eq(leadCategories.tenantId, config.tenantId)).orderBy(asc(leadCategories.id));
+  if (!categories.length) return null; // ohne Kategorie kann kein Lead entstehen
+  const inserted = await db.insert(rawBatches).values({ tenantId: config.tenantId, name: "Kontakte vom Dialer", categoryId: categories[0].id, categoryIds: categories.map((item) => item.id), sourceName: config.provider === "ondialer" ? "OnDialer" : "Dialer", mapping: { auto: DIALER_BATCH_MARK }, rowCount: 0, createdByUserId: null });
+  return (await db.select().from(rawBatches).where(eq(rawBatches.id, Number(inserted[0]?.insertId) || 0)).limit(1))[0] ?? null;
+}
+async function allowBatchCategory(db: Db, batch: { id: number; categoryId: number; categoryIds: unknown }, categoryId: number) {
+  const ids = batchCategoryIds(batch); if (!ids.includes(categoryId)) await db.update(rawBatches).set({ categoryIds: [...ids, categoryId] }).where(eq(rawBatches.id, batch.id));
+}
+/** Kategorie für einen Kontakt vom Dialer: ausdrücklich genannt (Name oder Kürzel) – sonst die eine Kategorie, deren Name oder Kürzel als ganzes Wort im Kampagnennamen steht. */
+async function dialerCategoryId(db: Db, tenantId: number, contact: DialerContact, campaign: string | null): Promise<number | null> {
+  const categories = await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
+  const wanted = contact.category?.toLowerCase(); if (wanted) { const hit = categories.find((item) => item.name.toLowerCase() === wanted || item.shortcode.toLowerCase() === wanted); if (hit) return hit.id; }
+  const words = (value: string) => value.toLowerCase().replace(/[^a-z0-9äöüß]+/g, " ").trim(); const haystack = ` ${words(campaign ?? "")} `; if (!haystack.trim()) return null;
+  const hits = categories.filter((item) => [item.name, item.shortcode].some((label) => { const needle = words(label); return needle.length >= 2 && haystack.includes(` ${needle} `); }));
+  return hits.length === 1 ? hits[0].id : null;
+}
+async function createDialerContact(db: Db, config: Pick<CallQaConfig, "tenantId" | "provider">, input: { phone: string; campaign: string | null; contact: DialerContact }) {
+  const batch = await ensureDialerBatch(db, config); if (!batch) return undefined;
+  const categoryId = await dialerCategoryId(db, config.tenantId, input.contact, input.campaign); if (categoryId) await allowBatchCategory(db, batch, categoryId);
+  const phone = normalizeRawPhone(input.phone) ?? input.phone;
+  const inserted = await db.insert(rawContacts).values({ tenantId: config.tenantId, batchId: batch.id, categoryId, firstName: input.contact.firstName, lastName: input.contact.lastName, company: input.contact.company, phone, email: input.contact.email, postcode: input.contact.postcode, city: input.contact.city, country: input.contact.country, data: mergeDialerData({}, input.contact).data, status: "in_liste", note: "Vom Dialer gemeldet" });
+  await db.update(rawBatches).set({ rowCount: sql`${rawBatches.rowCount} + 1` }).where(eq(rawBatches.id, batch.id));
+  return { id: Number(inserted[0]?.insertId) || 0, phone, status: "in_liste" as const, leadId: null };
+}
+/** Fehlende Angaben am Lead ergänzen (nichts überschreiben); Zusatzfelder, Ergebnis und Notiz des Dialers dazu. */
+async function fillLeadFromDialer(db: Db, lead: typeof leads.$inferSelect, contact: DialerContact): Promise<boolean> {
+  const patch: Partial<typeof leads.$inferInsert> = {};
+  if (!lead.firstName && contact.firstName) patch.firstName = contact.firstName; if (!lead.lastName && contact.lastName) patch.lastName = contact.lastName; if (!lead.company && contact.company) patch.company = contact.company;
+  if (!lead.email && contact.email) patch.email = contact.email; if (!lead.postcode && contact.postcode) patch.postcode = contact.postcode; if (!lead.city && contact.city) patch.city = contact.city;
+  const merged = mergeDialerData(plainObject(lead.metadata) ? lead.metadata : {}, contact); if (merged.changed) patch.metadata = merged.data;
+  if (!Object.keys(patch).length) return false;
+  await db.update(leads).set(patch).where(eq(leads.id, lead.id)); return true;
+}
+async function fillRawContactFromDialer(db: Db, rawContactId: number, contact: DialerContact): Promise<boolean> {
+  const row = (await db.select().from(rawContacts).where(eq(rawContacts.id, rawContactId)).limit(1))[0]; if (!row) return false;
+  const patch: Partial<typeof rawContacts.$inferInsert> = {};
+  if (!row.firstName && contact.firstName) patch.firstName = contact.firstName; if (!row.lastName && contact.lastName) patch.lastName = contact.lastName; if (!row.company && contact.company) patch.company = contact.company;
+  if (!row.email && contact.email) patch.email = contact.email; if (!row.postcode && contact.postcode) patch.postcode = contact.postcode; if (!row.city && contact.city) patch.city = contact.city;
+  const merged = mergeDialerData(plainObject(row.data) ? row.data : {}, contact); if (merged.changed) patch.data = merged.data;
+  if (!Object.keys(patch).length) return false;
+  await db.update(rawContacts).set(patch).where(eq(rawContacts.id, row.id)); return true;
+}
+/** Kontakt aus der Dialer-Liste ohne eigene Kategorie: die Kategorie des Gesprächs (Thema laut KI) nehmen und für die Liste freigeben. */
+async function dialerContactCategory(db: Db, tenantId: number, rawContactId: number, callId: number): Promise<number | null> {
+  const contact = (await db.select({ categoryId: rawContacts.categoryId, batchId: rawContacts.batchId }).from(rawContacts).where(and(eq(rawContacts.id, rawContactId), eq(rawContacts.tenantId, tenantId))).limit(1))[0];
+  if (!contact || contact.categoryId) return null;
+  const batch = (await db.select().from(rawBatches).where(eq(rawBatches.id, contact.batchId)).limit(1))[0]; if (!batch || !isDialerBatch(batch)) return null;
+  const call = (await db.select({ leadCategoryId: callRecords.leadCategoryId }).from(callRecords).where(eq(callRecords.id, callId)).limit(1))[0]; if (!call?.leadCategoryId) return null;
+  await allowBatchCategory(db, batch, call.leadCategoryId); return call.leadCategoryId;
+}
+
 export async function ingestDialerCall(db: Db, token: string, payload: Record<string, unknown>, options: { fetchImpl?: typeof fetch } = {}) {
   const config = (await db.select().from(callQaConfigs).where(eq(callQaConfigs.webhookToken, token)).limit(1))[0];
   if (!config) return { status: 404, body: { error: "unknown webhook token" } };
   const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) };
-  const get = (key: keyof typeof DEFAULT_MAPPING) => readPath(payload, mapping[key]) ?? payload[key];
+  const get = (key: keyof typeof CALL_MAPPING) => readPath(payload, mapping[key]) ?? payload[key];
+  const contact = extractDialerContact(payload, mapping); // Kontakt, Ergebnis und Notiz – falls der Dialer sie mitschickt
+  const phone = text(get("phone")) || contact.phone || ""; const leadRef = text(get("leadId"));
   // Testmodus: "test": true → Felder und Aufnahme-Link prüfen, nichts speichern (für den Dialer-Entwickler beim Einrichten)
   if (truthy(payload.test) || truthy(payload.dry_run)) {
     const found: string[] = []; const missing: string[] = [];
-    for (const key of Object.keys(DEFAULT_MAPPING) as Array<keyof typeof DEFAULT_MAPPING>) { if (text(get(key)) || typeof get(key) === "boolean") found.push(mapping[key]); else missing.push(mapping[key]); }
-    const required = (["callId", "phone", "recordingUrl"] as const).filter((key) => !text(get(key))).map((key) => mapping[key]);
+    for (const key of Object.keys(CALL_MAPPING) as Array<keyof typeof CALL_MAPPING>) { if (text(get(key)) || typeof get(key) === "boolean") found.push(mapping[key]); else missing.push(mapping[key]); }
+    const required = (["callId", "phone", "recordingUrl"] as const).filter((key) => !(key === "phone" ? phone : text(get(key)))).map((key) => mapping[key]);
     const recordingUrl = text(get("recordingUrl")); let recording: Record<string, unknown> = { checked: false };
     if (recordingUrl) {
       const headers: Record<string, string> = {}; if (config.recordingAuthHeader) { const raw = decryptIntegrationSecret(config.recordingAuthHeader); const [name, ...rest] = raw.split(":"); if (rest.length) headers[name.trim().toLowerCase()] = rest.join(":").trim(); else headers.authorization = raw; }
@@ -237,23 +317,31 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
       catch (error) { recording = { checked: true, reachable: false, error: error instanceof Error ? error.message : String(error) }; }
     }
     const consent = truthy(get("consent")) || !config.consentRequired;
-    return { status: 200, body: { ok: required.length === 0 && (recording.reachable !== false), test: true, stored: false, enabled: config.enabled, fields_found: found, fields_missing: missing, required_missing: required, recording, would_evaluate: config.enabled && consent && required.length === 0 && recording.reachable !== false, reason: !config.enabled ? "Gesprächsbewertung ist in der App ausgeschaltet" : required.length ? `Pflichtfelder fehlen: ${required.join(", ")}` : recording.reachable === false ? "Aufnahme-Link nicht abrufbar" : !consent ? `Einwilligung erforderlich – Feld „${mapping.consent}“ muss true sein` : "alles in Ordnung", transcription: transcriptionService(config) } };
+    const known = phone || leadRef ? await findDialerTarget(db, config.tenantId, leadRef, phone) : { lead: undefined, rawContact: undefined };
+    const would = known.lead || known.rawContact ? (contact.hasData ? "updated" : "matched") : phone && contact.hasIdentity ? "created" : "none";
+    return { status: 200, body: { ok: required.length === 0 && (recording.reachable !== false), test: true, stored: false, enabled: config.enabled, fields_found: found, fields_missing: missing, required_missing: required, recording, contact: { found: contact.found, would }, would_evaluate: config.enabled && consent && required.length === 0 && recording.reachable !== false, reason: !config.enabled ? "Gesprächsbewertung ist in der App ausgeschaltet" : required.length ? `Pflichtfelder fehlen: ${required.join(", ")}` : recording.reachable === false ? "Aufnahme-Link nicht abrufbar" : !consent ? `Einwilligung erforderlich – Feld „${mapping.consent}“ muss true sein` : "alles in Ordnung", transcription: transcriptionService(config) } };
   }
   if (!config.enabled) return { status: 403, body: { error: "call evaluation disabled" } };
   const externalCallId = text(get("callId")) || null;
   if (externalCallId) { const existing = (await db.select({ id: callRecords.id, status: callRecords.status }).from(callRecords).where(and(eq(callRecords.tenantId, config.tenantId), eq(callRecords.externalCallId, externalCallId))).limit(1))[0]; if (existing) return { status: 200, body: { ok: true, call_id: existing.id, duplicate: true, status: existing.status } }; }
-  const phone = text(get("phone")); const leadRef = text(get("leadId"));
-  let lead = leadRef ? (await db.select().from(leads).where(and(eq(leads.tenantId, config.tenantId), eq(leads.kind, "verkauf"), or(eq(leads.publicId, leadRef), ...(Number.isInteger(Number(leadRef)) && Number(leadRef) > 0 ? [eq(leads.id, Number(leadRef))] : [])))).limit(1))[0] : undefined;
-  if (!lead && phone) { const digits = normalizePhone(phone); const candidates = await db.select().from(leads).where(and(eq(leads.tenantId, config.tenantId), eq(leads.kind, "verkauf"), or(eq(leads.phone, phone), eq(leads.phone, `+${digits}`), eq(leads.phone, `0${digits.replace(/^49/, "")}`)))).orderBy(desc(leads.createdAt)).limit(5); lead = candidates.find((row) => row.phone && normalizePhone(row.phone) === digits) ?? candidates[0]; }
-  // Kein Lead zur Nummer, aber ein Rohdaten-Kontakt (hochgeladene Callcenter-Liste): merken – „freigegeben“ macht ihn zum Lead, „zurückgewiesen“ verwirft ihn
-  const rawContact = !lead && phone ? await rawContactByPhone(db, config.tenantId, phone) : undefined;
+  const target = await findDialerTarget(db, config.tenantId, leadRef, phone); const lead = target.lead; let rawContact = target.rawContact;
+  const campaign = config.defaultCampaign?.trim() || text(get("campaign")) || null;
+  // Kontakt-Daten übernehmen: bekannten Lead oder Kontakt ergänzen – oder (Rufnummer unbekannt, Name oder Firma da) den Kontakt anlegen
+  let contactState: "created" | "updated" | "matched" | "none" = lead || rawContact ? "matched" : "none";
+  try {
+    if (lead) { if (contact.hasData && await fillLeadFromDialer(db, lead, contact)) contactState = "updated"; }
+    else if (rawContact) { if (contact.hasData && await fillRawContactFromDialer(db, rawContact.id, contact)) contactState = "updated"; }
+    else if (phone && contact.hasIdentity) { const created = await createDialerContact(db, config, { phone, campaign, contact }); if (created) { rawContact = created; contactState = "created"; } }
+  } catch (error) { console.error("[Dialer] Kontakt-Daten nicht übernommen:", error instanceof Error ? error.message : error); } // das Gespräch geht deshalb nie verloren
   const consent = truthy(get("consent")) || !config.consentRequired;
   const startedAtRaw = text(get("startedAt")); const startedAt = startedAtRaw && !Number.isNaN(new Date(startedAtRaw).getTime()) ? new Date(startedAtRaw) : new Date();
-  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: isJunkAgentName(text(get("agent"))) ? null : text(get("agent")), campaign: config.defaultCampaign?.trim() || text(get("campaign")) || null, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
+  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: isJunkAgentName(text(get("agent"))) ? null : text(get("agent")), campaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
   const callId = Number(inserted[0]?.insertId) || 0;
-  if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, evaluated: false, reason: "no consent" } }; }
+  if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, contact: contactState, evaluated: false, reason: "no consent" } }; }
   const result = await processCall(db, callId, options);
-  return { status: 200, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, evaluated: result.status === "bewertet", score: result.score, verdict: result.verdict, decision: result.decision, error: result.error } };
+  // Lead-Nummer auch dann nennen, wenn der Kontakt erst durch die Freigabe zum Lead wurde
+  const leadPublicId = lead?.publicId ?? (await db.select({ publicId: leads.publicId }).from(callRecords).innerJoin(leads, eq(leads.id, callRecords.leadId)).where(eq(callRecords.id, callId)).limit(1))[0]?.publicId ?? null;
+  return { status: 200, body: { ok: true, call_id: callId, lead_id: leadPublicId, contact: contactState, evaluated: result.status === "bewertet", score: result.score, verdict: result.verdict, decision: result.decision, error: result.error } };
 }
 
 /** Eingang aus dem eigenen Dialer (kein Webhook-Token nötig). */
@@ -527,12 +615,12 @@ export async function evaluateTranscript(config: Pick<CallQaConfig, "criteria" |
 /** Note als Text für Notizen: ohne Kriterien-Punkte steht dort nicht „0/100“. */
 const scoreText = (evaluation: Pick<Evaluation, "score" | "unscored">) => (evaluation.unscored ? "ohne Kriterien-Punkte" : `${evaluation.score}/100`);
 /** Entscheidungsregeln des Mandanten (erste passende Regel gewinnt), sonst Schwellenwerte. */
-export function decideCall(config: Pick<CallQaConfig, "autoApproveThreshold" | "autoRejectThreshold" | "decisionRules">, evaluation: Evaluation, transcript: string): { decision: "freigegeben" | "pruefen" | "zurueckgewiesen"; rule: DecisionRule | null } {
+export function decideCall(config: Pick<CallQaConfig, "autoApproveThreshold" | "autoRejectThreshold" | "decisionRules">, evaluation: Evaluation, transcript: string, context: { dialerResult?: string | null } = {}): { decision: "freigegeben" | "pruefen" | "zurueckgewiesen"; rule: DecisionRule | null } {
   const rules = (Array.isArray(config.decisionRules) ? config.decisionRules : []) as DecisionRule[];
   for (const rule of rules.filter((item) => item.active)) {
     let actual: string | number = "";
     if (evaluation.unscored && (rule.field === "score" || rule.field.startsWith("criterion:"))) continue; // ohne Punkte greift keine Punkte-Regel
-    if (rule.field === "score") actual = evaluation.score; else if (rule.field === "verdict") actual = evaluation.verdict; else if (rule.field === "redFlags") actual = evaluation.redFlags.join(" | "); else if (rule.field === "transcript") actual = transcript; else if (rule.field.startsWith("criterion:")) actual = evaluation.criteria.find((item) => item.key === rule.field.slice(10))?.score ?? 0;
+    if (rule.field === "score") actual = evaluation.score; else if (rule.field === "verdict") actual = evaluation.verdict; else if (rule.field === "redFlags") actual = evaluation.redFlags.join(" | "); else if (rule.field === "transcript") actual = transcript; else if (rule.field === "dialerResult") actual = context.dialerResult ?? ""; else if (rule.field.startsWith("criterion:")) actual = evaluation.criteria.find((item) => item.key === rule.field.slice(10))?.score ?? 0;
     const expectedNumber = Number(rule.value); const actualText = String(actual).toLowerCase(); const expectedText = rule.value.toLowerCase();
     const hit = rule.op === "gte" ? Number(actual) >= expectedNumber : rule.op === "lte" ? Number(actual) <= expectedNumber : rule.op === "eq" ? actualText === expectedText : rule.op === "contains" ? actualText.includes(expectedText) : rule.op === "any" ? actualText.trim().length > 0 : false;
     if (hit) return { decision: rule.decision, rule };
@@ -585,7 +673,8 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     if (!agentManual && !detectedAgent?.sure) { const fromAi = evaluation.agentName ? canonicalAgentName(evaluation.agentName, knownAgents) : null; await db.update(callRecords).set({ agentName: fromAi || agentName, agentSource: "ki" }).where(eq(callRecords.id, callId)); } // „ki“ = von der KI geprüft (findet sie keinen Namen, bleibt ein vorhandener echter Name stehen)
     // Lead-Kategorie: Thema laut KI (sonst Stichwörter) → vorhandene Kategorie oder neue
     if (!call.leadCategoryId) { const categoryId = await resolveCallCategory(db, call.tenantId, evaluation.topic || detectTopic(transcript)).catch(() => null); if (categoryId) await db.update(callRecords).set({ leadCategoryId: categoryId }).where(eq(callRecords.id, callId)); }
-    const decided = decideCall(config, evaluation, transcript); let decision = decided.decision; const rule = decided.rule;
+    const dialer = extractDialerContact(call.payload, { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }); // Ergebnis im Dialer – für eigene Regeln
+    const decided = decideCall(config, evaluation, transcript, { dialerResult: dialer.result }); let decision = decided.decision; const rule = decided.rule;
     const questions = await questionsForCampaign(db, call.tenantId, call.campaign);
     const qualificationAnswers = await answerQualification(questions, transcript);
     const byQuestions = decideByQuestions(questions, qualificationAnswers);
@@ -596,7 +685,7 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     let target = lead;
     if (!target && call.rawContactId) {
       // Rohdaten-Kontakt: die Freigabe macht ihn zum Lead (mit Auslieferung über die Regeln), Ablehnung verwirft ihn
-      if (decision === "freigegeben") { const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}` }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
+      if (decision === "freigegeben") { const categoryId = await dialerContactCategory(db, call.tenantId, call.rawContactId, callId); const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}`, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
       else if (decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Gesprächsbewertung ${scoreText(evaluation)}: ${evaluation.verdict}` }).where(and(eq(rawContacts.id, call.rawContactId), eq(rawContacts.status, "in_liste")));
     }
     if (target) {
@@ -637,7 +726,7 @@ export async function reviewCall(db: Db, tenantId: number, userId: number, input
   await db.update(callRecords).set({ decision: input.decision, decidedBy: "manuell", reviewedByUserId: userId, reviewedAt: new Date(), reviewNote: input.note?.slice(0, 500) ?? null }).where(eq(callRecords.id, call.id));
   let lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
   if (!lead && call.rawContactId) {
-    if (input.decision === "freigegeben") { const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}` }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
+    if (input.decision === "freigegeben") { const categoryId = await dialerContactCategory(db, tenantId, call.rawContactId, call.id); const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
     else if (input.decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Manuell zurückgewiesen${input.note ? `: ${input.note}` : ""}` }).where(and(eq(rawContacts.id, call.rawContactId), inArray(rawContacts.status, ["neu", "in_liste"])));
   }
   if (lead) await applyDecision(db, config, call.id, lead, input.decision, { score: call.score ?? 0, unscored: call.score === null, verdict: call.verdict ?? "unklar", summary: input.note ?? call.summary ?? "" }, userId);
@@ -896,7 +985,7 @@ export async function getCall(db: Db, tenantId: number, callId: number) {
   const scores = Array.isArray(row.call.criteriaScores) ? (row.call.criteriaScores as Evaluation["criteria"]) : [];
   const questions = await questionsForCampaign(db, tenantId, row.call.campaign);
   const unscored = row.call.status === "bewertet" && criteriaUnscored(row.call); // Kriterien-Punkte fehlen (werden automatisch nachgeholt) – nicht als 0 % zeigen
-  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
+  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, dialer: dialerInfo(row.call.payload, { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }), questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
 }
 
 export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null } = {}) {

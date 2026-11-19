@@ -1,0 +1,68 @@
+import { describe, expect, it } from "vitest";
+import { CONTACT_MAPPING, dialerInfo, extractDialerContact, mergeDialerData } from "../shared/dialer-contact";
+import { dialerGuideText } from "../shared/dialer-guide";
+import { DEFAULT_MAPPING, decideCall } from "./call-qa";
+
+describe("Kontakt in der Meldung des Dialers", () => {
+  it("liest den verschachtelten Kontakt samt weiteren Feldern, Ergebnis und Notiz", () => {
+    const contact = extractDialerContact({ call_id: "x", phone: "+49 6151 5550103", result: "Termin", note: "  Dach nach Süden ", callback_at: "2026-11-21T10:00:00+01:00", contact: { id: "C-88412", first_name: "Murat", last_name: "Yilmaz", company: "", street: "Hauptstraße 12", postcode: 64283, city: "Darmstadt", country: "DE", email: "Murat@Example.de", fields: { "Dachfläche": "60 m²", "Eigentümer": true, Baujahr: 1998, leer: "", liste: ["a", "b"] }, geburtsjahr: 1975 } });
+    expect(contact).toMatchObject({ externalId: "C-88412", firstName: "Murat", lastName: "Yilmaz", company: null, street: "Hauptstraße 12", postcode: "64283", city: "Darmstadt", country: "DE", email: "murat@example.de", result: "Termin", note: "Dach nach Süden", callbackAt: "2026-11-21T09:00:00.000Z", hasIdentity: true, hasData: true });
+    expect(contact.fields).toEqual({ "Dachfläche": "60 m²", "Eigentümer": "ja", Baujahr: "1998", liste: "a, b", geburtsjahr: "1975" });
+    expect(contact.found).toEqual(expect.arrayContaining(["contact.id", "contact.first_name", "contact.last_name", "contact.street", "contact.postcode", "contact.city", "contact.country", "contact.email", "contact.fields (5)", "result", "note", "callback_at"]));
+    expect(contact.found).not.toContain("contact.company");
+  });
+
+  it("erkennt flache und deutsche Feldnamen, den ganzen Namen und die Hausnummer", () => {
+    const flat = extractDialerContact({ call_id: "x", phone: "0171 1234567", vorname: "Anna", nachname: "Berg", firma: "Helios Solar", strasse: "Am Markt", hausnummer: "3a", plz: "35390", ort: "Gießen", land: "Österreich", "e-mail": "anna@helios.example", contact_id: 4711, ergebnis: "kein Interesse", kommentar: "nicht mehr anrufen" });
+    expect(flat).toMatchObject({ firstName: "Anna", lastName: "Berg", company: "Helios Solar", street: "Am Markt 3a", postcode: "35390", city: "Gießen", country: "AT", email: "anna@helios.example", externalId: "4711", result: "kein Interesse", note: "nicht mehr anrufen" });
+    const named = extractDialerContact({ phone: "1", kontakt: { name: "Dr. Jürgen Müller", telefon: "+49 30 1" } }); expect(named).toMatchObject({ firstName: "Dr. Jürgen", lastName: "Müller", phone: "+49 30 1", hasIdentity: true });
+    expect(extractDialerContact({ customer: { name: "Müller" } })).toMatchObject({ firstName: null, lastName: "Müller" });
+    expect(extractDialerContact({ contact_first_name: "Eva", contact_last_name: "Roth", customer_email: "eva@example.de" })).toMatchObject({ firstName: "Eva", lastName: "Roth", email: "eva@example.de" });
+  });
+
+  it("allgemeine Namen neben der Rufnummer zählen nicht als Kontakt – und ohne Angaben gibt es keinen", () => {
+    const plain = extractDialerContact({ call_id: "c1", id: "777", name: "Kampagne Herbst", phone: "+49 30 1234567", agent: "Yilmaz", campaign: "PV", direction: "outbound", started_at: "2026-11-05T09:15:00+01:00", duration: 312, recording_url: "https://x/y.mp3", consent: true, data: { a: 1 }, lead_id: "API-1A2B3C4D" });
+    expect(plain).toMatchObject({ externalId: null, firstName: null, lastName: null, phone: null, hasIdentity: false, hasData: false }); expect(plain.fields).toEqual({}); expect(plain.found).toEqual([]);
+    expect(extractDialerContact(null).hasData).toBe(false); expect(extractDialerContact("text").hasData).toBe(false);
+    expect(extractDialerContact({ contact: { email: "kein-at-zeichen" } })).toMatchObject({ email: null, hasData: false });
+    expect(extractDialerContact({ result: "Termin" })).toMatchObject({ hasIdentity: false, hasData: true }); // nur ein Ergebnis: reicht zum Ergänzen, nicht zum Anlegen
+  });
+
+  it("eigene Zuordnung: Pfade aus den Einstellungen gehen vor", () => {
+    const mapped = extractDialerContact({ kunde_daten: { vn: "Eva", nn: "Roth" }, abschluss_code: "TERMIN", meta: { felder: { Dach: "Süd" } } }, { ...CONTACT_MAPPING, firstName: "kunde_daten.vn", lastName: "kunde_daten.nn", result: "abschluss_code", contactFields: "meta.felder" });
+    expect(mapped).toMatchObject({ firstName: "Eva", lastName: "Roth", result: "TERMIN" }); expect(mapped.fields).toEqual({ Dach: "Süd" });
+  });
+
+  it("zusammenführen: Vorhandenes bleibt, Ergebnis und Notiz gelten vom letzten Gespräch", () => {
+    const contact = extractDialerContact({ result: "Termin", note: "neu", contact: { id: "C-1", first_name: "A", street: "Neue Str. 1", fields: { Dach: "Süd", Baujahr: "1998" } } });
+    const first = mergeDialerData({ street: "Alte Str. 9", Baujahr: "", dialerResult: "Rückruf", fremd: 1 }, contact);
+    expect(first.changed).toBe(true); expect(first.data).toEqual({ street: "Alte Str. 9", Baujahr: "1998", Dach: "Süd", dialerContactId: "C-1", dialerResult: "Termin", dialerNote: "neu", fremd: 1 });
+    expect(mergeDialerData(first.data, contact).changed).toBe(false); // zweimal dasselbe ändert nichts
+    expect(mergeDialerData(null, extractDialerContact({ phone: "1" }))).toEqual({ data: {}, changed: false });
+  });
+
+  it("Kurzfassung für die Anzeige im Gespräch", () => {
+    expect(dialerInfo({ call_id: "x", phone: "1" })).toBeNull();
+    expect(dialerInfo({ result: "Termin", contact: { first_name: "Murat", last_name: "Yilmaz", postcode: "64283", city: "Darmstadt", fields: { Dach: "Süd" } } })).toMatchObject({ result: "Termin", name: "Murat Yilmaz", place: "64283 Darmstadt", fields: [{ label: "Dach", value: "Süd" }] });
+  });
+
+  it("Regel auf das Ergebnis im Dialer", () => {
+    const config = { autoApproveThreshold: 70, autoRejectThreshold: 30, decisionRules: [{ id: "r1", label: "Kein Interesse laut Dialer", field: "dialerResult", op: "contains", value: "kein interesse", decision: "zurueckgewiesen", active: true }] } as never;
+    const evaluation = { score: 90, verdict: "verkaufbar", criteria: [], summary: "", redFlags: [], nextStep: "", extracted: {}, unscored: false } as never;
+    expect(decideCall(config, evaluation, "…", { dialerResult: "Kein Interesse" })).toMatchObject({ decision: "zurueckgewiesen", rule: { id: "r1" } });
+    expect(decideCall(config, evaluation, "…", { dialerResult: "Termin" })).toMatchObject({ decision: "freigegeben", rule: null });
+    expect(decideCall(config, evaluation, "…")).toMatchObject({ decision: "freigegeben", rule: null }); // ohne Ergebnis greift die Regel nicht
+  });
+
+  it("die Anleitung für den Entwickler nennt die Kontakt-Felder, das Beispiel mit Kontakt und die Antwort", () => {
+    const text = dialerGuideText({ webhookUrl: "https://app.example/api/partner/ondialer/geheim123", fieldMapping: DEFAULT_MAPPING, consentRequired: true, recordingAuthHeader: false });
+    expect(text).toContain("## Kontakt mitschicken");
+    for (const field of ["contact.id", "contact.first_name", "contact.last_name", "contact.company", "contact.street", "contact.postcode", "contact.city", "contact.country", "contact.email", "contact.fields", "result", "note", "callback_at"]) expect(text).toContain(`| \`${field}\` |`);
+    expect(text).toContain("\"contact\": {\n    \"id\": \"C-88412\",\n    \"first_name\": \"Murat\""); expect(text).toContain("\"result\": \"Termin\"");
+    expect(text).toContain("`\"contact\": \"created\"`"); expect(text).toContain("`would`"); expect(text).toContain("`vorname`");
+    expect(text).not.toMatch(/tanesco|fluxora/i);
+    // eigene Namen für die Kontakt-Felder erscheinen in Tabelle und Beispiel
+    const own = dialerGuideText({ webhookUrl: "https://app.example/x", fieldMapping: { ...DEFAULT_MAPPING, firstName: "kunde.vorname", result: "abschluss" }, consentRequired: true, recordingAuthHeader: false });
+    expect(own).toContain("| `kunde.vorname` | Vorname |"); expect(own).toContain("\"kunde\": {\n    \"vorname\": \"Murat\""); expect(own).toContain("\"abschluss\": \"Termin\"");
+  });
+});

@@ -3,6 +3,7 @@ import { SCOPE_LABEL } from "../../../shared/call-qualification";
 import OptInPanel, { OptInBadge } from "@/components/OptInPanel";
 import type { OptInKind, OptInStatus } from "../../../shared/opt-in";
 import { dialerGuideText } from "../../../shared/dialer-guide";
+import { CONTACT_MAPPING, CONTACT_MAPPING_LABELS } from "../../../shared/dialer-contact";
 import { CALL_QA_PRESETS } from "../../../shared/call-qa-presets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -469,6 +470,8 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
   const data = call.data;
   const mood = moodOf(data); const started = data.startedAt ? new Date(data.startedAt) : null; const contactName = data.leadName ?? data.rawContact?.name ?? null;
   const recordingSource = (data as { recordingSource?: string | null }).recordingSource ?? null;
+  const dialer = data.dialer ?? null; // was der Dialer zum Kontakt mitgeschickt hat (Name, Anschrift, weitere Felder, Notiz)
+  const dialerFacts: Array<[string, string]> = dialer ? ([["Name", dialer.name], ["Firma", dialer.company], ["Straße", dialer.street], ["PLZ und Ort", dialer.place], ["E-Mail", dialer.email], ["Kontakt-Nummer im Dialer", dialer.contactId], ["Rückruf oder Termin", dialer.callbackAt && !Number.isNaN(new Date(dialer.callbackAt).getTime()) ? `${new Date(dialer.callbackAt).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })} Uhr` : dialer.callbackAt]] as Array<[string, string | null]>).filter((item): item is [string, string] => Boolean(item[1])) : [];
   return <div className="grid gap-4 gq-detail">
     <div className="gq-detail-bar"><button type="button" className="gq-back" onClick={onBack}><ChevronLeft aria-hidden="true" />Alle Gespräche</button><Button variant="outline" size="sm" className="gq-danger" disabled={remove.isPending} onClick={async () => { if (!(await confirmAction("Dieses Gespräch samt Transkript, Bewertung und hochgeladener Aufnahme endgültig löschen? Der Kontakt/Lead bleibt erhalten.", { confirmLabel: "Löschen", danger: true }))) return; remove.mutate({ callId }); }}>Gespräch löschen</Button></div>
     <section className="gq-stage gq-call-stage" aria-label="Ergebnis des Gesprächs">
@@ -491,6 +494,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
         <div><dt>Kampagne</dt><dd>{data.campaign ?? data.provider}</dd></div>
         {data.category ? <div><dt>Lead-Kategorie</dt><dd title="Von der KI aus dem Gespräch erkannt">{data.category.emoji ? `${data.category.emoji} ` : ""}{data.category.name}</dd></div> : null}
         <div><dt>Einwilligung zur Aufnahme</dt><dd>{data.consent ? `Ja (${data.consentSource ?? "Dialer"})` : "Nein"}</dd></div>
+        {dialer?.result ? <div><dt>Ergebnis im Dialer</dt><dd>{dialer.result}</dd></div> : null}
       </dl>
       {(data.summary || data.nextStep || data.error || data.redFlags.length > 0) && <div className="gq-call-notes">
         {data.summary && <p className="gq-call-summary">{data.summary}</p>}
@@ -508,6 +512,11 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
       <div className="gq-decide-foot"><div className="gq-tools"><button type="button" className="cq-tool" disabled={reevaluate.isPending || data.status === "ohne_einwilligung"} title="Das Gespräch nach den aktuellen Regeln der Kampagne neu bewerten" onClick={() => reevaluate.mutate({ callId })}><RefreshCw aria-hidden="true" /><span>Neu bewerten</span></button>{data.leadId && <button type="button" className="cq-tool" title="Einwilligungsstelle aus der Abschrift als Opt-in-Nachweis anlegen (ohne Freigabe)" disabled={optInFromCall.isPending} onClick={() => optInFromCall.mutate({ callId })}><FileCheck2 aria-hidden="true" /><span>Opt-in aus Gespräch</span></button>}</div>
         <div className="gq-assign"><Input value={linkId} placeholder="Lead-ID zuordnen" aria-label="Lead-ID zuordnen" onChange={(event) => setLinkId(event.target.value)} /><Button size="sm" variant="outline" onClick={() => link.mutate({ callId, publicId: linkId.trim() })} disabled={!linkId.trim()}>Zuordnen</Button></div></div>
     </section>
+    {dialer && (dialerFacts.length > 0 || dialer.fields.length > 0 || dialer.note) && <section className="surface-panel operations-panel gq-panel gq-dialer" aria-label="Vom Dialer gemeldet">
+      <div className="gq-panel-head"><div><h2>Vom Dialer gemeldet</h2><p>Diese Angaben hat der Dialer mit dem Gespräch geschickt. {data.leadPublicId ? "Sie stehen im Lead; vorhandene Angaben wurden nicht überschrieben." : "Bei einer Freigabe wird daraus der Lead."}</p></div></div>
+      {(dialerFacts.length > 0 || dialer.fields.length > 0) && <dl className="gq-dialer-facts">{dialerFacts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}{dialer.fields.map((field) => <div key={field.label} className="is-extra"><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>}
+      {dialer.note && <p className="gq-dialer-note"><b>Notiz des Agenten</b>{dialer.note}</p>}
+    </section>}
     {data.leadPublicId && <section className="surface-panel operations-panel gq-panel"><OptInPanel publicId={data.leadPublicId} onChanged={refresh} /></section>}
     <div className="gq-detail-grid">
       <section className="surface-panel operations-panel gq-panel" aria-label="Prüffragen">
@@ -664,8 +673,12 @@ function SettingsForm({ data, onDone, tab, onTab, onOpenCall }: { data: Settings
         </div>
         <details className="gs-details"><summary><span><b>Felder des Dialers zuordnen</b><small>Nur nötig, wenn der Dialer andere Feldnamen schickt als üblich.</small></span><ChevronDown aria-hidden="true" /></summary><div className="gs-details-body">
           <p>Welches Feld im Webhook des Dialers welche Bedeutung hat (Punkt-Schreibweise für verschachtelte Felder, z. B. call.id). Die Vorgaben passen zu einem Standard-Webhook; nach Erhalt der OnDialer-Dokumentation hier anpassen.</p>
+          <h4 className="gs-map-title">Zum Gespräch</h4>
           <div className="gs-map">{mappingKeys.map(([key, label]) => <label key={key} className="gs-field">{label}<Input value={form.fieldMapping[key]} onChange={(event) => patch({ fieldMapping: { ...form.fieldMapping, [key]: event.target.value } })} /></label>)}</div>
-          <p>Beispiel, wie der Webhook aussehen sollte:</p><pre>{sample}</pre>
+          <h4 className="gs-map-title">Zum Kontakt <span>wenn der Dialer den ganzen Kontakt mitschickt</span></h4>
+          <div className="gs-map is-contact">{CONTACT_MAPPING_LABELS.map(([key, label]) => <label key={key} className="gs-field">{label}<Input value={(form.fieldMapping as Record<string, string>)[key] ?? CONTACT_MAPPING[key]} onChange={(event) => patch({ fieldMapping: { ...form.fieldMapping, [key]: event.target.value } })} /></label>)}</div>
+          <p>Kennt die Software die Rufnummer noch nicht, legt sie den Kontakt selbst an (Liste „Kontakte vom Dialer“ unter „Rohdaten“). Ein grünes Gespräch macht ihn zum Lead, ein rotes verwirft ihn. Deutsche Feldnamen wie <code>vorname</code>, <code>plz</code> oder <code>ort</code> werden auch ohne Zuordnung erkannt.</p>
+          <p>Beispiel, wie der Webhook aussehen sollte (mit Kontakt: Knopf „Anleitung für den Dialer-Entwickler kopieren“):</p><pre>{sample}</pre>
           <p>Für den Entwickler des Dialers: Ein Aufruf der Adresse im Browser (GET) zeigt, ob alles stimmt. Ein Testgespräch mit <code>"test": true</code> prüft Felder und Aufnahme-Link, ohne etwas zu speichern.</p>
         </div></details>
       </section>}
@@ -720,9 +733,9 @@ function SettingsForm({ data, onDone, tab, onTab, onOpenCall }: { data: Settings
           <Switch plain checked={rule.active} onChange={(value) => setRule(index, { active: value })} label={rule.active ? "Aktiv" : "Aus"} />
           <button type="button" className="gs-x" aria-label={`Regel ${index + 1} entfernen`} title="Entfernen" onClick={() => patch({ decisionRules: form.decisionRules.filter((_, i) => i !== index) })}><X aria-hidden="true" /></button>
           <div className="gs-rule-line"><span>Wenn</span>
-            <select className="gs-select" aria-label="Was geprüft wird" value={rule.field} onChange={(event) => setRule(index, { field: event.target.value as typeof rule.field })}><option value="score">Gesamtpunkte</option><option value="verdict">Urteil</option><option value="redFlags">Warnsignale</option><option value="transcript">Transkript</option>{form.criteria.map((criterion) => <option key={criterion.key} value={`criterion:${criterion.key}`}>Kriterium: {criterion.label}</option>)}</select>
+            <select className="gs-select" aria-label="Was geprüft wird" value={rule.field} onChange={(event) => setRule(index, { field: event.target.value as typeof rule.field })}><option value="score">Gesamtpunkte</option><option value="verdict">Urteil</option><option value="redFlags">Warnsignale</option><option value="transcript">Transkript</option><option value="dialerResult">Ergebnis im Dialer</option>{form.criteria.map((criterion) => <option key={criterion.key} value={`criterion:${criterion.key}`}>Kriterium: {criterion.label}</option>)}</select>
             <select className="gs-select" aria-label="Vergleich" value={rule.op} onChange={(event) => setRule(index, { op: event.target.value as typeof rule.op })}><option value="gte">mindestens</option><option value="lte">höchstens</option><option value="eq">ist genau</option><option value="contains">enthält</option><option value="any">ist vorhanden</option></select>
-            {rule.op === "any" ? <i className="gs-rule-gap" aria-hidden="true" /> : <Input aria-label="Wert" value={rule.value} placeholder={rule.field === "verdict" ? "verkaufbar / nachfassen / nicht_verkaufbar" : rule.field === "transcript" ? "Wort oder Satz" : "Zahl"} onChange={(event) => setRule(index, { value: event.target.value })} />}
+            {rule.op === "any" ? <i className="gs-rule-gap" aria-hidden="true" /> : <Input aria-label="Wert" value={rule.value} placeholder={rule.field === "verdict" ? "verkaufbar / nachfassen / nicht_verkaufbar" : rule.field === "transcript" ? "Wort oder Satz" : rule.field === "dialerResult" ? "z. B. kein Interesse" : "Zahl"} onChange={(event) => setRule(index, { value: event.target.value })} />}
             <span>dann</span>
             <select className="gs-select" aria-label="Entscheidung" value={rule.decision} onChange={(event) => setRule(index, { decision: event.target.value as typeof rule.decision })}><option value="freigegeben">freigeben</option><option value="pruefen">zur Prüfung</option><option value="zurueckgewiesen">zurückweisen</option></select></div>
         </li>)}</ol>

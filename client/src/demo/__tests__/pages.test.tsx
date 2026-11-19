@@ -935,3 +935,38 @@ describe("Gespräche – Fenster „Aufnahmen testen“ und Opt-in-Nachweise im 
     expect(view.container.querySelector(".gq-detail .opt-in-head .eyebrow")).toBeNull();
   });
 });
+
+describe("Gespräche – der Dialer schickt den ganzen Kontakt mit", () => {
+  beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
+  it("ein Gespräch zeigt, was der Dialer zum Kontakt gemeldet hat – samt Ergebnis und Notiz", async () => {
+    const call = getStore().tables.callRecords.find((item: any) => item.payload?.contact)!; expect(call).toBeTruthy();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`); const { view } = mount(); await settle(700); const root = view.container;
+    const panel = root.querySelector<HTMLElement>(".gq-dialer")!; expect(panel).toBeTruthy(); expect(panel.querySelector("h2")?.textContent).toBe("Vom Dialer gemeldet");
+    const facts = Object.fromEntries(Array.from(panel.querySelectorAll(".gq-dialer-facts > div")).map((node) => [node.querySelector("dt")!.textContent, node.querySelector("dd")!.textContent]));
+    expect(facts).toMatchObject({ "Straße": "Hauptstraße 12", "Kontakt-Nummer im Dialer": "C-88412", "Mitarbeiter": "12" }); expect(facts.Name).toBeTruthy(); expect(facts["PLZ und Ort"]).toBeTruthy();
+    expect(panel.querySelector(".gq-dialer-note")?.textContent).toContain("Preis ist das Thema");
+    const stageFacts = Object.fromEntries(Array.from(root.querySelectorAll(".gq-call-facts > div")).map((node) => [node.querySelector("dt")!.textContent, node.querySelector("dd")!.textContent]));
+    expect(stageFacts["Ergebnis im Dialer"]).toBe("Angebot gewünscht");
+    // ein Gespräch ohne Kontakt-Daten hat den Bereich nicht
+    const other = getStore().tables.callRecords.find((item: any) => !item.payload && item.status === "bewertet")!; expect(other).toBeTruthy(); cleanup();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${other.id}`); const second = mount(); await settle(700);
+    expect(second.view.container.querySelector(".gq-decide")).toBeTruthy(); expect(second.view.container.querySelector(".gq-dialer")).toBeNull();
+  });
+
+  it("Dialer & Bewertung: Kontakt-Felder lassen sich zuordnen, und Regeln können das Ergebnis im Dialer prüfen", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche&view=Einstellungen"); const { view } = mount(); await settle(600); const root = view.container;
+    const labels = Array.from(root.querySelectorAll(".gs-map.is-contact .gs-field")).map((node) => node.childNodes[0].textContent);
+    expect(labels).toEqual(["Kontakt-Nummer des Dialers", "Vorname", "Nachname", "Firma", "Straße mit Hausnummer", "PLZ", "Ort", "Land", "E-Mail", "Weitere Felder (Name-Wert-Paare)", "Ergebnis im Dialer", "Notiz des Agenten", "Rückruf oder Termin"]);
+    const inputs = Array.from(root.querySelectorAll<HTMLInputElement>(".gs-map.is-contact input")); expect(inputs.map((node) => node.value).slice(0, 3)).toEqual(["contact.id", "contact.first_name", "contact.last_name"]);
+    await act(async () => { fireEvent.change(inputs[1], { target: { value: "kunde.vorname" } }); }); await settle(150);
+    expect(root.querySelector(".gs-save-state")?.textContent).toContain("Anbindung");
+    await act(async () => { fireEvent.click(Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-savebar button")).find((node) => /speichern/i.test(node.textContent ?? ""))!); }); await settle(700);
+    expect((getStore().tables.callQaConfigs[0] as any).fieldMapping).toMatchObject({ firstName: "kunde.vorname", lastName: "contact.last_name", callId: "call_id" });
+    // Regel auf das Ergebnis im Dialer
+    await act(async () => { fireEvent.click(Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-rail .gs-nav")).find((node) => node.querySelector("b")?.textContent === "Eigene Regeln")!); }); await settle(300);
+    await act(async () => { fireEvent.click(Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-add")).find((node) => /Regel hinzufügen/.test(node.textContent ?? ""))!); }); await settle(200);
+    const field = root.querySelector<HTMLSelectElement>(".gs-rule .gs-rule-line select")!; expect(Array.from(field.options).map((option) => option.textContent)).toContain("Ergebnis im Dialer");
+    await act(async () => { fireEvent.change(field, { target: { value: "dialerResult" } }); }); await settle(150);
+    expect(root.querySelector<HTMLInputElement>(".gs-rule .gs-rule-line input")!.placeholder).toBe("z. B. kein Interesse");
+  });
+});

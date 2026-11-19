@@ -103,7 +103,7 @@ beforeAll(async () => {
   owner = appRouter.createCaller({ user: { id: ownerUserId } } as never);
   invitee = appRouter.createCaller({ user: { id: inviteeUserId } } as never);
 
-  const app = express(); app.use(express.json({ limit: "5mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8"); } })); registerPublicApiRoutes(app);
+  const app = express(); app.use(express.json({ limit: "5mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8"); } })); app.use(express.urlencoded({ limit: "5mb", extended: true })); /* wie im echten Server: Formularfelder (z. B. vom Dialer) */ registerPublicApiRoutes(app);
   server = app.listen(0, "127.0.0.1"); await new Promise((resolve) => server.once("listening", resolve));
   apiBase = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
@@ -4328,6 +4328,69 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.listCalls({})).find((item) => item.externalCallId === "od-2001")).toMatchObject({ agentName: "Yilmaz", campaign: "PV Herbst", status: "bewertet" });
     // Duplikat (OnDialer schickt noch einmal) → nichts doppelt
     expect((await post({ call_id: "od-2001", phone: "+49 30 9177 6001", recording_url: "https://dialer.example/recordings-later/2001.mp3", consent: true })).json).toMatchObject({ ok: true, duplicate: true });
+  }, 60000);
+
+  it("63zra. OnDialer schickt den ganzen Kontakt: unbekannte Rufnummer → Kontakt angelegt, Freigabe macht ihn zum Lead mit allen Angaben; bekannter Lead wird ergänzt; Testmodus nennt die erkannten Felder; Regel auf das Ergebnis im Dialer", async () => {
+    const { callRecords: callsTable, rawContacts: rawTable, rawBatches: batchTable, leadCategories: catTable } = await import("../drizzle/schema");
+    const settings = await owner.leadops.getCallQaSettings(); expect(settings.enabled).toBe(true);
+    expect(settings.fieldMapping).toMatchObject({ callId: "call_id", firstName: "contact.first_name", postcode: "contact.postcode", result: "result", contactFields: "contact.fields" }); // die Kontakt-Felder gehören zur Zuordnung
+    const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    expect((await (await fetch(dialerUrl)).json()).expected_fields).toMatchObject({ firstName: "contact.first_name", city: "contact.city", note: "note" });
+    const pv = (await db.select().from(catTable).where(eq(catTable.id, S.pv.id)))[0];
+    const good = "Agent: Guten Tag, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar.";
+    const contact = { id: "C-88412", first_name: "Murat", last_name: "Yilmaz", company: "", street: "Hauptstraße 12", postcode: "64283", city: "Darmstadt", country: "DE", email: "Murat.Yilmaz@example.de", fields: { "Dachfläche": "60 m²", Baujahr: 1998 } };
+    // Testmodus: nennt die erkannten Kontakt-Felder und was geschehen würde – gespeichert wird nichts
+    const probe = await post({ test: true, call_id: "od-k-test", phone: "+49 6151 5550103", recording_url: "https://dialer.example/recordings/test.mp3", consent: true, result: "Termin", contact });
+    expect(probe.json).toMatchObject({ ok: true, test: true, stored: false, contact: { would: "created" } });
+    expect(probe.json.contact.found).toEqual(expect.arrayContaining(["contact.id", "contact.first_name", "contact.last_name", "contact.street", "contact.postcode", "contact.city", "contact.email", "contact.fields (2)", "result"]));
+    expect(await db.select().from(rawTable).where(eq(rawTable.phone, "+4961515550103"))).toHaveLength(0);
+    // (a) Rufnummer unbekannt: Kontakt wird angelegt, das grüne Gespräch macht ihn zum Lead – mit Anschrift, weiteren Feldern, Ergebnis und Notiz
+    const first = await post({ call_id: "od-k-1", phone: "+49 6151 5550103", agent: "Yilmaz", campaign: `${pv.shortcode} Dialer Herbst`, started_at: new Date().toISOString(), duration: 300, consent: true, transcript: good, result: "Termin", note: "Dach nach Süden", callback_at: "2026-11-21T10:00:00+01:00", contact });
+    expect(first.status).toBe(200); expect(first.json).toMatchObject({ ok: true, contact: "created", evaluated: true, decision: "freigegeben" }); expect(first.json.lead_id).toBeTruthy();
+    const raw = (await db.select().from(rawTable).where(eq(rawTable.phone, "+4961515550103")))[0];
+    expect(raw).toMatchObject({ firstName: "Murat", lastName: "Yilmaz", company: null, postcode: "64283", city: "Darmstadt", country: "DE", email: "murat.yilmaz@example.de", status: "konvertiert", categoryId: pv.id }); // Kategorie aus dem Kampagnennamen
+    const batch = (await db.select().from(batchTable).where(eq(batchTable.id, raw.batchId)))[0];
+    expect(batch).toMatchObject({ name: "Kontakte vom Dialer", sourceName: "OnDialer", rowCount: 1 }); expect(batch.mapping).toEqual({ auto: "dialer" });
+    const lead = await leadRow(first.json.lead_id);
+    expect(lead).toMatchObject({ firstName: "Murat", lastName: "Yilmaz", phone: "+4961515550103", postcode: "64283", city: "Darmstadt", categoryId: pv.id, supplierName: "OnDialer" }); expect(["genehmigt", "zugewiesen"]).toContain(lead.status);
+    expect(lead.metadata).toMatchObject({ street: "Hauptstraße 12", "Dachfläche": "60 m²", Baujahr: "1998", dialerContactId: "C-88412", dialerResult: "Termin", dialerNote: "Dach nach Süden", dialerCallbackAt: "2026-11-21T09:00:00.000Z", callDecision: "freigegeben" });
+    const record = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-k-1")))[0]; expect(record.rawContactId).toBe(raw.id); expect(record.leadId).toBe(lead.id);
+    const detail = await owner.leadops.getCall({ callId: first.json.call_id });
+    expect(detail.dialer).toMatchObject({ result: "Termin", note: "Dach nach Süden", name: "Murat Yilmaz", street: "Hauptstraße 12", place: "64283 Darmstadt", contactId: "C-88412" }); expect(detail.dialer!.fields).toEqual(expect.arrayContaining([{ label: "Dachfläche", value: "60 m²" }]));
+    expect((await owner.leadops.listCalls({})).find((item) => item.externalCallId === "od-k-1")).toMatchObject({ leadPublicId: first.json.lead_id, leadName: "Murat Yilmaz" });
+    // dieselbe Rufnummer noch einmal: kein zweiter Kontakt, kein zweiter Lead – das Gespräch hängt am vorhandenen Lead
+    const again = await post({ call_id: "od-k-1b", phone: "06151 5550103", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch.", result: "Rückruf", contact: { ...contact, street: "Andere Straße 9" } });
+    expect(again.json).toMatchObject({ contact: "updated", lead_id: first.json.lead_id }); // nur das Ergebnis des Dialers ist neu
+    expect(await db.select().from(rawTable).where(eq(rawTable.batchId, raw.batchId))).toHaveLength(1);
+    expect((await leadRow(first.json.lead_id)).metadata).toMatchObject({ street: "Hauptstraße 12", dialerResult: "Rückruf" });
+    // (b) bekannter Lead: fehlende Angaben werden ergänzt, vorhandene nie überschrieben
+    const known = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Karla", lastName: "Kennt", phone: "+49 40 777123", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    const second = await post({ call_id: "od-k-2", phone: "+49 40 777123", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch.", contact: { first_name: "Anders", last_name: "Name", email: "karla@example.de", postcode: "20095", city: "Hamburg", street: "Neue Straße 5", fields: { heizungsart: "Öl", Baujahr: "1988" } } });
+    expect(second.json).toMatchObject({ ok: true, contact: "updated", lead_id: known.publicId });
+    const knownRow = await leadRow(known.publicId);
+    expect(knownRow).toMatchObject({ firstName: "Karla", lastName: "Kennt", email: "karla@example.de", postcode: "20095", city: "Hamburg" });
+    expect(knownRow.metadata).toMatchObject({ heizungsart: "Strom", street: "Neue Straße 5", Baujahr: "1988" });
+    expect((await post({ call_id: "od-k-3", phone: "+49 40 777123", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch." })).json).toMatchObject({ contact: "matched", lead_id: known.publicId }); // ohne Kontakt-Daten: wie bisher
+    expect((await post({ call_id: "od-k-4", phone: "+49 40 777999", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch." })).json).toMatchObject({ contact: "none", lead_id: null }); // unbekannt und keine Daten: kein Kontakt
+    expect((await post({ call_id: "od-k-4b", phone: "+49 40 777998", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch.", contact: { email: "nur@mail.example" } })).json).toMatchObject({ contact: "none" }); // ohne Namen oder Firma wird nichts angelegt
+    // (c) flache deutsche Feldnamen (Formularfelder) – und die Rufnummer nur im Kontakt
+    const flat = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ call_id: "od-k-5", phone: "+49 6151 5550150", consent: "true", transcript: "Agent: Hallo. Kunde: Ich überlege noch.", vorname: "Anna", nachname: "Berg", strasse: "Am Markt", hausnummer: "3a", plz: "35390", ort: "Gießen", ergebnis: "Rückruf" }).toString() });
+    expect(await flat.json()).toMatchObject({ ok: true, contact: "created", decision: "pruefen", lead_id: null });
+    const flatRaw = (await db.select().from(rawTable).where(eq(rawTable.phone, "+4961515550150")))[0];
+    expect(flatRaw).toMatchObject({ firstName: "Anna", lastName: "Berg", postcode: "35390", city: "Gießen", status: "in_liste", leadId: null }); expect(flatRaw.data).toMatchObject({ street: "Am Markt 3a", dialerResult: "Rückruf" });
+    // von Hand freigeben → Lead; ohne Kategorie am Kontakt gilt die Kategorie der Liste oder die des Gesprächs
+    await owner.leadops.reviewCall({ callId: (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-k-5")))[0].id, decision: "freigegeben", note: "Rückruf war gut." });
+    const flatAfter = (await db.select().from(rawTable).where(eq(rawTable.id, flatRaw.id)))[0]; expect(flatAfter.status).toBe("konvertiert"); expect(flatAfter.leadId).toBeTruthy();
+    // (d) eigene Regel auf das Ergebnis im Dialer: „kein Interesse“ weist zurück, auch wenn das Gespräch gut klingt – der Kontakt wird verworfen
+    const current = await owner.leadops.getCallQaSettings();
+    await owner.leadops.saveCallQaSettings({ ...current, recordingAuthHeader: "••••••••", decisionRules: [...current.decisionRules, { id: "r-dialer", label: "Kein Interesse laut Dialer", field: "dialerResult", op: "contains", value: "kein interesse", decision: "zurueckgewiesen", active: true }] } as never);
+    try {
+      const refused = await post({ call_id: "od-k-6", phone: "+49 6151 5550199", consent: true, transcript: good, result: "Kein Interesse", contact: { first_name: "Nina", last_name: "Nein" } });
+      expect(refused.json).toMatchObject({ contact: "created", decision: "zurueckgewiesen", lead_id: null });
+      expect((await db.select().from(rawTable).where(eq(rawTable.phone, "+4961515550199")))[0]).toMatchObject({ status: "verworfen", leadId: null });
+    } finally { await owner.leadops.saveCallQaSettings({ ...current, recordingAuthHeader: "••••••••" } as never); }
+    expect((await owner.leadops.getCallQaSettings()).decisionRules.some((rule) => rule.id === "r-dialer")).toBe(false);
   }, 60000);
 
   it("63zs. Aufnahmen per Link: Player-Seite → Datei-Link, Dauer und Agent aus der Aufnahme, Kampagne umbenennen", async () => {
