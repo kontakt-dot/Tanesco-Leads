@@ -684,8 +684,8 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     await db.update(callRecords).set({ status: "bewertet", score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.unscored ? (evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : []) : evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", error: null }).where(eq(callRecords.id, callId));
     let target = lead;
     if (!target && call.rawContactId) {
-      // Rohdaten-Kontakt: die Freigabe macht ihn zum Lead (mit Auslieferung über die Regeln), Ablehnung verwirft ihn
-      if (decision === "freigegeben") { const categoryId = await dialerContactCategory(db, call.tenantId, call.rawContactId, callId); const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}`, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
+      // Rohdaten-Kontakt: die Freigabe macht ihn zum Lead, Ablehnung verwirft ihn. Über die Regeln ausgeliefert wird nur, wenn die Auslieferung eingeschaltet ist – sonst bleibt der Lead liegen („nur empfangen“)
+      if (decision === "freigegeben") { const categoryId = await dialerContactCategory(db, call.tenantId, call.rawContactId, callId); const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}`, skipAutomations: !config.autoDeliver, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
       else if (decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Gesprächsbewertung ${scoreText(evaluation)}: ${evaluation.verdict}` }).where(and(eq(rawContacts.id, call.rawContactId), eq(rawContacts.status, "in_liste")));
     }
     if (target) {
@@ -726,7 +726,7 @@ export async function reviewCall(db: Db, tenantId: number, userId: number, input
   await db.update(callRecords).set({ decision: input.decision, decidedBy: "manuell", reviewedByUserId: userId, reviewedAt: new Date(), reviewNote: input.note?.slice(0, 500) ?? null }).where(eq(callRecords.id, call.id));
   let lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
   if (!lead && call.rawContactId) {
-    if (input.decision === "freigegeben") { const categoryId = await dialerContactCategory(db, tenantId, call.rawContactId, call.id); const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
+    if (input.decision === "freigegeben") { const categoryId = await dialerContactCategory(db, tenantId, call.rawContactId, call.id); const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, skipAutomations: !config.autoDeliver, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
     else if (input.decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Manuell zurückgewiesen${input.note ? `: ${input.note}` : ""}` }).where(and(eq(rawContacts.id, call.rawContactId), inArray(rawContacts.status, ["neu", "in_liste"])));
   }
   if (lead) await applyDecision(db, config, call.id, lead, input.decision, { score: call.score ?? 0, unscored: call.score === null, verdict: call.verdict ?? "unklar", summary: input.note ?? call.summary ?? "" }, userId);
@@ -894,6 +894,24 @@ export async function setDefaultCampaign(db: Db, tenantId: number, campaign: str
   return { success: true as const, defaultCampaign: name };
 }
 
+/**
+ * Einmalige Einrichtung (gewünscht, 19.11.2026): Leads vom Dialer erst einmal nur empfangen. Bei jeder Gesprächsbewertung, die es an
+ * diesem Tag schon gab, wird die Auslieferung nach der Freigabe einmal ausgeschaltet – freigegebene Leads bleiben liegen, bis sie von Hand
+ * weitergegeben werden. Danach gehört der Schalter dem Mandanten: Wieder einschalten bleibt (Merker `receiveOnly`). Später angelegte
+ * Mandanten sind nicht betroffen.
+ */
+export const RECEIVE_ONLY_BEFORE = new Date("2026-11-21T00:00:00Z");
+export async function ensureReceiveOnly(db: Db, before: Date = RECEIVE_ONLY_BEFORE): Promise<number> {
+  let changed = 0;
+  for (const row of await db.select({ id: callQaConfigs.id, autoDeliver: callQaConfigs.autoDeliver, setupMarks: callQaConfigs.setupMarks, createdAt: callQaConfigs.createdAt }).from(callQaConfigs)) {
+    const marks = (row.setupMarks && typeof row.setupMarks === "object" && !Array.isArray(row.setupMarks) ? row.setupMarks : {}) as Record<string, string>;
+    if (marks.receiveOnly || row.createdAt.getTime() >= before.getTime()) continue;
+    await db.update(callQaConfigs).set({ autoDeliver: false, setupMarks: { ...marks, receiveOnly: new Date().toISOString() } }).where(eq(callQaConfigs.id, row.id));
+    if (row.autoDeliver) changed += 1;
+  }
+  return changed;
+}
+
 /** Einmalige Einrichtung (gewünscht): Kampagne „Wattfox PV und WP“ mit den Regeln der Vorlage – Gespräche aus „Wattfox PV“ hängen um. Nur bei Mandanten, die die Vorlage nutzen. */
 export const WATTFOX_CAMPAIGN = "Wattfox PV und WP";
 export async function ensureWattfoxCampaign(db: Db): Promise<number> {
@@ -985,7 +1003,7 @@ export async function getCall(db: Db, tenantId: number, callId: number) {
   const scores = Array.isArray(row.call.criteriaScores) ? (row.call.criteriaScores as Evaluation["criteria"]) : [];
   const questions = await questionsForCampaign(db, tenantId, row.call.campaign);
   const unscored = row.call.status === "bewertet" && criteriaUnscored(row.call); // Kriterien-Punkte fehlen (werden automatisch nachgeholt) – nicht als 0 % zeigen
-  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, dialer: dialerInfo(row.call.payload, { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }), questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
+  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, autoDeliver: config.autoDeliver, dialer: dialerInfo(row.call.payload, { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }), questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
 }
 
 export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null } = {}) {

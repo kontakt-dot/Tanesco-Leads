@@ -113,8 +113,10 @@ export async function listContacts(db: Db, tenantId: number, filter: { batchId?:
 /**
  * Rohdaten-Kontakt zum Lead machen. `deferAutomations`: die „Lead erstellt“-Automatik noch nicht ausführen (Opt-in-Start mitten im
  * Gespräch) – sie läuft nach, sobald das Anruf-Ergebnis gesetzt wird (Merker `automationPending` in den Metadaten).
+ * `skipAutomations`: gar keine Automatik – der Lead wird nur angelegt und bleibt liegen („nur empfangen“: Die Gesprächsbewertung
+ * liefert nichts aus, solange die Auslieferung dort ausgeschaltet ist). Kein Merker, es läuft auch später nichts von selbst nach.
  */
-export async function convertRawContact(db: Db, tenantId: number, rawContactId: number, options: { actorUserId: number | null; initialStatus?: "neu" | "genehmigt"; note?: string | null; categoryId?: number | null; deferAutomations?: boolean }) {
+export async function convertRawContact(db: Db, tenantId: number, rawContactId: number, options: { actorUserId: number | null; initialStatus?: "neu" | "genehmigt"; note?: string | null; categoryId?: number | null; deferAutomations?: boolean; skipAutomations?: boolean }) {
   const contact = (await db.select().from(rawContacts).where(and(eq(rawContacts.id, rawContactId), eq(rawContacts.tenantId, tenantId))).limit(1))[0];
   if (!contact) throw new Error("Rohdaten-Kontakt wurde nicht gefunden.");
   if (contact.leadId) { const existing = (await db.select({ id: leads.id, publicId: leads.publicId }).from(leads).where(eq(leads.id, contact.leadId)).limit(1))[0]; if (existing) return { leadId: existing.id, publicId: existing.publicId, alreadyConverted: true as const, automation: null }; }
@@ -131,8 +133,9 @@ export async function convertRawContact(db: Db, tenantId: number, rawContactId: 
   const leadId = Number(inserted[0]?.insertId) || 0;
   await db.insert(leadStatusEvents).values({ tenantId, leadId, nextStatus: initialStatus, actorUserId: options.actorUserId, note: `Aus Rohdaten übernommen (${batch.name})${options.note ? ` – ${options.note}` : ""}` });
   await db.update(rawContacts).set({ status: "konvertiert", leadId, categoryId, note: options.note?.slice(0, 320) ?? contact.note }).where(eq(rawContacts.id, contact.id));
-  const automation = options.deferAutomations ? null : await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "lead_erstellt" });
-  if (initialStatus === "genehmigt" && !options.deferAutomations) await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "status_geändert" });
+  const quiet = Boolean(options.deferAutomations || options.skipAutomations);
+  const automation = quiet ? null : await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "lead_erstellt" });
+  if (initialStatus === "genehmigt" && !quiet) await triggerLeadAutomations(db, { tenantId, actorUserId: options.actorUserId, leadId, triggerType: "status_geändert" });
   return { leadId, publicId, alreadyConverted: false as const, automation };
 }
 

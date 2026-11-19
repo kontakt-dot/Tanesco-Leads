@@ -18,7 +18,7 @@ html:not(.dark) .cl-folders{
   --fo-line:#e4e7ec;--fo-edge:#b9c0cb;--fo-bg:#ffffff;--fo-ink:#17130f;
   --fo-plate:#f2f4f7;--fo-plate-ink:#475467;--fo-count-bg:#f2f4f7;--fo-count:#344054;--fo-lift:0 10px 20px -14px rgba(16,24,40,.4);
   --fo-on-bg:linear-gradient(90deg,#bc001d,#fb2c36);--fo-on-ink:#ffffff;--fo-on-plate:rgba(255,255,255,.2);--fo-on-count-bg:#ffffff;--fo-on-count:#bc001d;--fo-on-shadow:0 8px 18px -10px rgba(16,24,40,.55);
-  --fo-drop:#98a2b3;--fo-over-bg:#17130f;--fo-over-ink:#ffffff;--fo-focus:#bc001d;--fo-sticky:#ffffff;
+  --fo-drop:#bc001d;--fo-over-bg:#bc001d;--fo-over-ink:#ffffff;--fo-focus:#bc001d;--fo-sticky:#ffffff;
 }
 .cl-folder-rail{display:contents} /* Ordner und „Neuer Ordner“ fließen in einer Reihe */
 .cl-folder{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;height:40px;padding:0;border-radius:13px;border:1px solid var(--fo-line);background:var(--fo-bg);color:var(--fo-ink);font-size:13.5px;font-weight:600;line-height:1;transition:border-color .15s,box-shadow .15s,transform .15s}
@@ -55,7 +55,7 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cl-folder-actions .cl-folder-act{height:40px;padding:0 14px 0 12px;border-radius:13px;border:1px dashed var(--fo-edge);font-size:13.5px}
 .cl-folder-actions .cl-folder-act:hover{border-style:solid}
 html:not(.dark) .cl-folder-actions .cl-folder-act{border-color:#cfd4dc!important}
-html:not(.dark) .cl-folder-actions .cl-folder-act:hover{border-color:#17130f!important;background:#ffffff!important;color:#17130f!important}
+html:not(.dark) .cl-folder-actions .cl-folder-act:hover{border-color:#bc001d!important;background:#ffffff!important;color:#bc001d!important}
 /* Handy: Ordner in einer Reihe zum Wischen, „Neuer Ordner“ darunter */
 @media(max-width:720px){
   .cl-folders{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:8px}

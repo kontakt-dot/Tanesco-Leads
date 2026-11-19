@@ -547,6 +547,26 @@ describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", ()
     cleanup(); const again = await open(); expect(again.container.querySelector(".gq-stage.is-inset")).toBeTruthy();
   });
 
+  it("Smileys sind Kugeln mit Gesicht: in der Liste und groß im Gespräch sitzen sie im Ring, jede Kugel bringt ihren eigenen Verlauf mit", async () => {
+    const view = await open(); const root = view.container; const rows = callRows(root); expect(rows.length).toBeGreaterThan(5);
+    for (const row of rows) { const ring = row.querySelector(".gq-ampel svg.cq-ring")!; expect(ring.querySelector(".cq-ring-track")).toBeTruthy(); expect(ring.querySelectorAll(".cq-orb").length).toBe(1); expect(ring.getAttribute("class")).toMatch(/is-(gruen|gelb|rot|offen)/); }
+    const full = rows.find((row) => row.className.includes("is-gruen"))!.querySelector(".cq-ring-share")!; expect(full.getAttribute("stroke-dasharray")).toMatch(/^\d+(\.\d+)? \d+(\.\d+)?$/);
+    expect(rows.filter((row) => row.className.includes("is-offen")).every((row) => !row.querySelector(".cq-ring-share"))).toBe(true); // „noch nicht bewertet“: leerer Ring, drei Punkte
+    expect(root.querySelectorAll(".gq-tally-item svg.cq-face .cq-orb").length).toBe(4); // Zähler: Kugel ohne Ring
+    // jede Kugel hat eigene Verläufe – keine Kennung doppelt, jede Füllung findet ihren Verlauf
+    const ids = Array.from(root.querySelectorAll(".cq-face linearGradient, .cq-face radialGradient, .cq-ring linearGradient, .cq-ring radialGradient")).map((node) => node.id);
+    expect(ids.length).toBe((rows.length + 4) * 3); expect(ids.every((id) => /^cq[a-zA-Z0-9_-]+[abc]$/.test(id))).toBe(true); expect(new Set(ids).size).toBe(ids.length);
+    for (const shape of Array.from(root.querySelectorAll(".cq-orb > circle, .cq-orb > ellipse"))) expect(ids).toContain((shape.getAttribute("fill") ?? "").replace(/^url\(#/, "").replace(/\)$/, ""));
+    // Mimik: Grün lacht (gefüllter Mund), Rot hat einen Bogen nach unten, Grau drei Punkte – auch ohne Farbe zu unterscheiden
+    const face = (mood: string) => root.querySelector(`.gq-tally-item.is-${mood} .cq-face .cq-orb g > g:last-child`)!;
+    expect(face("gruen").querySelectorAll("path").length).toBe(3); expect(face("gelb").querySelectorAll("circle").length).toBe(2); expect(face("rot").querySelectorAll("circle").length).toBe(2); expect(face("offen").querySelectorAll("circle").length).toBe(3); expect(face("offen").querySelector("path")).toBeNull();
+    // groß im Gespräch: derselbe Smiley im Ring, mit Augenbrauen beim roten
+    const red = getStore().tables.callRecords.find((item: any) => item.status === "bewertet" && item.decision === "zurueckgewiesen")!; cleanup();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${red.id}`); const detail = mount().view.container; await settle(600);
+    const big = detail.querySelector(".gq-call-main .cq-mood.is-lg svg.cq-ring")!; expect(big).toBeTruthy(); expect(big.getAttribute("width")).toBe("84"); expect(big.getAttribute("class")).toContain("is-rot");
+    expect(big.querySelectorAll(".cq-orb g > g:last-child path").length).toBe(3); // zwei Brauen und der Mund
+  });
+
   it("jedes Gespräch ist eine Karte: Ampel im Ring, Uhrzeit mit Dauer, worum es ging, Agent mit Kampagne, Ergebnis", async () => {
     const view = await open(); const root = view.container; const rows = callRows(root); expect(rows.length).toBeGreaterThan(5);
     expect(Array.from(root.querySelectorAll(".gq-table thead th")).map((node) => (node.textContent ?? "").replace("ⓘ", "").trim())).toEqual(["", "Ampel", "Uhrzeit", "Gespräch", "Agent, Kampagne", "Ergebnis", "Öffnen"]);
@@ -912,6 +932,33 @@ describe("Gespräche – Dialer & Bewertung: Abschnitte mit Stand, ein Abschnitt
     expect(getStore().tables.callRecords.length).toBe(calls + 1); const result = root.querySelector<HTMLElement>(".gs-result")!; expect(result).toBeTruthy(); expect(result.textContent).toMatch(/Urteil der KI: .+ Entscheidung: .+/);
     await click(result.querySelector("button"), 800);
     expect(new URLSearchParams(window.location.search).get("callId")).toBe(String(getStore().tables.callRecords[getStore().tables.callRecords.length - 1].id)); expect(root.querySelector(".gq-decide")).toBeTruthy();
+  });
+
+  it("Anbindung: freigegebene Leads nur empfangen oder sofort ausliefern – die Wahl wird gespeichert und steht im Gespräch", async () => {
+    const root = await open(); expect(config().autoDeliver).toBe(true);
+    const modes = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-deliver .gs-mode")); expect(modes().map((node) => node.querySelector("b")?.textContent)).toEqual(["Nur empfangen", "Sofort ausliefern"]);
+    expect(modes().map((node) => node.getAttribute("aria-checked"))).toEqual(["false", "true"]); expect(root.querySelector(".gs-deliver-head p")!.textContent).toContain("zu den Käufern");
+    await click(modes()[0]);
+    expect(modes().map((node) => node.className.includes("is-on"))).toEqual([true, false]); expect(modes().map((node) => node.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    expect(root.querySelector(".gs-deliver-head p")!.textContent).toContain("bleiben unter „Leads“ liegen");
+    expect(root.querySelector(".gs-savebar")!.className).toContain("is-dirty"); expect(nav(root, "Anbindung")!.querySelector(".gs-nav-dot")).toBeTruthy(); expect(nav(root, "Kriterien und Ampel")!.querySelector(".gs-nav-dot")).toBeNull(); // die Änderung gehört zur Anbindung
+    await click(nav(root, "Kriterien und Ampel")); expect(root.querySelector(".gs-after .gs-switch")).toBeNull(); // der Schalter steht nur noch an einer Stelle
+    expect(Array.from(root.querySelectorAll(".gs-field small")).some((node) => (node.textContent ?? "").includes("bleibt bei dir liegen"))).toBe(true);
+    await click(saveButton(root), 700); expect(config().autoDeliver).toBe(false);
+    // im Gespräch: „Freigeben“ ohne „& verkaufen“ – und der Hinweis sagt, dass nichts weitergeleitet wird
+    const call = getStore().tables.callRecords.find((item: any) => item.status === "bewertet")!; cleanup();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`); const detail = mount().view.container; await settle(600);
+    expect(Array.from(detail.querySelectorAll(".gq-choices .gq-choice")).map((node) => node.textContent)).toEqual(["Freigeben", "Zur Prüfung", "Zurückweisen"]);
+    expect(detail.querySelector(".gq-decide .gq-panel-head p")!.textContent).toContain("Leads werden gerade nur empfangen");
+  });
+
+  it("nur empfangen: Die Freigabe macht den Kontakt aus den Rohdaten zum Lead – keine Regel läuft, nichts wird zugeteilt", async () => {
+    const tables = getStore().tables as any; const row = tables.callRecords.find((item: any) => item.rawContactId && !item.leadId && item.status === "bewertet" && item.decision !== "freigegeben"); expect(row).toBeTruthy();
+    const approve = async () => { window.history.replaceState(null, "", `/?page=Gespräche&callId=${row.id}`); const detail = mount().view.container; await settle(600); await click(Array.from(detail.querySelectorAll<HTMLButtonElement>(".gq-choices .gq-choice"))[0], 700); cleanup(); return getStore().tables as any; };
+    const runs = () => (getStore().tables as any).automationExecutionLogs?.length ?? 0;
+    tables.callQaConfigs[0].autoDeliver = false; const before = runs();
+    const after = await approve(); const contact = after.rawContacts.find((item: any) => item.id === row.rawContactId); expect(contact.status).toBe("konvertiert");
+    const lead = after.leads.find((item: any) => item.id === contact.leadId); expect(lead.status).toBe("genehmigt"); expect(lead.metadata.automationPending).toBeUndefined(); expect(runs()).toBe(before);
   });
 });
 

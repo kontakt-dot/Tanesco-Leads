@@ -4393,6 +4393,60 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.getCallQaSettings()).decisionRules.some((rule) => rule.id === "r-dialer")).toBe(false);
   }, 60000);
 
+  it("63zrb. Nur empfangen: Ist die Auslieferung ausgeschaltet, wird der Kontakt vom Dialer zum Lead und bleibt liegen – keine Regel läuft, auch nicht bei der Freigabe von Hand; eingeschaltet laufen die Regeln; die einmalige Umstellung schaltet genau einmal aus", async () => {
+    const { callQaConfigs: configTable, rawContacts: rawTable, automationRules } = await import("../drizzle/schema");
+    const { ensureReceiveOnly } = await import("./call-qa");
+    const settings = await owner.leadops.getCallQaSettings(); expect(settings.enabled).toBe(true); expect(settings.autoDeliver).toBe(true);
+    const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    const good = "Agent: Guten Tag, es geht um Ihre Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar.";
+    // eigene Kategorie mit zwei Regeln, die nie zutreffen: Läuft die Automatik, stehen sie als „übersprungen“ im Protokoll – ohne jede Nebenwirkung
+    const category = await owner.leadops.createCategory({ shortcode: "NUR-E2E", name: "Nur empfangen Test", defaultLeadPrice: "10.00" });
+    const never = [{ field: "city", operator: "gleich", value: "Nirgendwo" }];
+    const onCreate = await owner.leadops.createAutomationRule({ name: "Probe: neuer Lead", triggerType: "lead_erstellt", sourceCategoryId: category.id!, targetCategoryId: category.id!, conditions: never, actionType: "lead_tags_setzen", actionConfig: {}, status: "aktiv" } as never);
+    const onStatus = await owner.leadops.createAutomationRule({ name: "Probe: Statuswechsel", triggerType: "status_geändert", sourceCategoryId: category.id!, targetCategoryId: category.id!, conditions: never, actionType: "lead_tags_setzen", actionConfig: {}, status: "aktiv" } as never);
+    const ruleIds = (await db.select({ id: automationRules.id }).from(automationRules).where(and(eq(automationRules.tenantId, S.tenantId), eq(automationRules.sourceCategoryId, category.id!)))).map((row) => row.id).sort((a, b) => a - b); expect(ruleIds).toHaveLength(2);
+    const logsFor = async (leadId: number) => db.select().from(automationExecutionLogs).where(eq(automationExecutionLogs.sourceLeadId, leadId));
+    const save = async (autoDeliver: boolean) => { const current = await owner.leadops.getCallQaSettings(); await owner.leadops.saveCallQaSettings({ ...current, recordingAuthHeader: "••••••••", autoDeliver } as never); expect((await owner.leadops.getCallQaSettings()).autoDeliver).toBe(autoDeliver); };
+    const allConfigs = await db.select({ id: configTable.id, autoDeliver: configTable.autoDeliver, setupMarks: configTable.setupMarks }).from(configTable); // für das Zurückstellen am Ende
+    try {
+      // (a) Auslieferung aus: Der Kontakt kommt an, wird nach dem guten Gespräch zum Lead – und bleibt liegen
+      await save(false);
+      const quiet = await post({ call_id: "od-n-1", phone: "+49 6151 5550301", campaign: "NUR-E2E Herbst", consent: true, transcript: good, contact: { first_name: "Nora", last_name: "Nur", postcode: "64283", city: "Darmstadt" } });
+      expect(quiet.json).toMatchObject({ ok: true, contact: "created", evaluated: true, decision: "freigegeben" }); expect(quiet.json.lead_id).toBeTruthy();
+      const quietLead = await leadRow(quiet.json.lead_id);
+      expect(quietLead).toMatchObject({ status: "genehmigt", categoryId: category.id, firstName: "Nora", lastName: "Nur", supplierName: "OnDialer" }); expect(quietLead.metadata).not.toHaveProperty("automationPending"); // kein Merker: es läuft auch später nichts von selbst nach
+      expect(await logsFor(quietLead.id)).toHaveLength(0);
+      expect((await owner.leadops.getCall({ callId: quiet.json.call_id })).autoDeliver).toBe(false);
+      // Freigabe von Hand: auch dann wird nichts weitergeleitet
+      const manual = await post({ call_id: "od-n-2", phone: "+49 6151 5550302", campaign: "NUR-E2E Herbst", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch.", contact: { first_name: "Hanna", last_name: "Hand" } });
+      expect(manual.json).toMatchObject({ contact: "created", decision: "pruefen", lead_id: null });
+      await owner.leadops.reviewCall({ callId: manual.json.call_id, decision: "freigegeben", note: "Passt." });
+      const manualRaw = (await db.select().from(rawTable).where(eq(rawTable.phone, "+4961515550302")))[0]; expect(manualRaw.status).toBe("konvertiert");
+      const manualLead = (await db.select().from(leads).where(eq(leads.id, manualRaw.leadId!)))[0]; expect(manualLead).toMatchObject({ status: "genehmigt", categoryId: category.id }); expect(await logsFor(manualLead.id)).toHaveLength(0);
+      // (b) Auslieferung an: dieselbe Art Meldung – jetzt laufen beide Regeln („Lead erstellt“ und „Statuswechsel“)
+      await save(true);
+      const loud = await post({ call_id: "od-n-3", phone: "+49 6151 5550303", campaign: "NUR-E2E Herbst", consent: true, transcript: good, contact: { first_name: "Lars", last_name: "Laut" } });
+      expect(loud.json).toMatchObject({ contact: "created", decision: "freigegeben" });
+      const loudLead = await leadRow(loud.json.lead_id); const loudLogs = await logsFor(loudLead.id);
+      expect(loudLogs.map((row) => row.ruleId).sort((a, b) => a - b)).toEqual(ruleIds); expect(loudLogs.every((row) => row.result === "übersprungen")).toBe(true);
+      expect((await owner.leadops.getCall({ callId: loud.json.call_id })).autoDeliver).toBe(true);
+      // (c) Einmalige Umstellung („erst einmal nur empfangen“): schaltet die Auslieferung genau einmal aus – wieder einschalten bleibt
+      const own = async () => (await db.select().from(configTable).where(eq(configTable.tenantId, S.tenantId)))[0];
+      expect(((await own()).setupMarks as Record<string, string> | null)?.receiveOnly).toBeUndefined();
+      await ensureReceiveOnly(db, new Date(Date.now() - 86_400_000)); expect((await own()).autoDeliver).toBe(true); expect(((await own()).setupMarks as Record<string, string> | null)?.receiveOnly).toBeUndefined(); // erst nach dem Stichtag angelegt: nicht betroffen
+      expect(await ensureReceiveOnly(db, new Date(Date.now() + 60_000))).toBeGreaterThanOrEqual(1);
+      const switched = await own(); expect(switched.autoDeliver).toBe(false); expect((switched.setupMarks as Record<string, string>).receiveOnly).toBeTruthy();
+      expect((await owner.leadops.getCallQaSettings()).autoDeliver).toBe(false);
+      await save(true); // der Mandant schaltet wieder ein …
+      expect(await ensureReceiveOnly(db, new Date(Date.now() + 60_000))).toBe(0); expect((await own()).autoDeliver).toBe(true); // … und das bleibt so
+    } finally {
+      for (const row of allConfigs) await db.update(configTable).set({ autoDeliver: row.autoDeliver, setupMarks: row.setupMarks }).where(eq(configTable.id, row.id));
+      for (const id of ruleIds) await owner.leadops.deleteAutomationRule({ id });
+    }
+    expect((await owner.leadops.getCallQaSettings()).autoDeliver).toBe(true); void onCreate; void onStatus;
+  }, 60000);
+
   it("63zs. Aufnahmen per Link: Player-Seite → Datei-Link, Dauer und Agent aus der Aufnahme, Kampagne umbenennen", async () => {
     const { importRecordingLinks } = await import("./call-qa"); const { callRecords: callsTable } = await import("../drizzle/schema");
     S.transcriptVerbose = true; S.transcriptForStub = "Agent: Guten Tag, hier ist Maya Becker von HausKompass. Es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja, gerne – ich bin Eigentümer.";
