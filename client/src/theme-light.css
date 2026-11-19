@@ -2658,7 +2658,7 @@ html:not(.dark) .builder-drawer .bg-slate-950\/40, html:not(.dark) .builder-draw
    clean & weiß, viel Weißraum, Website-Rot (#BC001D → #FB2C36) als einziger Akzent, sehr fette Titel (900),
    weiche großflächige Schatten, große Radien (14/16/24 px), Inter, dunkle Navy-Fläche mit roten Glows für die Navigation.
    ====================================================================================================== */
-html:not(.dark) { --primary: #bc001d; --ring: #bc001d; --acc1: 188, 0, 29; --acc2: 251, 44, 54; --font-sans: "Inter", system-ui, -apple-system, sans-serif; }
+html:not(.dark) { --primary: #bc001d; --ring: #344054; --acc1: 188, 0, 29; --acc2: 251, 44, 54; --font-sans: "Inter", system-ui, -apple-system, sans-serif; }
 html:not(.dark) body, html:not(.dark) .flux-shell, html:not(.dark) button, html:not(.dark) input, html:not(.dark) select, html:not(.dark) textarea { font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
 /* Flächen */
 html:not(.dark) .flux-shell { background: #f9fafb !important; background-attachment: initial; }
@@ -2766,7 +2766,7 @@ html:not(.dark) .lead-price { border-color: #009966 !important; color: #007a52 !
 html:not(.dark) .flow-node-badge { background: rgba(0, 153, 102, .10) !important; color: #007a52 !important; border-color: rgba(0, 153, 102, .3) !important; }
 /* Eingaben: weiß, 1 px gray-200, r 10 px, roter Fokusring */
 html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]), html:not(.dark) select, html:not(.dark) textarea { border-color: #e5e7eb !important; border-radius: 10px !important; background: #ffffff !important; color: #101828 !important; }
-html:not(.dark) input:focus-visible, html:not(.dark) select:focus-visible, html:not(.dark) textarea:focus-visible { outline: 2px solid rgba(16, 24, 40, .14) !important; outline-offset: 1px; border-color: #bc001d !important; }
+html:not(.dark) input:focus-visible, html:not(.dark) select:focus-visible, html:not(.dark) textarea:focus-visible { outline: 2px solid rgba(16, 24, 40, .16) !important; outline-offset: 1px; border-color: #101828 !important; }
 html:not(.dark) .filter-select, html:not(.dark) select.filter-select, html:not(.dark) .search-field { border-color: #e5e7eb !important; border-radius: 10px !important; }
 /* Tabellen */
 html:not(.dark) .lead-panel th, html:not(.dark) .category-panel th, html:not(.dark) .flux-table th { color: #6a7282 !important; }

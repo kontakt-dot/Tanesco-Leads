@@ -706,3 +706,77 @@ describe("Verträge – Stand, Spur, die fünf Schritte und Vorlagen", () => {
     await click(button(starter("leadliefervertrag"), "Vertrag daraus"), 900); expect(root.querySelector("h1")?.textContent).toBe("Neuer Vertrag");
   });
 });
+
+describe("Verträge – direkt im Dokument bearbeiten", () => {
+  beforeEach(() => { cleanup(); resetStore(); });
+  afterEach(() => { document.querySelectorAll(".app-confirm-backdrop").forEach((node) => node.remove()); cleanup(); resetStore(); });
+  const click = async (node: Element | null | undefined, wait = 300) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.click(node!); }); await settle(wait); };
+  const type = async (node: Element | null | undefined, value: string) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.change(node!, { target: { value } }); }); await settle(80); };
+  const openNew = async () => {
+    window.history.replaceState(null, "", "/?page=Verträge"); const { view } = mount(); await settle(600); const root = view.container;
+    await click(root.querySelector(".vt-head-actions .flux-button")); await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".starter-menu button")).find((node) => node.querySelector("strong")?.textContent === "Leadliefervertrag"), 700);
+    return root;
+  };
+  const todo = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLButtonElement>(".vd-todo button"));
+  const todoTexts = (root: HTMLElement) => todo(root).map((node) => node.textContent ?? "");
+  const blocks = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLElement>(".vd-sheet > .vd-block"));
+  const field = (scope: Element, label: string) => Array.from(scope.querySelectorAll<HTMLLabelElement>(".ct-field")).find((node) => node.querySelector("span")?.textContent === label)?.querySelector<HTMLInputElement>("input");
+
+  it("ein Klick macht die Stelle im Blatt bearbeitbar; Kunde und Angaben werden dort ausgefüllt, rechts stehen die offenen Punkte", async () => {
+    const root = await openNew();
+    expect(root.querySelector("h1")?.textContent).toBe("Neuer Vertrag"); expect(root.querySelector(".vd-sheet")).toBeTruthy();
+    expect(root.querySelector(".ct-blocks")).toBeNull(); expect(root.querySelector(".ct-editor-preview")).toBeNull(); // die lange Baustein-Liste und die getrennte Vorschau gibt es nicht mehr
+    const count = blocks(root).length; expect(count).toBeGreaterThan(20);
+    expect(todoTexts(root)).toEqual(expect.arrayContaining(["Kunde eintragen", "E-Mail des Kunden eintragen", "Liefergebiet ausfüllen", "Preis je Lead (netto) ausfüllen", "Selbst unterschreiben"]));
+    expect(Array.from(root.querySelectorAll(".vd-outline button")).map((node) => node.textContent)).toEqual(expect.arrayContaining(["§ 1 Gegenstand des Vertrags", "§ 7 Reklamation"]));
+    // Text: ein Klick macht aus dem Absatz ein Textfeld mit den Platzhaltern – geschrieben wird genau dort
+    const text = root.querySelector<HTMLElement>(".vd-block.is-text")!; expect(text.querySelector("textarea")).toBeNull();
+    await click(text); expect(text.classList.contains("is-active")).toBe(true);
+    const area = text.querySelector<HTMLTextAreaElement>("textarea.vd-text")!; expect(area.value).toContain("{{leadart}}");
+    await type(area, "Der Anbieter liefert {{firma}} Anfragen für {{leadart}}.");
+    await click(root.querySelector(".vd-sheet")); expect(text.querySelector("textarea")).toBeNull();
+    expect(text.querySelector(".c-p")?.textContent).toBe("Der Anbieter liefert {{firma}} Anfragen für {{leadart}}."); // noch nichts eingetragen: die Platzhalter bleiben sichtbar
+    // Kunde: der offene Punkt führt zu den Vertragsparteien – ausgefüllt wird im Blatt, der Text übernimmt den Namen sofort
+    await click(todo(root).find((node) => node.textContent === "Kunde eintragen"), 200);
+    const parties = root.querySelector<HTMLElement>(".vd-block.is-parties")!; expect(parties.classList.contains("is-active")).toBe(true);
+    await type(field(parties, "Firma"), "Dachbau Nord GmbH"); await type(field(parties, "E-Mail"), "einkauf@dachbau-nord.example");
+    expect(parties.querySelector(".c-parties")?.textContent).toContain("Dachbau Nord GmbH");
+    expect(text.querySelector(".c-p")?.textContent).toBe("Der Anbieter liefert Dachbau Nord GmbH Anfragen für {{leadart}}.");
+    expect(todoTexts(root)).not.toContain("Kunde eintragen"); expect(todoTexts(root)).not.toContain("E-Mail des Kunden eintragen");
+    // Angabe: Schnellauswahl direkt unter der Zeile
+    const before = todo(root).length;
+    await click(todo(root).find((node) => node.textContent === "Preis je Lead (netto) ausfüllen"), 200);
+    const price = root.querySelector<HTMLElement>(".vd-block.is-detail.is-active")!; expect(price.querySelector(".c-kv span")?.textContent).toBe("Preis je Lead (netto)"); expect(price.querySelector(".c-kv")?.className).toContain("is-open");
+    await click(Array.from(price.querySelectorAll<HTMLButtonElement>(".ct-presets button")).find((node) => node.textContent === "79 €"));
+    expect(price.querySelector(".c-kv strong")?.textContent).toBe("79 €"); expect(price.querySelector(".c-kv")?.className).not.toContain("is-open"); expect(todo(root).length).toBe(before - 1);
+    // die Angabe steht als Platzhalter {{preis}} im Text und wird dort eingesetzt
+    expect(root.querySelector(".vd-sheet")?.textContent).toContain("beträgt 79 € zuzüglich gesetzlicher Umsatzsteuer");
+    // Baustein einfügen: „+“ am Baustein → Auswahl → steht davor
+    const heading = root.querySelectorAll<HTMLElement>(".vd-block.is-heading")[1]; const position = blocks(root).indexOf(heading);
+    await click(heading.querySelector(".vd-plus")); const menu = heading.querySelector(".vd-menu")!; expect(menu.querySelectorAll("button").length).toBe(12);
+    await click(Array.from(menu.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Trennlinie"));
+    expect(blocks(root).length).toBe(count + 1); expect(blocks(root)[position].classList.contains("is-divider")).toBe(true); expect(blocks(root)[position + 1]).toBe(heading);
+    // verschieben und entfernen stehen am Baustein
+    const divider = blocks(root)[position]; await click(divider.querySelector('.vd-tools button[aria-label="Nach unten"]'));
+    expect(blocks(root)[position]).toBe(heading); expect(blocks(root)[position + 1].classList.contains("is-divider")).toBe(true);
+    await click(blocks(root)[position + 1].querySelector(".vd-tools button.is-danger")); expect(blocks(root).length).toBe(count);
+    // speichern: der Vertrag liegt mit Kunde, Text und Angabe im System
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Speichern"), 900);
+    expect(root.querySelector(".vt-detail-head h1")?.textContent).toBe("Leadliefervertrag");
+    const saved = getStore().tables.contracts.find((row: any) => row.recipientEmail === "einkauf@dachbau-nord.example") as any; expect(saved).toBeTruthy();
+    expect(saved.values.firma).toBe("Dachbau Nord GmbH"); expect(saved.blocks.find((block: any) => block.type === "detail" && block.key === "preis").value).toBe("79 €");
+    expect(saved.blocks.some((block: any) => block.type === "text" && block.text === "Der Anbieter liefert {{firma}} Anfragen für {{leadart}}.")).toBe(true);
+  });
+
+  it("Kundenansicht zeigt den Vertrag genau so, wie ihn der Kunde bekommt; ein Vertrag beim Kunden lässt sich nicht mehr ändern", async () => {
+    const root = await openNew();
+    await click(root.querySelector(".vd-preview-open"), 500);
+    const frame = document.querySelector<HTMLIFrameElement>(".vd-preview iframe")!; expect(frame).toBeTruthy(); expect(frame.getAttribute("srcdoc") ?? frame.srcdoc).toContain("§ 1 Gegenstand des Vertrags");
+    cleanup(); resetStore();
+    // gesendeter Vertrag: im Editor gesperrt – kein „+“, keine Leiste am Baustein, kein Textfeld beim Klick
+    window.history.replaceState(null, "", "/?page=Verträge"); const { view } = mount(); await settle(600); const list = view.container;
+    const sent = getStore().tables.contracts.find((row: any) => row.status === "angesehen" || row.status === "gesendet") as any; expect(sent).toBeTruthy();
+    await click(list.querySelector(`.vt-row[data-contract="${sent.id}"] .vt-row-main`), 900);
+    expect(list.querySelector(".vt-tracker")).toBeTruthy(); expect(Array.from(list.querySelectorAll("button")).some((node) => (node.textContent ?? "").trim() === "Bearbeiten")).toBe(false);
+  });
+});
