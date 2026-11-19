@@ -547,36 +547,46 @@ describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", ()
     cleanup(); const again = await open(); expect(again.container.querySelector(".gq-stage.is-inset")).toBeTruthy();
   });
 
-  it("Smileys sind Kugeln mit Gesicht: in der Liste und groß im Gespräch sitzen sie im Ring, jede Kugel bringt ihren eigenen Verlauf mit", async () => {
+  it("Smileys sind matte Kugeln mit eingeprägtem Gesicht: in der Liste für sich, groß im Gespräch im feinen Ring – jede Kugel bringt ihre eigenen Verläufe mit", async () => {
     const view = await open(); const root = view.container; const rows = callRows(root); expect(rows.length).toBeGreaterThan(5);
-    for (const row of rows) { const ring = row.querySelector(".gq-ampel svg.cq-ring")!; expect(ring.querySelector(".cq-ring-track")).toBeTruthy(); expect(ring.querySelectorAll(".cq-orb").length).toBe(1); expect(ring.getAttribute("class")).toMatch(/is-(gruen|gelb|rot|offen)/); }
-    const full = rows.find((row) => row.className.includes("is-gruen"))!.querySelector(".cq-ring-share")!; expect(full.getAttribute("stroke-dasharray")).toMatch(/^\d+(\.\d+)? \d+(\.\d+)?$/);
-    expect(rows.filter((row) => row.className.includes("is-offen")).every((row) => !row.querySelector(".cq-ring-share"))).toBe(true); // „noch nicht bewertet“: leerer Ring, drei Punkte
-    expect(root.querySelectorAll(".gq-tally-item svg.cq-face .cq-orb").length).toBe(4); // Zähler: Kugel ohne Ring
-    // jede Kugel hat eigene Verläufe – keine Kennung doppelt, jede Füllung findet ihren Verlauf
-    const ids = Array.from(root.querySelectorAll(".cq-face linearGradient, .cq-face radialGradient, .cq-ring linearGradient, .cq-ring radialGradient")).map((node) => node.id);
-    expect(ids.length).toBe((rows.length + 4) * 3); expect(ids.every((id) => /^cq[a-zA-Z0-9_-]+[abc]$/.test(id))).toBe(true); expect(new Set(ids).size).toBe(ids.length);
-    for (const shape of Array.from(root.querySelectorAll(".cq-orb > circle, .cq-orb > ellipse"))) expect(ids).toContain((shape.getAttribute("fill") ?? "").replace(/^url\(#/, "").replace(/\)$/, ""));
-    // Mimik: Grün lacht (gefüllter Mund), Rot hat einen Bogen nach unten, Grau drei Punkte – auch ohne Farbe zu unterscheiden
-    const face = (mood: string) => root.querySelector(`.gq-tally-item.is-${mood} .cq-face .cq-orb g > g:last-child`)!;
-    expect(face("gruen").querySelectorAll("path").length).toBe(3); expect(face("gelb").querySelectorAll("circle").length).toBe(2); expect(face("rot").querySelectorAll("circle").length).toBe(2); expect(face("offen").querySelectorAll("circle").length).toBe(3); expect(face("offen").querySelector("path")).toBeNull();
-    // groß im Gespräch: derselbe Smiley im Ring, mit Augenbrauen beim roten
+    for (const row of rows) { const face = row.querySelector(".gq-ampel svg.cq-face")!; expect(face.getAttribute("width")).toBe("40"); expect(face.querySelectorAll(".cq-orb").length).toBe(1); expect(face.getAttribute("class")).toMatch(/is-(gruen|gelb|rot|offen)/); expect(row.querySelector(".gq-ampel .cq-ring")).toBeNull(); } // Liste: Kugel ohne Ring – die Zahl steht daneben
+    expect(root.querySelectorAll(".gq-tally-item svg.cq-face .cq-orb").length).toBe(4); // Zähler oben: je eine kleine Kugel
+    // jede Kugel hat eigene Verläufe (Körper, Schatten, Licht, Lichtkante) – keine Kennung doppelt, jede Füllung findet ihren Verlauf
+    const ids = Array.from(root.querySelectorAll(".cq-face linearGradient, .cq-face radialGradient")).map((node) => node.id);
+    expect(ids.length).toBe((rows.length + 4) * 4); expect(ids.every((id) => /^cq[a-zA-Z0-9_-]+[abcd]$/.test(id))).toBe(true); expect(new Set(ids).size).toBe(ids.length);
+    const target = (value: string | null) => (value ?? "").replace(/^url\(#/, "").replace(/\)$/, "");
+    for (const shape of Array.from(root.querySelectorAll(".cq-orb > circle:not(.cq-orb-rim), .cq-orb > ellipse"))) expect(ids).toContain(target(shape.getAttribute("fill")));
+    for (const rim of Array.from(root.querySelectorAll(".cq-orb > .cq-orb-rim"))) { expect(rim.getAttribute("fill")).toBe("none"); expect(ids).toContain(target(rim.getAttribute("stroke"))); }
+    expect(root.querySelector(".cq-orb [fill='#fff'][stroke='#fff']:not(.cq-orb-edge)")).toBeNull(); // kein weißes Aufkleber-Gesicht mehr: das Gesicht ist in einem tiefen Ton der Ampelfarbe eingeprägt
+    // Mimik: Grün lächelt (Bogen nach unten gewölbt), Orange gerade Linie, Rot Bogen nach oben gewölbt, Grau drei Punkte – auch ohne Farbe zu unterscheiden
+    const ink = (mood: string) => root.querySelector(`.gq-tally-item.is-${mood} .cq-face .cq-orb-ink`)!;
+    for (const mood of ["gruen", "gelb", "rot"]) { expect(ink(mood).querySelectorAll("ellipse").length, mood).toBe(2); expect(ink(mood).querySelectorAll("path").length, mood).toBe(1); expect(ink(mood).getAttribute("fill"), mood).toMatch(/^#[0-9a-f]{6}$/); }
+    expect(ink("gruen").querySelector("path")!.getAttribute("d")).toMatch(/Q24 37/); expect(ink("gelb").querySelector("path")!.getAttribute("d")).toMatch(/ L/); expect(ink("rot").querySelector("path")!.getAttribute("d")).toMatch(/Q24 26/);
+    expect(ink("offen").querySelectorAll("circle").length).toBe(3); expect(ink("offen").querySelector("path")).toBeNull();
+    expect(new Set(["gruen", "gelb", "rot", "offen"].map((mood) => ink(mood).getAttribute("fill"))).size).toBe(4); // jede Ampelfarbe hat ihren eigenen tiefen Ton
+    // klein (Zähler): kräftiger gezeichnet, ohne helle Kante und ohne Glanzpunkte – so bleibt es scharf; in der Liste (40 px) mit heller Kante und Glanz im Auge
+    expect(root.querySelector(".gq-tally-item .cq-orb-edge")).toBeNull(); expect(root.querySelector(".gq-tally-item .cq-orb-glint")).toBeNull();
+    const listed = rows.find((row) => row.className.includes("is-gruen"))!.querySelector(".gq-ampel .cq-face")!; expect(listed.querySelector(".cq-orb-edge")).toBeTruthy(); expect(listed.querySelectorAll(".cq-orb-glint circle").length).toBe(2);
+    expect(rows.filter((row) => row.className.includes("is-offen")).every((row) => !row.querySelector(".cq-orb-glint"))).toBe(true); // „noch nicht bewertet“: drei Punkte, keine Augen
+    // groß im Gespräch: dieselbe Kugel im feinen Ring der erfüllten Prüffragen, mit Brauen beim roten
     const red = getStore().tables.callRecords.find((item: any) => item.status === "bewertet" && item.decision === "zurueckgewiesen")!; cleanup();
     window.history.replaceState(null, "", `/?page=Gespräche&callId=${red.id}`); const detail = mount().view.container; await settle(600);
     const big = detail.querySelector(".gq-call-main .cq-mood.is-lg svg.cq-ring")!; expect(big).toBeTruthy(); expect(big.getAttribute("width")).toBe("84"); expect(big.getAttribute("class")).toContain("is-rot");
-    expect(big.querySelectorAll(".cq-orb g > g:last-child path").length).toBe(3); // zwei Brauen und der Mund
+    expect(big.querySelector(".cq-ring-track")!.getAttribute("stroke-width")).toBe("2"); expect(big.querySelectorAll(".cq-orb").length).toBe(1);
+    const share = big.querySelector(".cq-ring-share"); if (share) { expect(share.getAttribute("stroke-dasharray")).toMatch(/^\d+(\.\d+)? \d+(\.\d+)?$/); expect(big.querySelector(`#${target(share.getAttribute("stroke"))}`)).toBeTruthy(); }
+    expect(big.querySelectorAll(".cq-orb-ink path").length).toBe(3); // zwei Brauen und der Mund
   });
 
-  it("jedes Gespräch ist eine Karte: Ampel im Ring, Uhrzeit mit Dauer, worum es ging, Agent mit Kampagne, Ergebnis", async () => {
+  it("jedes Gespräch ist eine Karte: Ampel als Kugel, Uhrzeit mit Dauer, worum es ging, Agent mit Kampagne, Ergebnis als farbiges Schild", async () => {
     const view = await open(); const root = view.container; const rows = callRows(root); expect(rows.length).toBeGreaterThan(5);
     expect(Array.from(root.querySelectorAll(".gq-table thead th")).map((node) => (node.textContent ?? "").replace("ⓘ", "").trim())).toEqual(["", "Ampel", "Uhrzeit", "Gespräch", "Agent, Kampagne", "Ergebnis", "Öffnen"]);
     for (const row of rows) {
       expect(row.querySelectorAll("td").length).toBe(7); expect(row.className).toMatch(/ is-(gruen|gelb|rot|offen)( |$)/);
-      expect(row.querySelector(".gq-ampel .cq-ring")).toBeTruthy(); // Smiley im Ring
+      expect(row.querySelector(".gq-ampel .cq-face")).toBeTruthy(); // Smiley als Kugel
       expect(row.querySelector(".gq-time b")?.textContent).toMatch(/^(\d\d:\d\d|–)$/);
       expect((row.querySelector(".gq-who-line > b")?.textContent ?? "").length).toBeGreaterThan(0);
       expect((row.querySelector(".gq-agent-lines b")?.textContent ?? "").length).toBeGreaterThan(0); expect((row.querySelector(".gq-agent-lines small")?.textContent ?? "").length).toBeGreaterThan(0); // Agent, darunter die Kampagne
-      expect(row.querySelector(".gq-result .gq-pill")).toBeTruthy();
+      const pill = row.querySelector(".gq-result .gq-pill")!; expect(pill).toBeTruthy(); expect(pill.className).toMatch(/ is-(freigegeben|pruefen|zurueckgewiesen|offen)$/); // die Farbe des Schilds hängt am Ergebnis
     }
     expect(root.textContent).not.toContain("nicht zugeordnet"); // leere Angaben stehen nicht mehr in jeder Zeile
     const withSummary = rows.filter((row) => row.querySelector(".gq-summary")); expect(withSummary.length).toBeGreaterThan(3); // die Zeile sagt, worum es ging

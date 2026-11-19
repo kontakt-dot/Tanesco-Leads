@@ -7,6 +7,7 @@
 /* ─────────────────────────── Farben für Verlauf und Kopf ─────────────────────────── */
 .gq-stage,.cq-list-panel,.gq-detail,.cq-dialog,.gq-settings{
   --gq-ink:#f6f4ff;--gq-dim:#aba7d2;--gq-line:rgba(255,255,255,.17);--gq-soft:rgba(255,255,255,.055);--gq-soft-2:rgba(255,255,255,.1);
+  --gp-green:#6ee7b7;--gp-green-bg:rgba(16,185,129,.15);--gp-orange:#fdba74;--gp-orange-bg:rgba(249,115,22,.17);--gp-red:#fca5a5;--gp-red-bg:rgba(239,68,68,.17);--gp-open:#c9c6e4;--gp-open-bg:rgba(255,255,255,.075);--gp-call:#a5e0fc;--gp-call-bg:rgba(125,211,252,.15);
   --gq-on-bg:#f6f4ff;--gq-on-ink:#17142c;--gq-on-shadow:none;--gq-focus:#f6f4ff;
   --gq-green:#3ddc97;--gq-orange:#ffa341;--gq-red:#ff6767;--gq-open:#6e6a93;--gq-open-edge:#a9a5c8;
   --gq-tip-bg:#ffffff;--gq-tip-ink:#17142c;--gq-tip-dim:#4a4763;--gq-tip-shadow:0 14px 34px rgba(0,0,0,.5);
@@ -14,6 +15,7 @@
 }
 html:not(.dark) .gq-stage,html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-dialog,html:not(.dark) .gq-settings{
   --gq-ink:#17130f;--gq-dim:#5b6472;--gq-line:#dde1e7;--gq-soft:#ffffff;--gq-soft-2:#e9ecf0;
+  --gp-green:#0b6b39;--gp-green-bg:#e2f5e9;--gp-orange:#a64208;--gp-orange-bg:#ffefdf;--gp-red:#ab1f15;--gp-red-bg:#fde8e6;--gp-open:#475467;--gp-open-bg:#ffffff;--gp-call:#075985;--gp-call-bg:#e0f2fe;
   --gq-on-bg:linear-gradient(90deg,#bc001d,#fb2c36);--gq-on-ink:#ffffff;--gq-on-shadow:0 6px 16px rgba(220,38,38,.25);--gq-focus:#bc001d;
   --gq-green:#16a34a;--gq-orange:#f97316;--gq-red:#dc2626;--gq-open:#c3c9d3;--gq-open-edge:#98a2b3;
   --gq-tip-bg:#17130f;--gq-tip-ink:#ffffff;--gq-tip-dim:#d0d3da;--gq-tip-shadow:0 14px 30px rgba(16,24,40,.22);
@@ -206,10 +208,9 @@ html:not(.dark) .gq-table .gq-call td{color:var(--gl-ink)!important}
 .gq-call .gq-col-check input{opacity:.5;transition:opacity .15s}
 .gq-call:hover .gq-col-check input,.gq-call .gq-col-check input:checked,.gq-call .gq-col-check input:focus-visible{opacity:1}
 
-/* Ampel: Smiley im Ring – der Ring zeigt, wie viele Prüffragen erfüllt sind; Prozent und Begründung stehen daneben */
+/* Ampel: Smiley als Kugel – Prozent und Begründung stehen daneben (groß im Gespräch sitzt die Kugel im feinen Ring der erfüllten Prüffragen) */
 .cq-mood.is-row,.cq-mood.is-row.has-percent{flex-direction:row;align-items:center;justify-content:flex-start;gap:11px;max-width:100%;line-height:1.1}
 .cq-ring{display:block;flex:none}
-.cq-ring-track{stroke:var(--gl-ring,rgba(148,163,184,.25))}
 .cq-mood-text{display:grid;gap:3px;min-width:0;text-align:left}
 .cq-mood.is-row.has-percent .cq-percent{font-size:15px;font-weight:700;line-height:1;letter-spacing:-.015em;font-variant-numeric:tabular-nums}
 .gq-table .cq-mood.is-row .cq-fraction,.gq-table .cq-mood.is-row.has-percent .cq-fraction{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;margin:0;font-size:11.5px;line-height:1.25;color:var(--gl-dim)!important;white-space:normal;overflow:hidden}
@@ -244,11 +245,13 @@ html:not(.dark) .gq-table .gq-call td{color:var(--gl-ink)!important}
 .gq-who.is-none{background:none;box-shadow:inset 0 0 0 1px var(--gl-edge);color:var(--gl-faint)}
 .gq-call td.gq-result{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
 .gq-optin{display:inline-flex;max-width:100%}
-/* Ergebnis als ruhiges Schild: farbiger Punkt, klare Schrift – die Farbe trägt schon der Ring */
-.gq-pill{--dot:var(--gq-open-edge);display:inline-flex;align-items:center;gap:7px;max-width:100%;height:26px;padding:0 11px 0 9px;border-radius:999px;border:1px solid var(--gl-line,var(--gq-line));background:var(--gl-card,var(--gq-soft));color:var(--gl-ink,var(--gq-ink));font-size:12px;font-weight:600;white-space:nowrap}
-.gq-pill::before{content:"";flex:none;width:7px;height:7px;border-radius:999px;background:var(--dot)}
-.gq-pill i{font-style:normal;font-weight:500;opacity:.7}
-.gq-pill.is-freigegeben{--dot:var(--gq-green)}.gq-pill.is-pruefen{--dot:var(--gq-orange)}.gq-pill.is-zurueckgewiesen{--dot:var(--gq-red)}
+/* Ergebnis als farbiges Schild: Grün = freigegeben, Orange = zur Prüfung, Rot = zurückgewiesen – wie vor Version 333 */
+.gq-pill{--pill-bg:var(--gp-open-bg);--pill-ink:var(--gp-open);display:inline-flex;align-items:center;gap:6px;max-width:100%;height:26px;padding:0 11px 0 9px;border-radius:999px;border:1px solid transparent;background:var(--pill-bg);color:var(--pill-ink);font-size:12px;font-weight:600;white-space:nowrap}
+.gq-pill::before{content:"";flex:none;width:6px;height:6px;border-radius:999px;background:currentColor}
+.gq-pill i{font-style:normal;font-weight:500;opacity:.8}
+.gq-pill.is-freigegeben{--pill-bg:var(--gp-green-bg);--pill-ink:var(--gp-green)}.gq-pill.is-pruefen{--pill-bg:var(--gp-orange-bg);--pill-ink:var(--gp-orange)}.gq-pill.is-zurueckgewiesen{--pill-bg:var(--gp-red-bg);--pill-ink:var(--gp-red)}
+/* „Offen“ im hellen Design: weiß mit feiner Linie statt grau hinterlegt */
+html:not(.dark) .gq-pill:not(.is-freigegeben):not(.is-pruefen):not(.is-zurueckgewiesen):not(.cq-callback){border-color:var(--gl-line,var(--gq-line))}
 .gq-call td.gq-col-go{display:grid;place-items:center;width:26px;height:26px;border-radius:999px;color:var(--gl-faint);transition:background-color .15s,color .15s,transform .15s}
 .gq-col-go svg{display:block;width:16px;height:16px}
 .gq-call:hover td.gq-col-go,.gq-call:focus-visible td.gq-col-go{background:var(--gl-soft);color:var(--gl-ink);transform:translateX(2px)}
@@ -318,9 +321,7 @@ html:not(.dark) .gq-detail{--gd-ink:#17130f;--gd-soft:#eef0f3;--gd-red:#ab1f15}
 .gq-call-pills{display:flex;flex-wrap:wrap;gap:8px;margin:13px 0 0}
 .gq-stage{--gp-err-bg:rgba(255,103,103,.13);--gp-err-line:rgba(255,103,103,.36);--gp-err:#ffd2d2;--gp-flag:#ffb9b9}
 html:not(.dark) .gq-stage{--gp-err-bg:#fef3f2;--gp-err-line:#fecdca;--gp-err:#b42318;--gp-flag:#b42318}
-.gq-stage .gq-pill{border-color:var(--gq-line);background:var(--gq-soft);color:var(--gq-ink)}
-html:not(.dark) .gq-stage .gq-pill{background:#ffffff}
-.gq-stage .gq-pill.cq-callback{--dot:#38bdf8}
+.gq-pill.cq-callback{--pill-bg:var(--gp-call-bg);--pill-ink:var(--gp-call)}
 .gq-stage .cq-mood.is-lg{gap:6px}
 .gq-stage .cq-mood.is-lg.has-percent .cq-percent{font-size:15px}
 .gq-stage .cq-mood.is-gruen .cq-percent{color:var(--gq-green)!important}.gq-stage .cq-mood.is-gelb .cq-percent{color:var(--gq-orange)!important}.gq-stage .cq-mood.is-rot .cq-percent{color:var(--gq-red)!important}
@@ -858,9 +859,12 @@ html:not(.dark) .gq-agent-chip.is-on{background:#fff5f5}
 html:not(.dark) .gq-call.is-selected{border-color:rgba(188,0,29,.45);background:#fff7f8}
 html:not(.dark) .gq-call:hover td.gq-col-go,html:not(.dark) .gq-call:focus-visible td.gq-col-go{background:rgba(188,0,29,.08);color:#bc001d}
 
-/* ── v339: Smileys als Kugeln – weicher Schatten, kleiner Hüpfer beim Überfahren ── */
-.cq-face,.cq-ring{overflow:visible;filter:drop-shadow(0 1.5px 2.5px rgba(16,24,40,.22))}
-html.dark .cq-face,html.dark .cq-ring{filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
+/* ── v341: Smileys als matte Kugeln – weicher Schatten in der Ampelfarbe, kleiner Hüpfer beim Überfahren ── */
+.cq-face,.cq-ring{--cq-glow:rgba(100,116,139,.34);overflow:visible;filter:drop-shadow(0 1.5px 2.5px var(--cq-glow))}
+.cq-face.is-gruen,.cq-ring.is-gruen{--cq-glow:rgba(28,154,82,.38)}.cq-face.is-gelb,.cq-ring.is-gelb{--cq-glow:rgba(232,105,15,.38)}.cq-face.is-rot,.cq-ring.is-rot{--cq-glow:rgba(210,58,51,.38)}
+.cq-mood.is-row .cq-face{filter:drop-shadow(0 3px 5px var(--cq-glow))}
+.cq-mood.is-lg .cq-ring{filter:drop-shadow(0 5px 9px var(--cq-glow))}
+html.dark .cq-face.is-offen,html.dark .cq-ring.is-offen{--cq-glow:rgba(0,0,0,.5);filter:brightness(.86) drop-shadow(0 1.5px 2.5px var(--cq-glow))}
 .cq-orb{transform-box:fill-box;transform-origin:center;transition:transform .2s cubic-bezier(.22,.61,.36,1)}
 .gq-call:hover .cq-orb,.gq-tally-item:hover .cq-orb{transform:scale(1.07)}
 @media(prefers-reduced-motion:reduce){.cq-orb{transition:none}.gq-call:hover .cq-orb,.gq-tally-item:hover .cq-orb{transform:none}}

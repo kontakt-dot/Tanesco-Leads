@@ -17,6 +17,25 @@ export function applyQuestionScope(questions: QualificationQuestion[], answers: 
   for (const question of questions) if (question.onlyFor && !transcriptCovers(transcript, question.onlyFor)) out[question.key] = { answer: "ja", note: `Entfällt – im Gespräch geht es nicht um ${SCOPE_LABEL[question.onlyFor]}.` };
   return out;
 }
+/** Wird im Gespräch ausdrücklich eine Gas-Wärmepumpe bzw. Gas-Hybridheizung genannt? Dass der Kunde heute mit Gas heizt, zählt nicht. */
+const GAS_HEAT_PUMP = /(erd|flüssig)?gas[- ]?wärmepumpe|gasbetriebene[nr]? wärmepumpe|gas[- ]?hybrid|hybrid[- ]?(heizung|wärmepumpe|anlage|gerät|system)|wärmepumpe (mit|auf|über) (erd|flüssig)?gas\b/i;
+export const mentionsGasHeatPump = (transcript: string) => GAS_HEAT_PUMP.test(transcript);
+/** Fragen zur Erdgas-Wärmepumpe erkennt man am Wortlaut (Vorlage Wattfox und eigene Fragen gleichermaßen). */
+export const isGasHeatPumpQuestion = (question: Pick<QualificationQuestion, "label">) => /erdgas|gas-?\s?wärmepumpe/i.test(question.label);
+/**
+ * Erdgas-Wärmepumpe: Ein „Nein“ der KI zählt nur, wenn im Gespräch ausdrücklich eine Gas-Wärmepumpe (oder Gas-Hybridheizung) genannt wird.
+ * Schließt die KI nur aus Andeutungen darauf (z. B. „heizt heute mit Gas“), ist die Frage unklar – das Gespräch geht zur Prüfung statt in die Zurückweisung.
+ * Antworten von Hand laufen nicht durch diese Regel.
+ */
+export function softenGasHeatPumpNo(questions: QualificationQuestion[], answers: Record<string, QualificationAnswer>, transcript: string): Record<string, QualificationAnswer> {
+  const out = { ...answers };
+  for (const question of questions) {
+    const current = out[question.key];
+    if (!isGasHeatPumpQuestion(question) || current?.answer !== "nein" || mentionsGasHeatPump(transcript)) continue;
+    out[question.key] = { answer: "unklar", note: `Nicht eindeutig: Im Gespräch wird keine Erdgas-Wärmepumpe genannt – bitte reinhören.${current.note ? ` Einschätzung der KI: ${current.note}` : ""}` };
+  }
+  return out;
+}
 export const RULE_LABEL: Record<QualificationRule, string> = { ko: "K.-o. (Nein = zurückgewiesen)", required: "Pflicht (Ja für Freigabe)", info: "Nur Auswertung" };
 export type QualificationAnswer = { answer: "ja" | "nein" | "unklar"; note?: string };
 export const DEFAULT_QUALIFICATION_QUESTIONS: QualificationQuestion[] = [
@@ -48,7 +67,7 @@ export function answerQuestionsHeuristically(questions: QualificationQuestion[],
     else if (/6 monate|sechs monate|monaten/.test(label)) answer = mentions(/(1|2|3|4|5|6|ein|zwei|drei|vier|fünf|sechs) monat|zeitnah|so schnell wie möglich|schnellstmöglich|möglichst (schnell|bald)|sofort|umgehend|diesen (sommer|herbst|winter|frühling)|dieses jahr|nächsten (monat|wochen)|bald|frühjahr|kommt auf das angebot|je nach angebot|wenn das angebot (passt|stimmt)|hängt vom angebot/) ? { answer: "ja", note: "Kunde will zeitnah umsetzen (ein genauer Termin ist nicht nötig)" } : mentions(/nächstes jahr|übernächstes|in (ein|zwei|drei) jahr|irgendwann|frühestens in (7|8|9|10|11|12)|erst in (7|8|9|10|11|12|einem jahr)|länger als (6|sechs) monate/) ? { answer: "nein", note: "Kunde will ausdrücklich erst später als in 6 Monaten umsetzen" } : { answer: "unklar" };
     else if (/angebotsvergleich|meldet sich|übergabe/.test(label)) answer = mentions(/angebotsvergleich/) && mentions(/meldet sich|melden sich|wird sich .{0,60}melden|werden sich .{0,60}melden|ruft (sie )?an|kommt auf sie zu|kontaktiert sie|nimmt kontakt|setzt sich .{0,20}in verbindung/) ? { answer: "ja", note: "Übergabe an „Photovoltaik Angebotsvergleich“ wurde angekündigt" } : mentions(/angebotsvergleich/) ? { answer: "unklar", note: "Angebotsvergleich genannt, Ankündigung unklar" } : { answer: "nein", note: "Keine Ankündigung, dass sich Photovoltaik Angebotsvergleich meldet" };
     else if (/dachfläche|dachflaeche|quadratmeter|\bqm\b|m²/.test(label)) { const sizes = Array.from(text.matchAll(/(\d{1,4})(?:[.,]\d+)?\s*(?:qm|m²|m2|quadratmeter)/g)).map((match) => Number(match[1])); const small = mentions(/(unter|weniger als|kleiner als|keine|nicht mal|nur) (\d|1\d|zwanzig|zehn|fünfzehn) (qm|m²|quadratmeter)|dach (ist )?(zu|sehr) klein|kein(e)? (eigenes )?dach|keine dachfläche/); answer = small || (sizes.length > 0 && Math.max(...sizes) <= 20) ? { answer: "nein", note: "Dachfläche ist nicht größer als 20 m²" } : sizes.length > 0 ? { answer: "ja", note: `Dachfläche genannt: ${Math.max(...sizes)} m²` } : mentions(/(über|mehr als|größer als|mindestens) (20|zwanzig)|genug (dach)?fläche|ausreichend (dach)?fläche|großes dach|große dachfläche|dachfläche (ist )?(groß|ausreichend)/) ? { answer: "ja", note: "Dachfläche ist größer als 20 m²" } : { answer: "unklar" }; }
-    else if (/erdgas|gas-?wärmepumpe|gaswärmepumpe/.test(label)) answer = mentions(/erdgas-?\s?wärmepumpe|gas-?\s?wärmepumpe|gasbetriebene wärmepumpe|gas-?hybrid|wärmepumpe (mit|auf) (erd)?gas/) ? { answer: "nein", note: "Kunde interessiert sich vor allem für eine Erdgas-Wärmepumpe" } : mentions(/wärmepumpe|waermepumpe/) ? { answer: "ja", note: "Keine Erdgas-Wärmepumpe als Hauptinteresse erkennbar" } : { answer: "unklar" };
+    else if (/erdgas|gas-?wärmepumpe|gaswärmepumpe/.test(label)) answer = mentionsGasHeatPump(text) ? { answer: "nein", note: "Kunde interessiert sich vor allem für eine Erdgas-Wärmepumpe" } : mentions(/wärmepumpe|waermepumpe/) ? { answer: "ja", note: "Keine Erdgas-Wärmepumpe als Hauptinteresse erkennbar" } : { answer: "unklar" };
     else if (/interesse/.test(label)) answer = NEG.test(text) ? { answer: "nein", note: "Kunde äußert kein Interesse" } : mentions(/interess|gerne|klingt gut|möchte|hätte gern|angebot/) ? { answer: "ja", note: "Kunde zeigt Interesse" } : { answer: "unklar" };
     else if (/photovoltaik|pv\b/.test(label)) answer = { answer: mentions(/photovoltaik|pv-anlage|solaranlage/) ? "ja" : "nein", note: mentions(/photovoltaik|pv-anlage|solaranlage/) ? "Photovoltaik wurde angesprochen" : "Kein Hinweis auf Photovoltaik" };
     else if (/wärmepumpe|waermepumpe/.test(label)) answer = { answer: mentions(/wärmepumpe|waermepumpe/) ? "ja" : "nein", note: mentions(/wärmepumpe|waermepumpe/) ? "Wärmepumpe wurde angesprochen" : "Kein Hinweis auf Wärmepumpe" };

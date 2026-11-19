@@ -75,4 +75,23 @@ describe("Helles Design – rosarot wie vor Version 333", () => {
     expect(grey.map((rule) => rule.selector)).toEqual([]);
     expect(tight(effective(css("vertraege.css")).get("html:not(.dark) .vt-list"))).toContain("background:none"); // Vertragsliste: dieselbe Lösung
   });
+
+  it("Gespräche: Ergebnis-Schilder sind wieder farbig hinterlegt – grün, orange, rot; „Offen“ bleibt neutral", () => {
+    const calls = css("gespraeche.css"); const callRules = effective(calls);
+    const light = rules(calls).filter((rule) => rule.selector.startsWith("html:not(.dark)") && rule.body.includes("--gp-green")).map((rule) => tight(rule.body)).join(";");
+    for (const token of ["--gp-green:#0b6b39", "--gp-green-bg:#e2f5e9", "--gp-orange:#a64208", "--gp-orange-bg:#ffefdf", "--gp-red:#ab1f15", "--gp-red-bg:#fde8e6", "--gp-open-bg:#ffffff"]) expect(light, token).toContain(token);
+    expect(calls).toContain("--gp-green:#6ee7b7;--gp-green-bg:rgba(16,185,129,.15)"); // das dunkle Design hat eigene Töne
+    const pill = tight(callRules.get(".gq-pill")); expect(pill).toContain("background:var(--pill-bg)"); expect(pill).toContain("color:var(--pill-ink)");
+    expect(tight(callRules.get(".gq-pill.is-freigegeben"))).toBe("--pill-bg:var(--gp-green-bg);--pill-ink:var(--gp-green)");
+    expect(tight(callRules.get(".gq-pill.is-pruefen"))).toBe("--pill-bg:var(--gp-orange-bg);--pill-ink:var(--gp-orange)"); expect(tight(callRules.get(".gq-pill.is-zurueckgewiesen"))).toBe("--pill-bg:var(--gp-red-bg);--pill-ink:var(--gp-red)");
+    expect(tight(callRules.get(".gq-pill::before"))).toContain("background:currentColor"); // der Punkt trägt die Schriftfarbe
+    expect(calls).not.toContain(".gq-stage .gq-pill{"); // im Kopf des Gesprächs gelten dieselben Farben wie in der Liste
+  });
+
+  it("Smileys: weicher Schatten in der Ampelfarbe statt grauem Schlagschatten", () => {
+    const callRules = effective(css("gespraeche.css"));
+    expect(tight(callRules.get(".cq-face"))).toContain("filter:drop-shadow(01.5px2.5pxvar(--cq-glow))");
+    for (const mood of ["gruen", "gelb", "rot"]) expect(tight(callRules.get(`.cq-face.is-${mood}`)), mood).toMatch(/^--cq-glow:rgba\(\d+,\d+,\d+,\.38\)$/);
+    expect(callRules.has(".cq-ring-track")).toBe(false); // die Spur des Rings bekommt ihre Farbe vom Smiley selbst
+  });
 });

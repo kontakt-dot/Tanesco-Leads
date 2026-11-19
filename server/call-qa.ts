@@ -32,7 +32,7 @@ import { summarizeCalls } from "../shared/call-overview";
 import { agentNameMerges, canonicalAgentName, cleanAgentName, detectAgent, detectAgentName, isJunkAgentName, sameAgentName } from "../shared/agent-names";
 export { cleanAgentName, detectAgentName };
 export { callPeriodRange, detectTopic, type CallPeriod };
-import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion, applyQuestionScope, isCallback, questionFulfilment, SCOPE_LABEL } from "../shared/call-qualification";
+import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion, applyQuestionScope, softenGasHeatPumpNo, isCallback, questionFulfilment, SCOPE_LABEL } from "../shared/call-qualification";
 
 /** Kampagnen mit eigenen Qualifizierungsfragen. Fehlt eine Kampagne, gilt der Standardfragensatz. */
 export async function listCampaigns(db: Db, tenantId: number) {
@@ -129,7 +129,7 @@ export async function answerQualification(questions: QualificationQuestion[], tr
     if (read.length < questions.length) { const again = readAnswers(await ask(6000).catch(() => ({})), questions); if (again.length > read.length) read = again; } // Antworten fehlen (z. B. abgeschnitten): ein zweiter Anlauf mit mehr Platz – was dann noch fehlt, beantworten die Stichwort-Regeln
     const out: Record<string, QualificationAnswer> = { ...heuristic };
     for (const item of read) out[item.key] = { answer: item.answer, note: item.note };
-    return applyQuestionScope(questions, out, transcript);
+    return softenGasHeatPumpNo(questions, applyQuestionScope(questions, out, transcript), transcript); // Erdgas-Wärmepumpe: „Nein“ nur bei ausdrücklicher Nennung – sonst unklar (Zur Prüfung)
   } catch { return heuristic; }
 }
 export async function campaignSummary(db: Db, tenantId: number, campaign: string | null | undefined) {
