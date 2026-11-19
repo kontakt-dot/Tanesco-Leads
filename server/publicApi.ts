@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { apiTokens, categoryFields, claimEvents, claims, deliveryStopReasons, deliveryStops, invoices, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, reclamationReasons, supplierInboundMappings, suppliers, metaConnections } from "../drizzle/schema";
 import { deliverLeadNow, loadDeliverySettings, triggerLeadAutomations } from "./lead-pipeline";
 import { checkPhoneNumber, handleWattfoxCallback } from "./partner-accounts";
-import { describeDialerWebhook, ingestDialerCall, localRecordingFile } from "./call-qa";
+import { describeDialerWebhook, ingestDialerCall, recordingForPlayback } from "./call-qa";
 import { authenticateRequest } from "./_core/auth";
 import { ensureTenantForUser } from "./db";
 import { desc, sql } from "drizzle-orm";
@@ -206,13 +206,16 @@ export function registerPublicApiRoutes(app: Express) {
   app.get("/api/partner/wattfox/:token", wattfoxHandler);
   app.post("/api/partner/wattfox/:token", wattfoxHandler);
   // ---- Meta Lead Ads: Webhook-Prüfung (GET) und neue Leads (POST), Facebook-Login-Rückruf
-  // Hochgeladene Aufnahmen abspielen – nur angemeldet und nur für den eigenen Mandanten
+  // Aufnahmen abspielen – nur angemeldet und nur für den eigenen Mandanten. Hochgeladene Dateien direkt; Aufnahmen, die beim Dialer liegen,
+  // über eine Kopie bei uns (höchstens einen Tag): Nur so lässt sich in der Aufnahme vor- und zurückspulen (sendFile beantwortet Teil-Abrufe).
   app.get("/api/aufnahmen/:callId", async (req: Request, res: Response) => {
+    let tenantId = 0; let db: Awaited<ReturnType<typeof getDb>> = null;
+    try { const user = await authenticateRequest(req); const context = await ensureTenantForUser(user.id); db = await getDb(); if (!context || !db) return res.status(403).send("Kein Zugriff."); tenantId = context.tenant.id; }
+    catch { return res.status(403).send("Bitte anmelden."); }
     try {
-      const user = await authenticateRequest(req); const context = await ensureTenantForUser(user.id); const db = await getDb(); if (!context || !db) return res.status(403).send("Kein Zugriff.");
-      const found = await localRecordingFile(db, context.tenant.id, Number(req.params.callId)); if (!found) return res.status(404).send("Keine hochgeladene Aufnahme.");
+      const found = await recordingForPlayback(db!, tenantId, Number(req.params.callId)); if (!found) return res.status(404).send("Zu diesem Gespräch liegt keine Aufnahme vor.");
       res.set({ "content-type": found.contentType, "cache-control": "private, max-age=3600", "accept-ranges": "bytes" }); return res.sendFile(found.file);
-    } catch { return res.status(403).send("Bitte anmelden."); }
+    } catch (error) { return res.status(502).send(`Die Aufnahme ließ sich nicht laden: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`); }
   });
   app.get("/api/meta/webhook", async (req: Request, res: Response) => {
     const mode = String(req.query["hub.mode"] ?? ""); const token = String(req.query["hub.verify_token"] ?? ""); const challenge = String(req.query["hub.challenge"] ?? "");

@@ -8,14 +8,14 @@
  *  5. Entscheidung: ab Freigabe-Schwelle Lead freigeben (und über die Automatisierung ausliefern/verkaufen),
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
-import { and, asc, desc, eq, gte, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gte, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, optIns, rawBatches, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
 import { batchCategoryIds, convertRawContact, normalizeRawPhone } from "./raw-data";
-import { CONTACT_MAPPING, dialerInfo, extractDialerContact, mergeDialerData, type DialerContact } from "../shared/dialer-contact";
+import { CONTACT_MAPPING, dialerInfo, extractDialerContact, matchDialerCategory, mergeDialerData, type DialerContact } from "../shared/dialer-contact";
 import { invokeLLM } from "./_core/llm";
 import { noteAfterEvaluation } from "./call-notes";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
@@ -29,6 +29,8 @@ import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
 import { detectTopic } from "../shared/call-topic";
 import { summarizeCalls } from "../shared/call-overview";
+import { locateByWords, markItems, normalizeSegments, parseClock, readTimeline, snapToSegment, timedTranscript, timelineStateOf, type CallSegment, type CallTimeline, type MarkItem, type TimelineState } from "../shared/call-timeline";
+export { markItems, timelineStateOf, type MarkItem, type TimelineState };
 import { agentNameMerges, canonicalAgentName, cleanAgentName, detectAgent, detectAgentName, isJunkAgentName, sameAgentName } from "../shared/agent-names";
 export { cleanAgentName, detectAgentName };
 export { callPeriodRange, detectTopic, type CallPeriod };
@@ -213,7 +215,7 @@ export async function describeDialerWebhook(db: Db, token: string) {
   const config = (await db.select().from(callQaConfigs).where(eq(callQaConfigs.webhookToken, token)).limit(1))[0];
   if (!config) return { status: 404, body: { ok: false, error: "unknown webhook token" } };
   const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) };
-  return { status: 200, body: { ok: true, service: "Gesprächsbewertung", method: "POST", content_type: "application/json", enabled: config.enabled, consent_required: config.consentRequired, transcription: transcriptionService(config), recording_auth_header: Boolean(config.recordingAuthHeader), expected_fields: mapping, required: [mapping.callId, mapping.phone, mapping.recordingUrl], test_mode: "POST mit \"test\": true prüft die Felder und den Aufnahme-Link, ohne etwas zu speichern" } };
+  return { status: 200, body: { ok: true, service: "Gesprächsbewertung", method: "POST", content_type: "application/json", enabled: config.enabled, consent_required: config.consentRequired, transcription: transcriptionService(config), recording_auth_header: Boolean(config.recordingAuthHeader), expected_fields: mapping, required: [mapping.callId, mapping.phone, mapping.recordingUrl, mapping.agent], recommended: [mapping.category], category_values: ["PV", "WP", "PV+WP"], test_mode: "POST mit \"test\": true prüft die Felder und den Aufnahme-Link, ohne etwas zu speichern" } };
 }
 /** Rohdaten-Kontakt zur Rufnummer (noch nicht Lead) – damit eine Freigabe ihn zum Lead macht und eine Ablehnung ihn verwirft. */
 async function rawContactByPhone(db: Db, tenantId: number, phone: string) {
@@ -258,10 +260,16 @@ async function allowBatchCategory(db: Db, batch: { id: number; categoryId: numbe
 /** Kategorie für einen Kontakt vom Dialer: ausdrücklich genannt (Name oder Kürzel) – sonst die eine Kategorie, deren Name oder Kürzel als ganzes Wort im Kampagnennamen steht. */
 async function dialerCategoryId(db: Db, tenantId: number, contact: DialerContact, campaign: string | null): Promise<number | null> {
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
-  const wanted = contact.category?.toLowerCase(); if (wanted) { const hit = categories.find((item) => item.name.toLowerCase() === wanted || item.shortcode.toLowerCase() === wanted); if (hit) return hit.id; }
+  const named = matchDialerCategory(categories, contact.category); if (named) return named.id; // „PV“, „WP“, „PV+WP“ oder genauer Name bzw. Kürzel
   const words = (value: string) => value.toLowerCase().replace(/[^a-z0-9äöüß]+/g, " ").trim(); const haystack = ` ${words(campaign ?? "")} `; if (!haystack.trim()) return null;
   const hits = categories.filter((item) => [item.name, item.shortcode].some((label) => { const needle = words(label); return needle.length >= 2 && haystack.includes(` ${needle} `); }));
   return hits.length === 1 ? hits[0].id : null;
+}
+/** Leadsparte, die der Dialer ausdrücklich nennt (Feld `category`): die passende Kategorie – oder null, wenn nichts genannt oder nichts Eindeutiges gefunden wird. */
+async function namedDialerCategory(db: Db, tenantId: number, contact: DialerContact): Promise<{ id: number; name: string } | null> {
+  if (!contact.category) return null;
+  const categories = await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
+  const hit = matchDialerCategory(categories, contact.category); return hit ? { id: hit.id, name: hit.name } : null;
 }
 async function createDialerContact(db: Db, config: Pick<CallQaConfig, "tenantId" | "provider">, input: { phone: string; campaign: string | null; contact: DialerContact }) {
   const batch = await ensureDialerBatch(db, config); if (!batch) return undefined;
@@ -309,7 +317,11 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
   if (truthy(payload.test) || truthy(payload.dry_run)) {
     const found: string[] = []; const missing: string[] = [];
     for (const key of Object.keys(CALL_MAPPING) as Array<keyof typeof CALL_MAPPING>) { if (text(get(key)) || typeof get(key) === "boolean") found.push(mapping[key]); else missing.push(mapping[key]); }
-    const required = (["callId", "phone", "recordingUrl"] as const).filter((key) => !(key === "phone" ? phone : text(get(key)))).map((key) => mapping[key]);
+    // Pflicht: Gesprächs-ID, Rufnummer, Aufnahme-Link – und der Agent (wir werten aus, wer die Leads bringt). Ohne Agent nehmen wir ein echtes Gespräch trotzdem an; der Testmodus meldet ihn aber als fehlend.
+    const technical = (["callId", "phone", "recordingUrl"] as const).filter((key) => !(key === "phone" ? phone : text(get(key)))).map((key) => mapping[key]);
+    const agentGiven = Boolean(text(get("agent"))) && !isJunkAgentName(text(get("agent")));
+    const required = agentGiven ? technical : [...technical, mapping.agent];
+    const namedCategory = await namedDialerCategory(db, config.tenantId, contact);
     const recordingUrl = text(get("recordingUrl")); let recording: Record<string, unknown> = { checked: false };
     if (recordingUrl) {
       const headers: Record<string, string> = {}; if (config.recordingAuthHeader) { const raw = decryptIntegrationSecret(config.recordingAuthHeader); const [name, ...rest] = raw.split(":"); if (rest.length) headers[name.trim().toLowerCase()] = rest.join(":").trim(); else headers.authorization = raw; }
@@ -319,7 +331,7 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
     const consent = truthy(get("consent")) || !config.consentRequired;
     const known = phone || leadRef ? await findDialerTarget(db, config.tenantId, leadRef, phone) : { lead: undefined, rawContact: undefined };
     const would = known.lead || known.rawContact ? (contact.hasData ? "updated" : "matched") : phone && contact.hasIdentity ? "created" : "none";
-    return { status: 200, body: { ok: required.length === 0 && (recording.reachable !== false), test: true, stored: false, enabled: config.enabled, fields_found: found, fields_missing: missing, required_missing: required, recording, contact: { found: contact.found, would }, would_evaluate: config.enabled && consent && required.length === 0 && recording.reachable !== false, reason: !config.enabled ? "Gesprächsbewertung ist in der App ausgeschaltet" : required.length ? `Pflichtfelder fehlen: ${required.join(", ")}` : recording.reachable === false ? "Aufnahme-Link nicht abrufbar" : !consent ? `Einwilligung erforderlich – Feld „${mapping.consent}“ muss true sein` : "alles in Ordnung", transcription: transcriptionService(config) } };
+    return { status: 200, body: { ok: required.length === 0 && (recording.reachable !== false), test: true, stored: false, enabled: config.enabled, fields_found: found, fields_missing: missing, required_missing: required, recording, contact: { found: contact.found, would }, agent: agentGiven ? text(get("agent")) : null, category: contact.category ? { value: contact.category, recognised: Boolean(namedCategory), as: namedCategory?.name ?? null } : null, recommended_missing: contact.category ? [] : [mapping.category], would_evaluate: config.enabled && consent && technical.length === 0 && recording.reachable !== false, reason: !config.enabled ? "Gesprächsbewertung ist in der App ausgeschaltet" : required.length ? `Pflichtfelder fehlen: ${required.join(", ")}` : recording.reachable === false ? "Aufnahme-Link nicht abrufbar" : !consent ? `Einwilligung erforderlich – Feld „${mapping.consent}“ muss true sein` : "alles in Ordnung", transcription: transcriptionService(config) } };
   }
   if (!config.enabled) return { status: 403, body: { error: "call evaluation disabled" } };
   const externalCallId = text(get("callId")) || null;
@@ -334,8 +346,13 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
     else if (phone && contact.hasIdentity) { const created = await createDialerContact(db, config, { phone, campaign, contact }); if (created) { rawContact = created; contactState = "created"; } }
   } catch (error) { console.error("[Dialer] Kontakt-Daten nicht übernommen:", error instanceof Error ? error.message : error); } // das Gespräch geht deshalb nie verloren
   const consent = truthy(get("consent")) || !config.consentRequired;
+  const namedCategory = await namedDialerCategory(db, config.tenantId, contact).catch(() => null); // Leadsparte laut Dialer („PV“, „WP“, „PV+WP“) – sonst erkennt die Software sie aus dem Gespräch
+  // Agent laut Dialer: Er weiß sicher, wer telefoniert hat – dieser Name gilt und wird nicht mehr aus dem Gespräch „verbessert“. Reine Nummern und Füllwörter zählen nicht als Name.
+  const agentRaw = text(get("agent")).replace(/\s+/g, " ").trim().slice(0, 160);
+  const agentNamed = agentRaw && !isJunkAgentName(agentRaw) && /[A-Za-z\u00C0-\u024F]{2,}/.test(agentRaw) ? agentRaw : null;
+  const dialerAgent = agentNamed ? (agentNamed.split(" ").length === 1 ? canonicalAgentName(agentNamed, await knownAgentNames(db, config.tenantId).catch(() => [])) || agentNamed : agentNamed) : null; // nur der Vorname: den bekannten vollen Namen nehmen
   const startedAtRaw = text(get("startedAt")); const startedAt = startedAtRaw && !Number.isNaN(new Date(startedAtRaw).getTime()) ? new Date(startedAtRaw) : new Date();
-  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: isJunkAgentName(text(get("agent"))) ? null : text(get("agent")), campaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
+  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: dialerAgent ?? (isJunkAgentName(agentRaw) ? null : agentRaw || null), agentSource: dialerAgent ? "dialer" : null, leadCategoryId: namedCategory?.id ?? null, campaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
   const callId = Number(inserted[0]?.insertId) || 0;
   if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, contact: contactState, evaluated: false, reason: "no consent" } }; }
   const result = await processCall(db, callId, options);
@@ -360,13 +377,18 @@ export async function ingestInternalCall(db: Db, tenantId: number, input: { exte
 
 /* ------------------------------------------------------------------ Transkription */
 
-async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typeof fetch): Promise<string> {
+/** Ergebnis der Umwandlung in Text: der Text, die Dauer (wenn der Dienst sie nennt) und die Abschnitte mit ihrer Zeit. */
+export type Transcription = { text: string; duration: number | null; segments: CallSegment[] };
+async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typeof fetch): Promise<Transcription> {
   const provider = config.transcriptionProvider === "auto" ? (call.transcript ? "payload" : process.env.OPENAI_API_KEY ? "openai" : process.env.DEEPGRAM_API_KEY ? "deepgram" : "payload") : config.transcriptionProvider;
-  if (provider === "payload") { if (call.transcript) return call.transcript; throw new Error("Kein Transkript im Payload und kein Transkriptionsdienst konfiguriert (OPENAI_API_KEY oder DEEPGRAM_API_KEY)."); }
+  if (provider === "payload") { if (call.transcript) return { text: call.transcript, duration: null, segments: [] }; throw new Error("Kein Transkript im Payload und kein Transkriptionsdienst konfiguriert (OPENAI_API_KEY oder DEEPGRAM_API_KEY)."); }
+  const { audio, contentType } = await loadRecording(config, call, fetchImpl);
+  return transcribeAudio(config, audio, contentType, fetchImpl, provider);
+}
+/** Aufnahme eines Gesprächs holen: die hochgeladene Datei oder der Link des Dialers – auch, wenn dahinter erst eine Player-Seite liegt. */
+export async function loadRecording(config: Pick<CallQaConfig, "recordingAuthHeader">, call: Pick<CallRecord, "recordingUrl">, fetchImpl: typeof fetch): Promise<{ audio: Uint8Array<ArrayBuffer>; contentType: string }> {
   if (!call.recordingUrl) throw new Error("Keine Aufzeichnungs-URL übergeben.");
-  if (call.recordingUrl.startsWith("file:")) { // hochgeladene Datei (Aufnahmen per Datei testen)
-    const local = await readLocalRecording(call.recordingUrl); return transcribeAudio(config, local.audio, local.contentType, fetchImpl, provider);
-  }
+  if (call.recordingUrl.startsWith("file:")) return readLocalRecording(call.recordingUrl); // hochgeladene Datei (Aufnahmen per Datei testen)
   const headers: Record<string, string> = {};
   if (config.recordingAuthHeader) { const raw = decryptIntegrationSecret(config.recordingAuthHeader); const [name, ...rest] = raw.split(":"); if (rest.length) headers[name.trim().toLowerCase()] = rest.join(":").trim(); else headers.authorization = raw; }
   let audioResponse: Response;
@@ -391,7 +413,7 @@ async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typ
     audio = new Uint8Array(await mediaResponse.arrayBuffer());
   } else if (/^application\/json/i.test(contentType)) throw new Error("Der Aufnahme-Link liefert keine Audiodatei (JSON). Bitte den direkten Datei-Link verwenden oder die Datei hochladen.");
   else audio = new Uint8Array(await audioResponse.arrayBuffer());
-  return transcribeAudio(config, audio, contentType, fetchImpl, provider);
+  return { audio, contentType };
 }
 
 /** Datei-Link aus einer Player-Seite herauslesen. */
@@ -441,20 +463,133 @@ export async function localRecordingFile(db: Db, tenantId: number, callId: numbe
   return { file: path.resolve(recordingsDir(), name), contentType: ({ mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", ogg: "audio/ogg", webm: "audio/webm", mp4: "video/mp4" } as Record<string, string>)[ext] ?? "application/octet-stream" };
 }
 
-/** Gesprächsdauer aus der letzten Transkription (Whisper „duration“ bzw. Deepgram-Metadaten) – processCall trägt sie ein, wenn der Dialer keine geliefert hat. */
-let lastTranscriptionDuration: number | null = null;
-async function transcribeAudio(config: CallQaConfig, audio: Uint8Array<ArrayBuffer>, contentType: string, fetchImpl: typeof fetch, provider: string): Promise<string> {
-  lastTranscriptionDuration = null;
+const PLAYBACK_EXT: Record<string, string> = { ...AUDIO_EXT, "audio/aac": "aac", "video/webm": "webm" };
+const AUDIO_TYPE: Record<string, string> = { mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", webm: "audio/webm", mp4: "video/mp4" };
+/** Zwischenablage für Aufnahmen, die beim Dialer liegen: nur zum Anhören, höchstens einen Tag. */
+export const playbackDir = () => path.join(recordingsDir(), "abspielen");
+export const PLAYBACK_KEEP_MS = 24 * 3_600_000;
+const playbackLoads = new Map<string, Promise<{ file: string; contentType: string }>>();
+let playbackPruned = 0;
+/** Abgelaufene Kopien entfernen (höchstens einmal je Stunde geprüft; `force` für Tests und den Zeitplan). */
+export async function prunePlaybackCache(options: { force?: boolean; now?: number } = {}): Promise<number> {
+  const now = options.now ?? Date.now(); if (!options.force && now - playbackPruned < 3_600_000) return 0; playbackPruned = now;
+  let removed = 0;
+  for (const name of await fs.readdir(playbackDir()).catch(() => [] as string[])) { const file = path.join(playbackDir(), name); const stat = await fs.stat(file).catch(() => null); if (stat && now - stat.mtimeMs > PLAYBACK_KEEP_MS) { await fs.unlink(file).catch(() => undefined); removed += 1; } }
+  return removed;
+}
+const playbackCopy = async (tenantId: number, callId: number) => { const prefix = `${tenantId}-${callId}.`; const name = (await fs.readdir(playbackDir()).catch(() => [] as string[])).find((item) => item.startsWith(prefix) && !item.endsWith(".teil")); return name ? path.join(playbackDir(), name) : null; };
+/** Kopie eines Gesprächs aus der Zwischenablage entfernen (Gespräch gelöscht oder Aufbewahrung abgelaufen). */
+export async function dropPlaybackCopy(tenantId: number, callId: number) { const file = await playbackCopy(tenantId, callId); if (file) await fs.unlink(file).catch(() => undefined); }
+/**
+ * Aufnahme zum Anhören – für hochgeladene Dateien die Datei selbst, für Links des Dialers eine Kopie bei uns.
+ * Die Kopie braucht es, damit man in der Aufnahme vor- und zurückspulen kann: Viele Dialer liefern die Datei nur am Stück
+ * oder hinter einer Player-Seite aus. Sie wird beim ersten Anhören geholt (mit dem hinterlegten Zugang), liegt nicht öffentlich
+ * und wird nach einem Tag wieder entfernt. Nur für Gespräche des eigenen Mandanten.
+ */
+export async function recordingForPlayback(db: Db, tenantId: number, callId: number, options: { fetchImpl?: typeof fetch } = {}): Promise<{ file: string; contentType: string } | null> {
+  const row = (await db.select({ recordingUrl: callRecords.recordingUrl }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.id, callId))).limit(1))[0];
+  if (!row?.recordingUrl) return null;
+  if (row.recordingUrl.startsWith("file:")) return localRecordingFile(db, tenantId, callId);
+  await prunePlaybackCache().catch(() => 0);
+  const existing = await playbackCopy(tenantId, callId);
+  if (existing) return { file: existing, contentType: AUDIO_TYPE[path.extname(existing).slice(1)] ?? "audio/mpeg" };
+  const key = `${tenantId}-${callId}`; const running = playbackLoads.get(key); if (running) return running; // der Browser fragt oft mehrfach gleichzeitig – nur einmal holen
+  const load = (async () => {
+    const config = await ensureCallQaConfig(db, tenantId);
+    const { audio, contentType } = await loadRecording(config, { recordingUrl: row.recordingUrl }, options.fetchImpl ?? fetch);
+    const ext = PLAYBACK_EXT[contentType.toLowerCase()] ?? (/\.(mp3|wav|m4a|aac|ogg|webm|mp4)(\?|#|$)/i.exec(row.recordingUrl ?? "")?.[1]?.toLowerCase() ?? "mp3");
+    await fs.mkdir(playbackDir(), { recursive: true }); const file = path.join(playbackDir(), `${key}.${ext}`);
+    await fs.writeFile(`${file}.teil`, audio); await fs.rename(`${file}.teil`, file); // erst vollständig schreiben, dann sichtbar machen
+    return { file, contentType: AUDIO_TYPE[ext] ?? "audio/mpeg" };
+  })();
+  playbackLoads.set(key, load);
+  try { return await load; } finally { playbackLoads.delete(key); }
+}
+
+/** Aufnahme in Text umwandeln. Whisper („verbose_json“) und Deepgram („utterances“) liefern die Abschnitte mit ihrer Zeit gleich mit – daraus entstehen die Zeitmarken im Gespräch. */
+export async function transcribeAudio(config: Pick<CallQaConfig, "transcriptionLanguage">, audio: Uint8Array<ArrayBuffer>, contentType: string, fetchImpl: typeof fetch, provider: string): Promise<Transcription> {
   if (provider === "openai") {
     const form = new FormData(); form.append("file", new Blob([audio], { type: contentType }), "aufzeichnung.mp3"); form.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL ?? "whisper-1"); form.append("language", config.transcriptionLanguage || "de"); form.append("response_format", "verbose_json");
     const response = await fetchImpl("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: form });
     const body = await response.text(); if (!response.ok) throw new Error(`Transkription (OpenAI) fehlgeschlagen: HTTP ${response.status} ${body.slice(0, 200)}`);
-    try { const parsed = JSON.parse(body) as { text?: string; duration?: number; segments?: Array<{ end?: number }> }; if (typeof parsed.duration === "number" && parsed.duration > 0) lastTranscriptionDuration = Math.round(parsed.duration); else if (parsed.segments?.length) lastTranscriptionDuration = Math.round(Number(parsed.segments[parsed.segments.length - 1]?.end ?? 0)) || null; if (typeof parsed.text === "string") return parsed.text.trim(); } catch { /* kein JSON (z. B. Test-Stub mit reinem Text) */ }
-    return body.trim();
+    try {
+      const parsed = JSON.parse(body) as { text?: string; duration?: number; segments?: Array<{ start?: number; end?: number; text?: string }> };
+      const segments = normalizeSegments(parsed.segments);
+      const duration = typeof parsed.duration === "number" && parsed.duration > 0 ? Math.round(parsed.duration) : Array.isArray(parsed.segments) && parsed.segments.length ? Math.round(Number(parsed.segments[parsed.segments.length - 1]?.end ?? 0)) || null : null;
+      if (typeof parsed.text === "string") return { text: parsed.text.trim(), duration, segments };
+    } catch { /* kein JSON (z. B. Test-Stub mit reinem Text) */ }
+    return { text: body.trim(), duration: null, segments: [] };
   }
   const response = await fetchImpl(`https://api.deepgram.com/v1/listen?model=nova-2&language=${encodeURIComponent(config.transcriptionLanguage || "de")}&smart_format=true&diarize=true&utterances=true`, { method: "POST", headers: { authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, "content-type": contentType }, body: audio });
   const body = await response.text(); if (!response.ok) throw new Error(`Transkription (Deepgram) fehlgeschlagen: HTTP ${response.status} ${body.slice(0, 200)}`);
-  try { const parsed = JSON.parse(body) as { metadata?: { duration?: number }; results?: { utterances?: Array<{ speaker: number; transcript: string }>; channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> } }; if (typeof parsed.metadata?.duration === "number" && parsed.metadata.duration > 0) lastTranscriptionDuration = Math.round(parsed.metadata.duration); const utterances = parsed.results?.utterances; if (utterances?.length) return utterances.map((item) => `Sprecher ${item.speaker + 1}: ${item.transcript}`).join("\n"); return parsed.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ""; } catch { return body; }
+  try {
+    const parsed = JSON.parse(body) as { metadata?: { duration?: number }; results?: { utterances?: Array<{ start?: number; end?: number; speaker: number; transcript: string }>; channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> } };
+    const duration = typeof parsed.metadata?.duration === "number" && parsed.metadata.duration > 0 ? Math.round(parsed.metadata.duration) : null;
+    const utterances = parsed.results?.utterances;
+    if (utterances?.length) return { text: utterances.map((item) => `Sprecher ${item.speaker + 1}: ${item.transcript}`).join("\n"), duration, segments: normalizeSegments(utterances) };
+    return { text: parsed.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "", duration, segments: [] };
+  } catch { return { text: body, duration: null, segments: [] }; }
+}
+
+/* ------------------------------------------------------------------ Zeitmarken: Stelle im Gespräch je Prüffrage und Kriterium */
+
+/**
+ * Stelle im Gespräch je Punkt: Die KI bekommt die Abschrift mit Zeitmarke am Zeilenanfang und nennt je Punkt die Zeile, in der die
+ * entscheidende Stelle beginnt. Die Zeit wird an den Anfang ihres Abschnitts gezogen; was außerhalb des Gesprächs liegt, fällt weg.
+ * Ohne KI (oder wenn sie nichts liefert) entscheiden die Wörter des Belegs. Gibt es keine einzelne Stelle, bleibt der Punkt ohne Zeit.
+ * Die Bewertung selbst wird davon nicht berührt – die Suche läuft danach und getrennt.
+ */
+export async function locateMarks(segments: CallSegment[], items: MarkItem[]): Promise<Record<string, number>> {
+  const marks: Record<string, number> = {}; if (!segments.length || !items.length) return marks;
+  const byWords = () => { for (const item of items) { const at = locateByWords(segments, item.note); if (at !== null) marks[item.id] = at; } return marks; };
+  if (!process.env.ANTHROPIC_API_KEY) return byWords();
+  try {
+    const fields = items.map((_, index) => `zeit_${index + 1}`);
+    const properties: Record<string, unknown> = {}; fields.forEach((field, index) => { properties[field] = { type: "string", description: `Zeitmarke zu Punkt ${index + 1}, genau wie in der Abschrift (z. B. 1:31) – leer, wenn es keine einzelne Stelle gibt` }; });
+    const schema = { name: "zeitmarken", schema: { type: "object", additionalProperties: false, required: fields, properties } };
+    const system = `Du bekommst die Abschrift eines Telefonats. Jede Zeile beginnt mit ihrer Zeitmarke in eckigen Klammern, z. B. [1:31]. Dazu bekommst du Punkte aus der Bewertung dieses Gesprächs – jeweils mit Ergebnis und Begründung.\nNenne für jeden Punkt die Zeitmarke der Zeile, in der die entscheidende Stelle für dieses Ergebnis beginnt: dort, wo danach gefragt wird oder wo der Kunde zustimmt, ablehnt oder ausweicht. Übernimm die Zeitmarke genau so, wie sie in der Abschrift steht (z. B. 1:31). Gibt es keine einzelne Stelle – etwa weil etwas im ganzen Gespräch nicht vorkommt –, trage einen leeren Text ein. Erfinde keine Zeitmarken.\nPunkte:\n${items.map((item, index) => `- ${fields[index]}: ${item.kind} „${item.label}“ – Ergebnis: ${item.result}${item.note ? ` – Begründung: ${item.note.slice(0, 420)}` : ""}`).join("\n")}`;
+    const response = await invokeLLM({ model: "fast", maxTokens: 900, messages: [{ role: "system", content: system }, { role: "user", content: `Abschrift:\n"""\n${timedTranscript(segments).slice(0, 44_000)}\n"""` }], outputSchema: schema });
+    let value: unknown; try { value = JSON.parse(response.choices[0]?.message.content ?? "{}"); } catch { value = {}; }
+    const read = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    if (!fields.some((field) => typeof read[field] === "string")) return byWords(); // gar nichts Verwertbares zurückgekommen
+    items.forEach((item, index) => { const at = snapToSegment(segments, parseClock(read[fields[index]])); if (at !== null) marks[item.id] = at; });
+    return marks;
+  } catch { return byWords(); }
+}
+
+/**
+ * Zeitmarken nachholen (ältere Gespräche oder Text vom Dialer): Die Aufnahme wird noch einmal in Text umgewandelt – nur, um die
+ * Abschnitte mit ihrer Zeit zu bekommen. Text, Bewertung und Entscheidung des Gesprächs bleiben, wie sie sind; danach wird je
+ * Prüffrage und Kriterium die Stelle gesucht. Geht es nicht (keine Aufnahme mehr, kein Dienst), wird der Grund vermerkt, damit
+ * nicht bei jedem Öffnen neu versucht wird – `force` versucht es trotzdem noch einmal.
+ */
+export async function ensureCallTimeline(db: Db, tenantId: number, callId: number, options: { fetchImpl?: typeof fetch; force?: boolean } = {}): Promise<{ state: TimelineState; segments: number; marks: number; note: string | null }> {
+  const call = (await db.select().from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0];
+  if (!call) throw new Error("Gespräch wurde nicht gefunden.");
+  const stored = readTimeline(call.timeline);
+  if (stored?.segments.length) return { state: "ok", segments: stored.segments.length, marks: Object.keys(stored.marks).length, note: null };
+  if (stored && !options.force) return { state: "ohne", segments: 0, marks: 0, note: stored.note ?? null };
+  const without = async (note: string) => { await db.update(callRecords).set({ timeline: { segments: [], marks: {}, note } satisfies CallTimeline }).where(eq(callRecords.id, callId)); return { state: "ohne" as const, segments: 0, marks: 0, note }; };
+  if (!call.transcript) return { state: "ohne", segments: 0, marks: 0, note: "Zu diesem Gespräch gibt es noch keinen Text." }; // nichts vermerken: die Auswertung läuft vielleicht noch
+  if (!call.recordingUrl) return without("Zu diesem Gespräch liegt keine Aufnahme vor.");
+  const config = await ensureCallQaConfig(db, tenantId);
+  if (config.consentRequired && !call.consent) return without("Ohne dokumentierte Einwilligung wird die Aufnahme nicht ausgewertet.");
+  const provider = config.transcriptionProvider === "openai" || config.transcriptionProvider === "deepgram" ? config.transcriptionProvider : process.env.OPENAI_API_KEY ? "openai" : process.env.DEEPGRAM_API_KEY ? "deepgram" : null;
+  if (!provider) return without("Für die Zeiten braucht es den Dienst, der Aufnahmen in Text umwandelt – er ist nicht eingerichtet.");
+  let segments: CallSegment[] = [];
+  try { const fetchImpl = options.fetchImpl ?? fetch; const { audio, contentType } = await loadRecording(config, call, fetchImpl); segments = (await transcribeAudio(config, audio, contentType, fetchImpl, provider)).segments; }
+  catch (error) { return without(`Die Aufnahme ließ sich nicht auswerten: ${(error instanceof Error ? error.message : String(error)).slice(0, 160)}`); }
+  if (!segments.length) return without("Der Dienst hat zu dieser Aufnahme keine Zeiten geliefert.");
+  const marks = await storeCallMarks(db, call, segments, config);
+  return { state: "ok", segments: segments.length, marks: Object.keys(marks).length, note: null };
+}
+/** Stellen je Prüffrage und Kriterium aus dem aktuellen Stand des Gesprächs suchen und zusammen mit den Abschnitten speichern. */
+async function storeCallMarks(db: Db, call: CallRecord, segments: CallSegment[], config: CallQaConfig): Promise<Record<string, number>> {
+  const questions = await questionsForCampaign(db, call.tenantId, call.campaign); const own = await criteriaForCampaign(db, call.tenantId, call.campaign, config);
+  const scores = (Array.isArray(call.criteriaScores) ? (call.criteriaScores as Evaluation["criteria"]) : []).filter((item) => item.key !== CRITERIA_NOTE_KEY);
+  const marks = await locateMarks(segments, markItems(questions, call.qualificationAnswers as Record<string, QualificationAnswer> | null, own.criteria, scores)).catch(() => ({} as Record<string, number>));
+  await db.update(callRecords).set({ timeline: { segments, marks } satisfies CallTimeline }).where(eq(callRecords.id, call.id));
+  return marks;
 }
 
 /* ------------------------------------------------------------------ Bewertung */
@@ -473,16 +608,16 @@ async function knownAgentNames(db: Db, tenantId: number) {
   const rows = await db.select({ name: callRecords.agentName, count: sql<number>`count(*)` }).from(callRecords).where(eq(callRecords.tenantId, tenantId)).groupBy(callRecords.agentName);
   return rows.filter((row): row is { name: string; count: number } => Boolean(row.name && row.name.trim()) && !isJunkAgentName(row.name)).map((row) => ({ name: row.name, count: Number(row.count) })); // „Mein Name“ & Co. sind keine Agenten
 }
-/** Aufräumen (beim Start und nach jeder Bewertung): ähnlich klingende Agenten-Namen je Mandant zusammenführen – der häufigste Name bleibt. */
+/** Aufräumen (beim Start und nach jeder Bewertung): ähnlich klingende Agenten-Namen je Mandant zusammenführen – der häufigste Name bleibt. Von Hand gesetzte und vom Dialer genannte Namen werden dabei nicht umgeschrieben. */
 export async function mergeSimilarAgentNames(db: Db, onlyTenantId?: number): Promise<number> {
   const tenants = onlyTenantId ? [onlyTenantId] : (await db.selectDistinct({ tenantId: callRecords.tenantId }).from(callRecords)).map((row) => row.tenantId);
   let changed = 0;
-  for (const tenantId of tenants) for (const merge of agentNameMerges(await knownAgentNames(db, tenantId))) { await db.update(callRecords).set({ agentName: merge.to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.agentName, merge.from), or(isNull(callRecords.agentSource), ne(callRecords.agentSource, "manuell")))); changed += 1; }
+  for (const tenantId of tenants) for (const merge of agentNameMerges(await knownAgentNames(db, tenantId))) { await db.update(callRecords).set({ agentName: merge.to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.agentName, merge.from), or(isNull(callRecords.agentSource), and(ne(callRecords.agentSource, "manuell"), ne(callRecords.agentSource, "dialer"))))) /* von Hand gesetzte und vom Dialer genannte Namen bleiben, wie sie sind */; changed += 1; }
   return changed;
 }
 /**
  * Alle vorhandenen Gespräche noch einmal gegen ihr Transkript prüfen: Stellt sich der Mitarbeiter dort eindeutig vor, gilt dieser Name
- * (auch wenn vorher ein anderer eingetragen war). Von Hand gesetzte Agenten bleiben. Danach werden ähnliche Namen zusammengeführt.
+ * (auch wenn vorher ein anderer eingetragen war). Von Hand gesetzte und vom Dialer genannte Agenten bleiben. Danach werden ähnliche Namen zusammengeführt.
  */
 export async function reassignAgentsFromTranscripts(db: Db, onlyTenantId?: number): Promise<number> {
   const tenants = onlyTenantId ? [onlyTenantId] : (await db.selectDistinct({ tenantId: callRecords.tenantId }).from(callRecords)).map((row) => row.tenantId);
@@ -491,7 +626,7 @@ export async function reassignAgentsFromTranscripts(db: Db, onlyTenantId?: numbe
     const known = await knownAgentNames(db, tenantId); const names = known.map((item) => item.name);
     const rows = await db.select({ id: callRecords.id, agentName: callRecords.agentName, agentSource: callRecords.agentSource, transcript: callRecords.transcript }).from(callRecords).where(eq(callRecords.tenantId, tenantId));
     for (const row of rows) {
-      if (row.agentSource === "manuell") continue;
+      if (row.agentSource === "manuell" || row.agentSource === "dialer") continue; // von Hand gesetzt oder vom Dialer genannt: gilt
       const stored = row.agentName?.trim() || null; const junk = Boolean(stored) && isJunkAgentName(stored); const current = junk ? null : stored; // „Mein Name“, „Woche“ … zählen als „kein Agent“
       const detected = row.transcript ? detectAgent(row.transcript, names) : null;
       const usable = detected?.sure ? canonicalAgentName(detected.name, known) : null; // nur eindeutige Vorstellungen zählen hier – alles andere prüft die KI (verifyAgentsWithAi)
@@ -655,17 +790,20 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
   const config = await ensureCallQaConfig(db, call.tenantId);
   try {
     const freshTranscript = call.status === "eingegangen" || !call.transcript;
-    const transcript = freshTranscript ? await transcribe(config, call, options.fetchImpl ?? fetch) : call.transcript!;
+    const transcription = freshTranscript ? await transcribe(config, call, options.fetchImpl ?? fetch) : null;
+    const transcript = transcription ? transcription.text : call.transcript!;
+    // Zeitmarken: frische Abschnitte aus der Umwandlung in Text – sonst die schon gespeicherten (z. B. bei „Neu bewerten“)
+    const segments = transcription?.segments.length ? transcription.segments : readTimeline(call.timeline)?.segments ?? [];
     if (!transcript.trim()) throw new Error("Transkript ist leer.");
     // Dauer aus der Transkription und Name des Mitarbeiters aus der Vorstellung („hier ist Maya Becker …“) – nur, wenn der Dialer nichts geliefert hat
-    const durationSeconds = call.durationSeconds ?? (freshTranscript ? lastTranscriptionDuration : null) ?? null;
-    // Agent: Die Vorstellung im Transkript gilt (auch gegenüber einem schon eingetragenen Namen) – außer der Agent wurde von Hand gesetzt
-    const agentManual = call.agentSource === "manuell"; const knownAgents = agentManual ? [] : await knownAgentNames(db, call.tenantId).catch(() => []);
+    const durationSeconds = call.durationSeconds ?? transcription?.duration ?? null;
+    // Agent: Die Vorstellung im Transkript gilt (auch gegenüber einem schon eingetragenen Namen) – außer der Agent wurde von Hand gesetzt oder der Dialer hat ihn genannt
+    const agentManual = call.agentSource === "manuell" || call.agentSource === "dialer"; const knownAgents = agentManual ? [] : await knownAgentNames(db, call.tenantId).catch(() => []);
     const detectedAgent = agentManual ? null : detectAgent(transcript, knownAgents.map((item) => item.name));
     let agentName = call.agentName?.trim() || null; let agentSource = call.agentSource ?? null;
     if (!agentManual && isJunkAgentName(agentName)) agentName = null; // „Mein Name“ & Co. sind kein Agent
     if (detectedAgent?.sure) { const resolved = canonicalAgentName(detectedAgent.name, knownAgents); if (resolved) { agentName = resolved; agentSource = "transkript"; } } // nur eine eindeutige Vorstellung zählt sofort – sonst entscheidet gleich die KI
-    await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName !== (call.agentName ?? null) || agentSource !== (call.agentSource ?? null) ? { agentName, agentSource } : {}) }).where(eq(callRecords.id, callId));
+    await db.update(callRecords).set({ transcript, status: "transkribiert", error: null, ...(transcription?.segments.length ? { timeline: { segments, marks: {} } satisfies CallTimeline } : {}), ...(durationSeconds !== null && call.durationSeconds === null ? { durationSeconds } : {}), ...(agentName !== (call.agentName ?? null) || agentSource !== (call.agentSource ?? null) ? { agentName, agentSource } : {}) }).where(eq(callRecords.id, callId));
     const lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
     const own = await criteriaForCampaign(db, call.tenantId, call.campaign, config); // Kriterien der Kampagne (sonst Standard)
     const evaluation = await evaluateTranscript({ ...config, criteria: own.criteria, instructions: own.instructions }, transcript, { leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() : null });
@@ -681,7 +819,9 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     const strictness = { freigegeben: 0, pruefen: 1, zurueckgewiesen: 2 } as const;
     if (byQuestions) { decision = byQuestions.decision; if (rule && strictness[decided.decision] > strictness[decision]) decision = decided.decision; } // Kampagnenfragen entscheiden; eine ausdrücklich angelegte Entscheidungsregel darf nur strenger machen
     const nextStep = [byQuestions?.reason, rule ? `Regel: ${rule.label}` : null, evaluation.nextStep].filter(Boolean).join(" · ").slice(0, 320);
-    await db.update(callRecords).set({ status: "bewertet", score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.unscored ? (evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : []) : evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", error: null }).where(eq(callRecords.id, callId));
+    // Stelle im Gespräch je Prüffrage und Kriterium („bei 1:31“) – nur, wenn es Abschnitte mit Zeit gibt; ein Fehler dabei hält die Bewertung nicht auf
+    const marks = segments.length ? await locateMarks(segments, markItems(questions, qualificationAnswers, own.criteria, evaluation.unscored ? [] : evaluation.criteria)).catch(() => ({} as Record<string, number>)) : {};
+    await db.update(callRecords).set({ status: "bewertet", score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.unscored ? (evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : []) : evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", error: null, ...(segments.length ? { timeline: { segments, marks } satisfies CallTimeline } : {}) }).where(eq(callRecords.id, callId));
     let target = lead;
     if (!target && call.rawContactId) {
       // Rohdaten-Kontakt: die Freigabe macht ihn zum Lead, Ablehnung verwirft ihn. Über die Regeln ausgeliefert wird nur, wenn die Auslieferung eingeschaltet ist – sonst bleibt der Lead liegen („nur empfangen“)
@@ -713,7 +853,9 @@ async function applyDecision(db: Db, config: CallQaConfig, callId: number, lead:
   if (decision === "pruefen" && current.status === "neu") nextStatus = "hängend";
   const meta = current.metadata && typeof current.metadata === "object" && !Array.isArray(current.metadata) ? (current.metadata as Record<string, unknown>) : {};
   await db.update(leads).set({ status: nextStatus, metadata: { ...meta, callScore: evaluation.score, callVerdict: evaluation.verdict, callDecision: decision, callRecordId: callId } }).where(eq(leads.id, lead.id));
-  await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: current.status, nextStatus, actorUserId, note: `${label}: ${decision === "freigegeben" ? "freigegeben" : decision === "pruefen" ? "zur Prüfung" : "zurückgewiesen"}${evaluation.summary ? ` – ${evaluation.summary.slice(0, 200)}` : ""}` });
+  // Im Verlauf des Leads steht, welcher Agent das Gespräch geführt hat (nur intern – nicht in den Angaben, die an Käufer gehen)
+  const agent = (await db.select({ agentName: callRecords.agentName }).from(callRecords).where(eq(callRecords.id, callId)).limit(1))[0]?.agentName?.trim() || null; const agentNote = agent && !isJunkAgentName(agent) ? ` · Agent: ${agent.slice(0, 80)}` : "";
+  await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: current.status, nextStatus, actorUserId, note: `${label}: ${decision === "freigegeben" ? "freigegeben" : decision === "pruefen" ? "zur Prüfung" : "zurückgewiesen"}${agentNote}${evaluation.summary ? ` – ${evaluation.summary.slice(0, 200)}` : ""}` });
   // Freigabe = Opt-in-Nachweis: die Einwilligungsstelle aus der Abschrift herausgesucht (sofern es noch keine gültige für den Fachbetrieb gibt)
   if (decision === "freigegeben") { try { const { optInFromCallRecord } = await import("./opt-in"); await optInFromCallRecord(db, config.tenantId, callId, actorUserId); } catch (error) { console.error("[Opt-in] aus Gesprächsfreigabe nicht angelegt:", error instanceof Error ? error.message : error); } }
   if (decision === "freigegeben" && config.autoDeliver && nextStatus !== current.status) await triggerLeadAutomations(db, { tenantId: config.tenantId, actorUserId, leadId: lead.id, triggerType: "status_geändert" });
@@ -859,6 +1001,9 @@ export async function rescoreUnscoredCalls(db: Db, options: { max?: number; tena
         const evaluation = await evaluateTranscript({ ...config, criteria: own.criteria, instructions: own.instructions }, row.transcript!, {});
         if (evaluation.unscored) { await db.update(callRecords).set({ score: null, criteriaScores: evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : [] }).where(eq(callRecords.id, row.id)); continue; }
         await db.update(callRecords).set({ score: evaluation.score, criteriaScores: evaluation.criteria }).where(eq(callRecords.id, row.id)); rescored += 1;
+        // die Kriterien sind jetzt da: ihre Stellen im Gespräch nachtragen (nur, wenn es Abschnitte mit Zeit gibt)
+        const fresh = (await db.select().from(callRecords).where(eq(callRecords.id, row.id)).limit(1))[0]; const segments = fresh ? readTimeline(fresh.timeline)?.segments ?? [] : [];
+        if (fresh && segments.length) await storeCallMarks(db, fresh, segments, config).catch(() => undefined);
       } catch (error) { console.error("[Gespräche] Kriterien nachbewerten:", row.id, error instanceof Error ? error.message : error); }
     }
     return { tried: todo.length, rescored };
@@ -974,6 +1119,8 @@ export async function deleteCallCampaign(db: Db, tenantId: number, input: { name
   return { deletedCalls: deleted };
 }
 
+/** Spalten für die Liste: ohne Text, Roh-Meldung und Zeitmarken – die sind groß und werden erst im einzelnen Gespräch gebraucht. */
+const CALL_LIST_COLUMNS = (() => { const { transcript, payload, timeline, ...rest } = getTableColumns(callRecords); void transcript; void payload; void timeline; return rest; })();
 export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; categoryId?: number | null; limit?: number } & CallPeriod = {}) {
   const conditions = [eq(callRecords.tenantId, tenantId)];
   const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to));
@@ -982,7 +1129,7 @@ export async function listCalls(db: Db, tenantId: number, filter: { decision?: s
   if (filter.agentName) conditions.push(eq(callRecords.agentName, filter.agentName));
   if (filter.status) conditions.push(eq(callRecords.status, filter.status as CallRecord["status"]));
   if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign));
-  const rows = await db.select({ call: callRecords, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company, categoryName: leadCategories.name, categoryEmoji: leadCategories.emoji }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).leftJoin(leadCategories, eq(leadCategories.id, callRecords.leadCategoryId)).where(and(...conditions)).orderBy(desc(callRecords.createdAt)).limit(filter.limit ?? 200);
+  const rows = await db.select({ call: CALL_LIST_COLUMNS, leadPublicId: leads.publicId, leadName: leads.firstName, leadLastName: leads.lastName, leadStatus: leads.status, reviewer: users.name, rawFirst: rawContacts.firstName, rawLast: rawContacts.lastName, rawCompany: rawContacts.company, categoryName: leadCategories.name, categoryEmoji: leadCategories.emoji }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).leftJoin(users, eq(users.id, callRecords.reviewedByUserId)).leftJoin(rawContacts, eq(rawContacts.id, callRecords.rawContactId)).leftJoin(leadCategories, eq(leadCategories.id, callRecords.leadCategoryId)).where(and(...conditions)).orderBy(desc(callRecords.createdAt)).limit(filter.limit ?? 200);
   // Opt-in je Gespräch: der beste Nachweis für den Fachbetrieb zum Lead (gültig > unvollständig > offen)
   const leadIds = Array.from(new Set(rows.map((row) => row.call.leadId).filter((id): id is number => typeof id === "number")));
   const optInRows = leadIds.length ? await db.select({ id: optIns.id, leadId: optIns.leadId, status: optIns.status, kind: optIns.kind, number: optIns.number, buyerName: optIns.buyerName, missing: optIns.missing, callRecordId: optIns.callRecordId }).from(optIns).where(and(eq(optIns.tenantId, tenantId), inArray(optIns.leadId, leadIds), eq(optIns.grantedTo, "kaeufer"))).orderBy(desc(optIns.id)) : [];
@@ -1003,7 +1150,8 @@ export async function getCall(db: Db, tenantId: number, callId: number) {
   const scores = Array.isArray(row.call.criteriaScores) ? (row.call.criteriaScores as Evaluation["criteria"]) : [];
   const questions = await questionsForCampaign(db, tenantId, row.call.campaign);
   const unscored = row.call.status === "bewertet" && criteriaUnscored(row.call); // Kriterien-Punkte fehlen (werden automatisch nachgeholt) – nicht als 0 % zeigen
-  return { ...row.call, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl?.startsWith("file:") ? `/api/aufnahmen/${row.call.id}` : row.call.recordingUrl, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, autoDeliver: config.autoDeliver, dialer: dialerInfo(row.call.payload, { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }), questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
+  const timeline = readTimeline(row.call.timeline); const timelineState = timelineStateOf(row.call);
+  return { ...row.call, timeline: undefined, segments: timeline?.segments ?? [], marks: timeline?.marks ?? {}, timelineState: timelineState.state, timelineNote: timelineState.note, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl ? `/api/aufnahmen/${row.call.id}` : null /* immer über die eigene Adresse: nur so lässt sich spulen, und Zugangsdaten im Link des Dialers bleiben bei uns */, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, autoDeliver: config.autoDeliver, dialer: dialerInfo(row.call.payload, { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }), questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
 }
 
 export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null } = {}) {
@@ -1027,6 +1175,7 @@ export async function deleteCall(db: Db, tenantId: number, callId: number) {
   const row = (await db.select({ id: callRecords.id, recordingUrl: callRecords.recordingUrl }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.id, callId))).limit(1))[0];
   if (!row) throw new Error("Gespräch wurde nicht gefunden.");
   if (row.recordingUrl?.startsWith("file:")) { const name = row.recordingUrl.slice("file:".length).replace(/[^a-zA-Z0-9._-]/g, ""); await fs.unlink(path.resolve(recordingsDir(), name)).catch(() => undefined); }
+  await dropPlaybackCopy(tenantId, callId); // Kopie zum Anhören
   await db.update(optIns).set({ callRecordId: null }).where(and(eq(optIns.tenantId, tenantId), eq(optIns.callRecordId, callId)));
   await db.delete(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.id, callId)));
   return { success: true as const };
@@ -1040,7 +1189,7 @@ export async function purgeExpiredCalls(db: Db) {
     if (!config.retentionDays || config.retentionDays <= 0) continue;
     const cutoff = new Date(Date.now() - config.retentionDays * 24 * 3_600_000);
     const stale = await db.select({ id: callRecords.id }).from(callRecords).where(and(eq(callRecords.tenantId, config.tenantId), lt(callRecords.createdAt, cutoff), or(eq(callRecords.status, "bewertet"), eq(callRecords.status, "fehlgeschlagen"), eq(callRecords.status, "ohne_einwilligung"))));
-    for (const row of stale) { const current = (await db.select({ transcript: callRecords.transcript, recordingUrl: callRecords.recordingUrl }).from(callRecords).where(eq(callRecords.id, row.id)).limit(1))[0]; if (!current?.transcript && !current?.recordingUrl) continue; await db.update(callRecords).set({ transcript: null, recordingUrl: null, payload: null }).where(eq(callRecords.id, row.id)); purged += 1; }
+    for (const row of stale) { const current = (await db.select({ transcript: callRecords.transcript, recordingUrl: callRecords.recordingUrl }).from(callRecords).where(eq(callRecords.id, row.id)).limit(1))[0]; if (!current?.transcript && !current?.recordingUrl) continue; if (current.recordingUrl?.startsWith("file:")) await fs.unlink(path.resolve(recordingsDir(), current.recordingUrl.slice("file:".length).replace(/[^a-zA-Z0-9._-]/g, ""))).catch(() => undefined); /* hochgeladene Aufnahme */ await dropPlaybackCopy(config.tenantId, row.id); /* Kopie zum Anhören */ await db.update(callRecords).set({ transcript: null, recordingUrl: null, payload: null, timeline: null /* die Abschnitte enthalten den Text des Gesprächs */ }).where(eq(callRecords.id, row.id)); purged += 1; }
   }
   return { purged };
 }

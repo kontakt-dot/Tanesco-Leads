@@ -6,9 +6,9 @@
  */
 
 /** Zuordnung der zusätzlichen Felder (Pfad in der Meldung, Punkt-Schreibweise) – in den Einstellungen änderbar. */
-export const CONTACT_MAPPING = { result: "result", note: "note", callbackAt: "callback_at", contactId: "contact.id", firstName: "contact.first_name", lastName: "contact.last_name", company: "contact.company", street: "contact.street", postcode: "contact.postcode", city: "contact.city", country: "contact.country", email: "contact.email", contactFields: "contact.fields" } as const;
+export const CONTACT_MAPPING = { result: "result", note: "note", callbackAt: "callback_at", contactId: "contact.id", firstName: "contact.first_name", lastName: "contact.last_name", company: "contact.company", street: "contact.street", postcode: "contact.postcode", city: "contact.city", country: "contact.country", email: "contact.email", contactFields: "contact.fields", category: "category" } as const;
 export type ContactMappingKey = keyof typeof CONTACT_MAPPING;
-export const CONTACT_MAPPING_LABELS: Array<[ContactMappingKey, string]> = [["contactId", "Kontakt-Nummer des Dialers"], ["firstName", "Vorname"], ["lastName", "Nachname"], ["company", "Firma"], ["street", "Straße mit Hausnummer"], ["postcode", "PLZ"], ["city", "Ort"], ["country", "Land"], ["email", "E-Mail"], ["contactFields", "Weitere Felder (Name-Wert-Paare)"], ["result", "Ergebnis im Dialer"], ["note", "Notiz des Agenten"], ["callbackAt", "Rückruf oder Termin"]];
+export const CONTACT_MAPPING_LABELS: Array<[ContactMappingKey, string]> = [["contactId", "Kontakt-Nummer des Dialers"], ["firstName", "Vorname"], ["lastName", "Nachname"], ["company", "Firma"], ["street", "Straße mit Hausnummer"], ["postcode", "PLZ"], ["city", "Ort"], ["country", "Land"], ["email", "E-Mail"], ["contactFields", "Weitere Felder (Name-Wert-Paare)"], ["category", "Leadsparte (PV, WP, PV+WP)"], ["result", "Ergebnis im Dialer"], ["note", "Notiz des Agenten"], ["callbackAt", "Rückruf oder Termin"]];
 
 export type DialerContact = {
   externalId: string | null; firstName: string | null; lastName: string | null; company: string | null; street: string | null; postcode: string | null; city: string | null;
@@ -101,7 +101,7 @@ export function extractDialerContact(payload: unknown, mapping: Partial<Record<s
   const emailRaw = pick("email", "email", "contact.email", 320); const email = emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw.toLowerCase() : null; if (emailRaw && !email) found.pop();
   const phone = clean(findIn(container, "phone", false)?.value, 48);
   const externalId = pick("contactId", "id", "contact.id", 120);
-  const category = clean(findIn(container, "category", false)?.value, 160) ?? clean(findIn(top, "category", true)?.value, 160);
+  const category = clean(readPath(top, path("category")), 160) ?? clean(findIn(container, "category", false)?.value, 160) ?? clean(findIn(top, "category", true)?.value, 160); if (category) found.push("category");
   // weitere Felder: das Feld `fields` – und alles im Kontakt, was kein bekanntes Feld ist
   const mappedFields = readPath(top, path("contactFields")); const fieldsSource = isObject(mappedFields) ? mappedFields : findIn(container, "fields", false)?.value ?? findIn(top, "fields", true)?.value;
   const fields = flatFields(fieldsSource);
@@ -112,7 +112,7 @@ export function extractDialerContact(payload: unknown, mapping: Partial<Record<s
   const callbackRaw = clean(readPath(top, path("callbackAt")), 60) ?? clean(findIn(top, "callbackAt", false)?.value, 60);
   const callbackAt = callbackRaw ? (Number.isNaN(new Date(callbackRaw).getTime()) ? callbackRaw : new Date(callbackRaw).toISOString()) : null; if (callbackAt) found.push("callback_at");
   const hasIdentity = Boolean(firstName || lastName || company);
-  const hasData = hasIdentity || Boolean(street || postcode || city || email || externalId || result || note || callbackAt || Object.keys(fields).length);
+  const hasData = hasIdentity || Boolean(street || postcode || city || email || externalId || category || result || note || callbackAt || Object.keys(fields).length);
   return { externalId, firstName, lastName, company, street, postcode, city, country, email, phone, category, fields, result, note, callbackAt, found, hasIdentity, hasData };
 }
 
@@ -137,6 +137,25 @@ export function dialerInfo(payload: unknown, mapping: Partial<Record<string, str
   const contact = extractDialerContact(payload, mapping); if (!contact.hasData) return null;
   const name = [contact.firstName, contact.lastName].filter(Boolean).join(" ") || null;
   const place = [contact.postcode, contact.city].filter(Boolean).join(" ") || null;
-  return { result: contact.result, note: contact.note, callbackAt: contact.callbackAt, contactId: contact.externalId, name, company: contact.company, street: contact.street, place, email: contact.email, fields: Object.entries(contact.fields).map(([label, value]) => ({ label, value })) };
+  return { result: contact.result, note: contact.note, callbackAt: contact.callbackAt, contactId: contact.externalId, name, company: contact.company, street: contact.street, place, email: contact.email, category: contact.category, fields: Object.entries(contact.fields).map(([label, value]) => ({ label, value })) };
 }
 export type DialerInfo = NonNullable<ReturnType<typeof dialerInfo>>;
+
+/** Welche Produkte nennt eine Leadsparte? „PV“, „Photovoltaik“, „Solar“ → PV; „WP“, „Wärmepumpe“ → WP; „PV+WP“, „beides“ → beide. */
+export function categoryProducts(value: string | null | undefined): { pv: boolean; wp: boolean } {
+  const text = ` ${String(value ?? "").toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, " ").trim()} `;
+  const both = /\b(pvwp|wppv|beides|beide|both)\b/.test(text);
+  return { pv: both || /\b(pv|photovoltaik|fotovoltaik|solar|solaranlage|solarstrom)\b/.test(text), wp: both || /\b(wp|waermepumpe|waermepumpen|heatpump|heat pump)\b/.test(text) };
+}
+/**
+ * Leadsparte des Dialers einer Kategorie zuordnen: zuerst genauer Name oder Kürzel; sonst über das Produkt –
+ * „PV“ → die Photovoltaik-Kategorie, „WP“ → die Wärmepumpen-Kategorie, „PV+WP“ → die Kategorie für beides.
+ * Nur ein eindeutiger Treffer zählt; sonst null (dann erkennt die Software die Kategorie aus dem Gespräch).
+ */
+export function matchDialerCategory<T extends { id: number; name: string; shortcode?: string | null }>(categories: T[], wanted: string | null | undefined): T | null {
+  const value = String(wanted ?? "").trim().toLowerCase(); if (!value) return null;
+  const exact = categories.filter((item) => item.name.trim().toLowerCase() === value || (item.shortcode ?? "").trim().toLowerCase() === value); if (exact.length === 1) return exact[0];
+  const want = categoryProducts(value); if (!want.pv && !want.wp) return null;
+  const hits = categories.filter((item) => { const has = categoryProducts(`${item.name} ${item.shortcode ?? ""}`); return has.pv === want.pv && has.wp === want.wp; });
+  return hits.length === 1 ? hits[0] : null;
+}

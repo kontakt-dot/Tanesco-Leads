@@ -329,8 +329,8 @@ html:not(.dark) .gq-stage{--gp-err-bg:#fef3f2;--gp-err-line:#fecdca;--gp-err:#b4
 
 .gq-player{display:grid;gap:8px;padding:14px 16px 13px;border-radius:16px;border:1px solid var(--gq-line);background:var(--gq-soft)}
 .gq-player b{font-size:12.5px;font-weight:600;color:var(--gq-ink)}
-.gq-player audio{display:block;width:100%;height:40px;color-scheme:dark}
-html:not(.dark) .gq-player audio{color-scheme:light}
+.gq-player audio[controls]{display:block;width:100%;height:40px;color-scheme:dark}
+html:not(.dark) .gq-player audio[controls]{color-scheme:light}
 .gq-player small{font-size:11.5px;line-height:1.4;color:var(--gq-dim)}
 
 .gq-call-facts{display:flex;flex-wrap:wrap;gap:14px 38px;margin:24px 0 0;padding-top:18px;border-top:1px solid var(--gq-line)}
@@ -345,6 +345,14 @@ html.dark .gq-stage .cq-agent button{color:var(--gq-ink)!important}
 .gq-call-next{margin:0;font-size:13px;line-height:1.45;color:var(--gq-dim)}
 .gq-call-error{margin:0;padding:9px 12px;border-radius:11px;border:1px solid var(--gp-err-line);background:var(--gp-err-bg);color:var(--gp-err);font-size:12.5px;line-height:1.45}
 .gq-call-flags{display:flex;flex-wrap:wrap;gap:6px;margin:0}
+/* Woran es liegt: entscheidende Prüffragen ohne „Ja“ – mit der Stelle im Gespräch */
+.gq-why{display:grid;gap:7px;margin-top:3px}
+.gq-why>b{font-size:12px;font-weight:700;color:var(--gq-dim)}
+.gq-why ul{display:grid;gap:7px;margin:0;padding:0;list-style:none}
+.gq-why li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 9px;font-size:13.5px;line-height:1.4;color:var(--gq-ink)}
+.gq-why-answer{flex:none;display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:21px;padding:0 9px;border-radius:999px;background:var(--gp-red-bg);color:var(--gp-red);font-size:11px;font-weight:700}
+.gq-why li.is-unklar .gq-why-answer{background:var(--gp-orange-bg);color:var(--gp-orange)}
+.gq-why-text{min-width:0;font-weight:600}
 .gq-flag{display:inline-flex;align-items:center;min-height:24px;padding:2px 10px;border-radius:999px;border:1px solid var(--gq-line);background:var(--gq-soft);color:var(--gp-flag);font-size:12px;font-weight:600}
 @media(max-width:1100px){
   .gq-call-top{grid-template-columns:minmax(0,1fr);gap:18px}
@@ -906,5 +914,90 @@ html:not(.dark) .gq-turn.is-speaker-1,html:not(.dark) .gq-turn.is-speaker-3{box-
 /* Vorlagen: Symbol auf rosarotem Plättchen wie auf der übrigen Plattform */
 html:not(.dark) .gs-preset-icon{background:#fff1f2;color:#bc001d}
 /* Abspieler im Gespräch: auch die Leiste des Browsers weiß, mit feiner Linie statt grauer Fläche */
-html:not(.dark) .gq-detail audio{border:1px solid var(--gl-line);border-radius:999px;background:#ffffff}
-html:not(.dark) .gq-detail audio::-webkit-media-controls-enclosure,html:not(.dark) .gq-detail audio::-webkit-media-controls-panel{background:#ffffff}
+html:not(.dark) .gq-detail audio[controls]{border:1px solid var(--gl-line);border-radius:999px;background:#ffffff}
+html:not(.dark) .gq-detail audio[controls]::-webkit-media-controls-enclosure,html:not(.dark) .gq-detail audio[controls]::-webkit-media-controls-panel{background:#ffffff}
+
+/* ── v342: Abspieler – abspielen, 10 Sekunden zurück und vor, Balken mit den Stellen des Gesprächs, Tempo; beim Scrollen bleibt eine kleine Leiste ── */
+.gq-player-ui,.gq-player-dock{--pl-ink:#f6f4ff;--pl-dim:#aba7d2;--pl-line:rgba(255,255,255,.17);--pl-card:rgba(255,255,255,.055);--pl-accent:#9d95ff;--pl-track:rgba(255,255,255,.16);--pl-on-bg:#f6f4ff;--pl-on-ink:#17142c;--pl-on-shadow:none;--pl-dock-bg:#1d1a3a;--pl-ring:#1d1a3a;--pl-knob:#ffffff;--pl-green:#3ddc97;--pl-orange:#ffa341;--pl-red:#ff6767;--pl-open:#a9a5c8;--pl-err:#ffd2d2}
+html:not(.dark) .gq-player-ui,html:not(.dark) .gq-player-dock{--pl-ink:#17130f;--pl-dim:#5b6472;--pl-line:#dde1e7;--pl-card:#ffffff;--pl-accent:#bc001d;--pl-track:#e9ecf0;--pl-on-bg:linear-gradient(90deg,#bc001d,#fb2c36);--pl-on-ink:#ffffff;--pl-on-shadow:0 6px 16px rgba(220,38,38,.25);--pl-dock-bg:#ffffff;--pl-ring:#ffffff;--pl-knob:#ffffff;--pl-green:#16a34a;--pl-orange:#f97316;--pl-red:#dc2626;--pl-open:#98a2b3;--pl-err:#b42318}
+.gq-player-ui{display:grid;gap:9px;min-width:0}
+.gq-player-ui audio{display:none}
+.gq-player-row{display:flex;align-items:center;gap:7px;min-width:0}
+.gq-play,.gq-skip,.gq-rate,.gq-dock-close{flex:none;font-family:inherit;cursor:pointer;transition:transform .12s,background-color .15s,border-color .15s,color .15s}
+.gq-play{display:grid;place-items:center;width:42px;height:42px;padding:0;border:0;border-radius:999px;background:var(--pl-on-bg);color:var(--pl-on-ink);box-shadow:var(--pl-on-shadow)}
+.gq-play svg{width:18px;height:18px;fill:currentColor}
+.gq-play:not(.is-playing) svg{margin-left:2px}
+.gq-play:hover{transform:scale(1.05)}
+.gq-skip{position:relative;display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid var(--pl-line);border-radius:999px;background:var(--pl-card);color:var(--pl-ink)}
+.gq-skip svg{width:22px;height:22px;stroke-width:1.6}
+.gq-skip span{position:absolute;inset:0;display:grid;place-items:center;padding-top:1px;font-size:8px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.gq-skip:hover,.gq-rate:hover{border-color:var(--pl-accent);color:var(--pl-accent)}
+.gq-clock{margin-left:3px;font-size:12.5px;color:var(--pl-dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.gq-player .gq-clock b,.gq-clock b{font-size:12.5px;font-weight:700;color:var(--pl-ink)}
+.gq-rate{margin-left:auto;height:28px;min-width:46px;padding:0 9px;border:1px solid var(--pl-line);border-radius:999px;background:var(--pl-card);color:var(--pl-ink);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.gq-play:focus-visible,.gq-skip:focus-visible,.gq-rate:focus-visible,.gq-dock-close:focus-visible{outline:2px solid var(--pl-accent);outline-offset:2px}
+.gq-scrub{position:relative;display:flex;align-items:center;height:20px;min-width:0}
+.gq-scrub input[type="range"]{-webkit-appearance:none;appearance:none;display:block;width:100%;height:6px;margin:0;padding:0;border:0;border-radius:999px;background:linear-gradient(90deg,var(--pl-accent) var(--fill,0%),var(--pl-track) var(--fill,0%));box-shadow:none;outline:none;cursor:pointer}
+/* helles Design: die allgemeine Regel für Eingabefelder (weißer Grund, 10px Ecken) darf den Balken nicht übermalen */
+html:not(.dark) .gq-scrub input[type="range"]:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]){border-radius:999px!important;background:linear-gradient(90deg,var(--pl-accent) var(--fill,0%),var(--pl-track) var(--fill,0%))!important}
+.gq-scrub input[type="range"]:disabled{cursor:default;opacity:.6}
+.gq-scrub input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border:2px solid var(--pl-accent);border-radius:999px;background:var(--pl-knob);box-shadow:0 1px 3px rgba(16,24,40,.25)}
+.gq-scrub input[type="range"]::-moz-range-thumb{width:10px;height:10px;border:2px solid var(--pl-accent);border-radius:999px;background:var(--pl-knob)}
+.gq-scrub input[type="range"]::-moz-range-track{background:transparent}
+.gq-scrub input[type="range"]:focus-visible{outline:2px solid var(--pl-accent);outline-offset:5px}
+.gq-scrub-mark{--mark:var(--pl-open);position:absolute;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;padding:0;border:2px solid var(--pl-ring);border-radius:999px;background:var(--mark);cursor:pointer;transition:transform .12s}
+.gq-scrub-mark.is-gruen{--mark:var(--pl-green)}.gq-scrub-mark.is-gelb{--mark:var(--pl-orange)}.gq-scrub-mark.is-rot{--mark:var(--pl-red)}
+.gq-scrub-mark:hover,.gq-scrub-mark:focus-visible{transform:scale(1.45);outline:none}
+.gq-player-error{margin:0;font-size:12px;line-height:1.45;color:var(--pl-err)}
+/* Zeile unter dem Balken: Erklärung der Punkte – beim Anfassen eines Punkts seine Zeit und sein Thema */
+.gq-scrub-hint{min-height:2.8em;margin:0;font-size:11.5px;line-height:1.4;color:var(--pl-dim)}
+.gq-scrub-hint.is-point{color:var(--pl-ink)}
+.gq-player .gq-scrub-hint b,.gq-scrub-hint b{margin-right:4px;font-size:11.5px;font-weight:700;color:var(--pl-accent);font-variant-numeric:tabular-nums}
+/* Die Aufnahme wird geholt: ein Ring läuft um den Knopf */
+.gq-play{position:relative}
+.gq-play.is-loading::after{content:"";position:absolute;inset:-4px;border-radius:999px;border:2px solid transparent;border-top-color:var(--pl-accent);animation:gq-spin .8s linear infinite}
+@keyframes gq-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.gq-play.is-loading::after{animation:none;border-color:var(--pl-accent)}}
+.gq-player small.gq-player-note{display:block}
+.gq-player-note.is-busy::before{content:"";display:inline-block;width:6px;height:6px;margin:0 7px 1px 0;border-radius:999px;background:var(--gl-accent,currentColor);animation:gq-pulse 1.4s ease-in-out infinite}
+/* Kleine Leiste am unteren Rand, solange der Abspieler aus dem Blick ist */
+.gq-player-dock{position:fixed;left:50%;bottom:18px;z-index:40;transform:translateX(-50%);display:flex;align-items:center;gap:8px;width:min(580px,calc(100vw - 24px));padding:9px 10px 9px 12px;border:1px solid var(--pl-line);border-radius:999px;background:var(--pl-dock-bg);box-shadow:0 18px 40px -12px rgba(16,24,40,.38);color:var(--pl-ink);font-size:13px;animation:gq-dock-in .18s ease-out}
+.gq-player-dock .gq-scrub{flex:1}
+.gq-player-dock .gq-play{width:36px;height:36px}.gq-player-dock .gq-play svg{width:16px;height:16px}
+.gq-player-dock .gq-skip{width:30px;height:30px}.gq-player-dock .gq-skip svg{width:20px;height:20px}
+.gq-dock-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:none;color:var(--pl-dim)}
+.gq-dock-close svg{width:15px;height:15px}
+.gq-dock-close:hover{background:var(--pl-track);color:var(--pl-ink)}
+@keyframes gq-dock-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+@media(prefers-reduced-motion:reduce){.gq-player-dock{animation:none}.gq-play:hover,.gq-scrub-mark:hover,.gq-scrub-mark:focus-visible{transform:none}}
+@media(max-width:760px){.gq-player-dock{bottom:78px;gap:6px}.gq-player-dock .gq-clock{font-size:11.5px}}
+
+/* Zeit einer Stelle im Gespräch („1:31“) – ein Klick springt in der Aufnahme dorthin */
+.gq-at{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px 0 6px;border:1px solid var(--gl-edge);border-radius:999px;background:var(--gl-card);color:var(--gl-ink);font-family:inherit;font-size:11px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
+.gq-at svg{width:9px;height:9px;fill:currentColor}
+.gq-at:hover{border-color:var(--gl-accent);color:var(--gl-accent)}
+.gq-at:focus-visible{outline:2px solid var(--gl-accent);outline-offset:2px}
+.gq-at.is-static{padding:0 8px;border-color:var(--gl-line);font-weight:600;color:var(--gl-dim);cursor:default}
+html:not(.dark) .gq-at:not(.is-static){border-color:rgba(188,0,29,.28);background:#fff5f5;color:#bc001d}
+html:not(.dark) .gq-at:not(.is-static):hover{border-color:#bc001d;background:#fff1f2}
+.gq-c-head .gq-at{margin-left:2px}
+
+/* Transkript mit Zeiten: jede Zeile trägt ihre Zeit; die laufende Zeile ist hervorgehoben */
+.gq-segs{position:relative;display:grid;gap:2px;max-height:620px;overflow-y:auto;margin:0;padding:2px;list-style:none;scroll-behavior:smooth}
+@media(prefers-reduced-motion:reduce){.gq-segs{scroll-behavior:auto}}
+.gq-seg{display:grid;grid-template-columns:46px minmax(0,1fr);gap:12px;align-items:baseline;width:100%;padding:7px 10px;border:0;border-radius:10px;background:none;color:var(--gl-ink);font-family:inherit;font-size:13.5px;line-height:1.5;text-align:left;cursor:pointer;transition:background-color .12s}
+.gq-seg time{font-size:11.5px;font-weight:700;color:var(--gl-faint);font-variant-numeric:tabular-nums}
+.gq-seg b{margin-right:7px;font-size:12px;font-weight:700;color:var(--gl-dim)}
+.gq-seg b.is-speaker-1,.gq-seg b.is-speaker-3{color:var(--gl-accent)}
+.gq-seg.is-now time{color:var(--gl-accent)}
+.gq-seg.is-now{background:var(--gl-soft);box-shadow:inset 3px 0 0 var(--gl-accent)}
+.gq-seg:focus-visible{outline:2px solid var(--gl-accent);outline-offset:-2px}
+.gq-seg.is-static{cursor:default}
+html:not(.dark) .gq-seg.is-now{background:#fff1f2}
+/* Überfahren nur mit der Maus – auf dem Handy bliebe die Zeile nach dem Antippen sonst markiert */
+@media(hover:hover){
+  .gq-seg:not(.is-static):hover{background:var(--gl-soft)}
+  .gq-seg:not(.is-static):hover time{color:var(--gl-accent)}
+  html:not(.dark) .gq-seg:not(.is-static):hover{background:#fff5f5}
+}
+

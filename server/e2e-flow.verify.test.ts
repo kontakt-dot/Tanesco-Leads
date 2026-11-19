@@ -49,6 +49,11 @@ vi.mock("./_core/llm", () => ({
     const stubState = globalThis as { __agentAnswer?: string; __answers?: Record<string, string>; __criteriaPlan?: string[]; __llmLog?: string[] };
     stubState.__llmLog?.push(params.outputSchema?.name ?? "");
     if (params.outputSchema?.name === "agentenname") return reply({ agentName: stubState.__agentAnswer ?? "" }); // Nachfrage „Wie heißt der anrufende Mitarbeiter?“
+    if (params.outputSchema?.name === "zeitmarken") { // Stelle im Gespräch je Punkt: globalThis.__marks = { "<Bezeichnung des Punkts>": "1:31" } – alles andere bleibt leer; "kaputt" = nichts Verwertbares
+      const plan = (globalThis as { __marks?: Record<string, string> | "kaputt" }).__marks; if (plan === "kaputt") return reply({ hinweis: "keine Zeiten" });
+      const system = String(params.messages.find((message) => message.role === "system")?.content ?? ""); const fields = Object.keys(params.outputSchema.schema?.properties ?? {});
+      return reply(Object.fromEntries(fields.map((field) => { const label = new RegExp(`^- ${field}: (?:Frage|Kriterium) „([^“]*)“`, "m").exec(system)?.[1] ?? ""; return [field, plan?.[label] ?? ""]; })));
+    }
     if (params.outputSchema?.name === "qualifizierung" && stubState.__answers) { // Prüffragen als einzelne Felder (antwort_<schlüssel> / notiz_<schlüssel>) – so antwortet die echte KI
       const fields = Object.keys(params.outputSchema.schema?.properties ?? {});
       return reply(Object.fromEntries(fields.map((field) => [field, field.startsWith("antwort_") ? stubState.__answers![field.slice(8)] ?? "ja" : `Beleg laut KI zu ${field.slice(6)}.`])));
@@ -119,7 +124,7 @@ beforeAll(async () => {
     if (url.includes("recordings-later/")) return S.recordingReady ? new Response(new Uint8Array([73, 68, 51, 3, 0, 0]), { status: 200, headers: { "content-type": "audio/mpeg" } }) : new Response("not ready", { status: 404 }); // Dialer meldet das Gespräch, bevor die Datei fertig ist
     if (url.includes("getSound.aspx") && S.playerPage) return new Response(S.playerPage, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
     if (url.includes("recordings/")) return new Response(new Uint8Array([73, 68, 51, 3, 0, 0]), { status: 200, headers: { "content-type": "audio/mpeg" } });
-    if (url.includes("api.openai.com/v1/audio/transcriptions")) { const text = S.transcriptForStub ?? "Agent: Hallo. Kunde: Ja gerne, ich bin Eigentümer und einverstanden."; return S.transcriptVerbose ? new Response(JSON.stringify({ text, duration: 187.4, segments: [{ end: 187.4 }] }), { status: 200, headers: { "content-type": "application/json" } }) : new Response(text, { status: 200, headers: { "content-type": "text/plain" } }); }
+    if (url.includes("api.openai.com/v1/audio/transcriptions")) { const text = S.transcriptForStub ?? "Agent: Hallo. Kunde: Ja gerne, ich bin Eigentümer und einverstanden."; return S.transcriptVerbose ? new Response(JSON.stringify({ text, duration: 187.4, segments: S.transcriptSegments ?? [{ end: 187.4 }] }), { status: 200, headers: { "content-type": "application/json" } }) : new Response(text, { status: 200, headers: { "content-type": "text/plain" } }); }
     if (url.includes("hlrlookup.com")) return new Response(JSON.stringify(url.includes("msisdn=491700000000") ? { status: "valid", network: "Telekom" } : { status: "invalid" }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.startsWith("https://nominatim.openstreetmap.org/")) return new Response(JSON.stringify([{ lat: "50.1109", lon: "8.6821", display_name: "Frankfurt am Main, Hessen, Deutschland" }]), { status: 200, headers: { "content-type": "application/json" } });
     if (url.startsWith("https://overpass-api.de/")) return new Response(JSON.stringify({ elements: [{ type: "node", id: 101, lat: 50.12, lon: 8.69, tags: { name: "Hansen Bedachungen GmbH", craft: "roofer", website: "https://hansen-test.de", phone: "+49 69 5550101", "addr:street": "Hauptstraße", "addr:housenumber": "5", "addr:postcode": "60311", "addr:city": "Frankfurt" } }, { type: "way", id: 202, center: { lat: 50.13, lon: 8.7 }, tags: { name: "Koch Dach e.K.", "addr:city": "Offenbach" } }] }), { status: 200, headers: { "content-type": "application/json" } });
@@ -4300,14 +4305,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
     // Prüf-Adresse
     const info = await fetch(dialerUrl); expect(info.status).toBe(200); const described = await info.json();
-    expect(described).toMatchObject({ ok: true, method: "POST", enabled: true, consent_required: true, expected_fields: { callId: "call_id", phone: "phone", recordingUrl: "recording_url", consent: "consent" }, required: ["call_id", "phone", "recording_url"], recording_auth_header: true, transcription: "openai" });
+    expect(described).toMatchObject({ ok: true, method: "POST", enabled: true, consent_required: true, expected_fields: { callId: "call_id", phone: "phone", recordingUrl: "recording_url", consent: "consent", agent: "agent", category: "category" }, required: ["call_id", "phone", "recording_url", "agent"], recommended: ["category"], category_values: ["PV", "WP", "PV+WP"], recording_auth_header: true, transcription: "openai" });
     expect((await fetch(`${apiBase}/api/partner/ondialer/falscher-token`)).status).toBe(404);
-    // Testmodus: nichts wird gespeichert, Felder und Aufnahme-Link werden geprüft
-    const probe = await post({ test: true, call_id: "od-test-1", phone: "+49 40 777009", recording_url: "https://dialer.example/recordings/test.mp3", consent: true });
-    expect(probe.status).toBe(200); expect(probe.json).toMatchObject({ ok: true, test: true, stored: false, would_evaluate: true, recording: { checked: true, reachable: true }, reason: "alles in Ordnung" }); expect(probe.json.fields_missing).toContain("agent");
+    // Testmodus: nichts wird gespeichert, Felder und Aufnahme-Link werden geprüft – mit Agent und Leadsparte ist alles in Ordnung
+    const probe = await post({ test: true, call_id: "od-test-1", phone: "+49 40 777009", agent: "Deniz Kaya", category: S.pv.name, recording_url: "https://dialer.example/recordings/test.mp3", consent: true });
+    expect(probe.status).toBe(200); expect(probe.json).toMatchObject({ ok: true, test: true, stored: false, would_evaluate: true, recording: { checked: true, reachable: true }, reason: "alles in Ordnung", agent: "Deniz Kaya", category: { value: S.pv.name, recognised: true, as: S.pv.name }, required_missing: [], recommended_missing: [] });
     expect((await owner.leadops.listCalls({})).some((item) => item.externalCallId === "od-test-1")).toBe(false);
-    const bad = await post({ test: true, call_id: "od-test-2" }); expect(bad.json.ok).toBe(false); expect(bad.json.required_missing).toEqual(["phone", "recording_url"]); expect(bad.json.reason).toContain("Pflichtfelder fehlen");
-    const noConsent = await post({ test: true, call_id: "od-test-3", phone: "+49 40 777009", recording_url: "https://dialer.example/recordings/test.mp3" }); expect(noConsent.json.would_evaluate).toBe(false); expect(noConsent.json.reason).toContain("Einwilligung");
+    // ohne Agent: das Gespräch würde ausgewertet – die Prüfung meldet aber, dass der Agent fehlt; ohne Leadsparte steht sie unter „empfohlen“
+    const noAgent = await post({ test: true, call_id: "od-test-1b", phone: "+49 40 777009", recording_url: "https://dialer.example/recordings/test.mp3", consent: true });
+    expect(noAgent.json).toMatchObject({ ok: false, would_evaluate: true, required_missing: ["agent"], recommended_missing: ["category"], agent: null, category: null, reason: "Pflichtfelder fehlen: agent" }); expect(noAgent.json.fields_missing).toContain("agent");
+    for (const junk of ["12", "Mein Name"]) expect((await post({ test: true, call_id: "od-test-1c", phone: "+49 40 777009", agent: junk, recording_url: "https://dialer.example/recordings/test.mp3", consent: true })).json.required_missing, junk).toEqual(junk === "12" ? [] : ["agent"]); // Füllwörter sind kein Agent; eine Nummer ist zumindest eine Angabe
+    expect((await post({ test: true, call_id: "od-test-1d", phone: "+49 40 777009", agent: "Deniz Kaya", category: "Fenster", recording_url: "https://dialer.example/recordings/test.mp3", consent: true })).json.category).toEqual({ value: "Fenster", recognised: false, as: null }); // unbekannte Leadsparte: dann erkennt die Software die Kategorie aus dem Gespräch
+    expect((await owner.leadops.listCalls({})).some((item) => String(item.externalCallId).startsWith("od-test-1"))).toBe(false);
+    const bad = await post({ test: true, call_id: "od-test-2" }); expect(bad.json.ok).toBe(false); expect(bad.json.required_missing).toEqual(["phone", "recording_url", "agent"]); expect(bad.json.reason).toContain("Pflichtfelder fehlen");
+    const noConsent = await post({ test: true, call_id: "od-test-3", phone: "+49 40 777009", agent: "Deniz Kaya", recording_url: "https://dialer.example/recordings/test.mp3" }); expect(noConsent.json.would_evaluate).toBe(false); expect(noConsent.json.reason).toContain("Einwilligung");
     // Rohdaten-Kontakt (noch kein Lead) wird angerufen; die Aufnahme ist beim Eingang noch nicht fertig
     const batch = await owner.leadops.createRawBatch({ name: "OnDialer Rohliste", categoryId: S.pv.id, sourceName: "OnDialer", mapping: {}, rows: [{ firstName: "Rudi", lastName: "Roh", phone: "+49 30 9177 6001" }] } as never);
     const raw = (await db.select().from(rawTable).where(eq(rawTable.batchId, batch.batchId)))[0]; expect(raw).toBeTruthy(); expect(raw.leadId).toBeNull();
@@ -4341,7 +4352,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const good = "Agent: Guten Tag, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar.";
     const contact = { id: "C-88412", first_name: "Murat", last_name: "Yilmaz", company: "", street: "Hauptstraße 12", postcode: "64283", city: "Darmstadt", country: "DE", email: "Murat.Yilmaz@example.de", fields: { "Dachfläche": "60 m²", Baujahr: 1998 } };
     // Testmodus: nennt die erkannten Kontakt-Felder und was geschehen würde – gespeichert wird nichts
-    const probe = await post({ test: true, call_id: "od-k-test", phone: "+49 6151 5550103", recording_url: "https://dialer.example/recordings/test.mp3", consent: true, result: "Termin", contact });
+    const probe = await post({ test: true, call_id: "od-k-test", phone: "+49 6151 5550103", agent: "Deniz Kaya", recording_url: "https://dialer.example/recordings/test.mp3", consent: true, result: "Termin", contact });
     expect(probe.json).toMatchObject({ ok: true, test: true, stored: false, contact: { would: "created" } });
     expect(probe.json.contact.found).toEqual(expect.arrayContaining(["contact.id", "contact.first_name", "contact.last_name", "contact.street", "contact.postcode", "contact.city", "contact.email", "contact.fields (2)", "result"]));
     expect(await db.select().from(rawTable).where(eq(rawTable.phone, "+4961515550103"))).toHaveLength(0);
@@ -4752,6 +4763,125 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Punkte-Kampagne")));
     }
   }, 90000);
+  it("63zw. Gespräche: Zeiten im Gespräch je Prüffrage und Kriterium, Aufnahme zum Spulen über die eigene Adresse, Zeiten nachholen – Agent und Leadsparte laut Dialer gelten", async () => {
+    const { locateMarks, prunePlaybackCache, playbackDir, PLAYBACK_KEEP_MS, purgeExpiredCalls, reassignAgentsFromTranscripts, mergeSimilarAgentNames, reevaluateCalls } = await import("./call-qa");
+    const { callRecords: callsTable, callQaConfigs: configTable, leadCategories: categoryTable, rawContacts: rawTable, users: usersTable } = await import("../drizzle/schema");
+    const { sdk } = await import("./_core/auth"); const { matchDialerCategory } = await import("../shared/dialer-contact"); const fsp = await import("node:fs/promises"); const nodePath = await import("node:path");
+    const tenantId = S.tenantId; const stub = globalThis as { __marks?: Record<string, string> | "kaputt"; __llmLog?: string[] }; const keyBefore = process.env.ANTHROPIC_API_KEY; const readyBefore = S.recordingReady; const verboseBefore = S.transcriptVerbose;
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    const row = async (id: number) => (await db.select().from(callsTable).where(eq(callsTable.id, id)))[0];
+    const timelineOf = async (id: number) => ((await row(id)).timeline ?? null) as { segments: Array<{ s: number; e: number; t: string }>; marks: Record<string, number>; note?: string } | null;
+    const transcriptions = () => outbound.filter((call) => call.url.includes("api.openai.com/v1/audio/transcriptions")).length;
+    // Ein Gespräch, wie es der Dienst liefert: je Satz Beginn und Ende. Bei 1:31 fragt der Agent nach der Weitergabe – der Kunde lehnt ab.
+    const spoken = [[0, 6.2, "Guten Tag, hier ist Maya Becker von HausKompass."], [6.2, 14, "Sie hatten sich für eine Photovoltaikanlage interessiert, richtig?"], [14, 21.5, "Wir überlegen noch, das Dach hat etwa 60 Quadratmeter."], [21.5, 40, "Passt ein Termin vor Ort in den nächsten Wochen?"], [40, 52, "Das muss ich erst mit meiner Frau besprechen."], [91, 99, "Dürfen wir Ihre Daten an einen Fachbetrieb weitergeben?"], [99, 104.4, "Nein, das möchte ich nicht, bitte keine Weitergabe."]] as const;
+    const starts = spoken.map((item) => item[0]); const whisper = spoken.map(([start, end, text], id) => ({ id, start, end, text: ` ${text}` })); const text = spoken.map((item) => item[2]).join(" ");
+    S.transcriptVerbose = true; S.transcriptSegments = whisper; S.transcriptForStub = text; S.recordingReady = false;
+    try {
+      delete process.env.ANTHROPIC_API_KEY;
+      // (a) Gespräch vom Dialer mit Agent und Leadsparte: Die Abschnitte kommen mit ihrer Zeit aus der Umwandlung in Text und werden gespeichert
+      const categories = await db.select({ id: categoryTable.id, name: categoryTable.name, shortcode: categoryTable.shortcode }).from(categoryTable).where(eq(categoryTable.tenantId, tenantId));
+      expect(matchDialerCategory(categories, S.pv.name)?.id).toBe(S.pv.id);
+      const first = await post({ call_id: "zeit-1", phone: "+49 40 778801", agent: "Deniz Kaya", category: S.pv.name, campaign: "Zeit-Kampagne", started_at: new Date().toISOString(), duration: 104, recording_url: "https://dialer.example/recordings/zeit-1.mp3", consent: true });
+      expect(first.status).toBe(200); expect(first.json).toMatchObject({ ok: true, evaluated: true }); expect(first.json.decision).not.toBe("freigegeben");
+      const callId = Number(first.json.call_id); let stored = await row(callId);
+      expect(stored).toMatchObject({ status: "bewertet", agentName: "Deniz Kaya", agentSource: "dialer", leadCategoryId: S.pv.id, recordingUrl: "https://dialer.example/recordings/zeit-1.mp3" }); // Agent und Leadsparte laut Dialer – obwohl sich im Gespräch „Maya Becker“ vorstellt
+      let timeline = await timelineOf(callId);
+      expect(timeline?.segments).toEqual(spoken.map(([s, e, t]) => ({ s, e, t }))); // gesäubert: Zeit auf Zehntel, Text ohne Leerraum
+      for (const at of Object.values(timeline!.marks)) expect(starts).toContain(at); // ohne KI entscheiden die Wörter des Belegs – eine Stelle beginnt immer am Satzanfang
+      await reassignAgentsFromTranscripts(db, tenantId); await mergeSimilarAgentNames(db, tenantId);
+      expect(await row(callId)).toMatchObject({ agentName: "Deniz Kaya", agentSource: "dialer" }); // bleibt auch beim Nachprüfen und Zusammenführen
+      let detail = await owner.leadops.getCall({ callId });
+      expect(detail).toMatchObject({ timelineState: "ok", timelineNote: null, recordingUrl: `/api/aufnahmen/${callId}`, recordingSource: "link", agentName: "Deniz Kaya", agentSource: "dialer", category: { id: S.pv.id } });
+      expect(detail.segments).toHaveLength(7); expect(detail.segments[5]).toEqual({ s: 91, e: 99, t: "Dürfen wir Ihre Daten an einen Fachbetrieb weitergeben?" }); expect(detail.marks).toEqual(timeline!.marks); expect((detail as { timeline?: unknown }).timeline).toBeUndefined(); // die Zugangsdaten im Link des Dialers bleiben bei uns
+      expect(detail.dialer).toMatchObject({ category: S.pv.name });
+      // Text direkt vom Dialer (keine Aufnahme): keine Zeiten; ein Anmeldename gilt als Angabe des Dialers, eine reine Nummer nicht
+      const second = await post({ call_id: "zeit-2", phone: "+49 40 778802", agent: "x.zorn", category: "Fenster", campaign: "Zeit-Kampagne", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch." });
+      const textOnly = Number(second.json.call_id); expect(await row(textOnly)).toMatchObject({ agentName: "x.zorn", agentSource: "dialer", timeline: null });
+      expect(await owner.leadops.getCall({ callId: textOnly })).toMatchObject({ timelineState: "ohne", segments: [], marks: {}, recordingUrl: null, recordingSource: null });
+      const third = await post({ call_id: "zeit-3", phone: "+49 40 778803", agent: "4711", campaign: "Zeit-Kampagne", consent: true, transcript: "Agent: Hallo. Kunde: Ich überlege noch." });
+      expect((await row(Number(third.json.call_id))).agentSource).not.toBe("dialer");
+
+      // (b) Stelle je Punkt ohne KI: der Beleg führt zum Satz; gibt es keine einzelne Stelle, bleibt der Punkt ohne Zeit
+      const segments = timeline!.segments;
+      expect(await locateMarks(segments, [{ id: "c:einwilligung", kind: "Kriterium", label: "Weitergabe erlaubt", result: "0 von 10 Punkten", note: "Der Kunde lehnt die Weitergabe seiner Daten an einen Fachbetrieb ab." }, { id: "q:entscheider", kind: "Frage", label: "Ist der Kunde Entscheider?", result: "Nein", note: "Er sagt: „Das muss ich erst mit meiner Frau besprechen.“" }, { id: "q:wintergarten", kind: "Frage", label: "Wintergarten?", result: "Nein", note: "Über einen Wintergarten wurde nicht gesprochen." }])).toEqual({ "c:einwilligung": 91, "q:entscheider": 40 });
+      expect(await locateMarks([], [{ id: "q:x", kind: "Frage", label: "x", result: "Ja", note: "Weitergabe an einen Fachbetrieb" }])).toEqual({});
+
+      // (c) mit KI: Sie nennt je Punkt die Zeitmarke aus der Abschrift. Die Zeit wird an den Satzanfang gezogen (1:35 → 1:31), Zeiten außerhalb des Gesprächs fallen weg, leere bleiben leer
+      process.env.ANTHROPIC_API_KEY = "test-key"; stub.__llmLog = [];
+      const answered = detail.questions.filter((question) => detail.qualificationAnswers[question.key] && !/^Entfällt/i.test(detail.qualificationAnswers[question.key].note ?? "")); expect(answered.length).toBeGreaterThan(1);
+      const consent = detail.criteria.find((criterion) => criterion.key === "einwilligung") ?? detail.criteria[detail.criteria.length - 1]; const need = detail.criteria[0]; expect(consent.key).not.toBe(need.key);
+      stub.__marks = { [consent.label]: "1:35", [need.label]: "0:07", [answered[0].label]: "[0:23]", [answered[1].label]: "9:59" };
+      const heard = transcriptions();
+      await reevaluateCalls(db, tenantId, [callId], { waitFor: true });
+      timeline = await timelineOf(callId);
+      expect(timeline?.marks).toEqual({ [`c:${consent.key}`]: 91, [`c:${need.key}`]: 6.2, [`q:${answered[0].key}`]: 21.5 }); expect(timeline?.segments).toHaveLength(7);
+      expect(stub.__llmLog).toContain("zeitmarken"); expect(transcriptions()).toBe(heard); // die Aufnahme wird dafür nicht noch einmal in Text umgewandelt
+      expect(await row(callId)).toMatchObject({ status: "bewertet", agentName: "Deniz Kaya", agentSource: "dialer" });
+      detail = await owner.leadops.getCall({ callId }); expect(detail.marks[`c:${consent.key}`]).toBe(91); // „Kunde hat nicht zugestimmt“ → 1:31
+      // Liefert die KI nichts Verwertbares, entscheiden wieder die Wörter des Belegs – die Bewertung selbst ist davon nie betroffen
+      stub.__marks = "kaputt"; await reevaluateCalls(db, tenantId, [callId], { waitFor: true });
+      timeline = await timelineOf(callId); expect(timeline?.segments).toHaveLength(7); for (const at of Object.values(timeline!.marks)) expect(starts).toContain(at); expect((await row(callId)).status).toBe("bewertet");
+
+      // (d) Aufnahme anhören: nur angemeldet, über die eigene Adresse – beim ersten Mal wird sie einmal vom Dialer geholt, danach liegt sie (höchstens einen Tag) bei uns; Teil-Abrufe machen das Spulen möglich
+      const openId = (await db.select({ openId: usersTable.openId }).from(usersTable).where(eq(usersTable.id, ownerUserId)))[0].openId; const cookie = `app_session_id=${await sdk.createSessionToken(openId)}`;
+      const audioUrl = `${apiBase}/api/aufnahmen/${callId}`; const fetched = () => outbound.filter((call) => call.url.includes("recordings/zeit-1.mp3")).length; const before = fetched();
+      expect((await fetch(audioUrl)).status).toBe(403);
+      const full = await fetch(audioUrl, { headers: { cookie } }); expect(full.status).toBe(200); expect(full.headers.get("content-type")).toContain("audio/mpeg"); expect(full.headers.get("accept-ranges")).toBe("bytes");
+      expect(Array.from(new Uint8Array(await full.arrayBuffer()))).toEqual([73, 68, 51, 3, 0, 0]);
+      const part = await fetch(audioUrl, { headers: { cookie, range: "bytes=2-4" } }); expect(part.status).toBe(206); expect(part.headers.get("content-range")).toBe("bytes 2-4/6"); expect(Array.from(new Uint8Array(await part.arrayBuffer()))).toEqual([51, 3, 0]);
+      expect(fetched()).toBe(before + 1);
+      const copy = nodePath.join(playbackDir(), `${tenantId}-${callId}.mp3`); expect((await fsp.stat(copy)).size).toBe(6);
+      expect((await fsp.readdir(playbackDir())).filter((name) => name.endsWith(".teil"))).toEqual([]);
+      expect((await fetch(`${apiBase}/api/aufnahmen/${textOnly}`, { headers: { cookie } })).status).toBe(404); expect((await fetch(`${apiBase}/api/aufnahmen/99999999`, { headers: { cookie } })).status).toBe(404);
+      // nach einem Tag ist die Kopie wieder weg – beim nächsten Anhören wird sie neu geholt
+      expect(await prunePlaybackCache({ force: true })).toBe(0);
+      expect(await prunePlaybackCache({ force: true, now: Date.now() + PLAYBACK_KEEP_MS + 60_000 })).toBeGreaterThanOrEqual(1); await expect(fsp.stat(copy)).rejects.toThrow();
+      expect((await fetch(audioUrl, { headers: { cookie } })).status).toBe(200); expect(fetched()).toBe(before + 2); expect((await fsp.stat(copy)).size).toBe(6);
+
+      // (e) Zeiten nachholen: ein älteres Gespräch hat Text und Bewertung, aber noch keine Zeiten – die Aufnahme wird dafür einmal neu in Text umgewandelt; Text, Punkte und Entscheidung bleiben
+      delete process.env.ANTHROPIC_API_KEY; stub.__marks = undefined;
+      const insertOld = async (external: string, values: Record<string, unknown> = {}) => Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: external, campaign: "Zeit-Kampagne", startedAt: new Date(), durationSeconds: 104, consent: true, status: "bewertet", score: 55, verdict: "nachfassen", decision: "pruefen", decidedBy: "automatisch", transcript: text, recordingUrl: `https://dialer.example/recordings/${external}.mp3`, criteriaScores: [{ key: need.key, score: 4, evidence: "Der Kunde muss das erst mit seiner Frau besprechen." }, { key: consent.key, score: 0, evidence: "Der Kunde lehnt die Weitergabe seiner Daten an einen Fachbetrieb ab." }], qualificationAnswers: { [answered[0].key]: { answer: "unklar", note: "Über einen Wintergarten wurde nicht gesprochen." } }, ...values } as never))[0].insertId);
+      const old = await insertOld("zeit-alt");
+      expect(await owner.leadops.getCall({ callId: old })).toMatchObject({ timelineState: "fehlt", segments: [], marks: {} });
+      const heardOld = transcriptions();
+      expect(await owner.leadops.fetchCallTimeline({ callId: old })).toEqual({ state: "ok", segments: 7, marks: 2, note: null });
+      expect(transcriptions()).toBe(heardOld + 1);
+      expect((await timelineOf(old))?.marks).toEqual({ [`c:${need.key}`]: 40, [`c:${consent.key}`]: 91 });
+      expect(await row(old)).toMatchObject({ transcript: text, score: 55, verdict: "nachfassen", decision: "pruefen", status: "bewertet" });
+      expect(await owner.leadops.getCall({ callId: old })).toMatchObject({ timelineState: "ok", marks: { [`c:${consent.key}`]: 91 } });
+      expect(await owner.leadops.fetchCallTimeline({ callId: old })).toMatchObject({ state: "ok", segments: 7 }); expect(transcriptions()).toBe(heardOld + 1); // schon vorhanden – nichts wird noch einmal geholt
+      // ohne Aufnahme: keine Zeiten – der Grund wird vermerkt und nicht bei jedem Öffnen neu versucht
+      expect(await owner.leadops.fetchCallTimeline({ callId: textOnly })).toEqual({ state: "ohne", segments: 0, marks: 0, note: "Zu diesem Gespräch liegt keine Aufnahme vor." });
+      expect(await owner.leadops.getCall({ callId: textOnly })).toMatchObject({ timelineState: "ohne", timelineNote: "Zu diesem Gespräch liegt keine Aufnahme vor." });
+      // der Dienst liefert keine Zeiten → vermerkt; mit „Noch einmal versuchen“ klappt es, sobald er welche liefert
+      const silent = await insertOld("zeit-stumm"); S.transcriptSegments = [];
+      expect(await owner.leadops.fetchCallTimeline({ callId: silent })).toMatchObject({ state: "ohne", note: "Der Dienst hat zu dieser Aufnahme keine Zeiten geliefert." });
+      S.transcriptSegments = whisper; const heardSilent = transcriptions();
+      expect(await owner.leadops.fetchCallTimeline({ callId: silent })).toMatchObject({ state: "ohne" }); expect(transcriptions()).toBe(heardSilent);
+      expect(await owner.leadops.fetchCallTimeline({ callId: silent, force: true })).toMatchObject({ state: "ok", segments: 7 });
+      // die Aufnahme ist beim Dialer nicht mehr abrufbar → Grund vermerkt; zum Anhören meldet die Adresse den Fehler
+      const gone = await insertOld("zeit-weg", { recordingUrl: "https://dialer.example/recordings-later/zeit-weg.mp3" });
+      const missing = await owner.leadops.fetchCallTimeline({ callId: gone }); expect(missing.state).toBe("ohne"); expect(missing.note).toContain("Die Aufnahme ließ sich nicht auswerten");
+      const broken = await fetch(`${apiBase}/api/aufnahmen/${gone}`, { headers: { cookie } }); expect(broken.status).toBe(502); expect(await broken.text()).toContain("Die Aufnahme ließ sich nicht laden");
+
+      // (f) Löschen und Aufbewahrung nehmen die Kopie zum Anhören und die Zeiten mit
+      expect((await fetch(`${apiBase}/api/aufnahmen/${old}`, { headers: { cookie } })).status).toBe(200); const oldCopy = nodePath.join(playbackDir(), `${tenantId}-${old}.mp3`); expect((await fsp.stat(oldCopy)).size).toBe(6);
+      await owner.leadops.deleteCall({ callId: old }); await expect(fsp.stat(oldCopy)).rejects.toThrow();
+      const retention = (await db.select({ retentionDays: configTable.retentionDays }).from(configTable).where(eq(configTable.tenantId, tenantId)))[0].retentionDays;
+      await db.update(configTable).set({ retentionDays: 30 }).where(eq(configTable.tenantId, tenantId)); await db.update(callsTable).set({ createdAt: new Date(Date.now() - 40 * 24 * 3_600_000) }).where(eq(callsTable.id, callId));
+      try { expect((await purgeExpiredCalls(db as never)).purged).toBeGreaterThanOrEqual(1); } finally { await db.update(configTable).set({ retentionDays: retention }).where(eq(configTable.tenantId, tenantId)); }
+      expect(await row(callId)).toMatchObject({ transcript: null, recordingUrl: null, timeline: null }); await expect(fsp.stat(copy)).rejects.toThrow();
+      expect(await owner.leadops.getCall({ callId })).toMatchObject({ timelineState: "ohne", segments: [], marks: {}, recordingUrl: null });
+    } finally {
+      if (keyBefore === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keyBefore;
+      stub.__marks = undefined; stub.__llmLog = undefined; S.transcriptSegments = undefined; S.transcriptForStub = undefined; S.transcriptVerbose = verboseBefore; S.recordingReady = readyBefore;
+      const ids = (await db.select({ id: callsTable.id }).from(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.campaign, "Zeit-Kampagne")))).map((item) => item.id);
+      await owner.leadops.deleteCalls({ callIds: ids }).catch(() => undefined);
+      await db.delete(rawTable).where(and(eq(rawTable.tenantId, tenantId), inArray(rawTable.phone, ["+4940778801", "+4940778802", "+4940778803"])));
+    }
+  }, 90000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

@@ -785,6 +785,13 @@
       "when": 1795700000000,
       "tag": "0111_vorlagen_bearbeiten",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "5",
+      "when": 1795800000000,
+      "tag": "0112_gespraech_zeitmarken",
+      "breakpoints": true
     }
   ]
 }

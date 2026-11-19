@@ -10,12 +10,14 @@ import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { useEffect, useMemo, useState, useRef } from "react";
-import { AudioLines, BookOpenText, Cable, CalendarCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileCheck2, FileText, FlaskConical, Gauge, Inbox, Info, LayoutTemplate, ListOrdered, PhoneCall, PhoneIncoming, Plus, RefreshCw, Repeat, Send, Settings2, ShieldCheck, Sparkles, TextSearch, Timer, TriangleAlert, Trophy, Upload, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { AudioLines, BookOpenText, Cable, CalendarCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileCheck2, FileText, FlaskConical, Gauge, Inbox, Info, LayoutTemplate, ListOrdered, PhoneCall, PhoneIncoming, Play, Plus, RefreshCw, Repeat, Send, Settings2, ShieldCheck, Sparkles, TextSearch, Timer, TriangleAlert, Trophy, Upload, Users, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import { Face, FACE_COLOR, MOOD, MoodFace, moodOf } from "@/components/CallMood";
+import { CallPlayer, type CallPlayerHandle, type PlayerMark } from "@/components/CallPlayer";
+import { clock, criterionMark, questionMark, segmentIndexAt, type CallSegment } from "../../../shared/call-timeline";
 import CallWave, { CallPeriodControl, CallTally, overviewSummary, dayKey, dayLabel, timeText, DECISION_LABEL, type CallRange, type DecisionFilter } from "@/components/CallScoreboard";
 import { AvatarContent, useAvatarOf } from "@/components/AvatarUpload";
 import { barHeight, clockText } from "../../../shared/call-overview";
@@ -28,11 +30,11 @@ const decisionLabel: Record<string, string> = { offen: "Offen", freigegeben: "Fr
 const statusLabel: Record<string, string> = { eingegangen: "Eingegangen", transkribiert: "Transkribiert", bewertet: "Bewertet", fehlgeschlagen: "Fehlgeschlagen", ohne_einwilligung: "Ohne Einwilligung" };
 const decisionClass = (decision: string) => decision === "freigegeben" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : decision === "zurueckgewiesen" ? "border-red-400/25 bg-red-500/10 text-red-200" : decision === "pruefen" ? "border-amber-400/25 bg-amber-500/10 text-amber-200" : "border-white/15 text-slate-300";
 /** Agent im Gespräch: Name aus dem Transkript – von Hand korrigierbar (bleibt dann fest, auch bei neuer Bewertung). */
-function AgentEdit({ callId, agentName, manual, onChanged, bare = false }: { callId: number; agentName: string | null; manual: boolean; onChanged: () => void; /** nur der Name – die Beschriftung „Agent“ steht schon daneben */ bare?: boolean }) {
+function AgentEdit({ callId, agentName, manual, fromDialer = false, onChanged, bare = false }: { callId: number; agentName: string | null; manual: boolean; /** der Dialer hat den Agenten genannt */ fromDialer?: boolean; onChanged: () => void; /** nur der Name – die Beschriftung „Agent“ steht schon daneben */ bare?: boolean }) {
   const [editing, setEditing] = useState(false); const [value, setValue] = useState(agentName ?? "");
   const agents = trpc.leadops.dialerAgentReport.useQuery({ period: "alle" }, { retry: false, staleTime: 60_000, enabled: editing });
   const save = trpc.leadops.setCallAgent.useMutation({ onSuccess: (result) => { toast.success(result.agentName ? `Agent auf „${result.agentName}“ gesetzt.` : "Agent wird wieder automatisch aus dem Transkript erkannt."); setEditing(false); onChanged(); }, onError: (error) => toast.error(error.message) });
-  if (!editing) return <span className="cq-agent">{bare ? "" : "Agent "}{agentName ?? (bare ? "nicht erkannt" : "–")}{manual ? " (von Hand)" : ""} <button type="button" className="cq-agent-edit underline" title="Agent korrigieren – bleibt dann fest, auch wenn das Gespräch neu bewertet wird" onClick={() => { setValue(agentName ?? ""); setEditing(true); }}>ändern</button></span>;
+  if (!editing) return <span className="cq-agent">{bare ? "" : "Agent "}{agentName ?? (bare ? "nicht erkannt" : "–")}{manual ? " (von Hand)" : fromDialer ? " (laut Dialer)" : ""} <button type="button" className="cq-agent-edit underline" title="Agent korrigieren – bleibt dann fest, auch wenn das Gespräch neu bewertet wird" onClick={() => { setValue(agentName ?? ""); setEditing(true); }}>ändern</button></span>;
   return <span className="cq-agent inline-flex flex-wrap items-center gap-1 align-middle"><Input className="h-7 w-44 text-xs" aria-label="Agent" list={`cq-agents-${callId}`} autoFocus value={value} placeholder="Name des Agenten" onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save.mutate({ callId, agentName: value.trim() || null }); if (event.key === "Escape") setEditing(false); }} /><datalist id={`cq-agents-${callId}`}>{(agents.data?.agents ?? []).filter((item) => item.name).map((item) => <option key={item.name} value={item.name} />)}</datalist><Button size="sm" className="h-7" disabled={save.isPending} onClick={() => save.mutate({ callId, agentName: value.trim() || null })}>{save.isPending ? "…" : "Speichern"}</Button><Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(false)}>Abbrechen</Button></span>;
 }
 /** Längere Belege: zwei Zeilen zeigen, Rest per Klick aufklappen – der Text selbst ist immer vollständig. */
@@ -465,13 +467,31 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
   const optInFromCall = trpc.leadops.optInFromCall.useMutation({ onSuccess: (result) => { if (!result) toast.error("Zu diesem Gespräch gibt es keinen Lead."); else toast[result.status === "gueltig" ? "success" : "warning"](result.created ? `Opt-in ${result.number} angelegt – ${result.status === "gueltig" ? "gültig" : "unvollständig, bitte prüfen oder per SMS bestätigen lassen"}.` : `Opt-in ${result.number} gibt es schon (${result.status}).`); refresh(); utils.leadops.listOptIns.invalidate(); }, onError: (error) => toast.error(error.message) });
   const reevaluate = trpc.leadops.reevaluateCall.useMutation({ onSuccess: (result) => { toast[result.status === "bewertet" ? "success" : "error"](result.status === "bewertet" ? `Neu bewertet: ${MOOD[moodOf({ verdict: result.verdict, decision: result.decision, status: result.status, score: result.score })].label}` : result.error ?? "Fehlgeschlagen"); refresh(); }, onError: (error) => toast.error(error.message) });
   const link = trpc.leadops.linkCallToLead.useMutation({ onSuccess: () => { toast.success("Lead zugeordnet."); refresh(); }, onError: (error) => toast.error(error.message) });
+  // Abspieler: Zeiten im Gespräch springen dorthin; das Transkript erfährt die laufende Stelle, ohne dass die ganze Seite neu gezeichnet wird
+  const player = useRef<CallPlayerHandle>(null); const timeListeners = useRef(new Set<(seconds: number) => void>());
+  const onTime = useCallback((seconds: number) => { timeListeners.current.forEach((listener) => listener(seconds)); }, []);
+  const subscribeTime = useCallback((listener: (seconds: number) => void) => { timeListeners.current.add(listener); return () => { timeListeners.current.delete(listener); }; }, []);
+  const jump = useCallback((seconds: number) => player.current?.seek(seconds, true), []);
+  // Zeitmarken fehlen noch (älteres Gespräch): einmal je Aufruf der Seite von selbst nachholen
+  const timeline = trpc.leadops.fetchCallTimeline.useMutation({ onSuccess: () => utils.leadops.getCall.invalidate({ callId }), onError: (error) => toast.error(error.message) });
+  const timelineAsked = useRef(false); const timelineMissing = call.data?.timelineState === "fehlt"; const fetchTimeline = timeline.mutate;
+  useEffect(() => { if (timelineMissing && !timelineAsked.current) { timelineAsked.current = true; fetchTimeline({ callId }); } }, [timelineMissing, callId, fetchTimeline]);
   if (call.error) return <section className="surface-panel p-6 text-sm text-red-200">{call.error.message} <Button variant="ghost" size="sm" onClick={onBack}>Zurück</Button></section>;
   if (!call.data) return <section className="surface-panel p-6 text-sm text-slate-400">Gespräch wird geladen…</section>;
   const data = call.data;
   const mood = moodOf(data); const started = data.startedAt ? new Date(data.startedAt) : null; const contactName = data.leadName ?? data.rawContact?.name ?? null;
   const recordingSource = (data as { recordingSource?: string | null }).recordingSource ?? null;
+  // Stellen im Gespräch: je Prüffrage und Kriterium die Zeit (Sekunden); Abschnitte der Abschrift mit Zeit
+  const marks = (data.marks ?? {}) as Record<string, number>; const segments = (data.segments ?? []) as CallSegment[]; const canPlay = Boolean(data.recordingUrl);
+  const answerTone = (answer: string | undefined): PlayerMark["tone"] => answer === "ja" ? "gruen" : answer === "nein" ? "rot" : "gelb";
+  const playerMarks: PlayerMark[] = []; const usedSeconds = new Set<number>();
+  for (const question of data.questions ?? []) { const at = marks[questionMark(question.key)]; if (typeof at !== "number" || usedSeconds.has(Math.round(at))) continue; usedSeconds.add(Math.round(at)); const given = data.qualificationAnswers?.[question.key]?.answer; playerMarks.push({ at, tone: answerTone(given), label: `${question.label} – ${given === "ja" ? "Ja" : given === "nein" ? "Nein" : "Unklar"}` }); }
+  for (const criterion of data.criteria) { const at = marks[criterionMark(criterion.key)]; if (typeof at !== "number" || usedSeconds.has(Math.round(at))) continue; usedSeconds.add(Math.round(at)); playerMarks.push({ at, tone: criterion.score === null ? "offen" : criterion.score >= 7 ? "gruen" : criterion.score >= 4 ? "gelb" : "rot", label: criterion.label }); }
+  const timelineBusy = timeline.isPending || (timelineMissing && !timeline.isError);
+  // Woran es liegt: die entscheidenden Prüffragen (K.-o. und Pflicht), die nicht mit Ja beantwortet sind – „Nein“ zuerst
+  const reasons = (data.questions ?? []).flatMap((question) => { const rule = ((question as { rule?: Rule }).rule ?? "info") as Rule; const given = data.qualificationAnswers?.[question.key]; if (rule === "info" || !given || given.answer === "ja" || /^Entfällt/i.test(given.note ?? "")) return []; return [{ key: question.key, label: question.label, answer: given.answer === "nein" ? "nein" as const : "unklar" as const }]; }).sort((a, b) => Number(a.answer === "unklar") - Number(b.answer === "unklar"));
   const dialer = data.dialer ?? null; // was der Dialer zum Kontakt mitgeschickt hat (Name, Anschrift, weitere Felder, Notiz)
-  const dialerFacts: Array<[string, string]> = dialer ? ([["Name", dialer.name], ["Firma", dialer.company], ["Straße", dialer.street], ["PLZ und Ort", dialer.place], ["E-Mail", dialer.email], ["Kontakt-Nummer im Dialer", dialer.contactId], ["Rückruf oder Termin", dialer.callbackAt && !Number.isNaN(new Date(dialer.callbackAt).getTime()) ? `${new Date(dialer.callbackAt).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })} Uhr` : dialer.callbackAt]] as Array<[string, string | null]>).filter((item): item is [string, string] => Boolean(item[1])) : [];
+  const dialerFacts: Array<[string, string]> = dialer ? ([["Leadsparte", dialer.category], ["Name", dialer.name], ["Firma", dialer.company], ["Straße", dialer.street], ["PLZ und Ort", dialer.place], ["E-Mail", dialer.email], ["Kontakt-Nummer im Dialer", dialer.contactId], ["Rückruf oder Termin", dialer.callbackAt && !Number.isNaN(new Date(dialer.callbackAt).getTime()) ? `${new Date(dialer.callbackAt).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })} Uhr` : dialer.callbackAt]] as Array<[string, string | null]>).filter((item): item is [string, string] => Boolean(item[1])) : [];
   return <div className="grid gap-4 gq-detail">
     <div className="gq-detail-bar"><button type="button" className="gq-back" onClick={onBack}><ChevronLeft aria-hidden="true" />Alle Gespräche</button><Button variant="outline" size="sm" className="gq-danger" disabled={remove.isPending} onClick={async () => { if (!(await confirmAction("Dieses Gespräch samt Transkript, Bewertung und hochgeladener Aufnahme endgültig löschen? Der Kontakt/Lead bleibt erhalten.", { confirmLabel: "Löschen", danger: true }))) return; remove.mutate({ callId }); }}>Gespräch löschen</Button></div>
     <section className="gq-stage gq-call-stage" aria-label="Ergebnis des Gesprächs">
@@ -486,19 +506,24 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
         </div>
         <div className="gq-player">
           <b>Aufnahme anhören</b>
-          {data.recordingUrl ? <><audio controls src={data.recordingUrl} onPlay={() => { if (!listenedOnce.current) { listenedOnce.current = true; listened.mutate({ callId }); } }} /><small>{recordingSource === "datei" ? "Hochgeladene Aufnahme – liegt bei uns, nur angemeldet abrufbar." : "Die Aufnahme liegt beim Dialer und wird direkt von dort abgespielt."}</small></> : <small>{data.status === "ohne_einwilligung" ? "Ohne dokumentierte Einwilligung gibt es keine Aufnahme." : "Zu diesem Gespräch liegt keine Aufnahme vor."}</small>}
+          {data.recordingUrl ? <>
+            <CallPlayer ref={player} src={data.recordingUrl} duration={data.durationSeconds || (segments.length ? segments[segments.length - 1].e : null)} marks={playerMarks} hint="Die Punkte auf dem Balken zeigen, wo die Prüffragen und Kriterien besprochen werden." onTime={onTime} onPlay={() => { if (!listenedOnce.current) { listenedOnce.current = true; listened.mutate({ callId }); } }} />
+            <small>{recordingSource === "vorschau" ? "Vorschau ohne Ton: Hier läuft nur die Uhr. Spulen, Tempo und die Zeiten arbeiten wie im echten Betrieb mit der Aufnahme." : recordingSource === "datei" ? "Hochgeladene Aufnahme – liegt bei uns, nur angemeldet abrufbar." : "Die Aufnahme liegt beim Dialer. Zum Anhören holen wir sie kurz zu uns – so kannst du vor- und zurückspulen."}</small>
+            {timelineBusy ? <small className="gq-player-note is-busy">Die Zeiten zu den Prüffragen werden gerade geholt …</small> : data.timelineState === "ohne" && data.timelineNote ? <small className="gq-player-note">Keine Zeiten zu diesem Gespräch: {data.timelineNote} <button type="button" className="gq-link" disabled={timeline.isPending} onClick={() => timeline.mutate({ callId, force: true })}>Noch einmal versuchen</button></small> : null}
+          </> : <small>{data.status === "ohne_einwilligung" ? "Ohne dokumentierte Einwilligung gibt es keine Aufnahme." : "Zu diesem Gespräch liegt keine Aufnahme vor."}</small>}
         </div>
       </div>
       <dl className="gq-call-facts">
-        <div><dt>Agent</dt><dd><AgentEdit bare callId={data.id} agentName={data.agentName ?? null} manual={data.agentSource === "manuell"} onChanged={() => { call.refetch(); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); utils.leadops.dialerAgentReport.invalidate(); }} /></dd></div>
+        <div><dt>Agent</dt><dd><AgentEdit bare callId={data.id} agentName={data.agentName ?? null} manual={data.agentSource === "manuell"} fromDialer={data.agentSource === "dialer"} onChanged={() => { call.refetch(); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); utils.leadops.dialerAgentReport.invalidate(); }} /></dd></div>
         <div><dt>Kampagne</dt><dd>{data.campaign ?? data.provider}</dd></div>
-        {data.category ? <div><dt>Lead-Kategorie</dt><dd title="Von der KI aus dem Gespräch erkannt">{data.category.emoji ? `${data.category.emoji} ` : ""}{data.category.name}</dd></div> : null}
+        {data.category ? <div><dt>Lead-Kategorie</dt><dd title={dialer?.category ? `Leadsparte laut Dialer: ${dialer.category}` : "Von der KI aus dem Gespräch erkannt"}>{data.category.emoji ? `${data.category.emoji} ` : ""}{data.category.name}</dd></div> : null}
         <div><dt>Einwilligung zur Aufnahme</dt><dd>{data.consent ? `Ja (${data.consentSource ?? "Dialer"})` : "Nein"}</dd></div>
         {dialer?.result ? <div><dt>Ergebnis im Dialer</dt><dd>{dialer.result}</dd></div> : null}
       </dl>
-      {(data.summary || data.nextStep || data.error || data.redFlags.length > 0) && <div className="gq-call-notes">
+      {(data.summary || data.nextStep || data.error || data.redFlags.length > 0 || reasons.length > 0) && <div className="gq-call-notes">
         {data.summary && <p className="gq-call-summary">{data.summary}</p>}
         {data.nextStep && <p className="gq-call-next">Nächster Schritt: {data.nextStep}</p>}
+        {reasons.length > 0 && <div className="gq-why"><b>Woran es liegt</b><ul>{reasons.map((reason) => <li key={reason.key} className={`is-${reason.answer}`}><span className="gq-why-answer">{reason.answer === "nein" ? "Nein" : "Unklar"}</span><span className="gq-why-text">{reason.label}</span><AtChip at={marks[questionMark(reason.key)]} label={reason.label} onJump={canPlay ? jump : null} /></li>)}</ul></div>}
         {data.error && <p className="gq-call-error">{data.error}</p>}
         {data.redFlags.length > 0 && <p className="gq-call-flags">{data.redFlags.map((flag) => <span key={flag} className="gq-flag">⚠ {flag}</span>)}</p>}
       </div>}
@@ -522,7 +547,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
       <section className="surface-panel operations-panel gq-panel" aria-label="Prüffragen">
         <div className="gq-panel-head"><div><h2>Prüffragen{data.campaign ? <span> {data.campaign}</span> : null}</h2><p>Diese Fragen entscheiden über Freigabe, Prüfung oder Zurückweisung. Jede Antwort lässt sich von Hand ändern – die Entscheidung folgt sofort.{data.nextStep ? <> <b>Aktuell:</b> {data.nextStep}</> : null}</p></div></div>
         <ul className="gq-qlist">{(data.questions ?? []).map((question) => { const answer = data.qualificationAnswers?.[question.key]; const rule = ((question as { rule?: Rule }).rule ?? "info") as Rule; const given = answer?.answer ?? "unklar"; return <li key={question.key} className={`gq-q is-${given}`}>
-          <div className="gq-q-text"><strong>{question.label}</strong><span className="gq-q-tags"><span className={`gq-rule is-${rule}`}>{RULE_SHORT[rule]}</span>{question.onlyFor && <span className="gq-rule">nur {SCOPE_LABEL[question.onlyFor]}</span>}</span>{answer?.note && <Expandable text={answer.note} className="gq-q-note" />}</div>
+          <div className="gq-q-text"><strong>{question.label}</strong><span className="gq-q-tags"><span className={`gq-rule is-${rule}`}>{RULE_SHORT[rule]}</span>{question.onlyFor && <span className="gq-rule">nur {SCOPE_LABEL[question.onlyFor]}</span>}<AtChip at={marks[questionMark(question.key)]} label={question.label} onJump={canPlay ? jump : null} /></span>{answer?.note && <Expandable text={answer.note} className="gq-q-note" />}</div>
           <div className="gq-answers" role="group" aria-label={`Antwort: ${question.label}`}>{(["ja", "nein", "unklar"] as const).map((option) => <button key={option} type="button" className={`gq-answer is-${option} ${given === option ? "is-on" : ""}`} aria-pressed={given === option} onClick={() => setAnswer.mutate({ callId, key: question.key, answer: option })}>{option === "ja" ? "Ja" : option === "nein" ? "Nein" : "Unklar"}</button>)}</div>
         </li>; })}</ul>
         {!(data.questions ?? []).length && <p className="gq-panel-empty">Für diese Kampagne sind keine Fragen hinterlegt.</p>}
@@ -531,19 +556,35 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
         <div className="gq-panel-head"><div><h2>Kriterien{data.criteriaCustom ? <span> eigene der Kampagne</span> : null}</h2>{data.verdict && <p>KI-Einschätzung zur Gesprächsqualität: <b>{verdictLabel[data.verdict]}</b>{typeof data.score === "number" && <>, Qualitätsnote <b>{data.score} %</b> (aus den gewichteten Kriterien)</>}. Entschieden wird aber über die Prüffragen (K.-o. und Pflicht) – deshalb kann die Ampel davon abweichen.</p>}</div></div>
         {data.criteriaUnscored && <p className="cq-unscored">Die Kriterien dieses Gesprächs sind noch nicht bewertet. Das holt die Software in den nächsten Minuten automatisch nach – die Ampel oben gilt trotzdem, denn sie kommt aus den Prüffragen. Sofort geht es mit „Neu bewerten“.{data.criteriaNote ? <span className="mt-1 block opacity-70">Technischer Hinweis: {data.criteriaNote}</span> : null}</p>}
         <ul className="gq-clist">{data.criteria.map((criterion) => { const mood = criterion.score === null ? "offen" : criterion.score >= 7 ? "gruen" : criterion.score >= 4 ? "gelb" : "rot"; return <li key={criterion.key} className={`gq-c is-${mood}`}>
-          <div className="gq-c-head"><strong>{criterion.label}</strong><small>Gewicht {criterion.weight}</small>{criterion.score !== null && <b className="cq-percent-sm">{criterion.score * 10} %</b>}<span className="cq-mood is-sm" title={criterion.score === null ? "Noch nicht bewertet" : `Einschätzung der KI: ${criterion.score >= 7 ? "erfüllt" : criterion.score >= 4 ? "teilweise" : "nicht erfüllt"}`}><Face mood={mood} size={24} /></span></div>
+          <div className="gq-c-head"><strong>{criterion.label}</strong><small>Gewicht {criterion.weight}</small><AtChip at={marks[criterionMark(criterion.key)]} label={criterion.label} onJump={canPlay ? jump : null} />{criterion.score !== null && <b className="cq-percent-sm">{criterion.score * 10} %</b>}<span className="cq-mood is-sm" title={criterion.score === null ? "Noch nicht bewertet" : `Einschätzung der KI: ${criterion.score >= 7 ? "erfüllt" : criterion.score >= 4 ? "teilweise" : "nicht erfüllt"}`}><Face mood={mood} size={24} /></span></div>
           <i className="gq-c-bar" aria-hidden="true"><i style={{ width: `${((criterion.score ?? 0) / 10) * 100}%` }} /></i>
           {criterion.evidence && <Expandable text={criterion.evidence} quote className="gq-c-evidence" />}
         </li>; })}</ul>
       </section>
       <section className="surface-panel operations-panel gq-panel is-wide" aria-label="Transkript">
-        <div className="gq-panel-head"><div><h2>Transkript</h2></div></div>
-        <Transcript text={data.transcript ?? null} fallback={data.status === "ohne_einwilligung" ? "Ohne dokumentierte Einwilligung wird das Gespräch nicht transkribiert." : "Noch kein Transkript."} />
+        <div className="gq-panel-head"><div><h2>Transkript</h2>{segments.length > 0 && <p>{canPlay ? "Ein Klick auf eine Zeile spielt die Aufnahme ab dieser Stelle. Die Zeile, die gerade läuft, ist hervorgehoben." : "Links steht, wann im Gespräch der Satz fällt."}</p>}</div></div>
+        {segments.length > 0 ? <TimedTranscript segments={segments} onJump={canPlay ? jump : null} subscribe={subscribeTime} /> : <Transcript text={data.transcript ?? null} fallback={data.status === "ohne_einwilligung" ? "Ohne dokumentierte Einwilligung wird das Gespräch nicht transkribiert." : "Noch kein Transkript."} />}
       </section>
     </div>
   </div>;
 }
 
+/** Zeit einer Stelle im Gespräch („1:31“). Mit Aufnahme ein Knopf, der dorthin springt und abspielt; ohne Aufnahme nur die Zeit. */
+function AtChip({ at, label, onJump }: { at: number | undefined; label: string; onJump: ((seconds: number) => void) | null }) {
+  if (typeof at !== "number") return null;
+  if (!onJump) return <span className="gq-at is-static" title="Stelle im Gespräch">{clock(at)}</span>;
+  return <button type="button" className="gq-at" title={`In der Aufnahme zu ${clock(at)} springen`} aria-label={`${label}: in der Aufnahme zu ${clock(at)} springen`} onClick={() => onJump(at)}><Play aria-hidden="true" />{clock(at)}</button>;
+}
+/** Abschrift mit Zeiten: jede Zeile trägt ihre Zeit; ein Klick spielt ab dieser Stelle, die laufende Zeile ist hervorgehoben. */
+function TimedTranscript({ segments, onJump, subscribe }: { segments: CallSegment[]; onJump: ((seconds: number) => void) | null; subscribe: (listener: (seconds: number) => void) => () => void }) {
+  const [current, setCurrent] = useState(-1); const list = useRef<HTMLOListElement>(null);
+  useEffect(() => subscribe((seconds) => { const index = segmentIndexAt(segments, seconds); setCurrent((old) => (old === index ? old : index)); }), [segments, subscribe]);
+  // Lange Gespräche: Die Liste rollt mit, sobald die laufende Zeile aus ihrem Fenster wandert (nur in der Liste – die Seite bleibt, wo sie ist)
+  useEffect(() => { const box = list.current; const row = box?.children[current] as HTMLElement | undefined; if (!box || !row || box.clientHeight <= 0 || box.scrollHeight <= box.clientHeight) return; const top = row.offsetTop; if (top < box.scrollTop || top + row.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = Math.max(0, top - box.clientHeight / 3); }, [current]);
+  const rows = segments.map((segment) => { const match = segment.sp === undefined ? /^\s*([A-Za-zÄÖÜäöüß][\wÄÖÜäöüß .\-]{0,28}?):\s+(.*)$/.exec(segment.t) : null; return { at: segment.s, who: segment.sp !== undefined ? `Sprecher ${segment.sp + 1}` : match ? match[1].trim() : "", text: match ? match[2] : segment.t }; });
+  const speakers = Array.from(new Set(rows.map((row) => row.who).filter(Boolean)));
+  return <ol ref={list} className="gq-segs">{rows.map((row, index) => { const body = <><time>{clock(row.at)}</time><span>{row.who && <b className={`is-speaker-${Math.max(0, speakers.indexOf(row.who)) % 4}`}>{row.who}</b>}{row.text}</span></>; return <li key={index}>{onJump ? <button type="button" className={`gq-seg ${index === current ? "is-now" : ""}`} aria-current={index === current ? "true" : undefined} aria-label={`Ab ${clock(row.at)} abspielen: ${row.text.slice(0, 80)}`} onClick={() => onJump(row.at)}>{body}</button> : <div className="gq-seg is-static">{body}</div>}</li>; })}</ol>;
+}
 /** Abschrift als Gespräch: erkennt Zeilen wie „Agent: …“ / „Kunde: …“ und setzt sie als Wortwechsel; sonst bleibt der Text, wie er ist. */
 function Transcript({ text, fallback }: { text: string | null; fallback: string }) {
   if (!text?.trim()) return <p className="gq-panel-empty">{fallback}</p>;
@@ -603,7 +644,7 @@ function SettingsForm({ data, onDone, tab, onTab, onOpenCall }: { data: Settings
   const applyPreset = trpc.leadops.applyCallQaPreset.useMutation({ onSuccess: (result) => { toast.success(`Vorlage übernommen – Kriterien, KI-Anweisung und Prüffragen sind gesetzt${result.campaigns ? ` (auch für ${result.campaigns} Kampagnen-Fragensätze)` : ""}.`); onDone(); onTab("bewertung"); }, onError: (error) => toast.error(error.message) });
   const copy = async (value: string) => { try { await navigator.clipboard.writeText(value); toast.success("Kopiert."); } catch { toast.error("Kopieren nicht möglich."); } };
   const mappingKeys: Array<[keyof typeof form.fieldMapping, string]> = [["callId", "Gesprächs-ID"], ["leadId", "Lead-ID (unsere)"], ["phone", "Telefonnummer"], ["agent", "Agent"], ["campaign", "Kampagne"], ["direction", "Richtung"], ["startedAt", "Beginn"], ["duration", "Dauer (Sek.)"], ["recordingUrl", "Aufzeichnungs-URL"], ["transcript", "Transkript (falls vorhanden)"], ["consent", "Einwilligung"]];
-  const sample = JSON.stringify({ [form.fieldMapping.callId]: "abc-123", [form.fieldMapping.leadId]: "API-1A2B3C4D", [form.fieldMapping.phone]: "+49 170 1234567", [form.fieldMapping.agent]: "Müller", [form.fieldMapping.campaign]: "PV Q4", [form.fieldMapping.startedAt]: "2026-09-23T10:15:00Z", [form.fieldMapping.duration]: 312, [form.fieldMapping.recordingUrl]: "https://…/aufzeichnung.mp3", [form.fieldMapping.consent]: true }, null, 2);
+  const sample = JSON.stringify({ [form.fieldMapping.callId]: "abc-123", [form.fieldMapping.leadId]: "API-1A2B3C4D", [form.fieldMapping.phone]: "+49 170 1234567", [form.fieldMapping.agent]: "Deniz Kaya", [(form.fieldMapping as Record<string, string>).category ?? CONTACT_MAPPING.category]: "PV", [form.fieldMapping.campaign]: "PV Q4", [form.fieldMapping.startedAt]: "2026-09-23T10:15:00Z", [form.fieldMapping.duration]: 312, [form.fieldMapping.recordingUrl]: "https://…/aufzeichnung.mp3", [form.fieldMapping.consent]: true }, null, 2);
 
   // Aufnahme → Text: welcher Dienst gerade greift (oder dass keiner eingerichtet ist)
   const { openai, deepgram } = data.transcriptionAvailable; const provider = form.transcriptionProvider;
@@ -683,7 +724,7 @@ function SettingsForm({ data, onDone, tab, onTab, onOpenCall }: { data: Settings
           <h4 className="gs-map-title">Zum Kontakt <span>wenn der Dialer den ganzen Kontakt mitschickt</span></h4>
           <div className="gs-map is-contact">{CONTACT_MAPPING_LABELS.map(([key, label]) => <label key={key} className="gs-field">{label}<Input value={(form.fieldMapping as Record<string, string>)[key] ?? CONTACT_MAPPING[key]} onChange={(event) => patch({ fieldMapping: { ...form.fieldMapping, [key]: event.target.value } })} /></label>)}</div>
           <p>Kennt die Software die Rufnummer noch nicht, legt sie den Kontakt selbst an (Liste „Kontakte vom Dialer“ unter „Rohdaten“). Ein grünes Gespräch macht ihn zum Lead, ein rotes verwirft ihn. Deutsche Feldnamen wie <code>vorname</code>, <code>plz</code> oder <code>ort</code> werden auch ohne Zuordnung erkannt.</p>
-          <p>Beispiel, wie der Webhook aussehen sollte (mit Kontakt: Knopf „Anleitung für den Dialer-Entwickler kopieren“):</p><pre>{sample}</pre>
+          <p>Beispiel, wie der Webhook aussehen sollte (mit Kontakt: Knopf „Anleitung für den Dialer-Entwickler kopieren“). Wichtig sind der volle Name des Agenten und die Leadsparte (PV, WP oder PV+WP) – dann steht bei jedem Lead, wer ihn gemacht hat und wozu er gehört:</p><pre>{sample}</pre>
           <p>Für den Entwickler des Dialers: Ein Aufruf der Adresse im Browser (GET) zeigt, ob alles stimmt. Ein Testgespräch mit <code>"test": true</code> prüft Felder und Aufnahme-Link, ohne etwas zu speichern.</p>
         </div></details>
       </section>}

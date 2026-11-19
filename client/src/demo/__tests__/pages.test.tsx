@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DemoApp from "../App.demo";
 import { localDemoLink } from "../link";
-import { getStore, resetStore } from "../backend";
+import { callProcedure, getStore, resetStore } from "../backend";
 
 // Profilbild: Das Klein-Rechnen im Browser braucht eine Zeichenfläche (gibt es in der Testumgebung nicht) – hier kommt stattdessen ein festes kleines Bild zurück
 const { TEST_AVATAR } = vi.hoisted(() => ({ TEST_AVATAR: `data:image/jpeg;base64,${btoa(String.fromCharCode(0xff, 0xd8, 0xff, 0xe0) + "x".repeat(240))}` }));
@@ -1000,10 +1000,14 @@ describe("Gespräche – der Dialer schickt den ganzen Kontakt mit", () => {
     window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`); const { view } = mount(); await settle(700); const root = view.container;
     const panel = root.querySelector<HTMLElement>(".gq-dialer")!; expect(panel).toBeTruthy(); expect(panel.querySelector("h2")?.textContent).toBe("Vom Dialer gemeldet");
     const facts = Object.fromEntries(Array.from(panel.querySelectorAll(".gq-dialer-facts > div")).map((node) => [node.querySelector("dt")!.textContent, node.querySelector("dd")!.textContent]));
-    expect(facts).toMatchObject({ "Straße": "Hauptstraße 12", "Kontakt-Nummer im Dialer": "C-88412", "Mitarbeiter": "12" }); expect(facts.Name).toBeTruthy(); expect(facts["PLZ und Ort"]).toBeTruthy();
+    expect(facts).toMatchObject({ "Leadsparte": "PV", "Straße": "Hauptstraße 12", "Kontakt-Nummer im Dialer": "C-88412", "Mitarbeiter": "12" }); expect(facts.Name).toBeTruthy(); expect(facts["PLZ und Ort"]).toBeTruthy();
+    expect(Object.keys(facts)[0]).toBe("Leadsparte"); // die Leadsparte laut Dialer steht vorn
     expect(panel.querySelector(".gq-dialer-note")?.textContent).toContain("Preis ist das Thema");
     const stageFacts = Object.fromEntries(Array.from(root.querySelectorAll(".gq-call-facts > div")).map((node) => [node.querySelector("dt")!.textContent, node.querySelector("dd")!.textContent]));
     expect(stageFacts["Ergebnis im Dialer"]).toBe("Angebot gewünscht");
+    // Agent und Leadsparte hat der Dialer genannt: der Agent gilt (ohne Nachprüfung aus dem Gespräch), die Leadsparte bestimmt die Kategorie
+    expect(call.agentSource).toBe("dialer"); expect(stageFacts.Agent).toMatch(/^.+ \(laut Dialer\) ändern$/); expect(stageFacts["Lead-Kategorie"]).toContain("Photovoltaik");
+    expect(Array.from(root.querySelectorAll<HTMLElement>(".gq-call-facts > div")).find((node) => node.querySelector("dt")?.textContent === "Lead-Kategorie")!.querySelector("dd")!.title).toBe("Leadsparte laut Dialer: PV");
     // ein Gespräch ohne Kontakt-Daten hat den Bereich nicht
     const other = getStore().tables.callRecords.find((item: any) => !item.payload && item.status === "bewertet")!; expect(other).toBeTruthy(); cleanup();
     window.history.replaceState(null, "", `/?page=Gespräche&callId=${other.id}`); const second = mount(); await settle(700);
@@ -1013,7 +1017,7 @@ describe("Gespräche – der Dialer schickt den ganzen Kontakt mit", () => {
   it("Dialer & Bewertung: Kontakt-Felder lassen sich zuordnen, und Regeln können das Ergebnis im Dialer prüfen", async () => {
     window.history.replaceState(null, "", "/?page=Gespräche&view=Einstellungen"); const { view } = mount(); await settle(600); const root = view.container;
     const labels = Array.from(root.querySelectorAll(".gs-map.is-contact .gs-field")).map((node) => node.childNodes[0].textContent);
-    expect(labels).toEqual(["Kontakt-Nummer des Dialers", "Vorname", "Nachname", "Firma", "Straße mit Hausnummer", "PLZ", "Ort", "Land", "E-Mail", "Weitere Felder (Name-Wert-Paare)", "Ergebnis im Dialer", "Notiz des Agenten", "Rückruf oder Termin"]);
+    expect(labels).toEqual(["Kontakt-Nummer des Dialers", "Vorname", "Nachname", "Firma", "Straße mit Hausnummer", "PLZ", "Ort", "Land", "E-Mail", "Weitere Felder (Name-Wert-Paare)", "Leadsparte (PV, WP, PV+WP)", "Ergebnis im Dialer", "Notiz des Agenten", "Rückruf oder Termin"]);
     const inputs = Array.from(root.querySelectorAll<HTMLInputElement>(".gs-map.is-contact input")); expect(inputs.map((node) => node.value).slice(0, 3)).toEqual(["contact.id", "contact.first_name", "contact.last_name"]);
     await act(async () => { fireEvent.change(inputs[1], { target: { value: "kunde.vorname" } }); }); await settle(150);
     expect(root.querySelector(".gs-save-state")?.textContent).toContain("Anbindung");
@@ -1027,3 +1031,118 @@ describe("Gespräche – der Dialer schickt den ganzen Kontakt mit", () => {
     expect(root.querySelector<HTMLInputElement>(".gs-rule .gs-rule-line input")!.placeholder).toBe("z. B. kein Interesse");
   });
 });
+
+describe("Gespräche – Aufnahme spulen und Zeiten im Gespräch", () => {
+  beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
+  const click = async (node: Element | null | undefined, wait = 60) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.click(node!); }); await settle(wait); };
+  const clockOf = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  const callOf = (external: string) => getStore().tables.callRecords.find((item: any) => item.externalCallId === external)!;
+  const open = async (external: string, wait = 700) => { const call = callOf(external); expect(call).toBeTruthy(); window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`); const { view } = mount(); await settle(wait); return { call, root: view.container }; };
+  const player = (root: HTMLElement) => { const ui = root.querySelector<HTMLElement>(".gq-player-ui")!; const [back, toggle, forward] = Array.from(ui.querySelectorAll<HTMLButtonElement>(".gq-player-row > button")); return { ui, back, toggle, forward, rate: ui.querySelector<HTMLButtonElement>(".gq-rate")!, range: ui.querySelector<HTMLInputElement>('.gq-scrub input[type="range"]')!, clock: () => ui.querySelector(".gq-clock b")!.textContent, total: () => ui.querySelector(".gq-clock")!.textContent, fill: () => parseFloat(ui.querySelector<HTMLElement>(".gq-scrub")!.style.getPropertyValue("--fill")) }; };
+
+  it("Abspieler: abspielen und anhalten, 10 Sekunden vor und zurück, Balken ziehen, Tempo – das erste Anhören wird vermerkt", async () => {
+    const { call, root } = await open("OD-10240"); const p = player(root);
+    expect(p.ui.querySelector("audio")).toBeNull(); expect(p.total()).toBe("0:00 / 6:00"); // Vorschau: nur die Uhr läuft
+    expect(root.querySelector(".gq-player")!.textContent).toContain("Vorschau ohne Ton"); expect(root.querySelector(".gq-player > b")?.textContent).toBe("Aufnahme anhören");
+    expect([p.back, p.toggle, p.forward].map((node) => node.getAttribute("aria-label"))).toEqual(["10 Sekunden zurück", "Abspielen", "10 Sekunden vor"]);
+    await click(p.forward); await click(p.forward); expect(p.clock()).toBe("0:20"); await click(p.back); expect(p.clock()).toBe("0:10"); await click(p.back); await click(p.back); expect(p.clock()).toBe("0:00");
+    await act(async () => { fireEvent.change(p.range, { target: { value: "91" } }); }); expect(p.clock()).toBe("1:31"); expect(p.fill()).toBeCloseTo((91 / 360) * 100, 3);
+    for (const next of ["1,25×", "1,5×", "2×", "1×"]) { await click(p.rate, 20); expect(p.rate.textContent).toBe(next); }
+    const heard = () => getStore().tables.activityLog.filter((item: any) => item.kind === "gespraech_abgehoert" && item.refId === call.id).length; expect(heard()).toBe(0);
+    await click(p.toggle, 900); expect(p.toggle.getAttribute("aria-label")).toBe("Anhalten"); expect(p.toggle.classList.contains("is-playing")).toBe(true); expect(p.fill()).toBeGreaterThan((91 / 360) * 100); expect(heard()).toBe(1);
+    await click(p.toggle); expect(p.toggle.getAttribute("aria-label")).toBe("Abspielen"); const stopped = p.fill(); await settle(600); expect(p.fill()).toBe(stopped);
+    await click(p.toggle, 300); await click(p.toggle); expect(heard()).toBe(1); // nur das erste Anhören je Aufruf der Seite
+  });
+
+  it("Zeiten: an jeder Prüffrage und jedem Kriterium steht die Stelle – ein Klick springt in der Aufnahme dorthin und spielt ab", async () => {
+    const { call, root } = await open("OD-10240"); const p = player(root); const marks = call.timeline.marks as Record<string, number>; const segments = call.timeline.segments as Array<{ s: number; t: string }>;
+    expect(Object.keys(marks).length).toBeGreaterThan(5); for (const at of Object.values(marks)) expect(segments.some((segment) => segment.s === at)).toBe(true); // jede Stelle beginnt an einem Satzanfang
+    // Prüffragen: die Zeit steht bei den Schildern der Frage; Fragen ohne Stelle im Gespräch haben keine
+    const questions = Array.from(root.querySelectorAll<HTMLElement>(".gq-qlist .gq-q")); const wanted = getStore().tables.callQaCampaigns.find((item: any) => item.name === call.campaign)!.questions as Array<{ key: string; label: string }>;
+    expect(questions.map((node) => node.querySelector(".gq-q-tags .gq-at")?.textContent ?? null)).toEqual(wanted.map((question) => (typeof marks[`q:${question.key}`] === "number" ? clockOf(marks[`q:${question.key}`]) : null)));
+    expect(questions.filter((node) => node.querySelector(".gq-at")).length).toBeGreaterThanOrEqual(3); expect(questions.filter((node) => !node.querySelector(".gq-at")).length).toBeGreaterThanOrEqual(1); // „kommt nicht vor“ hat keine Stelle
+    const chip = questions.find((node) => node.querySelector("strong")?.textContent?.includes("telefonische"))!.querySelector<HTMLButtonElement>("button.gq-at")!; const at = marks["q:telefonische_kontaktaufnahme"];
+    expect(chip.getAttribute("aria-label")).toBe(`Ist eine telefonische Kontaktaufnahme erwünscht?: in der Aufnahme zu ${clockOf(at)} springen`); expect(at).toBeGreaterThan(200);
+    await click(chip, 120); expect(p.clock()).toBe(clockOf(at)); expect(p.toggle.getAttribute("aria-label")).toBe("Anhalten"); // springt und spielt ab
+    // Kriterien: dieselbe Zeit-Marke neben dem Gewicht
+    const criteria = Array.from(root.querySelectorAll<HTMLElement>(".gq-clist .gq-c")); expect(criteria.length).toBe(6); expect(criteria.every((node) => /^\d+:\d\d$/.test(node.querySelector(".gq-c-head .gq-at")?.textContent ?? ""))).toBe(true);
+    const consent = criteria.find((node) => node.querySelector("strong")?.textContent === "Weitergabe erlaubt")!; expect(consent.querySelector(".gq-at")?.textContent).toBe(clockOf(marks["c:einwilligung"]));
+    await click(consent.querySelector(".gq-at"), 120); expect(p.clock()).toBe(clockOf(marks["c:einwilligung"]));
+    // Punkte auf dem Balken: je Stelle einer, in der Farbe der Antwort; beim Anfassen stehen Zeit und Thema darunter
+    const dots = Array.from(p.ui.querySelectorAll<HTMLButtonElement>(".gq-scrub-mark")); expect(dots.length).toBe(new Set(Object.values(marks).map((value) => Math.round(value))).size);
+    expect(dots.every((node) => /^Zu \d+:\d\d springen: .+/.test(node.getAttribute("aria-label") ?? ""))).toBe(true); expect(dots.every((node) => node.classList.contains("is-gruen"))).toBe(true); // in diesem Gespräch ist alles erfüllt
+    expect(p.ui.querySelector(".gq-scrub-hint")?.textContent).toBe("Die Punkte auf dem Balken zeigen, wo die Prüffragen und Kriterien besprochen werden.");
+    await act(async () => { fireEvent.mouseEnter(dots[dots.length - 1]); }); expect(p.ui.querySelector(".gq-scrub-hint")?.textContent).toMatch(/^\d+:\d\d .+/);
+    await click(p.toggle);
+  });
+
+  it("Transkript mit Zeiten: jede Zeile trägt ihre Zeit, ein Klick spielt ab dieser Stelle, die laufende Zeile ist hervorgehoben", async () => {
+    const { call, root } = await open("OD-10240"); const p = player(root); const segments = call.timeline.segments as Array<{ s: number; t: string }>;
+    const rows = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-segs .gq-seg")); expect(rows().length).toBe(String(call.transcript).split("\n").length); expect(rows().length).toBe(segments.length);
+    expect(rows().map((node) => node.querySelector("time")?.textContent)).toEqual(segments.map((segment) => clockOf(segment.s))); expect(rows()[0].querySelector("time")?.textContent).toBe("0:03");
+    expect(rows().slice(0, 2).map((node) => node.querySelector("b")?.textContent)).toEqual(["Agent", "Kundin"]); expect(rows()[0].querySelector("span")?.textContent).toContain("Guten Tag Frau Berger"); expect(rows()[0].querySelector("span")?.textContent).not.toContain("Agent:");
+    expect(root.querySelector('section[aria-label="Transkript"] .gq-panel-head p')?.textContent).toContain("Ein Klick auf eine Zeile spielt die Aufnahme ab dieser Stelle"); expect(root.querySelector(".gq-turns")).toBeNull();
+    expect(rows().some((node) => node.classList.contains("is-now"))).toBe(false);
+    await click(rows()[6], 120); expect(p.clock()).toBe(clockOf(segments[6].s)); expect(p.toggle.getAttribute("aria-label")).toBe("Anhalten");
+    expect(rows().map((node) => node.classList.contains("is-now"))).toEqual(segments.map((_, index) => index === 6)); expect(rows()[6].getAttribute("aria-current")).toBe("true");
+    await click(p.toggle);
+    // spulen: die markierte Zeile folgt der Stelle – vor dem ersten Satz ist keine markiert
+    await act(async () => { fireEvent.change(p.range, { target: { value: String(Math.ceil(segments[2].s) + 1) } }); }); expect(rows().findIndex((node) => node.classList.contains("is-now"))).toBe(2);
+    await act(async () => { fireEvent.change(p.range, { target: { value: "0" } }); }); expect(rows().some((node) => node.classList.contains("is-now"))).toBe(false);
+  });
+
+  it("Woran es liegt: oben stehen die entscheidenden Prüffragen ohne „Ja“ – mit der Minute, in der es besprochen wird", async () => {
+    const { call, root } = await open("OD-10242"); const p = player(root); const marks = call.timeline.marks as Record<string, number>;
+    const why = root.querySelector<HTMLElement>(".gq-call-stage .gq-why")!; expect(why).toBeTruthy(); expect(why.querySelector("b")?.textContent).toBe("Woran es liegt");
+    const lines = Array.from(why.querySelectorAll<HTMLElement>("li")).map((node) => [node.querySelector(".gq-why-answer")?.textContent, node.querySelector(".gq-why-text")?.textContent, node.querySelector(".gq-at")?.textContent ?? null]);
+    expect(lines).toEqual([["Nein", "Hat der Kunde generell Interesse?", clockOf(marks["q:interesse"])], ["Nein", "Ist eine telefonische Kontaktaufnahme erwünscht?", clockOf(marks["q:telefonische_kontaktaufnahme"])], ["Unklar", "Stimmt der Kunde einem Vor-Ort-Termin innerhalb eines Monats zu?", null]]); // „Nein“ zuerst; Info-Fragen stehen hier nicht
+    expect(clockOf(marks["q:telefonische_kontaktaufnahme"])).toBe("1:23"); // „Ich möchte nicht angerufen werden …“
+    await click(why.querySelectorAll<HTMLButtonElement>("button.gq-at")[1], 120); expect(p.clock()).toBe("1:23"); expect(root.querySelector(".gq-seg.is-now")?.textContent).toContain("Ich möchte nicht angerufen werden"); await click(p.toggle);
+    const red = Array.from(p.ui.querySelectorAll(".gq-scrub-mark")).filter((node) => node.classList.contains("is-rot")); expect(red.length).toBeGreaterThanOrEqual(1); // die Stellen mit „Nein“ sind auf dem Balken rot
+    // ein Gespräch, in dem alles passt, hat den Bereich nicht
+    cleanup(); const good = await open("OD-10240"); expect(good.root.querySelector(".gq-why")).toBeNull();
+  });
+
+  it("Zeiten fehlen noch (älteres Gespräch): sie werden beim Öffnen von selbst geholt – Text und Bewertung bleiben", async () => {
+    const before = callOf("OD-10243"); expect(before.timeline ?? null).toBeNull(); const score = before.score; const decision = before.decision; const transcript = before.transcript;
+    const { call, root } = await open("OD-10243", 250);
+    expect(root.querySelector(".gq-player-note.is-busy")?.textContent).toBe("Die Zeiten zu den Prüffragen werden gerade geholt …"); expect(root.querySelector(".gq-segs")).toBeNull(); expect(root.querySelectorAll(".gq-at").length).toBe(0); expect(root.querySelector(".gq-turns")).toBeTruthy(); // bis dahin: Transkript wie bisher
+    await settle(1500);
+    expect(root.querySelector(".gq-player-note.is-busy")).toBeNull(); expect(root.querySelectorAll(".gq-segs .gq-seg").length).toBe(String(transcript).split("\n").length); expect(root.querySelectorAll(".gq-at").length).toBeGreaterThan(2); expect(root.querySelectorAll(".gq-scrub-mark").length).toBeGreaterThan(1);
+    const after = callOf("OD-10243"); expect(after.timeline.segments.length).toBe(String(transcript).split("\n").length); expect(after).toMatchObject({ score, decision, transcript }); expect(call.id).toBe(after.id);
+    // beim nächsten Öffnen sind die Zeiten sofort da – nichts wird noch einmal geholt
+    cleanup(); const again = await open("OD-10243", 300); expect(again.root.querySelector(".gq-player-note.is-busy")).toBeNull(); expect(again.root.querySelectorAll(".gq-segs .gq-seg").length).toBeGreaterThan(0);
+  });
+
+  it("ohne Aufnahme oder ohne Text: kein Abspieler bzw. keine Zeiten – und nichts wird im Hintergrund versucht", async () => {
+    // ohne Einwilligung: keine Aufnahme, kein Abspieler
+    const silent = getStore().tables.callRecords.find((item: any) => item.status === "ohne_einwilligung")!; window.history.replaceState(null, "", `/?page=Gespräche&callId=${silent.id}`); let root = mount().view.container; await settle(700);
+    expect(root.querySelector(".gq-player-ui")).toBeNull(); expect(root.querySelector(".gq-player")?.textContent).toBe("Aufnahme anhörenOhne dokumentierte Einwilligung gibt es keine Aufnahme."); expect(root.querySelectorAll(".gq-at").length).toBe(0);
+    // Aufnahme da, aber (noch) kein Text: Abspieler ja, Zeiten nein
+    cleanup(); const noText = getStore().tables.callRecords.find((item: any) => item.recordingUrl && !item.transcript && typeof item.durationSeconds === "number")!; expect(noText).toBeTruthy();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${noText.id}`); root = mount().view.container; await settle(900);
+    expect(root.querySelector(".gq-player-ui")).toBeTruthy(); expect(root.querySelector(".gq-player-note")).toBeNull(); expect(root.querySelectorAll(".gq-scrub-mark").length).toBe(0); expect(root.querySelector(".gq-scrub-hint")).toBeNull(); expect(root.querySelector(".gq-segs")).toBeNull();
+    expect(getStore().tables.callRecords.find((item: any) => item.id === noText.id)!.timeline ?? null).toBeNull();
+    // eingefügter Text ohne Aufnahme (Ausprobieren): keine Zeiten – der Grund wird beim Nachfragen genannt und vermerkt
+    cleanup(); const pasted = await callProcedure("leadops.simulateCall", { transcript: "Agent: Guten Tag, es geht um Ihre Photovoltaik-Anfrage.\nKunde: Ja gerne, wir sind Eigentümer.", publicId: null, agentName: "Test" }) as { callId: number };
+    expect(getStore().tables.callRecords.find((item: any) => item.id === pasted.callId)!.timeline ?? null).toBeNull();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${pasted.callId}`); root = mount().view.container; await settle(900);
+    expect(root.querySelector(".gq-player-ui")).toBeNull(); expect(root.querySelector(".gq-segs")).toBeNull(); expect(root.querySelectorAll(".gq-at").length).toBe(0); expect(root.querySelector(".gq-turns")).toBeTruthy();
+    expect(await callProcedure("leadops.fetchCallTimeline", { callId: pasted.callId })).toMatchObject({ state: "ohne", note: "Zu diesem Gespräch liegt keine Aufnahme vor." });
+    expect(await callProcedure("leadops.getCall", { callId: pasted.callId })).toMatchObject({ timelineState: "ohne", timelineNote: "Zu diesem Gespräch liegt keine Aufnahme vor.", segments: [], marks: {}, recordingUrl: null });
+  });
+
+  it("Aufnahme per Link oder Datei: das neue Gespräch bringt seine Zeiten gleich mit; neu bewerten behält die Abschnitte", async () => {
+    const created = await callProcedure("leadops.importRecordingLinks", { text: "https://dialer.example/aufnahmen/neu-1.mp3", campaign: "PV Q4" }) as { callIds: number[] };
+    const row = () => getStore().tables.callRecords.find((item: any) => item.id === created.callIds[0])!; const lines = String(row().transcript).split("\n").length;
+    expect(row().timeline.segments.length).toBe(lines); expect(row().timeline.segments[0].s).toBeGreaterThan(0); expect(row().timeline.segments[lines - 1].e).toBeLessThanOrEqual(row().durationSeconds);
+    const detail = await callProcedure("leadops.getCall", { callId: row().id }) as Record<string, any>;
+    expect(detail).toMatchObject({ timelineState: "ok", timelineNote: null, recordingUrl: `vorschau:${row().durationSeconds}`, recordingSource: "vorschau" }); expect(detail.segments.length).toBe(lines); expect(detail.timeline).toBeUndefined(); expect(Object.keys(detail.marks).every((key) => /^[qc]:/.test(key))).toBe(true);
+    const segments = JSON.stringify(row().timeline.segments);
+    await callProcedure("leadops.reevaluateCall", { callId: row().id }); expect(JSON.stringify(row().timeline.segments)).toBe(segments);
+    const file = await callProcedure("leadops.importRecordingFile", { fileName: "gespraech.mp3", mimeType: "audio/mpeg", base64: "QUJD" }) as { callId: number };
+    expect(getStore().tables.callRecords.find((item: any) => item.id === file.callId)!.timeline.segments.length).toBeGreaterThan(3);
+    expect(await callProcedure("leadops.fetchCallTimeline", { callId: file.callId })).toMatchObject({ state: "ok" });
+  });
+});
+

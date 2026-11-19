@@ -70,7 +70,7 @@ describe("Helles Design – rosarot wie vor Version 333", () => {
     for (const token of ["--gl-tray:#ffffff", "--gl-softer:#ffffff", "--gl-card:#ffffff", "--gq-soft:#ffffff"]) expect(lightTokens, token).toContain(token);
     expect(calls).toContain("--gl-tray:rgba(0,0,0,.16)"); expect(calls).toContain("--gl-softer:rgba(255,255,255,.022)"); // das dunkle Design bleibt, wie es war
     const wrap = tight(callRules.get("html:not(.dark) .gq-table-wrap")); expect(wrap).toContain("background:none"); expect(wrap).toContain("border-color:transparent"); // die Liste hat keinen eigenen Rahmen mehr
-    for (const selector of [".gq-stage.is-inset", ".gq-periods", ".cq-list-panel .dashboard-segments", ".cq-dialog .cq-question-row", ".cq-dialog .cq-criterion-row", ".gq-turn", ".gq-detail audio"]) expect(tight(callRules.get(`html:not(.dark) ${selector}`)), selector).toContain("background:#ffffff");
+    for (const selector of [".gq-stage.is-inset", ".gq-periods", ".cq-list-panel .dashboard-segments", ".cq-dialog .cq-question-row", ".cq-dialog .cq-criterion-row", ".gq-turn", ".gq-detail audio[controls]"]) expect(tight(callRules.get(`html:not(.dark) ${selector}`)), selector).toContain("background:#ffffff");
     const grey = rules(calls).filter((rule) => rule.selector.startsWith("html:not(.dark)") && /background(-color)?:(#f9fafb|#f8fafb|#f4f5f7)/i.test(tight(rule.body)));
     expect(grey.map((rule) => rule.selector)).toEqual([]);
     expect(tight(effective(css("vertraege.css")).get("html:not(.dark) .vt-list"))).toContain("background:none"); // Vertragsliste: dieselbe Lösung

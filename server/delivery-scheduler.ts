@@ -24,7 +24,7 @@ import { tenantsWithImap } from "./mail-settings";
 import { metaConnections } from "../drizzle/schema";
 import { deliverLeadNow, loadDeliverySettings, metadataOf, type Db } from "./lead-pipeline";
 import { intervalWindowOpen } from "./order-eligibility";
-import { purgeExpiredCalls } from "./call-qa";
+import { prunePlaybackCache, purgeExpiredCalls } from "./call-qa";
 import { predictiveTick, releaseWrapUps, reconcileSipgateRecordings, syncSipgateCalls } from "./dialer";
 
 export { intervalWindowOpen };
@@ -122,6 +122,7 @@ export function startDeliveryScheduler(intervalMinutes = Number(process.env.DELI
       const db = await getDb(); if (!db) return;
       const summaries = await runScheduledDeliveries(db);
       const purged = await purgeExpiredCalls(db).catch(() => ({ purged: 0 })); if (purged.purged) console.log(`[Aufbewahrung] ${purged.purged} Gesprächsaufzeichnungen/-transkripte entfernt`);
+      await prunePlaybackCache().catch(() => 0); // Kopien von Aufnahmen zum Anhören: nach einem Tag wieder weg (prüft höchstens einmal je Stunde)
       const mails = await processDueEmails(db).catch((error) => { console.error("[E-Mail] Versand fehlgeschlagen:", error); return null; });
       const weekly = await import("./mail-health").then((mod) => mod.runWeeklyReports(db)).catch(() => 0); if (weekly) console.log(`[Wochenbericht] ${weekly} Bericht${weekly === 1 ? "" : "e"} verschickt`); // montags ab 8 Uhr, einmal je Woche
       for (const tenantId of (await db.select({ id: tenants.id }).from(tenants).catch(() => [] as Array<{ id: number }>)).map((row) => row.id)) await processAutomations(db, tenantId, { appUrl: process.env.APP_URL ?? "" }).catch((error) => console.error(`[Pipeline] Automatik Mandant ${tenantId}:`, error instanceof Error ? error.message : error));

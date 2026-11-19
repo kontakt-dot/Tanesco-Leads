@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONTACT_MAPPING, dialerInfo, extractDialerContact, mergeDialerData } from "../shared/dialer-contact";
+import { CONTACT_MAPPING, categoryProducts, dialerInfo, extractDialerContact, matchDialerCategory, mergeDialerData } from "../shared/dialer-contact";
 import { dialerGuideText } from "../shared/dialer-guide";
 import { DEFAULT_MAPPING, decideCall } from "./call-qa";
 
@@ -64,5 +64,30 @@ describe("Kontakt in der Meldung des Dialers", () => {
     // eigene Namen für die Kontakt-Felder erscheinen in Tabelle und Beispiel
     const own = dialerGuideText({ webhookUrl: "https://app.example/x", fieldMapping: { ...DEFAULT_MAPPING, firstName: "kunde.vorname", result: "abschluss" }, consentRequired: true, recordingAuthHeader: false });
     expect(own).toContain("| `kunde.vorname` | Vorname |"); expect(own).toContain("\"kunde\": {\n    \"vorname\": \"Murat\""); expect(own).toContain("\"abschluss\": \"Termin\"");
+  });
+
+  it("Leadsparte vom Dialer: „PV“, „WP“ und „PV+WP“ führen zur passenden Kategorie – genauer Name oder Kürzel gehen vor", () => {
+    const categories = [{ id: 1, name: "Photovoltaik", shortcode: "PV" }, { id: 2, name: "Wärmepumpe", shortcode: "WP" }, { id: 3, name: "Photovoltaik & Wärmepumpe", shortcode: "PVWP" }, { id: 4, name: "Fenster", shortcode: "FEN" }];
+    const id = (value: string | null) => matchDialerCategory(categories, value)?.id ?? null;
+    for (const value of ["PV", "pv", " Pv ", "Photovoltaik", "photovoltaik", "Solar", "Solaranlage", "PV-Anlage"]) expect(id(value), value).toBe(1);
+    for (const value of ["WP", "wp", "Wärmepumpe", "waermepumpe", "Wärmepumpen", "Heat Pump"]) expect(id(value), value).toBe(2);
+    for (const value of ["PV+WP", "PV + WP", "PV/WP", "pv und wp", "PV & WP", "WP+PV", "PVWP", "Photovoltaik & Wärmepumpe", "Photovoltaik und Wärmepumpe", "beides", "both"]) expect(id(value), value).toBe(3);
+    expect(id("Fenster")).toBe(4); expect(id("fen")).toBe(4); // jede andere Kategorie über Namen oder Kürzel
+    for (const value of ["", "  ", null, "Dach", "Heizung", "Sonstiges"]) expect(id(value), String(value)).toBeNull(); // nichts erkannt: die Software erkennt die Kategorie aus dem Gespräch
+    // ohne die Kategorie für beides gibt es für „PV+WP“ keinen eindeutigen Treffer; zwei Photovoltaik-Kategorien sind ebenfalls nicht eindeutig
+    expect(matchDialerCategory(categories.slice(0, 2), "PV+WP")).toBeNull();
+    expect(matchDialerCategory([...categories, { id: 5, name: "Photovoltaik Gewerbe", shortcode: "PVG" }], "Solar")).toBeNull(); expect(matchDialerCategory([...categories, { id: 5, name: "Photovoltaik Gewerbe", shortcode: "PVG" }], "PV")?.id).toBe(1); // das Kürzel passt genau
+    expect(categoryProducts("PV+WP")).toEqual({ pv: true, wp: true }); expect(categoryProducts("Wärmepumpe")).toEqual({ pv: false, wp: true }); expect(categoryProducts("Fenster")).toEqual({ pv: false, wp: false }); expect(categoryProducts(null)).toEqual({ pv: false, wp: false });
+  });
+
+  it("liest die Leadsparte aus der Meldung: oben, im Kontakt, mit deutschem Namen oder über die eingestellte Zuordnung", () => {
+    expect(extractDialerContact({ call_id: "x", phone: "+49 30 1", category: "PV" })).toMatchObject({ category: "PV", hasData: true, hasIdentity: false });
+    expect(extractDialerContact({ call_id: "x", phone: "+49 30 1", category: "PV" }).found).toContain("category");
+    expect(extractDialerContact({ phone: "+49 30 1", contact: { first_name: "Murat", category: "WP" } }).category).toBe("WP");
+    expect(extractDialerContact({ phone: "+49 30 1", sparte: "PV+WP" }).category).toBe("PV+WP"); expect(extractDialerContact({ phone: "+49 30 1", kategorie: "Wärmepumpe" }).category).toBe("Wärmepumpe");
+    expect(extractDialerContact({ phone: "+49 30 1", produkt: { name: "PV" } }, { category: "produkt.name" }).category).toBe("PV"); // eigener Feldname
+    expect(extractDialerContact({ phone: "+49 30 1" }).category).toBeNull();
+    expect(CONTACT_MAPPING.category).toBe("category"); expect(DEFAULT_MAPPING.category).toBe("category");
+    expect(dialerInfo({ phone: "+49 30 1", category: "PV", contact: { first_name: "Murat" } })?.category).toBe("PV");
   });
 });
