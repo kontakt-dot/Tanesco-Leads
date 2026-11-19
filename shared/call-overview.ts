@@ -29,7 +29,8 @@ export type CallOverview = {
   byAgent: AgentTally[];
 };
 export const TIMELINE_LIMIT = 240;
-export const AGENT_LIMIT = 12;
+/** So viele Agenten kennt die Übersicht höchstens – die Auswahl mit Suche in der Gesprächsliste zeigt sie alle. */
+export const AGENT_LIMIT = 400;
 const timeOf = (value: Date | string | null) => (value ? new Date(value).getTime() : 0);
 
 export function summarizeCalls(all: OverviewRow[], filter: { agentName?: string | null } = {}): CallOverview {

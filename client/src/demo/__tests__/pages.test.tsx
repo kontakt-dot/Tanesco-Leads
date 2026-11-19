@@ -504,47 +504,33 @@ describe("Gespräche – „Zurück“ bleibt in Gespräche", () => {
   });
 });
 
-describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", () => {
-  const forgetWave = () => { try { window.localStorage.removeItem("tanesco-gespraeche-verlauf"); } catch { /* egal */ } };
-  beforeEach(() => { cleanup(); resetStore(); forgetWave(); }); afterEach(() => { cleanup(); resetStore(); forgetWave(); });
-  /** Der Verlauf ist dezent: erst der Knopf „Verlauf“ in der Leiste klappt ihn auf. */
-  const openWave = async (root: HTMLElement) => { await act(async () => { fireEvent.click(root.querySelector<HTMLButtonElement>(".gq-wave-toggle")!); }); await settle(300); return root.querySelector<HTMLElement>(".gq-stage")!; };
+describe("Gespräche – Liste: Zähler als Filter, Zeilen als ruhiges Protokoll, Agenten-Auswahl", () => {
+  beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
   const callRows = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLElement>(".flux-table tbody tr.gq-call"));
   const tally = (root: HTMLElement, label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-tally-item")).find((node) => node.querySelector("b")?.textContent === label)!;
   const open = async () => { window.history.replaceState(null, "", "/?page=Gespräche"); const { view } = mount(); await settle(500); return view; };
 
-  it("zeigt Überschrift, Verlauf und Zähler; ein Klick auf einen Zähler filtert Liste und Verlauf", async () => {
+  it("zeigt Leiste und Zähler; ein Klick auf einen Zähler filtert die Liste – der Verlauf ist weg", async () => {
     const view = await open(); const root = view.container;
     const total = callRows(root).length; expect(total).toBeGreaterThan(5);
-    // oben dominiert nichts mehr: der Verlauf ist eingeklappt, die Leiste nennt nur die Summe in Worten
-    expect(root.querySelector(".gq-stage")).toBeNull();
-    const toggle = root.querySelector<HTMLButtonElement>(".gq-wave-toggle")!; expect(toggle.textContent).toBe("Verlauf"); expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(root.querySelector(".gq-sum > span")?.textContent).toMatch(new RegExp(`^${total} Gespräche, .+ am Telefon$`));
+    // oben dominiert nichts: kein Feld über der Liste, kein Knopf „Verlauf“ – die Leiste nennt die Summe in Worten
+    expect(root.querySelector(".gq-stage")).toBeNull(); expect(root.querySelector(".gq-wave-toggle")).toBeNull(); expect(root.querySelector(".gq-wave")).toBeNull(); expect(root.querySelector(".gq-slot")).toBeNull();
+    expect(Array.from(root.querySelectorAll(".gq-toolbar button")).some((node) => /Verlauf/.test(node.textContent ?? ""))).toBe(false);
+    expect(root.querySelector(".gq-sum")?.textContent).toMatch(new RegExp(`^${total} Gespräche, .+ am Telefon$`));
     expect(Array.from(root.querySelectorAll(".gq-toolbar .gq-label")).map((node) => node.textContent)).toEqual(["Zeitraum", "Ergebnis", "Kampagne", "Agent", "Lead-Kategorie"]);
-    const stage = await openWave(root); expect(stage).toBeTruthy(); expect(stage.className).toContain("is-inset"); expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(root.querySelector(".cq-list-panel")?.contains(stage)).toBe(true); // der Verlauf sitzt in der Liste, nicht mehr als eigener Kopf darüber
-    expect(stage.querySelector(".gq-count")?.textContent).toBe(`${total} Gespräche insgesamt`);
-    expect(stage.querySelector(".gq-talk")?.textContent).toMatch(/^Zusammen .+ am Telefon, im Schnitt \d+:\d\d Minuten je Gespräch\. \d+ % der \d+ entschiedenen Gespräche sind freigegeben\.$/);
-    expect(stage.querySelectorAll(".gq-slot").length).toBe(total); // ein Strich je Gespräch
     const counts = ["Freigegeben", "Zur Prüfung", "Zurückgewiesen", "Offen"].map((label) => Number(tally(root, label).querySelector("strong")?.textContent));
     expect(counts.reduce((sum, value) => sum + value, 0)).toBe(total); expect(counts[1]).toBeGreaterThan(0);
     expect(root.querySelectorAll(".gq-day").length).toBeGreaterThan(1); // die Liste ist nach Tagen gebündelt
     expect(root.querySelector(".cq-ampel-row")).toBeNull(); expect(root.textContent).not.toContain("Bewertet"); // die sechs Kacheln von früher sind weg
-    // Zähler „Zur Prüfung“ → nur diese Gespräche; im Verlauf treten die anderen zurück, die Tafel zählt weiter alle
+    // Zähler „Zur Prüfung“ → nur diese Gespräche; die Zähler zählen weiter alle
     await act(async () => { fireEvent.click(tally(root, "Zur Prüfung")); }); await settle(400);
     expect(tally(root, "Zur Prüfung").getAttribute("aria-pressed")).toBe("true");
     expect(callRows(root).length).toBe(counts[1]); expect(callRows(root).every((row) => /^Zur Prüfung/.test(row.querySelector(".gq-pill")?.textContent ?? ""))).toBe(true);
-    expect(stage.querySelectorAll(".gq-slot").length).toBe(total); expect(stage.querySelectorAll(".gq-slot.is-dim").length).toBe(total - counts[1]);
-    expect(stage.querySelector(".gq-count")?.textContent).toBe(`${total} Gespräche insgesamt`);
+    expect(["Freigegeben", "Zur Prüfung", "Zurückgewiesen", "Offen"].map((label) => Number(tally(root, label).querySelector("strong")?.textContent))).toEqual(counts);
     expect(root.querySelector(".gq-result-line")?.textContent).toContain("„Zur Prüfung“");
     // derselbe Zähler noch einmal hebt den Filter auf
     await act(async () => { fireEvent.click(tally(root, "Zur Prüfung")); }); await settle(400);
-    expect(callRows(root).length).toBe(total); expect(stage.querySelectorAll(".gq-slot.is-dim").length).toBe(0); expect(root.querySelector(".gq-result-line")).toBeNull();
-    // einklappen – und die Wahl bleibt beim nächsten Öffnen der Seite gemerkt
-    await act(async () => { fireEvent.click(toggle); }); await settle(200);
-    expect(root.querySelector(".gq-stage")).toBeNull(); expect(window.localStorage.getItem("tanesco-gespraeche-verlauf")).toBe("0");
-    await act(async () => { fireEvent.click(toggle); }); await settle(200); expect(window.localStorage.getItem("tanesco-gespraeche-verlauf")).toBe("1");
-    cleanup(); const again = await open(); expect(again.container.querySelector(".gq-stage.is-inset")).toBeTruthy();
+    expect(callRows(root).length).toBe(total); expect(root.querySelector(".gq-result-line")).toBeNull();
   });
 
   it("Smileys sind matte Kugeln mit eingeprägtem Gesicht: in der Liste für sich, groß im Gespräch im feinen Ring – jede Kugel bringt ihre eigenen Verläufe mit", async () => {
@@ -577,13 +563,13 @@ describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", ()
     expect(big.querySelectorAll(".cq-orb-ink path").length).toBe(3); // zwei Brauen und der Mund
   });
 
-  it("jedes Gespräch ist eine Karte: Ampel als Kugel, Uhrzeit mit Dauer, worum es ging, Agent mit Kampagne, Ergebnis als farbiges Schild", async () => {
+  it("jedes Gespräch ist eine Zeile im Protokoll: Ampel als Kugel, Uhrzeit mit „Uhr“ und Dauer, worum es ging, Agent mit Kampagne, Ergebnis als farbiges Schild", async () => {
     const view = await open(); const root = view.container; const rows = callRows(root); expect(rows.length).toBeGreaterThan(5);
     expect(Array.from(root.querySelectorAll(".gq-table thead th")).map((node) => (node.textContent ?? "").replace("ⓘ", "").trim())).toEqual(["", "Ampel", "Uhrzeit", "Gespräch", "Agent, Kampagne", "Ergebnis", "Öffnen"]);
     for (const row of rows) {
       expect(row.querySelectorAll("td").length).toBe(7); expect(row.className).toMatch(/ is-(gruen|gelb|rot|offen)( |$)/);
       expect(row.querySelector(".gq-ampel .cq-face")).toBeTruthy(); // Smiley als Kugel
-      expect(row.querySelector(".gq-time b")?.textContent).toMatch(/^(\d\d:\d\d|–)$/);
+      expect(row.querySelector(".gq-time b")?.textContent).toMatch(/^(\d\d:\d\d Uhr|–)$/); // „15:02 Uhr“
       expect((row.querySelector(".gq-who-line > b")?.textContent ?? "").length).toBeGreaterThan(0);
       expect((row.querySelector(".gq-agent-lines b")?.textContent ?? "").length).toBeGreaterThan(0); expect((row.querySelector(".gq-agent-lines small")?.textContent ?? "").length).toBeGreaterThan(0); // Agent, darunter die Kampagne
       const pill = row.querySelector(".gq-result .gq-pill")!; expect(pill).toBeTruthy(); expect(pill.className).toMatch(/ is-(freigegeben|pruefen|zurueckgewiesen|offen)$/); // die Farbe des Schilds hängt am Ergebnis
@@ -591,18 +577,18 @@ describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", ()
     expect(root.textContent).not.toContain("nicht zugeordnet"); // leere Angaben stehen nicht mehr in jeder Zeile
     const withSummary = rows.filter((row) => row.querySelector(".gq-summary")); expect(withSummary.length).toBeGreaterThan(3); // die Zeile sagt, worum es ging
     expect(withSummary.every((row) => (row.querySelector(".gq-summary")?.textContent ?? "").length > 8)).toBe(true);
-    const timed = rows.filter((row) => row.querySelector(".gq-dur")); expect(timed.length).toBeGreaterThan(3);
-    expect(timed.every((row) => /^\d+%$/.test(row.querySelector<HTMLElement>(".gq-dur")!.style.width))).toBe(true); // Balken: Dauer im Verhältnis zum längsten Gespräch
-    expect(timed.some((row) => row.querySelector<HTMLElement>(".gq-dur")!.style.width === "100%")).toBe(true);
+    const timed = rows.filter((row) => row.querySelector(".gq-time small")); expect(timed.length).toBeGreaterThan(3);
+    expect(timed.every((row) => /^\d+:\d\d Min$/.test(row.querySelector(".gq-time small")!.textContent ?? ""))).toBe(true); // die Dauer steht als Zahl da
+    expect(root.querySelector(".gq-dur")).toBeNull(); expect(rows.every((row) => row.querySelector(".gq-time")!.children.length <= 2)).toBe(true); // kein Strich mehr unter der Dauer
     // der Ring zeigt die erfüllten Prüffragen – steht eine Prozentzahl daneben, passt sie zur Ampel
     const scored = rows.filter((row) => row.querySelector(".cq-percent")); expect(scored.length).toBeGreaterThan(0);
     expect(scored.every((row) => /^\d+ %$/.test(row.querySelector(".cq-percent")!.textContent ?? ""))).toBe(true);
   });
 
-  it("ein Strich im Verlauf öffnet das Gespräch – oben mit Ergebnis und Aufnahme, zurück geht es zur Liste", async () => {
-    const view = await open(); const root = view.container; await openWave(root);
-    const slot = root.querySelector<HTMLButtonElement>(".gq-slot")!; expect(slot.getAttribute("aria-label")).toMatch(/^Gespräch .+ – öffnen$/);
-    await act(async () => { fireEvent.click(slot); }); await settle(500);
+  it("eine Zeile öffnet das Gespräch – oben mit Ergebnis und Aufnahme, zurück geht es zur Liste", async () => {
+    const view = await open(); const root = view.container;
+    const row = callRows(root)[0]; expect(row.getAttribute("aria-label")).toMatch(/^Gespräch .+ – öffnen$/); expect(row.getAttribute("tabindex")).toBe("0");
+    await act(async () => { fireEvent.click(row.querySelector(".gq-time")!); }); await settle(500);
     expect(window.location.search).toContain("callId=");
     const stage = root.querySelector<HTMLElement>(".gq-call-stage")!; expect(stage).toBeTruthy();
     expect(root.querySelector(".gq-tally")).toBeNull(); // die Anzeigetafel gehört zur Liste, nicht zum einzelnen Gespräch
@@ -613,33 +599,55 @@ describe("Gespräche – Anzeigetafel: Verlauf, Zähler als Filter, Agenten", ()
     expect(root.querySelector(".cq-list-panel")).toBeTruthy(); expect(window.location.search).not.toContain("callId=");
   });
 
-  it("ein Agent lässt sich auswählen: Liste und Zahlen gelten dann für ihn, die Auswahl bleibt vollständig", async () => {
-    const view = await open(); const root = view.container; await openWave(root);
-    const chips = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-agent-chip:not(.is-all)"));
-    const before = chips().length; expect(before).toBeGreaterThan(1); const total = callRows(root).length;
-    const name = chips()[0].querySelector("b")!.textContent!; const count = Number(chips()[0].querySelector("em")!.textContent); expect(count).toBeGreaterThan(0); expect(count).toBeLessThan(total);
-    await act(async () => { fireEvent.click(chips()[0]); }); await settle(500);
-    expect(callRows(root).length).toBe(count); expect(callRows(root).every((row) => row.querySelector(".gq-agent-cell b")?.textContent === name)).toBe(true);
-    expect(root.querySelector(".gq-sum > span")?.textContent).toMatch(new RegExp(`^${count} ${count === 1 ? "Gespräch" : "Gespräche"}(,|$)`));
-    expect(root.querySelector(".gq-count")?.textContent).toBe(`${count} ${count === 1 ? "Gespräch" : "Gespräche"} insgesamt`);
-    expect(root.querySelector(".gq-talk")?.textContent).toContain(`${name} – zusammen`);
-    expect(root.querySelectorAll(".gq-slot").length).toBe(count);
-    expect(chips().length).toBe(before); expect(chips()[0].getAttribute("aria-pressed")).toBe("true"); // die anderen Agenten bleiben wählbar
-    await act(async () => { fireEvent.click(root.querySelector<HTMLButtonElement>(".gq-agent-chip.is-all")!); }); await settle(400);
-    expect(callRows(root).length).toBe(total);
+  it("Agent wählen: eine Auswahl mit Suche statt je Agent ein Schild – Liste und Zahlen gelten dann für ihn", async () => {
+    const view = await open(); const root = view.container; const total = callRows(root).length;
+    const button = () => root.querySelector<HTMLButtonElement>(".gq-pick-button")!; const pop = () => root.querySelector<HTMLElement>(".gq-pick-pop"); const options = () => Array.from(root.querySelectorAll<HTMLElement>(".gq-pick-option"));
+    expect(root.querySelector(".gq-agent-chip")).toBeNull(); // keine Reihe von Schildern mehr – auch 80 Agenten brauchen nur eine Zeile
+    const agents = new Set(getStore().tables.callRecords.map((item: any) => item.agentName).filter(Boolean)).size; expect(agents).toBeGreaterThan(3);
+    expect(button().querySelector("b")?.textContent).toBe("Alle Agenten"); expect(button().querySelector("em")?.textContent).toBe(String(agents)); expect(button().getAttribute("aria-expanded")).toBe("false"); expect(pop()).toBeNull(); expect(root.querySelector(".gq-pick-clear")).toBeNull();
+    // öffnen: Suchfeld und Liste – oben „Alle Agenten“, darunter jeder Agent mit Zahl und Anteilen, meiste Gespräche zuerst
+    await act(async () => { fireEvent.click(button()); }); await settle(100);
+    expect(button().getAttribute("aria-expanded")).toBe("true"); const search = root.querySelector<HTMLInputElement>(".gq-pick-search input")!; expect(search.getAttribute("aria-label")).toBe("Agent suchen"); expect(search.placeholder).toBe(`Agent suchen … (${agents})`);
+    expect(options().length).toBe(agents + 1); expect(options()[0].querySelector("b")?.textContent).toBe("Alle Agenten"); expect(options()[0].querySelector("em")?.textContent).toBe(String(total)); expect(options()[0].getAttribute("aria-selected")).toBe("true");
+    const listed = options().slice(1).map((node) => ({ name: node.querySelector("b")!.textContent!, count: Number(node.querySelector("em")!.textContent) }));
+    expect(listed.map((item) => item.count)).toEqual([...listed.map((item) => item.count)].sort((a, b) => b - a)); expect(listed.reduce((sum, item) => sum + item.count, 0)).toBeLessThanOrEqual(total); expect(options().slice(1).every((node) => node.querySelector(".gq-split"))).toBe(true);
+    // suchen: nur passende Agenten – „Alle Agenten“ steht dann nicht mehr in der Liste; ohne Treffer ein Hinweis
+    const second = listed[1]; const needle = second.name.split(" ").slice(-1)[0].slice(0, 4).toLowerCase();
+    await act(async () => { fireEvent.change(search, { target: { value: needle } }); }); await settle(50);
+    expect(options().length).toBeGreaterThan(0); expect(options().every((node) => node.querySelector("b")!.textContent!.toLowerCase().includes(needle))).toBe(true); expect(options().some((node) => node.querySelector("b")!.textContent === second.name)).toBe(true);
+    await act(async () => { fireEvent.change(search, { target: { value: "gibt es nicht" } }); }); await settle(50);
+    expect(options().length).toBe(0); expect(root.querySelector(".gq-pick-empty")?.textContent).toBe("Kein Agent mit „gibt es nicht“.");
+    // mit den Tasten wählen: Pfeil nach unten, Eingabe
+    await act(async () => { fireEvent.change(search, { target: { value: second.name } }); }); await settle(50); expect(options().length).toBe(1); expect(options()[0].className).toContain("is-active");
+    await act(async () => { fireEvent.keyDown(search, { key: "Enter" }); }); await settle(500);
+    expect(pop()).toBeNull(); expect(button().className).toContain("has-value"); expect(button().querySelector("b")?.textContent).toBe(second.name); expect(button().querySelector("em")?.textContent).toBe(String(second.count));
+    expect(callRows(root).length).toBe(second.count); expect(callRows(root).every((row) => row.querySelector(".gq-agent-cell b")?.textContent === second.name)).toBe(true);
+    expect(root.querySelector(".gq-sum")?.textContent).toMatch(new RegExp(`^${second.count} ${second.count === 1 ? "Gespräch" : "Gespräche"}(,|$)`));
+    // die Auswahl bleibt vollständig: wieder öffnen – der gewählte Agent ist markiert, die anderen bleiben wählbar; Esc schließt ohne Änderung
+    await act(async () => { fireEvent.click(button()); }); await settle(100);
+    expect(options().length).toBe(agents + 1); const on = options().filter((node) => node.getAttribute("aria-selected") === "true"); expect(on.map((node) => node.querySelector("b")!.textContent)).toEqual([second.name]);
+    await act(async () => { fireEvent.keyDown(root.querySelector(".gq-pick-search input")!, { key: "Escape" }); }); await settle(50); expect(pop()).toBeNull(); expect(button().querySelector("b")?.textContent).toBe(second.name);
+    // per Klick einen anderen wählen, dann mit dem Kreuz wieder alle
+    await act(async () => { fireEvent.click(button()); }); await settle(100);
+    const first = options().find((node) => node.querySelector("b")!.textContent === listed[0].name)!; await act(async () => { fireEvent.click(first); }); await settle(500);
+    expect(button().querySelector("b")?.textContent).toBe(listed[0].name); expect(callRows(root).length).toBe(listed[0].count);
+    const clear = root.querySelector<HTMLButtonElement>(".gq-pick-clear")!; expect(clear.getAttribute("aria-label")).toBe("Filter aufheben – wieder alle Agenten zeigen");
+    await act(async () => { fireEvent.click(clear); }); await settle(500);
+    expect(callRows(root).length).toBe(total); expect(button().querySelector("b")?.textContent).toBe("Alle Agenten"); expect(root.querySelector(".gq-pick-clear")).toBeNull();
+    // ein Klick daneben schließt die Auswahl
+    await act(async () => { fireEvent.click(button()); }); await settle(100); expect(pop()).toBeTruthy();
+    await act(async () => { fireEvent.mouseDown(root.querySelector(".gq-table")!); }); await settle(50); expect(pop()).toBeNull();
   });
 
-  it("ein einzelner Tag zeigt den Tagesverlauf auf einer Uhrzeit-Achse mit „jetzt“", async () => {
-    const view = await open(); const root = view.container; await openWave(root);
-    expect(root.querySelector(".gq-wave")?.className).toContain("is-days"); expect(root.querySelector(".gq-now")).toBeNull();
-    const heute = Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-periods button")).find((node) => node.textContent === "Heute")!;
-    await act(async () => { fireEvent.click(heute); }); await settle(500);
-    const wave = root.querySelector<HTMLElement>(".gq-wave")!; expect(wave.className).toContain("is-clock"); expect(heute.getAttribute("aria-pressed")).toBe("true");
-    const labels = Array.from(wave.querySelectorAll(".gq-tick b")).map((node) => node.textContent ?? ""); expect(labels.length).toBeGreaterThan(3); expect(labels.every((label) => /^\d+ Uhr$/.test(label))).toBe(true);
-    expect(wave.querySelector(".gq-now")?.textContent).toBe("jetzt");
-    expect(root.querySelector(".gq-count")?.textContent).toMatch(/ heute$/);
-    expect(wave.querySelectorAll(".gq-slot").length).toBe(callRows(root).length);
-    expect(Array.from(root.querySelectorAll(".gq-day-name")).map((node) => node.textContent)).toEqual(callRows(root).length ? ["Heute"] : []);
+  it("viele Agenten: die Auswahl zeigt alle – auch 80 – und bleibt eine Zeile", async () => {
+    const store = getStore(); const sample = store.tables.callRecords.find((item: any) => item.status === "bewertet" && item.agentName)!; let nextId = Math.max(...store.tables.callRecords.map((item: any) => item.id)) + 1;
+    for (let index = 1; index <= 80; index += 1) store.tables.callRecords.push({ ...sample, id: nextId++, externalCallId: `viele-${index}`, agentName: `Agent Nummer ${String(index).padStart(2, "0")}`, leadId: null, rawContactId: null, payload: null });
+    const view = await open(); const root = view.container; const button = root.querySelector<HTMLButtonElement>(".gq-pick-button")!;
+    expect(Number(button.querySelector("em")?.textContent)).toBeGreaterThanOrEqual(84); expect(root.querySelectorAll(".gq-agents button").length).toBe(1); // ein Knopf statt 80 Schildern
+    await act(async () => { fireEvent.click(button); }); await settle(150);
+    const names = Array.from(root.querySelectorAll(".gq-pick-option b")).map((node) => node.textContent); for (const index of [1, 40, 80]) expect(names).toContain(`Agent Nummer ${String(index).padStart(2, "0")}`);
+    await act(async () => { fireEvent.change(root.querySelector(".gq-pick-search input")!, { target: { value: "nummer 7" } }); }); await settle(50);
+    expect(Array.from(root.querySelectorAll(".gq-pick-option b")).map((node) => node.textContent)).toEqual(Array.from({ length: 10 }, (_, index) => `Agent Nummer 7${index}`));
   });
 });
 
@@ -828,7 +836,7 @@ describe("Gespräche – Agenten und der untere Teil eines Gesprächs", () => {
     const name = rows[0].querySelector(".gq-agent-lines b")!.textContent!;
     await click(rows[0].querySelector(".gq-open-calls"), 800);
     expect(root.querySelector(".cq-list-panel .gq-table")).toBeTruthy();
-    expect(root.querySelector(".gq-agent-chip.is-on b")?.textContent).toBe(name);
+    expect(root.querySelector(".gq-pick-button.has-value b")?.textContent).toBe(name);
   });
 
   it("ein Gespräch: Entscheidung mit drei klaren Knöpfen, Prüffragen zum Umschalten, Kriterien mit Balken", async () => {

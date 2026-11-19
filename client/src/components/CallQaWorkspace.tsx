@@ -11,16 +11,16 @@ import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { AudioLines, BookOpenText, Cable, CalendarCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileCheck2, FileText, FlaskConical, Gauge, Inbox, Info, LayoutTemplate, ListOrdered, PhoneCall, PhoneIncoming, Play, Plus, RefreshCw, Repeat, Send, Settings2, ShieldCheck, Sparkles, TextSearch, Timer, TriangleAlert, Trophy, Upload, Users, X } from "lucide-react";
+import { BookOpenText, Cable, CalendarCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileCheck2, FileText, FlaskConical, Gauge, Inbox, Info, LayoutTemplate, ListOrdered, PhoneCall, PhoneIncoming, Play, Plus, RefreshCw, Repeat, Search, Send, Settings2, ShieldCheck, Sparkles, TextSearch, Timer, TriangleAlert, Trophy, Upload, Users, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import { Face, FACE_COLOR, MOOD, MoodFace, moodOf } from "@/components/CallMood";
 import { CallPlayer, type CallPlayerHandle, type PlayerMark } from "@/components/CallPlayer";
 import { clock, criterionMark, questionMark, segmentIndexAt, type CallSegment } from "../../../shared/call-timeline";
-import CallWave, { CallPeriodControl, CallTally, overviewSummary, dayKey, dayLabel, timeText, DECISION_LABEL, type CallRange, type DecisionFilter } from "@/components/CallScoreboard";
+import { CallPeriodControl, CallTally, overviewSummary, dayKey, dayLabel, timeText, DECISION_LABEL, type CallRange, type DecisionFilter } from "@/components/CallScoreboard";
 import { AvatarContent, useAvatarOf } from "@/components/AvatarUpload";
-import { barHeight, clockText } from "../../../shared/call-overview";
+import { clockText } from "../../../shared/call-overview";
 import { initialsOf } from "../../../shared/avatar";
 
 type Settings = inferRouterOutputs<AppRouter>["leadops"]["getCallQaSettings"];
@@ -63,16 +63,13 @@ export default function CallQaWorkspace() {
   const statsInput = { period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, campaign: campaign || null, agentName: agent || null, categoryId };
   const stats = trpc.leadops.callStatistics.useQuery(statsInput, { retry: false, placeholderData: (previous) => previous, refetchInterval: 30_000 });
   const categoryOptions = trpc.leadops.callCategoryOptions.useQuery(undefined, { retry: false, staleTime: 30_000 });
-  const categoryName = categoryId ? (categoryOptions.data ?? []).find((item) => item.id === categoryId)?.name ?? null : null;
-  const scope = [agent || null, campaign ? `Kampagne „${campaign}“` : null, categoryName ? `Kategorie „${categoryName}“` : null].filter(Boolean).join(", ");
   return <>
     <header className="page-intro compact"><div><span className="eyebrow">CALLCENTER</span><h1>Gespräche</h1><p>Jedes Telefonat aus dem Dialer wird mitgeschnitten, in Text umgewandelt und von der KI bewertet. Was passt, wird als Lead freigegeben.</p></div><div className="people-header-actions"><Button variant={view === "liste" ? "default" : "outline"} className={view === "liste" ? "flux-button" : ""} onClick={() => go("liste", null)}>Gespräche</Button><Button variant={view === "agenten" ? "default" : "outline"} className={view === "agenten" ? "flux-button" : ""} onClick={() => go("agenten", null)}><Users className="h-4 w-4" /> Agenten</Button><Button variant={view === "einstellungen" ? "default" : "outline"} className={view === "einstellungen" ? "flux-button" : ""} onClick={() => go("einstellungen", null)}>Dialer & Bewertung</Button></div></header>
-    {view === "einstellungen" ? <CallQaSettings onOpenCall={(id) => go("liste", id)} /> : view === "agenten" ? <AgentReport onShowCalls={(name) => { setAgent(name); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} overviewLoading={stats.isFetching} scope={scope} />}
+    {view === "einstellungen" ? <CallQaSettings onOpenCall={(id) => go("liste", id)} /> : view === "agenten" ? <AgentReport onShowCalls={(name) => { setAgent(name); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} />}
   </>;
 }
 
 type Overview = inferRouterOutputs<AppRouter>["leadops"]["callStatistics"];
-const WAVE_KEY = "tanesco-gespraeche-verlauf";
 type DayGroup = { key: string; label: string; sub: string; rows: CallRow[] };
 const LONG_DAY = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "numeric", month: "long" });
 /** Gespräche nach Tagen bündeln: „Heute“, „Gestern“, sonst der ausgeschriebene Tag. */
@@ -93,7 +90,46 @@ const AgentFace = ({ name, avatarUrl }: { name: string; avatarUrl?: string | nul
 const Split = ({ approved, review, rejected, open }: { approved: number; review: number; rejected: number; open: number }) => <span className="gq-split" aria-hidden="true">{approved > 0 && <i className="is-approved" style={{ flexGrow: approved }} />}{review > 0 && <i className="is-review" style={{ flexGrow: review }} />}{rejected > 0 && <i className="is-rejected" style={{ flexGrow: rejected }} />}{open > 0 && <i className="is-open" style={{ flexGrow: open }} />}</span>;
 /** Hinweis unter dem Ergebnis, solange ein Gespräch noch nicht fertig bewertet ist. */
 const statusNote = (status: string): { cls: string; text: string } | null => status === "eingegangen" ? { cls: "is-working", text: "Eingegangen – Text folgt" } : status === "transkribiert" ? { cls: "is-working", text: "Text liegt vor – Bewertung folgt" } : status === "fehlgeschlagen" ? { cls: "is-warn", text: "Fehlgeschlagen" } : status === "ohne_einwilligung" ? { cls: "is-warn", text: "Ohne Einwilligung" } : null;
-function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange, categoryId, onCategory, decision, onDecision, overview, overviewLoading, scope }: { onOpen: (id: number) => void; agent: string; onAgent: (name: string) => void; campaign: string; onCampaign: (name: string) => void; range: CallRange; onRange: (range: CallRange) => void; categoryId: number | null; onCategory: (id: number | null) => void; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void; overview: Overview | null; overviewLoading: boolean; scope: string }) {
+type AgentOption = { name: string; total: number; approved: number; review: number; rejected: number; open: number };
+/**
+ * Agent wählen – eine Auswahl mit Suche statt je Agent ein Schild: passt auch bei 80 Agenten in eine Zeile.
+ * Die Liste zeigt je Agent die Zahl seiner Gespräche im Zeitraum und wie sie ausgingen (meiste Gespräche zuerst).
+ */
+function AgentPicker({ agents, value, onChange, pictureOf }: { agents: AgentOption[]; value: string; onChange: (name: string) => void; pictureOf: (name: string | null | undefined) => string | null }) {
+  const [open, setOpen] = useState(false); const [query, setQuery] = useState(""); const [active, setActive] = useState(0);
+  const box = useRef<HTMLDivElement>(null); const input = useRef<HTMLInputElement>(null); const list = useRef<HTMLUListElement>(null); const trigger = useRef<HTMLButtonElement>(null);
+  const current = value ? agents.find((item) => item.name === value) ?? null : null; const calls = agents.reduce((sum, item) => sum + item.total, 0);
+  const needle = query.trim().toLowerCase(); const shown = needle ? agents.filter((item) => item.name.toLowerCase().includes(needle)) : agents;
+  const options: Array<AgentOption | null> = needle ? shown : [null, ...shown]; // ohne Suche steht „Alle Agenten“ oben
+  useEffect(() => { if (!open) return; const onDown = (event: MouseEvent) => { if (box.current && !box.current.contains(event.target as Node)) setOpen(false); }; document.addEventListener("mousedown", onDown); return () => document.removeEventListener("mousedown", onDown); }, [open]);
+  const show = () => { setQuery(""); setActive(Math.max(0, agents.findIndex((item) => item.name === value) + 1)); setOpen(true); window.setTimeout(() => input.current?.focus(), 0); };
+  const hide = (refocus = false) => { setOpen(false); if (refocus) trigger.current?.focus(); };
+  const choose = (name: string) => { onChange(name); hide(true); };
+  useEffect(() => { if (!open) return; const row = list.current?.children[active] as HTMLElement | undefined; row?.scrollIntoView?.({ block: "nearest" }); }, [active, open]);
+  const onKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") { event.preventDefault(); setActive((index) => Math.min(options.length - 1, index + 1)); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); setActive((index) => Math.max(0, index - 1)); }
+    else if (event.key === "Enter") { event.preventDefault(); if (options.length) choose(options[Math.min(active, options.length - 1)]?.name ?? ""); }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); hide(true); }
+    else if (event.key === "Tab") hide();
+  };
+  return <div className={`gq-pick ${open ? "is-open" : ""}`} ref={box}>
+    <button ref={trigger} type="button" className={`gq-pick-button ${value ? "has-value" : ""}`} aria-haspopup="listbox" aria-expanded={open} title={value ? `${value}: ${current?.total ?? 0} ${current?.total === 1 ? "Gespräch" : "Gespräche"} im Zeitraum – anderen Agenten wählen` : "Gespräche eines Agenten zeigen"} onClick={() => (open ? hide() : show())}>
+      {value ? <><AgentFace name={value} avatarUrl={pictureOf(value)} /><b>{value}</b><em>{current?.total ?? 0}</em></> : <><Users aria-hidden="true" /><b>Alle Agenten</b><em>{agents.length}</em></>}
+      <ChevronDown className="gq-pick-chevron" aria-hidden="true" />
+    </button>
+    {value && <button type="button" className="gq-pick-clear" aria-label="Filter aufheben – wieder alle Agenten zeigen" title="Wieder alle Agenten zeigen" onClick={() => { onChange(""); hide(); }}><X aria-hidden="true" /></button>}
+    {open && <div className="gq-pick-pop">
+      <label className="gq-pick-search"><Search aria-hidden="true" /><input ref={input} type="text" role="combobox" aria-expanded="true" aria-controls="gq-pick-list" aria-autocomplete="list" aria-label="Agent suchen" placeholder={`Agent suchen … (${agents.length})`} value={query} onChange={(event) => { setQuery(event.target.value); setActive(0); }} onKeyDown={onKey} /></label>
+      {options.length > 0 ? <ul id="gq-pick-list" role="listbox" aria-label="Agenten" ref={list}>{options.map((option, index) => { const name = option?.name ?? ""; const on = name === value; return <li key={name || "alle"} role="option" aria-selected={on} className={`gq-pick-option ${index === active ? "is-active" : ""} ${on ? "is-on" : ""}`} onMouseEnter={() => setActive(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(name)}>
+        {option ? <><AgentFace name={option.name} avatarUrl={pictureOf(option.name)} /><span className="gq-pick-name"><b>{option.name}</b><Split approved={option.approved} review={option.review} rejected={option.rejected} open={option.open} /></span><em title={`${option.total} ${option.total === 1 ? "Gespräch" : "Gespräche"} – ${option.approved} freigegeben, ${option.review} zur Prüfung, ${option.rejected} zurückgewiesen${option.open ? `, ${option.open} offen` : ""}`}>{option.total}</em></>
+          : <><span className="gq-who is-all" aria-hidden="true"><Users /></span><span className="gq-pick-name"><b>Alle Agenten</b><small>{agents.length} {agents.length === 1 ? "Agent" : "Agenten"} im Zeitraum</small></span><em title={`${calls} Gespräche`}>{calls}</em></>}
+        <Check className="gq-pick-check" aria-hidden="true" />
+      </li>; })}</ul> : <p className="gq-pick-empty">Kein Agent mit „{query.trim()}“.</p>}
+    </div>}
+  </div>;
+}
+function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange, categoryId, onCategory, decision, onDecision, overview }: { onOpen: (id: number) => void; agent: string; onAgent: (name: string) => void; campaign: string; onCampaign: (name: string) => void; range: CallRange; onRange: (range: CallRange) => void; categoryId: number | null; onCategory: (id: number | null) => void; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void; overview: Overview | null }) {
   const categoryOptions = trpc.leadops.callCategoryOptions.useQuery(undefined, { retry: false, staleTime: 30_000 });
   const utils = trpc.useUtils();
   const [linkText, setLinkText] = useState(""); const [linkAgent, setLinkAgent] = useState(""); const [linkCampaign, setLinkCampaign] = useState("");
@@ -136,12 +172,8 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
   const rows: CallRow[] = calls.data ?? []; const days = groupCallsByDay(rows);
   const avatarOf = useAvatarOf(); const userIdOf = new Map((agentNames.data?.agents ?? []).filter((item) => item.userId && item.name).map((item) => [item.name, item.userId] as const));
   const pictureOf = (name: string | null | undefined) => (name ? avatarOf(userIdOf.get(name) ?? null) : null);
-  const agentChips = overview?.byAgent ?? []; const extraAgent = agent && !agentChips.some((item) => item.name === agent) ? agent : null;
+  const agentChips = overview?.byAgent ?? [];
   const allSelected = Boolean(rows.length) && selected.size === rows.length;
-  const longest = rows.reduce((max, row) => Math.max(max, row.durationSeconds ?? 0), 0); // für den kleinen Dauer-Balken unter der Uhrzeit
-  // Der Verlauf (große Zahl + Tonspur) ist dezent: erst ein Klick auf „Verlauf“ klappt ihn auf – die Wahl bleibt in diesem Browser gemerkt
-  const [showWave, setShowWave] = useState<boolean>(() => { try { return window.localStorage.getItem(WAVE_KEY) === "1"; } catch { return false; } });
-  const toggleWave = () => setShowWave((open) => { try { window.localStorage.setItem(WAVE_KEY, open ? "0" : "1"); } catch { /* ohne Speicher: gilt nur für diese Sitzung */ } return !open; });
   const toggle = (id: number, on: boolean) => setSelected((current) => { const next = new Set(current); if (on) next.add(id); else next.delete(id); return next; });
   return <>
     <section className="surface-panel operations-panel overflow-hidden cq-list-panel">
@@ -153,9 +185,8 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
         <div className="gq-tally-row">
           <span className="gq-label">Ergebnis</span>
           <CallTally overview={overview} decision={decision} onDecision={onDecision} />
-          <div className="gq-sum"><span>{overviewSummary(overview)}</span><button type="button" className={`gq-wave-toggle ${showWave ? "is-open" : ""}`} aria-expanded={showWave} title={showWave ? "Verlauf einklappen" : "Verlauf zeigen: jedes Gespräch als Strich – wann telefoniert wurde und wie es ausging"} onClick={toggleWave}><AudioLines aria-hidden="true" /><span>Verlauf</span><ChevronDown className="gq-wave-chevron" aria-hidden="true" /></button></div>
+          <div className="gq-sum"><span>{overviewSummary(overview)}</span></div>
         </div>
-        {showWave && <CallWave overview={overview} loading={overviewLoading} range={range} decision={decision} onOpen={onOpen} scope={scope} />}
         <div className="cq-campaign-row">
           <span className="gq-label">Kampagne</span>
           <div className="dashboard-segments"><button type="button" className={campaign ? "" : "active"} onClick={() => onCampaign("")}>Alle</button>{(campaigns.data ?? []).map((item) => <button key={item.name} type="button" className={campaign === item.name ? "active" : ""} onClick={() => onCampaign(item.name)}>{item.name}</button>)}</div>
@@ -164,13 +195,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
         <div className="gq-agent-row">
           <div className="gq-agents" role="group" aria-label="Nach Agent filtern">
             <span className="gq-label">Agent</span>
-            <button type="button" className={`gq-agent-chip is-all ${agent ? "" : "is-on"}`} aria-pressed={!agent} onClick={() => onAgent("")}><b>Alle</b></button>
-            {agentChips.map((item) => <button key={item.name} type="button" className={`gq-agent-chip ${agent === item.name ? "is-on" : ""}`} aria-pressed={agent === item.name} title={`${item.name}: ${item.total} ${item.total === 1 ? "Gespräch" : "Gespräche"} – ${item.approved} freigegeben, ${item.review} zur Prüfung, ${item.rejected} zurückgewiesen${item.open ? `, ${item.open} offen` : ""}`} onClick={() => onAgent(agent === item.name ? "" : item.name)}>
-              <AgentFace name={item.name} avatarUrl={pictureOf(item.name)} />
-              <span className="gq-agent-text"><b>{item.name}</b><Split approved={item.approved} review={item.review} rejected={item.rejected} open={item.open} /></span>
-              <em>{item.total}</em>
-            </button>)}
-            {extraAgent && <button type="button" className="gq-agent-chip is-on" aria-pressed="true" title="Im gewählten Zeitraum hat dieser Agent keine Gespräche – Klick hebt den Filter auf" onClick={() => onAgent("")}><AgentFace name={extraAgent} avatarUrl={pictureOf(extraAgent)} /><span className="gq-agent-text"><b>{extraAgent}</b></span><em>0</em></button>}
+            <AgentPicker agents={agentChips} value={agent} onChange={onAgent} pictureOf={pictureOf} />
           </div>
           <label className="gq-category"><span className="gq-label">Lead-Kategorie</span><select className="filter-select h-8" aria-label="Nach Lead-Kategorie filtern" value={categoryId ?? ""} onChange={(event) => onCategory(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kategorien</option>{(categoryOptions.data ?? []).map((item) => <option key={item.id} value={item.id}>{item.emoji ? `${item.emoji} ` : ""}{item.name} ({item.count})</option>)}</select></label>
         </div>
@@ -191,7 +216,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
             return <tr key={call.id} className={`gq-call is-${moodOf(call)} ${selected.has(call.id) ? "is-selected" : ""}`} tabIndex={0} aria-label={`Gespräch ${started ? `${day.label}, ${timeText(started)} Uhr` : "ohne Uhrzeit"}${contact ? `, ${contact}` : ""} – öffnen`} onClick={() => onOpen(call.id)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(call.id); } }}>
               <td className="gq-col-check" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label="Gespräch auswählen" checked={selected.has(call.id)} onChange={(event) => toggle(call.id, event.target.checked)} /></td>
               <td className="gq-ampel"><MoodFace call={call} percent layout="row" /></td>
-              <td className="gq-time"><b>{started ? timeText(started) : "–"}</b>{typeof call.durationSeconds === "number" && call.durationSeconds > 0 ? <><small>{clockText(call.durationSeconds)} Min</small><i className="gq-dur" aria-hidden="true" style={{ width: `${Math.round(barHeight(call.durationSeconds, longest) * 100)}%` }} /></> : null}</td>
+              <td className="gq-time"><b>{started ? <>{timeText(started)}<span> Uhr</span></> : "–"}</b>{typeof call.durationSeconds === "number" && call.durationSeconds > 0 ? <small>{clockText(call.durationSeconds)} Min</small> : null}</td>
               <td className="gq-talkcell">
                 <span className="gq-who-line"><b>{contact ?? call.phone ?? "Unbekannt"}</b>{call.leadPublicId ? <span className="gq-lead-id" title="Diesem Lead zugeordnet">{call.leadPublicId}</span> : call.rawContactName ? <span className="gq-raw" title="Kontakt aus den Rohdaten – wird bei Freigabe zum Lead">Rohdaten</span> : null}{contact && call.phone ? <span className="gq-phone">{call.phone}</span> : null}{call.category && <span className="gq-chip is-cat cq-category" title="Lead-Kategorie – von der KI aus dem Gespräch erkannt">{call.category.emoji ? `${call.category.emoji} ` : ""}{call.category.name}</span>}</span>
                 {gist && <span className={`gq-summary ${gist.cls}`} title={gist.text}>{gist.text}</span>}

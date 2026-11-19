@@ -1,17 +1,16 @@
 /*
- * Gespräche – Gesprächsliste (Leiste, aufklappbarer Verlauf, Gespräche als Karten) und Kopf eines Gesprächs.
+ * Gespräche – Gesprächsliste (Leiste, Gespräche als ruhiges Protokoll) und Kopf eines Gesprächs.
  * Von Hand für beide Farbschemata geschrieben (wird NICHT automatisch in das helle Schema übersetzt).
  * Helles Schema: Weiß, Stahlgrau, Anthrazit und das satte Rot der Seite – bewusst keine blassen Rottöne.
  */
 
-/* ─────────────────────────── Farben für Verlauf und Kopf ─────────────────────────── */
+/* ─────────────────────────── Farben für Liste und Kopf ─────────────────────────── */
 .gq-stage,.cq-list-panel,.gq-detail,.cq-dialog,.gq-settings{
   --gq-ink:#f6f4ff;--gq-dim:#aba7d2;--gq-line:rgba(255,255,255,.17);--gq-soft:rgba(255,255,255,.055);--gq-soft-2:rgba(255,255,255,.1);
   --gp-green:#6ee7b7;--gp-green-bg:rgba(16,185,129,.15);--gp-orange:#fdba74;--gp-orange-bg:rgba(249,115,22,.17);--gp-red:#fca5a5;--gp-red-bg:rgba(239,68,68,.17);--gp-open:#c9c6e4;--gp-open-bg:rgba(255,255,255,.075);--gp-call:#a5e0fc;--gp-call-bg:rgba(125,211,252,.15);
   --gq-on-bg:#f6f4ff;--gq-on-ink:#17142c;--gq-on-shadow:none;--gq-focus:#f6f4ff;
   --gq-green:#3ddc97;--gq-orange:#ffa341;--gq-red:#ff6767;--gq-open:#6e6a93;--gq-open-edge:#a9a5c8;
   --gq-tip-bg:#ffffff;--gq-tip-ink:#17142c;--gq-tip-dim:#4a4763;--gq-tip-shadow:0 14px 34px rgba(0,0,0,.5);
-  --gq-wave-h:128px;--gq-slot-max:22px;
 }
 html:not(.dark) .gq-stage,html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-dialog,html:not(.dark) .gq-settings{
   --gq-ink:#17130f;--gq-dim:#5b6472;--gq-line:#dde1e7;--gq-soft:#ffffff;--gq-soft-2:#e9ecf0;
@@ -21,7 +20,7 @@ html:not(.dark) .gq-stage,html:not(.dark) .cq-list-panel,html:not(.dark) .gq-det
   --gq-tip-bg:#17130f;--gq-tip-ink:#ffffff;--gq-tip-dim:#d0d3da;--gq-tip-shadow:0 14px 30px rgba(16,24,40,.22);
 }
 
-/* ─────────────────────────── Feld für Verlauf und Kopf eines Gesprächs ─────────────────────────── */
+/* ─────────────────────────── Feld für den Kopf eines Gesprächs ─────────────────────────── */
 .gq-stage{
   position:relative;isolation:isolate;overflow:hidden;margin-bottom:16px;padding:20px 26px 22px;border-radius:22px;
   color:var(--gq-ink);border:1px solid rgba(185,180,255,.2);
@@ -38,68 +37,20 @@ html:not(.dark) .gq-stage{border-color:#f3f4f6;border-radius:20px;background:rad
 html:not(.dark) .gq-stage .gq-count{color:var(--gq-ink)!important;font-weight:800}
 .gq-stage.is-loading .gq-count{transition:opacity .2s;opacity:.72}
 
-/* Der Verlauf in der Liste: klappt unter der Leiste auf (Knopf „Verlauf“) – ruhiger und kleiner als ein eigener Kopf */
-.gq-stage.is-inset{--gq-wave-h:104px;margin:0;padding:16px 18px 14px;border-radius:16px;box-shadow:none;animation:gq-open .22s ease-out}
-html:not(.dark) .gq-stage.is-inset{border-color:#e4e7ec;border-radius:16px;background:#ffffff;box-shadow:none}
-.gq-stage.is-inset .gq-count{font-size:clamp(21px,2.1vw,28px);letter-spacing:-.025em}
-.gq-stage.is-inset .gq-talk{margin-top:6px;font-size:13px}
-.gq-stage.is-inset .gq-wave{margin-top:14px}
-@keyframes gq-open{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
-
-/* Verlauf: jeder Strich ein Gespräch – wie die Tonspur einer Aufnahme um eine Mittellinie */
-.gq-wave{position:relative;margin-top:20px}
-.gq-wave-track{position:relative;display:flex;gap:12px;height:calc(var(--gq-wave-h) + 22px)}
-.gq-wave-track::before{content:"";position:absolute;left:0;right:0;top:calc(var(--gq-wave-h) / 2);height:1px;background:repeating-linear-gradient(90deg,var(--gq-line) 0 4px,transparent 4px 10px)}
-.gq-wave.is-medium .gq-wave-track{gap:8px}.gq-wave.is-dense .gq-wave-track{gap:4px}
-.gq-wave-group{position:relative;flex:1 1 0;min-width:0;display:flex;flex-direction:column;container-type:inline-size}
-.gq-wave-bars{display:flex;height:var(--gq-wave-h)}
-.gq-slot{flex:1 1 0;min-width:0;max-width:var(--gq-slot-max);height:100%;display:grid;place-items:center;padding:0;border:0;background:none;cursor:pointer}
-.gq-slot i{display:block;width:clamp(1.5px,58%,11px);height:calc(var(--h,.2) * 100%);border-radius:999px;background:var(--c);transition:opacity .2s,filter .15s,transform .15s;animation:gq-rise .6s cubic-bezier(.2,.9,.25,1) backwards;animation-delay:var(--d,0ms)}
-.gq-slot.is-gruen{--c:var(--gq-green)}.gq-slot.is-gelb{--c:var(--gq-orange)}.gq-slot.is-rot{--c:var(--gq-red)}.gq-slot.is-offen{--c:var(--gq-open)}
-.gq-slot:hover i,.gq-slot.is-hover i,.gq-slot:focus-visible i{filter:brightness(1.18);transform:scaleX(1.35)}
-.gq-slot.is-dim i{opacity:.16}
-.gq-slot:focus-visible{outline:2px solid var(--gq-focus);outline-offset:-2px;border-radius:6px}
-@keyframes gq-rise{from{transform:scaleY(.05);opacity:0}to{transform:scaleY(1);opacity:1}}
-.gq-wave-label{position:relative;display:flex;align-items:flex-end;height:22px;padding-left:1px;font-size:11.5px;color:var(--gq-dim);white-space:nowrap}
-.gq-wave-label::before{content:"";position:absolute;left:0;top:3px;width:1px;height:5px;background:var(--gq-line)}
-.gq-wave-label b{font-weight:500;padding-left:6px}.gq-wave-label i{display:none;font-style:normal;padding-left:5px}
-.gq-wave-track.has-room{--gq-group-min:min(50px,calc(100% / var(--gq-groups,1) - 12px))}
-.gq-wave-track.has-room .gq-wave-group{min-width:var(--gq-group-min)}
-@container (max-width:47px){.gq-wave.is-days .gq-wave-label b{display:none}.gq-wave.is-days .gq-wave-label i{display:inline}}
-@container (max-width:40px){.gq-wave.is-hours .gq-wave-label b{display:none}.gq-wave.is-hours .gq-wave-label i{display:inline}}
-@container (max-width:17px){.gq-wave-label i{visibility:hidden}}
-
-/* Ein einzelner Tag: Uhrzeit-Achse – jedes Gespräch steht dort, wo es begonnen hat */
-.gq-wave.is-clock .gq-wave-track{display:block}
-.gq-clock-bars{position:absolute;left:0;right:0;top:0;height:var(--gq-wave-h)}
-.gq-clock-bars .gq-slot{position:absolute;top:0;flex:none;width:var(--gq-clock-w,.8%);min-width:3px;max-width:none}
-.gq-clock-bars .gq-slot i{width:100%}
-.gq-clock-ticks{position:absolute;left:0;right:0;top:var(--gq-wave-h);height:22px}
-.gq-tick{position:absolute;top:0;bottom:0;display:flex;align-items:flex-end;font-size:11.5px;color:var(--gq-dim);white-space:nowrap}
-.gq-tick::before{content:"";position:absolute;left:0;top:3px;width:1px;height:5px;background:var(--gq-line)}
-.gq-tick b{font-weight:500;padding-left:6px}
-.gq-now{position:absolute;top:-14px;width:1px;height:calc(var(--gq-wave-h) + 14px);background:linear-gradient(180deg,var(--gq-ink) 0,var(--gq-ink) 55%,transparent 100%);opacity:.5;pointer-events:none}
-.gq-now b{position:absolute;top:-3px;left:6px;font-size:11px;font-weight:600;line-height:1;color:var(--gq-ink);white-space:nowrap}
-.gq-now.is-right b{left:auto;right:6px}
-.gq-wave-note{margin:8px 0 0;font-size:12px;line-height:1.4;color:var(--gq-dim);opacity:.85}
-
-.gq-tip{position:absolute;top:-6px;z-index:3;transform:translate(-50%,-100%);min-width:150px;max-width:208px;padding:8px 11px 9px;border-radius:11px;background:var(--gq-tip-bg);color:var(--gq-tip-ink);box-shadow:var(--gq-tip-shadow);pointer-events:none;font-size:12px;line-height:1.35}
-.gq-tip b{display:block;font-weight:700;font-variant-numeric:tabular-nums}
-.gq-tip span{display:flex;align-items:baseline;gap:6px;color:var(--gq-tip-dim)}
-.gq-tip span i{flex:none;width:8px;height:8px;border-radius:999px;background:#8d89ad;transform:translateY(-.5px)}
-.gq-tip.is-gruen span i{background:#22c55e}.gq-tip.is-gelb span i{background:#f97316}.gq-tip.is-rot span i{background:#ef4444}
 
 
 /* ─────────────────────────── Gesprächsliste ─────────────────────────── */
 .cq-list-panel,.gq-detail,.cq-dialog,.gq-settings{
   --gl-ink:#f1effe;--gl-dim:#a19dc8;--gl-faint:#8480ab;--gl-line:rgba(255,255,255,.09);--gl-edge:rgba(255,255,255,.24);--gl-soft:rgba(255,255,255,.06);--gl-softer:rgba(255,255,255,.022);--gl-accent:#9d95ff;
   --gl-card:rgba(255,255,255,.04);--gl-tray:rgba(0,0,0,.16);--gl-lift:0 14px 28px -16px rgba(0,0,0,.8);--gl-ring:rgba(255,255,255,.12);
+  --gl-row:rgba(255,255,255,.035);--gl-row-on:rgba(157,149,255,.11);--gl-pop:#1d1a3a;--gl-pop-shadow:0 22px 48px -14px rgba(0,0,0,.7);
   --gl-orange:#fdba74;--gl-red:#fca5a5;--gl-warn:#fcd34d;
   --gt-green:#3ddc97;--gt-orange:#ffa341;--gt-red:#ff6767;--gt-open:#a9a5c8;--gt-ink:#17142c;
 }
 html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-dialog,html:not(.dark) .gq-settings{
   --gl-ink:#17130f;--gl-dim:#5b6472;--gl-faint:#7c8594;--gl-line:#e4e7ec;--gl-edge:#cfd4dc;--gl-soft:#f2f4f7;--gl-softer:#ffffff;--gl-accent:#bc001d;
   --gl-card:#ffffff;--gl-tray:#ffffff;--gl-lift:0 12px 26px -16px rgba(16,24,40,.34);--gl-ring:#e6e9ee;
+  --gl-row:#fff8f8;--gl-row-on:#fff1f2;--gl-pop:#ffffff;--gl-pop-shadow:0 22px 48px -16px rgba(16,24,40,.28),0 2px 6px rgba(16,24,40,.06);
   --gl-orange:#a64208;--gl-red:#b42318;--gl-warn:#92400e;
   --gt-green:#15803d;--gt-orange:#c2410c;--gt-red:#b91c1c;--gt-open:#475467;--gt-ink:#ffffff;
 }
@@ -122,7 +73,7 @@ html:not(.dark) .gq-periods button:not(.active):hover{background:#fff5f5;color:#
 .cq-list-panel .gq-dates input[type="date"]{height:32px;min-width:136px;padding:0 9px;border-radius:10px;border:1px solid var(--gq-line);background:var(--gq-soft);color:var(--gq-ink);font:inherit;font-size:12.5px;color-scheme:dark}
 html:not(.dark) .cq-list-panel .gq-dates input[type="date"]{color-scheme:light}
 .gq-reset{padding:0;border:0;background:none;color:var(--gq-ink);font:inherit;font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
-.gq-periods button:focus-visible,.gq-reset:focus-visible,.gq-tally-item:focus-visible,.gq-wave-toggle:focus-visible{outline:2px solid var(--gq-focus);outline-offset:2px}
+.gq-periods button:focus-visible,.gq-reset:focus-visible,.gq-tally-item:focus-visible{outline:2px solid var(--gq-focus);outline-offset:2px}
 
 /* Ergebnis: Zähler – zugleich Filter für die Liste */
 .gq-tally{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
@@ -137,30 +88,53 @@ html:not(.dark) .cq-list-panel .gq-dates input[type="date"]{color-scheme:light}
 .gq-tally.has-filter .gq-tally-item:not(.is-on){opacity:.55}
 .gq-tally.has-filter .gq-tally-item:not(.is-on):hover{opacity:.9}
 
-/* Summe in Worten und der Knopf, der den Verlauf aufklappt */
+/* Summe in Worten */
 .gq-sum{display:flex;align-items:center;gap:12px;margin-left:auto;min-width:0;font-size:12.5px;color:var(--gl-dim)}
 .gq-sum>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
-.gq-wave-toggle{display:inline-flex;align-items:center;gap:6px;flex:none;height:34px;padding:0 9px 0 11px;border-radius:10px;border:1px solid var(--gl-line);background:var(--gl-card);color:var(--gl-ink);font-family:inherit;font-size:12.5px;font-weight:600;line-height:1;cursor:pointer;transition:border-color .15s,background-color .15s}
-.gq-wave-toggle svg{width:15px;height:15px;flex:none}
-.gq-wave-toggle>svg:first-child{color:var(--gl-accent)}
-.gq-wave-toggle:hover{border-color:var(--gl-edge)}
-.gq-wave-toggle.is-open{border-color:var(--gl-ink);background:var(--gl-soft)}
-.gq-wave-chevron{opacity:.6;transition:transform .2s}
-.gq-wave-toggle.is-open .gq-wave-chevron{transform:rotate(180deg)}
 
 /* Kampagne und Agent */
 .gq-tools{display:flex;align-items:center;gap:2px;margin-left:auto}
-.gq-agent-row{align-items:flex-start}
-.gq-agents{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;flex:1 1 420px}
-.gq-agents>.gq-label{align-self:center}
-.gq-agent-chip{display:inline-grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;min-height:40px;max-width:260px;padding:4px 13px 4px 5px;border-radius:999px;border:1px solid var(--gl-line);background:var(--gl-card);color:var(--gl-ink);font-family:inherit;text-align:left;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s}
-.gq-agent-chip:hover{border-color:var(--gl-edge)}
-.gq-agent-chip.is-on{border-color:var(--gl-accent);box-shadow:inset 0 0 0 1px var(--gl-accent)}
-.gq-agent-chip:focus-visible,.gq-call:focus-visible,.gq-link:focus-visible{outline:2px solid var(--gl-accent);outline-offset:2px}
-.gq-agent-chip.is-all{display:inline-flex;padding:0 16px}
-.gq-agent-chip b{display:block;font-size:12.5px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.gq-agent-chip em{font-style:normal;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--gl-dim)}
-.gq-agent-text{display:grid;gap:4px;min-width:0}
+.gq-agents{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;flex:1 1 320px}
+/* Agent wählen: eine Auswahl mit Suche – passt auch bei 80 Agenten in eine Zeile */
+.gq-pick{position:relative;display:inline-flex;align-items:center;gap:6px;min-width:0}
+.gq-pick-button{display:inline-flex;align-items:center;gap:8px;height:36px;min-width:0;max-width:320px;padding:0 9px 0 5px;border-radius:11px;border:1px solid var(--gl-line);background:var(--gl-card);color:var(--gl-ink);font-family:inherit;font-size:12.5px;line-height:1;cursor:pointer;transition:border-color .15s,background-color .15s}
+.gq-pick-button>svg:first-child{flex:none;width:16px;height:16px;margin:0 1px 0 7px;color:var(--gl-dim)}
+.gq-pick-button .gq-who{width:26px;height:26px;font-size:10px}
+.gq-pick-button b{min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gq-pick-button em,.gq-pick-option em{flex:none;display:inline-grid;place-items:center;min-width:24px;height:21px;padding:0 7px;border-radius:999px;background:var(--gl-soft);color:var(--gl-ink);font-style:normal;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.gq-pick-chevron{flex:none;width:15px;height:15px;color:var(--gl-faint);transition:transform .18s}
+.gq-pick.is-open .gq-pick-chevron{transform:rotate(180deg)}
+.gq-pick-button:hover{border-color:var(--gl-edge)}
+.gq-pick.is-open .gq-pick-button,.gq-pick-button.has-value{border-color:var(--gl-accent)}
+.gq-pick-button.has-value{box-shadow:inset 0 0 0 1px var(--gl-accent)}
+.gq-pick-clear{display:grid;place-items:center;flex:none;width:26px;height:26px;padding:0;border:0;border-radius:999px;background:none;color:var(--gl-dim);cursor:pointer;transition:background-color .15s,color .15s}
+.gq-pick-clear svg{width:14px;height:14px}
+.gq-pick-clear:hover{background:var(--gl-soft);color:var(--gl-ink)}
+.gq-pick-button:focus-visible,.gq-pick-clear:focus-visible{outline:2px solid var(--gl-accent);outline-offset:2px}
+.gq-pick-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:40;width:340px;max-width:calc(100vw - 32px);border:1px solid var(--gl-line);border-radius:14px;background:var(--gl-pop);box-shadow:var(--gl-pop-shadow);overflow:hidden;animation:gq-pick-in .14s ease-out}
+@keyframes gq-pick-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.gq-pick-search{display:flex;align-items:center;gap:9px;padding:0 13px;border-bottom:1px solid var(--gl-line)}
+.gq-pick-search svg{flex:none;width:15px;height:15px;color:var(--gl-faint)}
+.gq-pick-search input{flex:1;min-width:0;height:42px;padding:0;border:0;background:none;color:var(--gl-ink);font:inherit;font-size:13px;outline:none}
+.gq-pick-search:focus-within{box-shadow:inset 0 -2px 0 var(--gl-accent)}
+html:not(.dark) .gq-pick-search input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]){border-radius:0!important;background:none!important}
+html:not(.dark) .gq-pick-search input:focus-visible{outline:none!important}
+.gq-pick-pop ul{display:grid;gap:1px;max-height:330px;margin:0;padding:6px;overflow-y:auto;list-style:none}
+.gq-pick-option{display:grid;grid-template-columns:auto minmax(0,1fr) auto 16px;align-items:center;gap:10px;padding:7px 8px;border-radius:9px;cursor:pointer}
+.gq-pick-option .gq-who{width:28px;height:28px;font-size:10.5px}
+.gq-pick-option .gq-who.is-all{background:none;box-shadow:inset 0 0 0 1px var(--gl-edge);color:var(--gl-dim)}
+.gq-pick-option .gq-who.is-all svg{width:14px;height:14px}
+.gq-pick-name{display:grid;gap:4px;min-width:0}
+.gq-pick-name b{font-size:13px;font-weight:600;line-height:1.2;color:var(--gl-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gq-pick-name small{font-size:11.5px;line-height:1.2;color:var(--gl-dim)}
+.gq-pick-name .gq-split{max-width:120px;height:3px}
+.gq-pick-option.is-active{background:var(--gl-row)}
+.gq-pick-option.is-on{background:var(--gl-row-on)}
+.gq-pick-check{width:15px;height:15px;color:var(--gl-accent);opacity:0}
+.gq-pick-option.is-on .gq-pick-check{opacity:1}
+.gq-pick-empty{margin:0;padding:18px 14px 20px;font-size:12.5px;color:var(--gl-dim);text-align:center}
+@media(prefers-reduced-motion:reduce){.gq-pick-pop{animation:none}.gq-pick-chevron{transition:none}}
+.gq-call:focus-visible,.gq-link:focus-visible{outline:2px solid var(--gl-accent);outline-offset:2px}
 .gq-category{display:inline-flex;align-items:center;gap:8px;margin-left:auto}
 .gq-category .gq-label{min-width:0}
 
@@ -183,26 +157,30 @@ html:not(.dark) .gq-who.is-tone-3{--tone-bg:#fbe3f2;--tone-ink:#8f1d68}html:not(
 .gq-bulk .gq-danger{color:var(--gl-red)!important}
 
 /* Die Gespräche: jede Zeile eine eigene Karte auf einer ruhigen Fläche. Alle Karten teilen dieselben Spalten (--gq-cols). */
-.gq-table-wrap{padding:2px 12px 14px;border:1px solid var(--gl-line);border-radius:18px;background:var(--gl-tray)}
-.gq-table{--gq-cols:22px 164px 76px minmax(0,1fr) 204px 196px 26px;display:block;width:100%;border-collapse:separate;border-spacing:0}
+/* Die Liste ist ein ruhiges Protokoll: ein Blatt, Zeilen mit feinen Linien – keine einzelnen Karten, kein Schatten, nichts hüpft */
+.gq-table-wrap{padding:0 12px 10px;border:0;border-radius:0;background:none}
+.gq-table{--gq-cols:22px 168px 92px minmax(0,1fr) 208px 188px 22px;display:block;width:100%;border-collapse:separate;border-spacing:0}
 .gq-table thead,.gq-table tbody,.gq-day{display:block}
-.gq-table thead tr{display:grid;grid-template-columns:var(--gq-cols);column-gap:14px;align-items:center;padding:12px 15px 0}
+.gq-table thead tr{display:grid;grid-template-columns:var(--gq-cols);column-gap:16px;align-items:center;padding:10px 12px;border-top:1px solid var(--gl-line);border-bottom:1px solid var(--gl-line)}
 .gq-table thead th{display:block;padding:0;text-align:left;font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--gl-faint);white-space:nowrap;background:none;border:0}
 html:not(.dark) .gq-table thead th{color:var(--gl-faint)!important}
-.gq-table tbody{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
-.gq-table tbody+tbody{margin-top:8px}
+.gq-table tbody{display:block}
+.gq-table tbody:last-child .gq-call:last-child{border-bottom:1px solid var(--gl-line)}
 .gq-table input[type="checkbox"]{display:block;width:15px;height:15px;accent-color:var(--gl-accent);cursor:pointer}
-.gq-day th{display:block;padding:14px 4px 0;text-align:left;font-weight:400;background:none;border:0}
+.gq-day th{display:block;padding:22px 12px 10px;text-align:left;font-weight:400;background:none;border:0}
+.gq-table tbody:first-of-type .gq-day th{padding-top:18px}
 .gq-day-line{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px}
-.gq-day-name{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--gl-ink)}
+.gq-day-name{font-size:14px;font-weight:700;letter-spacing:-.01em;color:var(--gl-ink)}
 .gq-day-date,.gq-day-count{font-size:12px;color:var(--gl-dim)}
 .gq-day-count{margin-left:auto}
 .gq-day .gq-split{width:74px;min-width:74px;align-self:center}
 
-.gq-call{--mood:var(--gq-open-edge);display:grid;grid-template-columns:var(--gq-cols);column-gap:14px;align-items:center;padding:11px 14px;border:1px solid var(--gl-line);border-radius:16px;background:var(--gl-card);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+.gq-call{--mood:var(--gq-open-edge);display:grid;grid-template-columns:var(--gq-cols);column-gap:16px;align-items:center;min-height:66px;padding:12px;border:0;border-top:1px solid var(--gl-line);border-radius:0;background:transparent;cursor:pointer;transition:background-color .12s}
 .gq-call.is-gruen{--mood:var(--gq-green)}.gq-call.is-gelb{--mood:var(--gq-orange)}.gq-call.is-rot{--mood:var(--gq-red)}.gq-call.is-offen{--mood:var(--gq-open-edge)}
-.gq-call:hover{border-color:color-mix(in srgb,var(--mood) 60%,var(--gl-line));box-shadow:var(--gl-lift);transform:translateY(-1px)}
-.gq-call.is-selected{border-color:var(--gl-ink);box-shadow:inset 0 0 0 1px var(--gl-ink)}
+.gq-day+.gq-call{border-top-color:var(--gl-edge)} /* unter der Tagesüberschrift: eine etwas kräftigere Linie */
+.gq-call:hover{background:var(--gl-row)}
+.gq-call.is-selected{background:var(--gl-row-on);box-shadow:inset 3px 0 0 var(--gl-accent)}
+.gq-call:focus-visible{outline-offset:-2px}
 .gq-call td{display:block;min-width:0;padding:0;border:0;background:none;font-size:13px;line-height:1.3;color:var(--gl-ink)}
 html:not(.dark) .gq-table .gq-call td{color:var(--gl-ink)!important}
 .gq-call .gq-col-check input{opacity:.5;transition:opacity .15s}
@@ -215,11 +193,11 @@ html:not(.dark) .gq-table .gq-call td{color:var(--gl-ink)!important}
 .cq-mood.is-row.has-percent .cq-percent{font-size:15px;font-weight:700;line-height:1;letter-spacing:-.015em;font-variant-numeric:tabular-nums}
 .gq-table .cq-mood.is-row .cq-fraction,.gq-table .cq-mood.is-row.has-percent .cq-fraction{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;margin:0;font-size:11.5px;line-height:1.25;color:var(--gl-dim)!important;white-space:normal;overflow:hidden}
 
-/* Uhrzeit: darunter die Dauer – als Zahl und als kleiner Balken in der Ampelfarbe (längstes Gespräch = voller Balken) */
+/* Uhrzeit („15:02 Uhr“), darunter die Dauer als Zahl */
 .gq-time{white-space:nowrap}
-.gq-time b{display:block;font-size:15px;font-weight:700;letter-spacing:-.015em;font-variant-numeric:tabular-nums}
-.gq-time small{display:block;margin-top:2px;font-size:11.5px;font-weight:400;color:var(--gl-dim);font-variant-numeric:tabular-nums}
-.gq-dur{display:block;height:3px;min-width:5px;max-width:54px;margin-top:5px;border-radius:999px;background:var(--mood);opacity:.6}
+.gq-time b{display:block;font-size:14.5px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.gq-time b span{margin-left:3px;font-size:11.5px;font-weight:500;letter-spacing:0;color:var(--gl-dim)}
+.gq-time small{display:block;margin-top:3px;font-size:11.5px;font-weight:400;color:var(--gl-dim);font-variant-numeric:tabular-nums}
 
 /* Gespräch: wer, woher – und in einer Zeile, worum es ging */
 .gq-call td.gq-talkcell{display:grid;gap:5px}
@@ -252,28 +230,25 @@ html:not(.dark) .gq-table .gq-call td{color:var(--gl-ink)!important}
 .gq-pill.is-freigegeben{--pill-bg:var(--gp-green-bg);--pill-ink:var(--gp-green)}.gq-pill.is-pruefen{--pill-bg:var(--gp-orange-bg);--pill-ink:var(--gp-orange)}.gq-pill.is-zurueckgewiesen{--pill-bg:var(--gp-red-bg);--pill-ink:var(--gp-red)}
 /* „Offen“ im hellen Design: weiß mit feiner Linie statt grau hinterlegt */
 html:not(.dark) .gq-pill:not(.is-freigegeben):not(.is-pruefen):not(.is-zurueckgewiesen):not(.cq-callback){border-color:var(--gl-line,var(--gq-line))}
-.gq-call td.gq-col-go{display:grid;place-items:center;width:26px;height:26px;border-radius:999px;color:var(--gl-faint);transition:background-color .15s,color .15s,transform .15s}
+.gq-call td.gq-col-go{display:grid;place-items:center;width:22px;height:22px;border-radius:999px;color:var(--gl-faint);transition:color .12s,transform .12s}
 .gq-col-go svg{display:block;width:16px;height:16px}
-.gq-call:hover td.gq-col-go,.gq-call:focus-visible td.gq-col-go{background:var(--gl-soft);color:var(--gl-ink);transform:translateX(2px)}
+.gq-call:hover td.gq-col-go,.gq-call:focus-visible td.gq-col-go{color:var(--gl-accent);transform:translateX(2px)}
 .gq-empty{margin:0;padding:38px 24px 42px;text-align:center;font-size:13.5px;line-height:1.5;color:var(--gl-dim);border-top:1px solid var(--gl-line)}
 
 /* ─────────────────────────── Schmale Bildschirme ─────────────────────────── */
-/* Tablet: Karte zweizeilig – Agent rutscht unter das Gespräch, das Ergebnis steht rechts */
+/* Tablet: Zeile zweizeilig – Agent rutscht unter das Gespräch, das Ergebnis steht rechts */
 @media(max-width:1100px){
   .gq-table thead{display:none}
   .gq-table-wrap{padding:0 10px 12px}
-  .gq-call{grid-template-columns:22px 158px 70px minmax(0,1fr) auto;grid-template-areas:"check ampel time talk result" "check ampel time agent result";row-gap:7px;padding:12px 14px}
+  .gq-call{grid-template-columns:22px 158px 84px minmax(0,1fr) auto;grid-template-areas:"check ampel time talk result" "check ampel time agent result";row-gap:7px;padding:12px}
   .gq-call td.gq-col-go{display:none}
   .gq-call td.gq-col-check{grid-area:check}.gq-ampel{grid-area:ampel}.gq-time{grid-area:time}.gq-call td.gq-talkcell{grid-area:talk}.gq-agent{grid-area:agent}
   .gq-call td.gq-result{grid-area:result;align-items:flex-end}
 }
-/* Handy: Karte dreizeilig – Ampel und Ergebnis, Uhrzeit und Gespräch, Agent */
+/* Handy: Zeile dreizeilig – Ampel und Ergebnis, Uhrzeit und Gespräch, Agent */
 @media(max-width:760px){
-  .gq-stage{--gq-wave-h:88px;--gq-slot-max:16px;padding:14px 14px 16px;border-radius:18px}
-  .gq-stage.is-inset{--gq-wave-h:84px;padding:14px 12px 12px;border-radius:14px}
+  .gq-stage{padding:14px 14px 16px;border-radius:18px}
   .gq-talk{font-size:13px}
-  .gq-wave-track{gap:6px}
-  .gq-tick.is-odd b{display:none}
 
   .gq-toolbar{padding:0 2px 14px;gap:12px}
   .gq-label{min-width:0;width:100%}
@@ -289,15 +264,14 @@ html:not(.dark) .gq-pill:not(.is-freigegeben):not(.is-pruefen):not(.is-zurueckge
   .cq-campaign-row .dashboard-segments{width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.cq-campaign-row .dashboard-segments::-webkit-scrollbar{display:none}
   .cq-campaign-row .dashboard-segments button{flex:none}
   .gq-tools{margin-left:0;width:100%;justify-content:flex-start}
-  .gq-agents{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:none;flex-basis:100%}.gq-agents::-webkit-scrollbar{display:none}
-  .gq-agents>.gq-label{display:none}
-  .gq-agent-chip{flex:none}
+  .gq-agents{flex-basis:100%}.gq-pick,.gq-pick-button{flex:1 1 auto;max-width:none}.gq-pick-chevron{margin-left:auto}.gq-pick-pop{width:auto;right:0}
   .gq-category{margin-left:0;width:100%}.gq-category .gq-label{width:auto}.gq-category select{flex:1;min-width:0}
   .gq-result-line,.gq-bulk{padding:10px 12px}
 
   .gq-table-wrap{padding:0 8px 10px}
   .gq-day .gq-split{display:none}
-  .gq-call{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"ampel ampel result" "time talk talk" "agent agent agent";gap:10px 12px;padding:12px;border-radius:14px}
+  .gq-call{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"ampel ampel result" "time talk talk" "agent agent agent";gap:10px 12px;padding:14px 6px}
+  .gq-day th{padding:20px 6px 9px}
   .gq-call td.gq-col-check{display:none}
   .gq-time{align-self:start}
 }
@@ -844,9 +818,8 @@ html .gq-detail .opt-in-number{color:var(--gl-dim)!important}
 html .gq-detail .opt-in-quote{border-left-color:var(--gl-edge)!important;color:var(--gl-ink)!important}
 
 @media(prefers-reduced-motion:reduce){
-  .gq-slot i,.gq-summary.is-working::before,.gq-stage.is-inset,.gs-card{animation:none}
-  .gq-slot i,.gq-call,.gq-call td.gq-col-go,.gq-tally-item,.gq-agent-chip,.gq-wave-chevron{transition:none}
-  .gq-call:hover{transform:none}
+  .gq-summary.is-working::before,.gs-card{animation:none}
+  .gq-call,.gq-call td.gq-col-go,.gq-tally-item{transition:none}
 }
 
 /* ── v340 (hell): rosarotes Design wie vor Version 333 – Auswahl und Überfahren in zartem Rot mit Schrift in Markenrot; der Hauptknopf trägt den Verlauf mit rotem Schein ── */
@@ -860,12 +833,8 @@ html:not(.dark) .gs-idea:hover{border-color:rgba(188,0,29,.35);background:#fff5f
 html:not(.dark) .gs-x:hover{background:#fff1f2;color:#bc001d}
 html:not(.dark) .gi-drop.is-over{border-color:#bc001d!important;background:#fff1f2}
 html:not(.dark) .gq-back:hover{background:#fff5f5;color:#bc001d}
-html:not(.dark) .gq-wave-toggle:hover{border-color:rgba(188,0,29,.35)}
-html:not(.dark) .gq-wave-toggle.is-open{border-color:rgba(188,0,29,.35);background:rgba(188,0,29,.08);color:#bc001d}
-html:not(.dark) .gq-agent-chip:hover{border-color:rgba(188,0,29,.35)}
-html:not(.dark) .gq-agent-chip.is-on{background:#fff5f5}
-html:not(.dark) .gq-call.is-selected{border-color:rgba(188,0,29,.45);background:#fff7f8}
-html:not(.dark) .gq-call:hover td.gq-col-go,html:not(.dark) .gq-call:focus-visible td.gq-col-go{background:rgba(188,0,29,.08);color:#bc001d}
+html:not(.dark) .gq-pick-button:hover{border-color:rgba(188,0,29,.35)}
+html:not(.dark) .gq-pick-button.has-value{background:#fff5f5}
 
 /* ── v341: Smileys als matte Kugeln – weicher Schatten in der Ampelfarbe, kleiner Hüpfer beim Überfahren ── */
 .cq-face,.cq-ring{--cq-glow:rgba(100,116,139,.34);overflow:visible;filter:drop-shadow(0 1.5px 2.5px var(--cq-glow))}
@@ -874,8 +843,8 @@ html:not(.dark) .gq-call:hover td.gq-col-go,html:not(.dark) .gq-call:focus-visib
 .cq-mood.is-lg .cq-ring{filter:drop-shadow(0 5px 9px var(--cq-glow))}
 html.dark .cq-face.is-offen,html.dark .cq-ring.is-offen{--cq-glow:rgba(0,0,0,.5);filter:brightness(.86) drop-shadow(0 1.5px 2.5px var(--cq-glow))}
 .cq-orb{transform-box:fill-box;transform-origin:center;transition:transform .2s cubic-bezier(.22,.61,.36,1)}
-.gq-call:hover .cq-orb,.gq-tally-item:hover .cq-orb{transform:scale(1.07)}
-@media(prefers-reduced-motion:reduce){.cq-orb{transition:none}.gq-call:hover .cq-orb,.gq-tally-item:hover .cq-orb{transform:none}}
+.gq-tally-item:hover .cq-orb{transform:scale(1.07)}
+@media(prefers-reduced-motion:reduce){.cq-orb{transition:none}.gq-tally-item:hover .cq-orb{transform:none}}
 @media(max-width:760px){.gq-stage .cq-mood.is-lg .cq-ring{width:64px;height:64px}}
 
 /* ── v339: Anbindung – freigegebene Leads nur empfangen oder sofort ausliefern ── */
@@ -900,10 +869,7 @@ html:not(.dark) .gs-mode.is-on small{color:#9f1239}
 
 /* ── v340 (hell): Gespräche ganz in Weiß – keine grauen Flächen mehr. Die Farben dafür stehen oben (--gl-tray, --gl-softer, --gq-soft: alle weiß).
    Die Liste braucht darum keinen eigenen Rahmen mehr: jede Karte trägt ihre feine Linie und einen Hauch Schatten. Das dunkle Design bleibt. ── */
-html:not(.dark) .gq-table-wrap{padding:0 12px 8px;border-color:transparent;border-radius:0;background:none}
-html:not(.dark) .gq-table thead tr{padding-top:6px}
-html:not(.dark) .gq-call{box-shadow:0 1px 2px rgba(16,24,40,.05)}
-html:not(.dark) .gq-call:hover{box-shadow:var(--gl-lift)}
+html:not(.dark) .gq-table-wrap{border-color:transparent;background:none}
 /* Kampagnen-Auswahl in der Liste, Fragen und Kriterien im Fenster „Kampagne einstellen“: ebenfalls weiß */
 html:not(.dark) .cq-list-panel .dashboard-segments{background:#ffffff!important}
 html:not(.dark) .cq-list-panel .dashboard-segments button:not(.active):hover{background:#fff5f5!important;color:#bc001d!important}
