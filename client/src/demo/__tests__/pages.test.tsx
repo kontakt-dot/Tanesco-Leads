@@ -818,3 +818,120 @@ describe("Gespräche – Agenten und der untere Teil eines Gesprächs", () => {
     expect(root.querySelector(".gq-choices .gq-choice.is-on")?.textContent).toBe("Zur Prüfung");
   });
 });
+
+describe("Gespräche – Dialer & Bewertung: Abschnitte mit Stand, ein Abschnitt zur Zeit, eine Leiste zum Speichern", () => {
+  beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
+  const click = async (node: Element | null | undefined, wait = 300) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.click(node!); }); await settle(wait); };
+  const type = async (node: Element | null | undefined, value: string, wait = 150) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.change(node!, { target: { value } }); }); await settle(wait); };
+  const open = async () => { window.history.replaceState(null, "", "/?page=Gespräche&view=Einstellungen"); const { view } = mount(); await settle(600); return view.container; };
+  const nav = (root: HTMLElement, label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-rail .gs-nav")).find((node) => node.querySelector("b")?.textContent === label);
+  const heading = (root: HTMLElement) => root.querySelector(".gs-main .gs-card h2")?.textContent;
+  const saveButton = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-savebar button")).find((node) => /speichern/i.test(node.textContent ?? ""))!;
+  const config = () => getStore().tables.callQaConfigs[0] as any;
+
+  it("links stehen die Abschnitte mit ihrem Stand, rechts genau einer – der Weg eines Gesprächs zeigt, was fehlt", async () => {
+    const root = await open();
+    expect(Array.from(root.querySelectorAll(".gs-rail .gs-nav b")).map((node) => node.textContent)).toEqual(["Anbindung", "Vorlagen", "Kriterien und Ampel", "Eigene Regeln", "Daten auslesen", "Beispiele für die KI", "Ausprobieren"]);
+    expect(root.querySelectorAll(".gs-main .gs-card").length).toBe(1); expect(heading(root)).toBe("Anbindung an den Dialer");
+    expect(root.querySelector(".gq-settings .eyebrow")).toBeNull(); // keine Schilder mehr als Überschrift
+    const steps = Array.from(root.querySelectorAll<HTMLElement>(".gs-flow li")); expect(steps.length).toBe(4);
+    expect(steps[0].className).toContain("is-ok"); expect(steps[2].className).toContain("is-warn"); expect(steps[2].textContent).toContain("Kein Dienst eingerichtet"); // in der Vorschau ist kein Dienst für die Umwandlung in Text hinterlegt
+    expect(nav(root, "Anbindung")!.querySelector("small")!.textContent).toBe("Text-Dienst fehlt"); expect(nav(root, "Anbindung")!.getAttribute("aria-current")).toBe("true");
+    expect(root.querySelector(".gs-address-row code em")?.textContent).toContain("/api/partner/dialer/");
+    // ausschalten → erste Station und Stand in der Leiste folgen sofort
+    await click(root.querySelector(".gs-head .gs-switch"));
+    expect(root.querySelector(".gs-flow li")!.className).toContain("is-off"); expect(nav(root, "Anbindung")!.querySelector("small")!.textContent).toBe("Ausgeschaltet");
+    // anderer Abschnitt: wieder genau einer
+    await click(nav(root, "Kriterien und Ampel"));
+    expect(root.querySelectorAll(".gs-main .gs-card").length).toBe(1); expect(heading(root)).toBe("Kriterien und Ampel");
+    expect(root.querySelectorAll(".gs-crit").length).toBe(config().criteria.length);
+    expect(root.querySelectorAll(".gs-scale-bar i").length).toBe(3);
+    expect(Array.from(root.querySelectorAll(".gs-scale-legend small")).map((node) => node.textContent)).toEqual([`bis Note ${config().autoRejectThreshold}`, "dazwischen", `ab Note ${config().autoApproveThreshold}`]);
+  });
+
+  it("eine Änderung zeigt Punkt und Speichern-Leiste; Verwerfen stellt zurück; Speichern schreibt und der Abschnitt bleibt stehen", async () => {
+    const root = await open(); await click(nav(root, "Kriterien und Ampel"));
+    expect(root.querySelector(".gs-savebar.is-dirty")).toBeNull(); expect(saveButton(root).disabled).toBe(true); expect(root.querySelector(".gs-save-state")?.textContent).toBe("Alles gespeichert.");
+    const weight = () => root.querySelector<HTMLInputElement>(".gs-crit .gs-crit-weight input")!; const before = Number(weight().value); const total = config().criteria.reduce((sum: number, item: any) => sum + item.weight, 0);
+    await type(weight(), "40");
+    expect(root.querySelector(".gs-savebar.is-dirty")).toBeTruthy(); expect(root.querySelector(".gs-save-state")?.textContent).toContain("Kriterien und Ampel"); expect(nav(root, "Kriterien und Ampel")!.querySelector(".gs-nav-dot")).toBeTruthy(); expect(nav(root, "Anbindung")!.querySelector(".gs-nav-dot")).toBeNull();
+    expect(root.querySelector(".gs-crit .gs-crit-share small")?.textContent).toBe(`${Math.round((40 / (total - before + 40)) * 100)} % der Note`);
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-savebar button")).find((node) => node.textContent === "Verwerfen"));
+    expect(Number(weight().value)).toBe(before); expect(root.querySelector(".gs-savebar.is-dirty")).toBeNull();
+    // „Rot bis“ über „Grün ab“ → Hinweis, und gespeichert wird nicht
+    const thresholds = () => Array.from(root.querySelectorAll<HTMLInputElement>(".gs-fields-row input[type=number]"));
+    const rejectBefore = config().autoRejectThreshold;
+    await type(thresholds()[0], String(config().autoApproveThreshold + 5)); expect(root.querySelector(".gs-note.is-warn[role=alert]")?.textContent).toContain("muss kleiner sein");
+    await click(saveButton(root), 500); expect(config().autoRejectThreshold).toBe(rejectBefore); expect(root.querySelector(".gs-savebar.is-dirty")).toBeTruthy();
+    await type(thresholds()[0], "20"); await type(weight(), "40");
+    await click(saveButton(root), 700);
+    expect(config().autoRejectThreshold).toBe(20); expect(config().criteria[0].weight).toBe(40);
+    expect(heading(root)).toBe("Kriterien und Ampel"); expect(root.querySelector(".gs-savebar.is-dirty")).toBeNull(); expect(Number(weight().value)).toBe(40);
+  });
+
+  it("Eigene Regeln: ein Vorschlag legt eine fertige Regel an; Daten auslesen: das Kürzel entsteht aus der Bezeichnung", async () => {
+    const root = await open(); await click(nav(root, "Eigene Regeln"));
+    expect(nav(root, "Eigene Regeln")!.querySelector("small")!.textContent).toBe("Noch keine"); expect(root.querySelectorAll(".gs-empty .gs-idea").length).toBe(3);
+    await click(root.querySelector(".gs-empty .gs-idea"));
+    const rule = () => root.querySelector<HTMLElement>(".gs-rule")!; expect(root.querySelectorAll(".gs-rule").length).toBe(1); expect(root.querySelector(".gs-empty")).toBeNull();
+    expect(rule().querySelector<HTMLInputElement>(".gs-rule-name")!.value).toBe("Warnsignal vorhanden");
+    expect(Array.from(rule().querySelectorAll<HTMLSelectElement>("select")).map((node) => node.value)).toEqual(["redFlags", "any", "zurueckgewiesen"]);
+    expect(rule().querySelector(".gs-rule-line input")).toBeNull(); // „ist vorhanden“ braucht keinen Wert
+    await click(rule().querySelector(".gs-switch")); expect(rule().className).toContain("is-off"); expect(nav(root, "Eigene Regeln")!.querySelector("small")!.textContent).toBe("0 von 1 aktiv");
+    await click(nav(root, "Daten auslesen")); await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-add")).find((node) => /Frage hinzufügen/.test(node.textContent ?? "")));
+    const inputs = () => Array.from(root.querySelectorAll<HTMLInputElement>(".gs-fieldrow input")); expect(inputs().length).toBe(3);
+    await type(inputs()[0], "Dachfläche Süd"); expect(inputs()[2].value).toBe("dachflaeche_sued");
+    await type(inputs()[1], "Wie groß ist die Dachfläche nach Süden?");
+    expect(root.querySelector(".gs-save-state")?.textContent).toContain("Eigene Regeln, Daten auslesen");
+    await click(saveButton(root), 700);
+    expect(config().decisionRules.map((item: any) => [item.field, item.op, item.decision, item.active])).toEqual([["redFlags", "any", "zurueckgewiesen", false]]);
+    expect(config().extractFields).toEqual([{ key: "dachflaeche_sued", label: "Dachfläche Süd", question: "Wie groß ist die Dachfläche nach Süden?" }]);
+    expect(heading(root)).toBe("Daten aus dem Gespräch auslesen");
+  });
+
+  it("Vorlage übernehmen führt zu den Kriterien und ist danach als „im Einsatz“ gekennzeichnet", async () => {
+    const root = await open(); await click(nav(root, "Vorlagen"));
+    const cards = () => Array.from(root.querySelectorAll<HTMLElement>(".gs-preset")); expect(cards().length).toBeGreaterThan(1); expect(root.querySelector(".gs-used")).toBeNull();
+    const name = cards()[0].querySelector(".gs-preset-text > b")!.textContent!;
+    await click(cards()[0].querySelector("button"), 400);
+    await click(document.querySelector(".app-confirm .app-confirm-ok"), 800);
+    expect(heading(root)).toBe("Kriterien und Ampel"); expect(root.querySelectorAll(".gs-crit").length).toBe(config().criteria.length);
+    await click(nav(root, "Vorlagen"));
+    expect(cards()[0].querySelector(".gs-used")?.textContent).toBe("im Einsatz"); expect(cards()[0].querySelector(".gs-preset-text > b")!.textContent).toBe(`${name}im Einsatz`); expect(cards()[1].querySelector(".gs-used")).toBeNull();
+    // Text eines Kriteriums von Hand geändert und gespeichert → die Bindung an die Vorlage ist gelöst
+    await click(nav(root, "Kriterien und Ampel")); await type(root.querySelector(".gs-crit .gs-crit-text"), "Eigener Text"); await click(saveButton(root), 700);
+    await click(nav(root, "Vorlagen")); expect(root.querySelector(".gs-used")).toBeNull();
+  });
+
+  it("Ausprobieren: das Ergebnis steht im Abschnitt und führt zum Gespräch", async () => {
+    const root = await open(); await click(nav(root, "Ausprobieren"));
+    const run = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".gs-test-row button")).find((node) => /Bewerte/.test(node.textContent ?? ""))!; expect(run().disabled).toBe(true);
+    await type(root.querySelector(".gs-textarea.is-tall"), "Agent: Guten Tag, hier ist Taner von HausKompass. Sie hatten sich für eine Photovoltaikanlage interessiert?\nKunde: Ja, genau. Uns gehört das Haus, wir wollen das dieses Jahr noch machen.");
+    expect(run().disabled).toBe(false); const calls = getStore().tables.callRecords.length;
+    await click(run(), 1200);
+    expect(getStore().tables.callRecords.length).toBe(calls + 1); const result = root.querySelector<HTMLElement>(".gs-result")!; expect(result).toBeTruthy(); expect(result.textContent).toMatch(/Urteil der KI: .+ Entscheidung: .+/);
+    await click(result.querySelector("button"), 800);
+    expect(new URLSearchParams(window.location.search).get("callId")).toBe(String(getStore().tables.callRecords[getStore().tables.callRecords.length - 1].id)); expect(root.querySelector(".gq-decide")).toBeTruthy();
+  });
+});
+
+describe("Gespräche – Fenster „Aufnahmen testen“ und Opt-in-Nachweise im neuen Stil", () => {
+  beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
+  it("Aufnahmen testen: zwei Wege nebeneinander – Datei hochladen und Link einfügen", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche"); const { view } = mount(); await settle(500);
+    await act(async () => { fireEvent.click(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-tool")).find((node) => /Aufnahmen testen/.test(node.textContent ?? ""))!); }); await settle(400);
+    const ways = Array.from(document.querySelectorAll<HTMLElement>(".gi-dialog .gi-way")); expect(ways.map((node) => node.querySelector("h3")!.childNodes[0].textContent)).toEqual(["Datei hochladen", "Link einfügen"]);
+    expect(ways[0].querySelector(".gi-drop input[type=file]")).toBeTruthy(); expect(ways[0].querySelector(".gi-drop button")?.textContent).toBe("Datei auswählen");
+    const fetchButton = ways[1].querySelector<HTMLButtonElement>("button")!; expect(fetchButton.textContent).toBe("Aufnahmen holen und bewerten"); expect(fetchButton.disabled).toBe(true);
+    await act(async () => { fireEvent.change(ways[1].querySelector("textarea")!, { target: { value: "https://download.example.de/aufnahme-1.mp3" } }); }); await settle(150);
+    expect(fetchButton.disabled).toBe(false);
+    expect(document.querySelectorAll(".gi-meta input").length).toBe(2);
+  });
+
+  it("ein Gespräch mit Lead: die Opt-in-Nachweise haben eine normale Überschrift statt eines Schildes", async () => {
+    const call = getStore().tables.callRecords.find((item: any) => item.leadId)!; expect(call).toBeTruthy();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`); const { view } = mount(); await settle(700);
+    const title = view.container.querySelector(".gq-detail .opt-in-title"); expect(title?.textContent).toMatch(/^Opt-in-Nachweise/); expect(title?.tagName).toBe("H2");
+    expect(view.container.querySelector(".gq-detail .opt-in-head .eyebrow")).toBeNull();
+  });
+});
