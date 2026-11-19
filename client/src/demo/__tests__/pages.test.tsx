@@ -780,3 +780,41 @@ describe("Verträge – direkt im Dokument bearbeiten", () => {
     expect(list.querySelector(".vt-tracker")).toBeTruthy(); expect(Array.from(list.querySelectorAll("button")).some((node) => (node.textContent ?? "").trim() === "Bearbeiten")).toBe(false);
   });
 });
+
+describe("Gespräche – Agenten und der untere Teil eines Gesprächs", () => {
+  beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
+  const click = async (node: Element | null | undefined, wait = 400) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.click(node!); }); await settle(wait); };
+
+  it("Agenten: Kennzahlen, Bestwerte und je Agent eine Karte – „Gespräche“ führt zur Liste dieses Agenten", async () => {
+    window.history.replaceState(null, "", "/?page=Gespräche"); const { view } = mount(); await settle(500); const root = view.container;
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".people-header-actions button")).find((node) => /Agenten/.test(node.textContent ?? "")), 800);
+    const panel = root.querySelector<HTMLElement>(".gq-agents-panel")!; expect(panel).toBeTruthy();
+    expect(Array.from(panel.querySelectorAll(".gq-stats dt")).map((node) => node.textContent)).toEqual(["Agenten", "Anrufe", "Am Telefon", "Termine", "Freigegeben"]);
+    const rows = Array.from(panel.querySelectorAll<HTMLElement>(".gq-alist > li")); expect(rows.length).toBeGreaterThan(1);
+    expect(rows.map((row) => row.querySelector(".gq-rank")?.textContent)).toEqual(rows.map((_, index) => String(index + 1)));
+    for (const row of rows) { expect((row.querySelector(".gq-agent-lines b")?.textContent ?? "").length).toBeGreaterThan(0); expect(row.querySelectorAll(".gq-astats > span").length).toBe(6); }
+    expect(panel.querySelectorAll(".gq-best li").length).toBeGreaterThan(0);
+    expect(root.querySelector(".agent-table")).toBeNull(); expect(root.querySelector(".agent-total")).toBeNull(); // die breite Tabelle und die Kacheln von früher sind weg
+    const name = rows[0].querySelector(".gq-agent-lines b")!.textContent!;
+    await click(rows[0].querySelector(".gq-open-calls"), 800);
+    expect(root.querySelector(".cq-list-panel .gq-table")).toBeTruthy();
+    expect(root.querySelector(".gq-agent-chip.is-on b")?.textContent).toBe(name);
+  });
+
+  it("ein Gespräch: Entscheidung mit drei klaren Knöpfen, Prüffragen zum Umschalten, Kriterien mit Balken", async () => {
+    const call = getStore().tables.callRecords.find((item: any) => item.status === "bewertet" && typeof item.score === "number" && Array.isArray(item.criteriaScores) && item.criteriaScores.length > 0)!; expect(call).toBeTruthy();
+    window.history.replaceState(null, "", `/?page=Gespräche&callId=${call.id}`); const { view } = mount(); await settle(600); const root = view.container;
+    const choices = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".gq-choices .gq-choice")); expect(choices().map((node) => node.textContent)).toEqual(["Freigeben & verkaufen", "Zur Prüfung", "Zurückweisen"]);
+    expect(Array.from(root.querySelectorAll(".gq-panel-head h2")).map((node) => (node.textContent ?? "").split(" ")[0])).toEqual(expect.arrayContaining(["Entscheidung", "Prüffragen", "Kriterien", "Transkript"]));
+    const questions = () => Array.from(root.querySelectorAll<HTMLElement>(".gq-qlist .gq-q")); expect(questions().length).toBeGreaterThan(0);
+    for (const question of questions()) { expect(question.querySelectorAll(".gq-answer").length).toBe(3); expect(question.querySelectorAll(".gq-answer.is-on").length).toBe(1); expect(question.querySelector(".gq-rule")).toBeTruthy(); }
+    // Antwort umschalten → genau diese ist danach gewählt
+    const target = questions()[0].querySelector<HTMLButtonElement>(".gq-answer:not(.is-on)")!; const label = target.textContent;
+    await click(target, 700);
+    expect(questions()[0].querySelector(".gq-answer.is-on")?.textContent).toBe(label);
+    expect(root.querySelectorAll(".gq-clist .gq-c").length).toBeGreaterThan(0); expect(root.querySelectorAll(".gq-c-bar").length).toBe(root.querySelectorAll(".gq-clist .gq-c").length);
+    // entscheiden: „Zur Prüfung“ → der Knopf ist danach der gewählte
+    await click(choices()[1], 800);
+    expect(root.querySelector(".gq-choices .gq-choice.is-on")?.textContent).toBe("Zur Prüfung");
+  });
+});

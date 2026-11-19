@@ -2013,3 +2013,5 @@ html:not(.dark) .cq-campaign textarea.cq-textarea { background: #ffffff !importa
 html:not(.dark) .cq-campaign select { background: #ffffff !important; color: #101828 !important; border-color: #d0d5dd !important; }
 html:not(.dark) .cq-savebar { background: #ffffff !important; border-top-color: #e4e7ec !important; }
 html:not(.dark) .cq-unscored { color: #344054 !important; background: #f2f4f7 !important; border-color: #98a2b3 !important; }
+/* Deaktivierte Hauptknöpfe: grau statt blassrot (halbtransparentes Rot wirkt rosa) */
+html:not(.dark) .flux-button:disabled, html:not(.dark) .flux-button[disabled], html:not(.dark) .flux-button[aria-disabled="true"], html:not(.dark) button[class*="bg-primary"]:disabled, html:not(.dark) .app-confirm-ok:disabled, html:not(.dark) .campaign-act.is-primary:disabled { background: #d0d5dd !important; color: #ffffff !important; box-shadow: none !important; opacity: 1 !important; filter: none !important; cursor: default; }
