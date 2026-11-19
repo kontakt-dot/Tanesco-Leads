@@ -1,0 +1,78 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+/**
+ * Helles Design: rosarot wie vor Version 333 – Auswahl, Überfahren und Marken-Schilder in zartem Rot mit Schrift in Markenrot,
+ * Hauptknöpfe und gewählte Reiter im roten Verlauf mit rotem Schein. Das dunkle Design bleibt unberührt.
+ */
+const css = (name: string) => readFileSync(new URL(`../client/src/${name}`, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const rules = (source: string) => Array.from(source.matchAll(/([^{}]+)\{([^{}]*)\}/g)).map((match) => ({ selector: match[1].replace(/\s+/g, " ").trim(), body: match[2].replace(/\s+/g, " ").trim() })).filter((rule) => !rule.selector.startsWith("@"));
+/** Was am Ende gilt: je einzelnem Selektor die letzte Regel der Datei. */
+const effective = (source: string) => { const map = new Map<string, string>(); for (const rule of rules(source)) for (const part of rule.selector.split(",")) map.set(part.trim(), rule.body); return map; };
+const tight = (text: string | undefined) => (text ?? "").replace(/\s+/g, "");
+const GRADIENT = "linear-gradient(90deg, #bc001d, #fb2c36)";
+const STEEL_FILL = /background(-color)?\s*:\s*(#f2f4f7|#f7f8fa|#eceef2|#e4e7ec|#d0d5dd)/i;
+const ROSE = /rgba\(188, ?0, ?29, ?\.\d+\)|rgba\(220, ?38, ?38, ?\.\d+\)|#fff1f2|#fff1f3|#fff5f5|#fff7f8|#fde8ea|#fde7ea|#fdecef|#ffe3e8|#ffe4e6/i;
+
+describe("Helles Design – rosarot wie vor Version 333", () => {
+  const manual = css("theme-light.manual.css"); const light = effective(manual); const of = (selector: string) => light.get(`html:not(.dark) ${selector}`) ?? "";
+
+  it("Menü links: der gewählte Punkt ist zartrot mit rotem Balken und roter Schrift", () => {
+    const active = of(".flux-sidebar .nav-item.active");
+    expect(active).toContain("linear-gradient(90deg, rgba(188, 0, 29, .14), rgba(188, 0, 29, .04))"); expect(active).toContain("box-shadow: inset 3px 0 #bc001d"); expect(active).toContain("color: #bc001d");
+    expect(of(".flux-sidebar .nav-item.active svg")).toContain("color: #bc001d");
+    expect(of(".mobile-tabbar button.active")).toContain("linear-gradient(180deg, rgba(188, 0, 29, .14), rgba(188, 0, 29, .05))");
+  });
+
+  it("Schilder über den Überschriften: zartrote Pille mit roter Schrift", () => {
+    const eyebrow = of(".eyebrow"); expect(eyebrow).toContain("background: rgba(188, 0, 29, .08)"); expect(eyebrow).toContain("border: 1px solid rgba(188, 0, 29, .2)"); expect(eyebrow).toContain("color: #bc001d");
+  });
+
+  it("Auswahl, Marken und Hinweise sind rosarot – nichts davon ist stahlgrau hinterlegt", () => {
+    const selectors = [".action-picker button.active", ".order-steps button.active", ".order-choice-chips button.selected", ".appearance-options button.active", ".cat-pick.is-on", ".rv-item.is-active", ".rv-approaches button.is-active", ".provider-card.active", ".list-picker-row.is-active", ".inbox-item.is-picked", ".hourly-day tr.is-selected td", ".stage-pill", ".fact-icon", ".cl-tag.is-sparte", ".cd-avatar", ".motivation-bar", ".pipeline-quote", ".cl-tile", ".cl-approval", ".sheets-step", ".kpi-people-count", ".opt-in-step.is-current", ".bg-violet-500\\/10"];
+    for (const selector of selectors) { const body = of(selector); expect(body, selector).toMatch(ROSE); expect(body, selector).not.toMatch(STEEL_FILL); }
+    expect(of(".live-leads-workspace .lead-panel table tbody tr:hover")).toContain("#fff5f5"); // Zeile der Lead-Liste beim Überfahren
+    expect(manual).not.toContain("v339");
+  });
+
+  it("Hauptknöpfe und gewählte Reiter: roter Verlauf mit rotem Schein; Fokus in Rot", () => {
+    const button = of(".flux-button"); expect(button).toContain(GRADIENT); expect(button).toContain("0 8px 30px rgba(220, 38, 38, .30)");
+    const tab = of(".settings-tab.active"); expect(tab).toContain(GRADIENT); expect(tab).toContain("0 8px 24px rgba(220, 38, 38, .25)");
+    expect(of("input:focus-visible")).toContain("rgba(188, 0, 29, .35)"); expect(light.get("html:not(.dark)")).toContain("--ring: #bc001d");
+  });
+
+  it("ausgeschaltete Hauptknöpfe haben keine graue Sonderregel mehr", () => {
+    expect(light.has("html:not(.dark) .flux-button:disabled")).toBe(false); expect(manual).not.toContain("#d0d5dd !important; color: #ffffff !important; box-shadow: none");
+    expect(of(".email-leads-push:disabled")).toContain("#f1b8c1");
+  });
+
+  it("Gespräche, Ordner und Verträge tragen dasselbe Rosarot – und nur im hellen Design", () => {
+    const calls = css("gespraeche.css"); const callRules = effective(calls);
+    expect(tight(callRules.get("html:not(.dark) .gs-nav.is-on"))).toContain("linear-gradient(90deg,rgba(188,0,29,.14),rgba(188,0,29,.04));box-shadow:inset3px0#bc001d");
+    expect(tight(callRules.get("html:not(.dark) .gs-nav.is-on .gs-nav-text b"))).toContain("color:#bc001d");
+    expect(tight(callRules.get("html:not(.dark) .gs-mode.is-on"))).toContain("background:#fff1f2");
+    expect(callRules.get(".gs-nav.is-on")).toContain("var(--gl-"); // Grundregel (dunkles Design) arbeitet weiter mit den Farbwerten des Schemas
+    expect(calls).toContain("--gq-on-shadow:0 6px 16px rgba(220,38,38,.25)");
+    const folders = css("bausteine.css"); expect(folders).toContain("--fo-on-bg:#fff1f2"); expect(folders).toContain("--fo-on-count-bg:#bc001d"); expect(tight(effective(folders).get("html:not(.dark) .cl-folder.is-active"))).toContain("border-color:#bc001d");
+    const contracts = css("vertraege.css"); const contractRules = effective(contracts);
+    expect(tight(contractRules.get("html:not(.dark) .vt-nudge"))).toContain("background:#fde8ea"); expect(tight(contractRules.get("html:not(.dark) .vt-btn.is-solid"))).toContain("linear-gradient(90deg,#bc001d,#fb2c36)");
+    expect(tight(contractRules.get(".vt-track i.is-done"))).toContain("var(--vt-ink)"); // „erledigt“ bleibt dunkel – Rot heißt dort „abgelehnt/abgelaufen“
+    // Rot und Rosa der neuen Blöcke stehen nur in Regeln für das helle Design
+    for (const [name, source, start] of [["gespraeche.css", calls, "html:not(.dark) .gs-nav:hover"], ["vertraege.css", contracts, "html:not(.dark) .vt-nudge"]] as const) {
+      const stray = rules(source.slice(source.indexOf(start))).filter((rule) => /#bc001d|#fb2c36|#fff1f2|#fff5f5|#fde8ea|rgba\(188,0,29/.test(rule.body) && !rule.selector.split(",").every((part) => part.trim().startsWith("html:not(.dark)")));
+      expect(stray.map((rule) => rule.selector), name).toEqual([]);
+    }
+  });
+
+  it("Gespräche: im hellen Design ist alles weiß – keine graue Fläche hinter der Liste, keine grauen Kästen", () => {
+    const calls = css("gespraeche.css"); const callRules = effective(calls);
+    const lightTokens = rules(calls).filter((rule) => rule.selector.startsWith("html:not(.dark)") && /--g[lq]-/.test(rule.body)).map((rule) => tight(rule.body)).join(";");
+    for (const token of ["--gl-tray:#ffffff", "--gl-softer:#ffffff", "--gl-card:#ffffff", "--gq-soft:#ffffff"]) expect(lightTokens, token).toContain(token);
+    expect(calls).toContain("--gl-tray:rgba(0,0,0,.16)"); expect(calls).toContain("--gl-softer:rgba(255,255,255,.022)"); // das dunkle Design bleibt, wie es war
+    const wrap = tight(callRules.get("html:not(.dark) .gq-table-wrap")); expect(wrap).toContain("background:none"); expect(wrap).toContain("border-color:transparent"); // die Liste hat keinen eigenen Rahmen mehr
+    for (const selector of [".gq-stage.is-inset", ".gq-periods", ".cq-list-panel .dashboard-segments", ".cq-dialog .cq-question-row", ".cq-dialog .cq-criterion-row", ".gq-turn", ".gq-detail audio"]) expect(tight(callRules.get(`html:not(.dark) ${selector}`)), selector).toContain("background:#ffffff");
+    const grey = rules(calls).filter((rule) => rule.selector.startsWith("html:not(.dark)") && /background(-color)?:(#f9fafb|#f8fafb|#f4f5f7)/i.test(tight(rule.body)));
+    expect(grey.map((rule) => rule.selector)).toEqual([]);
+    expect(tight(effective(css("vertraege.css")).get("html:not(.dark) .vt-list"))).toContain("background:none"); // Vertragsliste: dieselbe Lösung
+  });
+});

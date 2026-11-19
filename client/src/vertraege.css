@@ -147,7 +147,7 @@ html.dark .vt-tpl{background:linear-gradient(rgba(0,0,0,.22) 0 128px,rgba(255,25
 .vt-tpl-hint{font-size:12.5px;line-height:1.45;color:var(--vt-dim)}
 .vt-tpl-meta{font-size:12px;color:var(--vt-faint)}
 .vt-tpl-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:auto;padding:12px 18px 18px}
-/* Knöpfe der Vorlagen: Anthrazit als ruhige Betonung – das Rot bleibt dem Hauptknopf der Seite */
+/* Knöpfe der Vorlagen (dunkles Design: helle Betonung; helles Design: roter Verlauf, siehe unten) */
 .vt-btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 11px;border-radius:10px;border:1px solid var(--vt-edge);background:var(--vt-card);color:var(--vt-ink);font:inherit;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:border-color .15s,background-color .15s,opacity .15s}
 .vt-btn svg{width:14px;height:14px;flex:none}
 .vt-btn:hover{border-color:var(--vt-ink);background:var(--vt-soft)}
@@ -321,3 +321,20 @@ html:not(.dark) .vd-sheet .c-h{color:var(--ink)!important}
   .vt-row,.vt-tpl,.vt-station>i b{transition:none}
   .vt-row:hover,.vt-tpl:hover{transform:none}
 }
+
+/* ── v340 (hell): rosarotes Design wie auf der übrigen Plattform – Hinweise und Marken zartrot, Überfahren zartrot, Hauptknöpfe im roten Verlauf. Die Fortschritts-Punkte bleiben dunkel: „erledigt“ muss sich klar von Rot für „abgelehnt/abgelaufen“ unterscheiden. ── */
+html:not(.dark) .vt-nudge,html:not(.dark) .vt-tag.is-custom{background:#fde8ea;color:#bc001d}
+html:not(.dark) .vt-btn.is-solid{border-color:transparent;background:linear-gradient(90deg,#bc001d,#fb2c36);background-origin:border-box;color:#ffffff;box-shadow:0 8px 24px rgba(220,38,38,.25)}
+html:not(.dark) .vt-btn:not(.is-solid):not(.is-icon):hover,html:not(.dark) .vt-stand-open:hover{border-color:rgba(188,0,29,.35);background:#fff5f5;color:#bc001d}
+html:not(.dark) .vt-tpl.is-new:hover{border-color:rgba(188,0,29,.45)}
+html:not(.dark) .vt-tpl.is-new button svg{background:#fff1f2;color:#bc001d}
+html:not(.dark) .vt-back:hover,html:not(.dark) .vd-todo button:hover,html:not(.dark) .vd-outline button:hover,html:not(.dark) .vd-menu button:hover{background:#fff5f5}
+html:not(.dark) .vt-search:focus-within{border-color:rgba(188,0,29,.5)}
+html:not(.dark) .vt-station:not(.is-ergebnis)>i b{background:linear-gradient(90deg,#bc001d,#fb2c36)}
+html:not(.dark) .vd-sheet{--pick:#bc001d}
+
+/* ── v340 (hell): die Vertragsliste ohne graue Fläche – wie die Liste bei „Gespräche“. Jede Karte trägt ihre feine Linie und einen Hauch Schatten.
+   Das Blatt beim Schreiben und die Vorschau der Vorlagen behalten ihren Untergrund, damit man das Papier erkennt. ── */
+html:not(.dark) .vt-list{padding:0;border-color:transparent;border-radius:0;background:none}
+html:not(.dark) .vt-row{box-shadow:0 1px 2px rgba(16,24,40,.05)}
+html:not(.dark) .vt-row:hover{box-shadow:var(--vt-lift)}

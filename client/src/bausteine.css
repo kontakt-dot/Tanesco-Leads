@@ -17,8 +17,8 @@
 html:not(.dark) .cl-folders{
   --fo-line:#e4e7ec;--fo-edge:#b9c0cb;--fo-bg:#ffffff;--fo-ink:#17130f;
   --fo-plate:#f2f4f7;--fo-plate-ink:#475467;--fo-count-bg:#f2f4f7;--fo-count:#344054;--fo-lift:0 10px 20px -14px rgba(16,24,40,.4);
-  --fo-on-bg:linear-gradient(90deg,#bc001d,#fb2c36);--fo-on-ink:#ffffff;--fo-on-plate:rgba(255,255,255,.2);--fo-on-count-bg:#ffffff;--fo-on-count:#bc001d;--fo-on-shadow:0 8px 18px -10px rgba(16,24,40,.55);
-  --fo-drop:#bc001d;--fo-over-bg:#bc001d;--fo-over-ink:#ffffff;--fo-focus:#bc001d;--fo-sticky:#ffffff;
+  --fo-on-bg:#fff1f2;--fo-on-ink:#9f1239;--fo-on-plate:rgba(188,0,29,.1);--fo-on-count-bg:#bc001d;--fo-on-count:#ffffff;--fo-on-shadow:0 6px 16px rgba(220,38,38,.12);
+  --fo-drop:#f19aa6;--fo-over-bg:#ffe4e8;--fo-over-ink:#9f1239;--fo-focus:rgba(188,0,29,.55);--fo-sticky:#ffffff;
 }
 .cl-folder-rail{display:contents} /* Ordner und „Neuer Ordner“ fließen in einer Reihe */
 .cl-folder{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;height:40px;padding:0;border-radius:13px;border:1px solid var(--fo-line);background:var(--fo-bg);color:var(--fo-ink);font-size:13.5px;font-weight:600;line-height:1;transition:border-color .15s,box-shadow .15s,transform .15s}
@@ -55,7 +55,13 @@ button.cl-folder:focus-visible,.cl-folder-pick:focus-visible,.cl-folder-more:foc
 .cl-folder-actions .cl-folder-act{height:40px;padding:0 14px 0 12px;border-radius:13px;border:1px dashed var(--fo-edge);font-size:13.5px}
 .cl-folder-actions .cl-folder-act:hover{border-style:solid}
 html:not(.dark) .cl-folder-actions .cl-folder-act{border-color:#cfd4dc!important}
-html:not(.dark) .cl-folder-actions .cl-folder-act:hover{border-color:#bc001d!important;background:#ffffff!important;color:#bc001d!important}
+html:not(.dark) .cl-folder-actions .cl-folder-act:hover{border-color:rgba(188,0,29,.35)!important;background:#fff5f5!important;color:#bc001d!important}
+/* Helles Design, rosarot wie vor Version 333: gewählter Ordner zartrot mit rotem Rand, Zahl in Rot; Ablage beim Ziehen rosarot */
+html:not(.dark) .cl-folder.is-active,html:not(.dark) .cl-folder.is-active:hover{border-color:#bc001d}
+html:not(.dark) .cl-folder.is-active svg,html:not(.dark) .cl-folder.is-active:hover svg{color:#bc001d}
+html:not(.dark) .cl-folders.is-dragging .cl-folder.is-over{border-color:#bc001d}
+html:not(.dark) .cl-folders.is-dragging .cl-folder.is-over svg,html:not(.dark) .cl-folders.is-dragging .cl-folder.is-over i{background:rgba(188,0,29,.12);color:#9f1239}
+html:not(.dark) .cl-folder-more:hover{background:rgba(188,0,29,.1)}
 /* Handy: Ordner in einer Reihe zum Wischen, „Neuer Ordner“ darunter */
 @media(max-width:720px){
   .cl-folders{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:8px}

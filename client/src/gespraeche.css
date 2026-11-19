@@ -13,8 +13,8 @@
   --gq-wave-h:128px;--gq-slot-max:22px;
 }
 html:not(.dark) .gq-stage,html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-dialog,html:not(.dark) .gq-settings{
-  --gq-ink:#17130f;--gq-dim:#5b6472;--gq-line:#dde1e7;--gq-soft:#f2f4f7;--gq-soft-2:#e9ecf0;
-  --gq-on-bg:linear-gradient(90deg,#bc001d,#fb2c36);--gq-on-ink:#ffffff;--gq-on-shadow:0 4px 12px rgba(16,24,40,.18);--gq-focus:#bc001d;
+  --gq-ink:#17130f;--gq-dim:#5b6472;--gq-line:#dde1e7;--gq-soft:#ffffff;--gq-soft-2:#e9ecf0;
+  --gq-on-bg:linear-gradient(90deg,#bc001d,#fb2c36);--gq-on-ink:#ffffff;--gq-on-shadow:0 6px 16px rgba(220,38,38,.25);--gq-focus:#bc001d;
   --gq-green:#16a34a;--gq-orange:#f97316;--gq-red:#dc2626;--gq-open:#c3c9d3;--gq-open-edge:#98a2b3;
   --gq-tip-bg:#17130f;--gq-tip-ink:#ffffff;--gq-tip-dim:#d0d3da;--gq-tip-shadow:0 14px 30px rgba(16,24,40,.22);
 }
@@ -27,7 +27,7 @@ html:not(.dark) .gq-stage,html:not(.dark) .cq-list-panel,html:not(.dark) .gq-det
   box-shadow:0 26px 60px -34px rgba(0,0,0,.85);
 }
 /* Helles Schema: weißes Feld wie alle anderen Bereiche der Plattform */
-html:not(.dark) .gq-stage{border-color:#f3f4f6;border-radius:20px;background:#ffffff;box-shadow:0 8px 30px rgba(0,0,0,.06)}
+html:not(.dark) .gq-stage{border-color:#f3f4f6;border-radius:20px;background:radial-gradient(680px 250px at 0% 0%,rgba(188,0,29,.05),transparent 64%),#ffffff;box-shadow:0 8px 30px rgba(0,0,0,.06)}
 .gq-stage button{font-family:inherit}
 .gq-stage button:focus-visible,.gq-stage input:focus-visible{outline:2px solid var(--gq-focus);outline-offset:2px}
 .gq-count{margin:0;font-size:clamp(30px,3.5vw,50px);line-height:1.04;font-weight:800;letter-spacing:-.035em;color:var(--gq-ink);font-variant-numeric:tabular-nums;text-wrap:balance}
@@ -38,7 +38,7 @@ html:not(.dark) .gq-stage .gq-count{color:var(--gq-ink)!important;font-weight:80
 
 /* Der Verlauf in der Liste: klappt unter der Leiste auf (Knopf „Verlauf“) – ruhiger und kleiner als ein eigener Kopf */
 .gq-stage.is-inset{--gq-wave-h:104px;margin:0;padding:16px 18px 14px;border-radius:16px;box-shadow:none;animation:gq-open .22s ease-out}
-html:not(.dark) .gq-stage.is-inset{border-color:#e4e7ec;border-radius:16px;background:#f9fafb;box-shadow:none}
+html:not(.dark) .gq-stage.is-inset{border-color:#e4e7ec;border-radius:16px;background:#ffffff;box-shadow:none}
 .gq-stage.is-inset .gq-count{font-size:clamp(21px,2.1vw,28px);letter-spacing:-.025em}
 .gq-stage.is-inset .gq-talk{margin-top:6px;font-size:13px}
 .gq-stage.is-inset .gq-wave{margin-top:14px}
@@ -96,8 +96,8 @@ html:not(.dark) .gq-stage.is-inset{border-color:#e4e7ec;border-radius:16px;backg
   --gt-green:#3ddc97;--gt-orange:#ffa341;--gt-red:#ff6767;--gt-open:#a9a5c8;--gt-ink:#17142c;
 }
 html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-dialog,html:not(.dark) .gq-settings{
-  --gl-ink:#17130f;--gl-dim:#5b6472;--gl-faint:#7c8594;--gl-line:#e4e7ec;--gl-edge:#cfd4dc;--gl-soft:#f2f4f7;--gl-softer:#f9fafb;--gl-accent:#bc001d;
-  --gl-card:#ffffff;--gl-tray:#f4f5f7;--gl-lift:0 12px 26px -16px rgba(16,24,40,.34);--gl-ring:#e6e9ee;
+  --gl-ink:#17130f;--gl-dim:#5b6472;--gl-faint:#7c8594;--gl-line:#e4e7ec;--gl-edge:#cfd4dc;--gl-soft:#f2f4f7;--gl-softer:#ffffff;--gl-accent:#bc001d;
+  --gl-card:#ffffff;--gl-tray:#ffffff;--gl-lift:0 12px 26px -16px rgba(16,24,40,.34);--gl-ring:#e6e9ee;
   --gl-orange:#a64208;--gl-red:#b42318;--gl-warn:#92400e;
   --gt-green:#15803d;--gt-orange:#c2410c;--gt-red:#b91c1c;--gt-open:#475467;--gt-ink:#ffffff;
 }
@@ -113,8 +113,8 @@ html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-di
 .gq-periods button{height:30px;padding:0 13px;border:0;border-radius:9px;background:transparent;color:var(--gq-dim);font-family:inherit;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:background-color .15s,color .15s}
 .gq-periods button:hover{color:var(--gq-ink);background:var(--gq-soft)}
 .gq-periods button.active{background:var(--gq-on-bg);color:var(--gq-on-ink);box-shadow:var(--gq-on-shadow)}
-html:not(.dark) .gq-periods{border:1px solid #e5e7eb;background:#f9fafb}
-html:not(.dark) .gq-periods button:not(.active):hover{background:#ffffff}
+html:not(.dark) .gq-periods{border:1px solid #e5e7eb;background:#ffffff}
+html:not(.dark) .gq-periods button:not(.active):hover{background:#fff5f5;color:#bc001d}
 .gq-dates{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
 .gq-dates label{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--gq-dim)}
 .cq-list-panel .gq-dates input[type="date"]{height:32px;min-width:136px;padding:0 9px;border-radius:10px;border:1px solid var(--gq-line);background:var(--gq-soft);color:var(--gq-ink);font:inherit;font-size:12.5px;color-scheme:dark}
@@ -840,30 +840,23 @@ html .gq-detail .opt-in-quote{border-left-color:var(--gl-edge)!important;color:v
   .gq-call:hover{transform:none}
 }
 
-/* ── v339 (hell): Auswahl in kräftigem Rot, das ausläuft – kein Grau. Gewählt = Verlauf mit weißer Schrift, Überfahren = roter Rand. ── */
-html:not(.dark) .gs-nav:hover{background:#ffffff}
-html:not(.dark) .gs-nav:not(.is-on):hover .gs-nav-text b{color:#bc001d}
-html:not(.dark) .gs-nav:not(.is-on):hover .gs-nav-icon{border-color:#bc001d;color:#bc001d}
-html:not(.dark) .gs-nav.is-on,html:not(.dark) .gs-nav.is-on:hover{background:linear-gradient(90deg,#bc001d,#fb2c36);box-shadow:0 4px 12px rgba(16,24,40,.18)}
-html:not(.dark) .gs-nav.is-on .gs-nav-icon{border-color:transparent;background:#ffffff;color:#bc001d}
-html:not(.dark) .gs-nav.is-on .gs-nav-text b{color:#ffffff}
-html:not(.dark) .gs-nav.is-on .gs-nav-text small,html:not(.dark) .gs-nav.is-on .gs-nav-text small.is-warn{color:rgba(255,255,255,.9)}
-html:not(.dark) .gs-nav.is-on .gs-nav-text small[class^="is-"]::before{box-shadow:0 0 0 1.5px #ffffff}
-html:not(.dark) .gs-nav.is-on .gs-nav-dot{background:#ffffff}
-html:not(.dark) .gs-btn:hover:not(:disabled),html:not(.dark) .gq-open-calls:hover{border-color:#bc001d;background:#ffffff;color:#bc001d}
-html:not(.dark) .gs-btn.is-strong,html:not(.dark) .gs-btn.is-strong:hover:not(:disabled){border-color:transparent;background:linear-gradient(90deg,#bc001d,#fb2c36);background-origin:border-box;color:#ffffff}
-html:not(.dark) .gs-add:hover{border-color:#bc001d;background:#ffffff;color:#bc001d}
-html:not(.dark) .gs-idea:hover{border-color:#bc001d}
-html:not(.dark) .gs-x:hover{background:#ffffff;box-shadow:inset 0 0 0 1px #bc001d;color:#bc001d}
-html:not(.dark) .gi-drop.is-over{border-color:#bc001d!important;background:#ffffff}
-html:not(.dark) .gq-back:hover{background:#ffffff;color:#bc001d}
-html:not(.dark) .gq-wave-toggle:hover{border-color:#bc001d}
-html:not(.dark) .gq-wave-toggle.is-open{border-color:transparent;background:linear-gradient(90deg,#bc001d,#fb2c36);background-origin:border-box;color:#ffffff}
-html:not(.dark) .gq-wave-toggle.is-open>svg:first-child{color:#ffffff}
-html:not(.dark) .gq-agent-chip:hover{border-color:#bc001d}
-html:not(.dark) .gq-call.is-selected{border-color:#bc001d;box-shadow:inset 0 0 0 1px #bc001d}
-html:not(.dark) .gq-call:hover td.gq-col-go,html:not(.dark) .gq-call:focus-visible td.gq-col-go{background:linear-gradient(90deg,#bc001d,#fb2c36);color:#ffffff}
-html:not(.dark) .cq-dialog .cq-facts .cq-fact.is-active{border-color:#bc001d!important;box-shadow:inset 0 0 0 1px #bc001d}
+/* ── v340 (hell): rosarotes Design wie vor Version 333 – Auswahl und Überfahren in zartem Rot mit Schrift in Markenrot; der Hauptknopf trägt den Verlauf mit rotem Schein ── */
+html:not(.dark) .gs-nav:hover{background:#fff5f5}
+html:not(.dark) .gs-nav.is-on,html:not(.dark) .gs-nav.is-on:hover{background:linear-gradient(90deg,rgba(188,0,29,.14),rgba(188,0,29,.04));box-shadow:inset 3px 0 #bc001d}
+html:not(.dark) .gs-nav.is-on .gs-nav-text b{color:#bc001d}
+html:not(.dark) .gs-nav.is-on .gs-nav-icon{border-color:transparent;background:#bc001d;color:#ffffff}
+html:not(.dark) .gs-btn:hover:not(:disabled),html:not(.dark) .gq-open-calls:hover,html:not(.dark) .gs-add:hover{border-color:rgba(188,0,29,.35);background:#fff5f5;color:#bc001d}
+html:not(.dark) .gs-btn.is-strong,html:not(.dark) .gs-btn.is-strong:hover:not(:disabled){border-color:transparent;background:linear-gradient(90deg,#bc001d,#fb2c36);background-origin:border-box;color:#ffffff;box-shadow:0 8px 24px rgba(220,38,38,.25)}
+html:not(.dark) .gs-idea:hover{border-color:rgba(188,0,29,.35);background:#fff5f5}
+html:not(.dark) .gs-x:hover{background:#fff1f2;color:#bc001d}
+html:not(.dark) .gi-drop.is-over{border-color:#bc001d!important;background:#fff1f2}
+html:not(.dark) .gq-back:hover{background:#fff5f5;color:#bc001d}
+html:not(.dark) .gq-wave-toggle:hover{border-color:rgba(188,0,29,.35)}
+html:not(.dark) .gq-wave-toggle.is-open{border-color:rgba(188,0,29,.35);background:rgba(188,0,29,.08);color:#bc001d}
+html:not(.dark) .gq-agent-chip:hover{border-color:rgba(188,0,29,.35)}
+html:not(.dark) .gq-agent-chip.is-on{background:#fff5f5}
+html:not(.dark) .gq-call.is-selected{border-color:rgba(188,0,29,.45);background:#fff7f8}
+html:not(.dark) .gq-call:hover td.gq-col-go,html:not(.dark) .gq-call:focus-visible td.gq-col-go{background:rgba(188,0,29,.08);color:#bc001d}
 
 /* ── v339: Smileys als Kugeln – weicher Schatten, kleiner Hüpfer beim Überfahren ── */
 .cq-face,.cq-ring{overflow:visible;filter:drop-shadow(0 1.5px 2.5px rgba(16,24,40,.22))}
@@ -886,8 +879,28 @@ html.dark .cq-face,html.dark .cq-ring{filter:drop-shadow(0 2px 4px rgba(0,0,0,.5
 .gs-mode.is-on{border-color:var(--gl-accent);box-shadow:inset 0 0 0 1px var(--gl-accent)}
 .gs-mode.is-on svg{color:var(--gl-accent)}
 .gs-mode:focus-visible{outline:2px solid var(--gq-focus);outline-offset:2px}
-html:not(.dark) .gs-mode:not(.is-on):hover{border-color:#bc001d;color:#bc001d}
-html:not(.dark) .gs-mode.is-on{border-color:transparent;background:linear-gradient(90deg,#bc001d,#fb2c36);background-origin:border-box;box-shadow:0 4px 12px rgba(16,24,40,.18);color:#ffffff}
-html:not(.dark) .gs-mode.is-on svg,html:not(.dark) .gs-mode.is-on small{color:rgba(255,255,255,.9)}
+html:not(.dark) .gs-mode:not(.is-on):hover{border-color:rgba(188,0,29,.35);background:#fff5f5}
+html:not(.dark) .gs-mode.is-on{border-color:#bc001d;background:#fff1f2;box-shadow:inset 0 0 0 1px rgba(188,0,29,.15);color:#9f1239}
+html:not(.dark) .gs-mode.is-on svg{color:#bc001d}
+html:not(.dark) .gs-mode.is-on small{color:#9f1239}
 @media(max-width:860px){.gs-deliver{grid-template-columns:minmax(0,1fr)}.gs-mode{min-width:0}}
 @media(max-width:520px){.gs-modes{grid-template-columns:minmax(0,1fr)}}
+
+/* ── v340 (hell): Gespräche ganz in Weiß – keine grauen Flächen mehr. Die Farben dafür stehen oben (--gl-tray, --gl-softer, --gq-soft: alle weiß).
+   Die Liste braucht darum keinen eigenen Rahmen mehr: jede Karte trägt ihre feine Linie und einen Hauch Schatten. Das dunkle Design bleibt. ── */
+html:not(.dark) .gq-table-wrap{padding:0 12px 8px;border-color:transparent;border-radius:0;background:none}
+html:not(.dark) .gq-table thead tr{padding-top:6px}
+html:not(.dark) .gq-call{box-shadow:0 1px 2px rgba(16,24,40,.05)}
+html:not(.dark) .gq-call:hover{box-shadow:var(--gl-lift)}
+/* Kampagnen-Auswahl in der Liste, Fragen und Kriterien im Fenster „Kampagne einstellen“: ebenfalls weiß */
+html:not(.dark) .cq-list-panel .dashboard-segments{background:#ffffff!important}
+html:not(.dark) .cq-list-panel .dashboard-segments button:not(.active):hover{background:#fff5f5!important;color:#bc001d!important}
+html:not(.dark) .cq-dialog .cq-question-row,html:not(.dark) .cq-dialog .cq-criterion-row,html:not(.dark) .cq-dialog .cq-namebar{background:#ffffff!important}
+/* Transkript: beide Seiten weiß – wer spricht, zeigen der Platz (links oder rechts) und die Beschriftung */
+html:not(.dark) .gq-turn{background:#ffffff;box-shadow:inset 0 0 0 1px var(--gl-line)}
+html:not(.dark) .gq-turn.is-speaker-1,html:not(.dark) .gq-turn.is-speaker-3{box-shadow:inset 0 0 0 1px var(--gl-edge)}
+/* Vorlagen: Symbol auf rosarotem Plättchen wie auf der übrigen Plattform */
+html:not(.dark) .gs-preset-icon{background:#fff1f2;color:#bc001d}
+/* Abspieler im Gespräch: auch die Leiste des Browsers weiß, mit feiner Linie statt grauer Fläche */
+html:not(.dark) .gq-detail audio{border:1px solid var(--gl-line);border-radius:999px;background:#ffffff}
+html:not(.dark) .gq-detail audio::-webkit-media-controls-enclosure,html:not(.dark) .gq-detail audio::-webkit-media-controls-panel{background:#ffffff}
