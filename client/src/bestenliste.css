@@ -165,7 +165,10 @@ html:not(.dark) .bl-stage .bl-stage-head h2{color:#ffffff!important;font-weight:
 .bl-agent{display:flex;align-items:center;gap:10px;min-width:0}
 .bl-agent .gq-who{width:34px;height:34px;font-size:12px}
 .bl-agent-lines{display:grid;gap:3px;min-width:0}
-.bl-agent-lines>b{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--bl-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bl-agent-lines>b,.bl-name>b{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--bl-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Name und – wenn bekannt – der Alias am Telefon in einer Zeile: der Name hat Vorrang, der Alias wird notfalls gekürzt */
+.bl-name{display:flex;align-items:baseline;gap:8px;min-width:0}.bl-name>b{flex:0 1 auto;min-width:0}
+.bl-alias{flex:1 1 0;min-width:0;font-style:normal;font-size:11.5px;font-weight:500;color:var(--bl-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bl-agent-lines>small{display:flex;align-items:center;gap:6px;min-width:0;font-size:11.5px;color:var(--bl-dim)}
 .bl-agent-lines>small>span:last-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bl-level{flex:none;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:700;line-height:1;background:var(--lv0-bg);color:var(--lv0-ink)}

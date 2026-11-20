@@ -3,6 +3,7 @@
  * Anrufe laufen über den Telefonie-Anbieter (sipgate oder Simulation); Ereignisse (klingelt, verbunden, beendet,
  * Anrufbeantworter, Aufzeichnung) kommen als Webhooks zurück und werden hier verarbeitet.
  */
+import { aliasesOf } from "../shared/agent-alias";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { berlinDay, berlinOffsetMinutes, emptyBucket, finishAgentReport, isNoAgent, nameKey, NO_AGENT, previousSpan, type AgentBucket, type AgentReportPeriod, type AgentWin } from "../shared/agent-ranking";
 import { callPeriodRange } from "../shared/call-period";
@@ -785,7 +786,9 @@ export async function agentReport(db: Db, tenantId: number, input: { period?: Ag
   const previous = previousSpan(period, today, days);
   const report = finishAgentReport({ buckets: Array.from(buckets.values()), days, allTime: allTime.map((row) => ({ name: nameOf(row.name), approved: Number(row.approved) || 0 })), previous, today, fromDay: from ? berlinDay(from) : null });
   const recentWins: AgentWin[] = wins.map((row) => ({ callId: row.callId, name: row.name?.trim() || null, at: row.at ?? null, campaign: row.campaign ?? null }));
-  return { period, from, now, today, campaign, previous, ...report, recentWins, campaigns: campaignRows };
+  // Alias-Namen: Unter dem echten Namen steht, wie sich der Agent am Telefon nennt – so findet man ihn auch über den Alias
+  const aliasList = await import("./agent-alias").then(({ agentAliases }) => agentAliases(db, tenantId)).catch(() => []);
+  return { period, from, now, today, campaign, previous, ...report, agents: report.agents.map((agent) => ({ ...agent, aliases: aliasesOf(agent.name, aliasList) })), recentWins, campaigns: campaignRows };
 }
 
 /**

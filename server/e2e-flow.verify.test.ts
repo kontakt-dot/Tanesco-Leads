@@ -5470,4 +5470,91 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const lena = (await owner.leadops.listImportHistory({})).find((row) => row.listName === "Wärmepumpe regional ab 20 Mitarbeiter");
     if (lena) expect((await owner.leadops.renameListImport({ id: lena.id, listName: "PV_regional_ab_20_Mitarbeiter" })).listName).toBe("Photovoltaik regional ab 20 Mitarbeiter");
   }, 60000);
+
+  it("v346a. Alias-Namen der Agenten: aus Gesprächen mit echtem Namen vom Dialer gelernt, alte Gespräche rückwirkend zugeordnet, Verlauf der Leads umgeschrieben, von Hand zuordnen und entfernen, Bestenliste kennt den Alias", async () => {
+    const schema = await import("../drizzle/schema"); const { callRecords: callsTable, leadStatusEvents: eventsTable, leads: leadsTable } = schema;
+    const { agentAliases, backfillSpokenNames, learnAgentAliases, syncAgentAliases } = await import("./agent-alias"); const { mergeSimilarAgentNames, reassignAgentsFromTranscripts } = await import("./call-qa");
+    const tenantId = S.tenantId as number; const REAL = "AL Deniz Kaya"; const ALIAS = "Lena Vogt";
+    const intro = (name: string) => `Guten Tag, mein Name ist ${name} von HausKompass. Es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer.`;
+    let seq = 0; const mk = async (values: Partial<typeof callsTable.$inferInsert>) => { seq += 1; return Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: `alias-${seq}`, consent: true, status: "bewertet", decision: "pruefen", decidedBy: "automatisch", startedAt: new Date(), ...values }))[0].insertId); };
+    const row = async (id: number) => (await db.select().from(callsTable).where(eq(callsTable.id, id)))[0];
+    // ältere Gespräche laufen unter dem Alias (Name aus dem Gespräch) – eins davon wurde von Hand so gesetzt; „Karin Wolf“ gehört noch niemandem
+    const old1 = await mk({ agentName: ALIAS, agentSource: "transkript", transcript: intro(ALIAS) }); const old2 = await mk({ agentName: ALIAS, agentSource: null }); const oldHand = await mk({ agentName: ALIAS, agentSource: "manuell" }); const other = await mk({ agentName: "Karin Wolf", agentSource: "ki" });
+    // seit heute meldet der Dialer den echten Namen – im Gespräch stellt sich der Agent weiter mit dem Alias vor
+    const new1 = await mk({ agentName: REAL, agentSource: "dialer", transcript: intro(ALIAS) }); const new2 = await mk({ agentName: REAL, agentSource: "dialer", transcript: intro(ALIAS) }); const plain = await mk({ agentName: REAL, agentSource: "dialer", transcript: "Guten Tag Herr Wegner, es geht um Ihre Anfrage zur Photovoltaik." });
+    // im Verlauf eines Leads steht der Alias als Agent
+    const lead = (await db.select({ id: leadsTable.id, status: leadsTable.status }).from(leadsTable).where(eq(leadsTable.tenantId, tenantId)).limit(1))[0];
+    const eventId = Number((await db.insert(eventsTable).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: `Gesprächsbewertung 85/100 (verkaufbar): freigegeben · Agent: ${ALIAS} – Termin zugesagt` }))[0].insertId);
+    const keepId = Number((await db.insert(eventsTable).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: `Gesprächsbewertung 85/100: freigegeben · Agent: ${ALIAS}mann – anderer Name` }))[0].insertId);
+    // 1) Vorstellung nachprüfen: eindeutige Formel gilt; ohne Formel fragt die KI (hier: findet keinen Namen) – das Gespräch ist dann „geprüft“
+    const checked = await backfillSpokenNames(db, { tenantId, max: 50, ask: async () => "" }); expect(checked.found).toBeGreaterThanOrEqual(2);
+    expect((await row(new1)).agentAlias).toBe(ALIAS); expect((await row(new2)).agentAlias).toBe(ALIAS); expect((await row(plain)).agentAlias).toBe("");
+    // 2) lernen und anwenden: zwei Gespräche belegen das Paar – alle alten Gespräche bekommen den echten Namen, der Alias bleibt am Gespräch stehen
+    const learned = await learnAgentAliases(db, tenantId); expect(learned.renamed).toBeGreaterThanOrEqual(3);
+    expect((await agentAliases(db, tenantId)).find((item) => item.alias === ALIAS)).toMatchObject({ name: REAL, source: "gelernt", calls: 2 });
+    expect(await row(old1)).toMatchObject({ agentName: REAL, agentAlias: ALIAS, agentSource: "alias" }); expect(await row(old2)).toMatchObject({ agentName: REAL, agentAlias: ALIAS, agentSource: "alias" });
+    expect(await row(oldHand)).toMatchObject({ agentName: REAL, agentAlias: ALIAS, agentSource: "manuell" }); expect(await row(other)).toMatchObject({ agentName: "Karin Wolf", agentSource: "ki" });
+    expect((await db.select().from(eventsTable).where(eq(eventsTable.id, eventId)))[0].note).toBe(`Gesprächsbewertung 85/100 (verkaufbar): freigegeben · Agent: ${REAL} – Termin zugesagt`);
+    expect((await db.select().from(eventsTable).where(eq(eventsTable.id, keepId)))[0].note).toContain(`Agent: ${ALIAS}mann`); // nur der ganze Name wird ersetzt
+    // 3) das bleibt so: Nachprüfen aus dem Transkript und Zusammenführen ähnlicher Namen schreiben den Alias nicht zurück
+    await reassignAgentsFromTranscripts(db, tenantId); await mergeSimilarAgentNames(db, tenantId); expect(await row(old1)).toMatchObject({ agentName: REAL, agentSource: "alias" });
+    expect((await syncAgentAliases(db)).renamed).toBe(0); // zweiter Lauf: nichts mehr zu tun
+    // 4) Übersicht und Bestenliste
+    const overview = await owner.leadops.agentAliasOverview();
+    expect(overview.aliases.find((item) => item.alias === ALIAS)).toMatchObject({ name: REAL, source: "gelernt", realCalls: 6, aliasCalls: 5 }); expect(overview.real).toContain(REAL); expect(overview.open.map((item) => item.name)).toContain("Karin Wolf"); expect(overview.open.map((item) => item.name)).not.toContain(ALIAS);
+    const report = await owner.leadops.dialerAgentReport({ period: "heute" }); expect((report.agents.find((agent) => agent.name === REAL) as { aliases?: string[] } | undefined)?.aliases).toEqual([ALIAS]); expect(report.agents.some((agent) => agent.name === ALIAS)).toBe(false);
+    expect((await owner.leadops.listCalls({ agentName: REAL, period: "heute" })).filter((item) => item.externalCallId?.startsWith("alias-")).length).toBe(6);
+    // 5) von Hand: zuordnen gilt sofort und rückwirkend; ein von Hand eingetragener Alias am Gespräch wird der echte Name
+    expect(await owner.leadops.setAgentAlias({ alias: "Karin Wolf", name: REAL })).toMatchObject({ success: true, renamed: 1 }); expect(await row(other)).toMatchObject({ agentName: REAL, agentAlias: "Karin Wolf", agentSource: "alias" });
+    expect((await owner.leadops.setCallAgent({ callId: plain, agentName: ALIAS })).agentName).toBe(REAL); expect(await row(plain)).toMatchObject({ agentName: REAL, agentAlias: ALIAS, agentSource: "manuell" });
+    await expect(owner.leadops.setAgentAlias({ alias: REAL, name: REAL })).rejects.toThrow(/gleich/); await expect(owner.leadops.setAgentAlias({ alias: "Noch Einer", name: ALIAS })).rejects.toThrow(/selbst als Alias/);
+    // 6) entfernen: die darüber zugeordneten Gespräche laufen wieder unter dem Alias – und er wird nicht wieder gelernt
+    expect(await owner.leadops.removeAgentAlias({ alias: "Karin Wolf" })).toMatchObject({ success: true, restored: 1 }); expect(await row(other)).toMatchObject({ agentName: "Karin Wolf", agentAlias: null, agentSource: null });
+    expect((await agentAliases(db, tenantId)).find((item) => item.alias === "Karin Wolf")).toMatchObject({ name: "", source: "manuell" });
+    expect((await owner.leadops.agentAliasOverview()).aliases.find((item) => item.alias === "Karin Wolf")?.name).toBe("");
+    await owner.leadops.removeAgentAlias({ alias: "Karin Wolf" }); expect((await agentAliases(db, tenantId)).some((item) => item.alias === "Karin Wolf")).toBe(false); // „wieder lernen lassen“
+    // 7) Eingang vom Dialer: Bei der Bewertung wird der Name der Vorstellung gleich gemerkt – beim zweiten Gespräch steht die Zuordnung, ein altes Gespräch unter dem Alias wird mitgenommen
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return await response.json() as Record<string, any>; };
+    const oldMax = await mk({ agentName: "Max Reuter", agentSource: "transkript" });
+    const first = await post({ call_id: "alias-hook-1", phone: "+49 30 99887701", agent: "AL Jonas Brandt", consent: true, transcript: intro("Max Reuter") }); expect(first.ok).toBe(true);
+    expect(await row(first.call_id)).toMatchObject({ agentName: "AL Jonas Brandt", agentSource: "dialer", agentAlias: "Max Reuter" }); expect(await row(oldMax)).toMatchObject({ agentName: "AL Jonas Brandt", agentAlias: "Max Reuter", agentSource: "alias" }); // einmal genannt reicht, weil es unter „Max Reuter“ schon Gespräche gab
+    // ein Gespräch ohne Agent vom Dialer, in dem sich jemand mit dem Alias vorstellt, zählt gleich für den echten Namen
+    const third = await post({ call_id: "alias-hook-2", phone: "+49 30 99887702", consent: true, transcript: intro("Max Reuter") });
+    expect(await row(third.call_id)).toMatchObject({ agentName: "AL Jonas Brandt", agentAlias: "Max Reuter", agentSource: "alias" });
+  }, 60000);
+
+  it("v346b. Tags: Listen-Marker stehen nicht in der Übersicht und lassen sich nicht von Hand anlegen, mehrere Tags auf einmal löschen; Team löschen; KI-Verbrauch je Tag nach Bereich und Zweck", async () => {
+    const schema = await import("../drizzle/schema"); const { tags: tagsTable, teams: teamsTable, memberships: memberTable, aiUsageDays } = schema; const tenantId = S.tenantId as number;
+    // --- Tags
+    await owner.leadops.createTag({ name: "V346 Eins", color: "#22c55e" }); await owner.leadops.createTag({ name: "V346 Zwei", color: "#3b82f6" });
+    const markerId = Number((await db.insert(tagsTable).values({ tenantId, name: "Liste: V346 Dachdecker", color: "#f59e0b" }))[0].insertId);
+    const overview = await owner.leadops.tagOverview(); const names = overview.tags.map((tag) => tag.name);
+    expect(names).toEqual(expect.arrayContaining(["V346 Eins", "V346 Zwei"])); expect(names.some((name) => name.startsWith("Liste: "))).toBe(false);
+    expect((await owner.leadops.listTags()).some((tag) => tag.id === markerId)).toBe(true); // für Anrufkampagnen bleibt der Marker da
+    await expect(owner.leadops.createTag({ name: "Liste: selbst", color: "#22c55e" })).rejects.toThrow(/vergibt die Software selbst/);
+    const ids = overview.tags.filter((tag) => tag.name.startsWith("V346 ")).map((tag) => tag.id); expect(ids).toHaveLength(2);
+    await expect(owner.leadops.updateTag({ id: ids[0], name: "Liste: umbenannt" })).rejects.toThrow(/vergibt die Software selbst/);
+    expect(await owner.leadops.deleteTags({ ids: [...ids, markerId, 99_999_999] })).toEqual({ deleted: 2 });
+    expect((await owner.leadops.tagOverview()).tags.some((tag) => tag.name.startsWith("V346 "))).toBe(false); expect((await db.select().from(tagsTable).where(eq(tagsTable.id, markerId)))).toHaveLength(1);
+    await db.delete(tagsTable).where(eq(tagsTable.id, markerId));
+    // --- Team löschen: Mitglieder bleiben Benutzer, nur ohne Team
+    await owner.leadops.createTeam({ name: "V346 Team", description: "zum Löschen", color: "#8b5cf6" }); const team = (await owner.leadops.listTeams()).find((item) => item.name === "V346 Team")!; expect(team).toBeTruthy();
+    const member = (await db.select().from(memberTable).where(eq(memberTable.tenantId, tenantId)).limit(1))[0]; const teamBefore = member.teamId;
+    await db.update(memberTable).set({ teamId: team.id }).where(eq(memberTable.id, member.id));
+    expect(await owner.leadops.deleteTeam({ id: team.id })).toEqual({ success: true, name: "V346 Team", members: 1 });
+    expect((await owner.leadops.listTeams()).some((item) => item.id === team.id)).toBe(false); expect((await db.select().from(memberTable).where(eq(memberTable.id, member.id)))[0].teamId).toBeNull();
+    await expect(owner.leadops.deleteTeam({ id: team.id })).rejects.toThrow(/nicht gefunden/); expect(await db.select().from(teamsTable).where(eq(teamsTable.id, team.id))).toHaveLength(0);
+    await db.update(memberTable).set({ teamId: teamBefore }).where(eq(memberTable.id, member.id));
+    // --- KI-Verbrauch
+    await db.delete(aiUsageDays); const dayOf = (back: number) => new Date(Date.now() - back * 86_400_000).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
+    await db.insert(aiUsageDays).values([{ day: dayOf(0), purpose: "gespraechsbewertung", calls: 20, costMilliCents: 190_000 }, { day: dayOf(0), purpose: "vorschlaege", calls: 30, costMilliCents: 78_000 }, { day: dayOf(0), purpose: "kontakt_aus_gespraech", calls: 4, costMilliCents: 900 }, { day: dayOf(2), purpose: "webseite", calls: 5, costMilliCents: 4_400 }, { day: dayOf(40), purpose: "vorschlaege", calls: 9, costMilliCents: 50_000 }]);
+    const { forgetSpentCache } = await import("./ai-budget"); forgetSpentCache();
+    const usage = await owner.leadops.aiUsageHistory({ days: 7 });
+    expect(usage.days).toHaveLength(7); expect(usage.today).toBe(dayOf(0)); expect(usage.days[6]).toMatchObject({ day: dayOf(0), cents: 269, calls: 54, areas: { gespraeche: 191, kampagnen: 78 } });
+    expect(usage.days[6].parts.map((part) => part.label)).toEqual(["Gespräche bewerten", "E-Mail-Entwürfe", "Kontakt aus dem Gespräch lesen"]); expect(usage.days[4]).toMatchObject({ cents: 4, areas: { firmen: 4 } }); expect(usage.days[5].cents).toBe(0);
+    expect(usage).toMatchObject({ totalCents: 273, weekCents: 273, todayCents: 269, totalCalls: 59 }); expect(usage.budgetCents).toBeGreaterThan(0);
+    expect((await owner.leadops.aiUsageHistory()).days).toHaveLength(30); expect((await owner.leadops.aiUsageToday()).parts[0]).toMatchObject({ purpose: "gespraechsbewertung", label: "Gespräche bewerten" });
+    await db.delete(aiUsageDays); forgetSpentCache();
+  }, 60000);
 });

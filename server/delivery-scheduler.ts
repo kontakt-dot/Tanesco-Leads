@@ -95,6 +95,7 @@ export function startRecordingRetry(intervalSeconds = Number(process.env.RECORDI
       // Nebenher (ohne den Takt aufzuhalten): Gespräche ohne Kriterien-Punkte nachbewerten und unsichere Agenten-Namen von der KI prüfen lassen
       const { rescoreUnscoredCalls, verifyAgentsWithAi } = await import("./call-qa");
       void rescoreUnscoredCalls(db).then((done) => { if (done.tried) console.log(`[Gespräche] Kriterien nachbewertet: ${done.rescored} von ${done.tried}`); }).catch((error) => console.error("[Gespräche] Kriterien nachbewerten:", error instanceof Error ? error.message : error));
+      void import("./agent-alias").then(({ syncAgentAliases }) => syncAgentAliases(db)).then((done) => { if (done.renamed) console.log(`[Gespräche] Alias-Namen: ${done.renamed} Gespräche dem echten Namen zugeordnet.`); }).catch((error) => console.error("[Gespräche] Alias-Namen:", error instanceof Error ? error.message : error));
       void verifyAgentsWithAi(db).then((done) => { if (done.checked) console.log(`[Gespräche] Agenten per KI geprüft: ${done.checked}, geändert ${done.changed}`); }).catch((error) => console.error("[Gespräche] Agenten prüfen:", error instanceof Error ? error.message : error)); }
     catch (error) { console.error("[Gespräche] Aufnahme nachholen:", error instanceof Error ? error.message : error); } finally { running = false; }
   };

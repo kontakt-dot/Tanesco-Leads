@@ -1,3 +1,4 @@
+import AgentAliasSettings from "@/components/AgentAliasSettings";
 import DialerIntake from "@/components/DialerIntake";
 import { Badge } from "@/components/ui/badge";
 import { SCOPE_LABEL } from "../../../shared/call-qualification";
@@ -32,11 +33,11 @@ const decisionLabel: Record<string, string> = { offen: "Offen", freigegeben: "Fr
 const statusLabel: Record<string, string> = { eingegangen: "Eingegangen", transkribiert: "Transkribiert", bewertet: "Bewertet", fehlgeschlagen: "Fehlgeschlagen", ohne_einwilligung: "Ohne Einwilligung" };
 const decisionClass = (decision: string) => decision === "freigegeben" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : decision === "zurueckgewiesen" ? "border-red-400/25 bg-red-500/10 text-red-200" : decision === "pruefen" ? "border-amber-400/25 bg-amber-500/10 text-amber-200" : "border-white/15 text-slate-300";
 /** Agent im Gespräch: Name aus dem Transkript – von Hand korrigierbar (bleibt dann fest, auch bei neuer Bewertung). */
-function AgentEdit({ callId, agentName, manual, fromDialer = false, onChanged, bare = false }: { callId: number; agentName: string | null; manual: boolean; /** der Dialer hat den Agenten genannt */ fromDialer?: boolean; onChanged: () => void; /** nur der Name – die Beschriftung „Agent“ steht schon daneben */ bare?: boolean }) {
+function AgentEdit({ callId, agentName, manual, fromDialer = false, alias = null, viaAlias = false, onChanged, bare = false }: { callId: number; agentName: string | null; manual: boolean; /** der Dialer hat den Agenten genannt */ fromDialer?: boolean; /** Name, mit dem sich der Agent am Telefon vorstellt */ alias?: string | null; /** der echte Name kam über den Alias */ viaAlias?: boolean; onChanged: () => void; /** nur der Name – die Beschriftung „Agent“ steht schon daneben */ bare?: boolean }) {
   const [editing, setEditing] = useState(false); const [value, setValue] = useState(agentName ?? "");
   const agents = trpc.leadops.callAgentNames.useQuery(undefined, { retry: false, staleTime: 60_000, enabled: editing });
   const save = trpc.leadops.setCallAgent.useMutation({ onSuccess: (result) => { toast.success(result.agentName ? `Agent auf „${result.agentName}“ gesetzt.` : "Agent wird wieder automatisch aus dem Transkript erkannt."); setEditing(false); onChanged(); }, onError: (error) => toast.error(error.message) });
-  if (!editing) return <span className="cq-agent">{bare ? "" : "Agent "}{agentName ?? (bare ? "nicht erkannt" : "–")}{manual ? " (von Hand)" : fromDialer ? " (laut Dialer)" : ""} <button type="button" className="cq-agent-edit underline" title="Agent korrigieren – bleibt dann fest, auch wenn das Gespräch neu bewertet wird" onClick={() => { setValue(agentName ?? ""); setEditing(true); }}>ändern</button></span>;
+  if (!editing) return <span className="cq-agent">{bare ? "" : "Agent "}{agentName ?? (bare ? "nicht erkannt" : "–")}{manual ? " (von Hand)" : fromDialer ? " (laut Dialer)" : viaAlias ? " (über den Alias zugeordnet)" : ""}{alias ? <span className="cq-agent-alias" title="So stellt sich der Agent am Telefon vor – Alias-Namen verwaltest du unter „Dialer & Bewertung“ → „Alias-Namen“"> · am Telefon: {alias}</span> : null} <button type="button" className="cq-agent-edit underline" title="Agent korrigieren – bleibt dann fest, auch wenn das Gespräch neu bewertet wird" onClick={() => { setValue(agentName ?? ""); setEditing(true); }}>ändern</button></span>;
   return <span className="cq-agent inline-flex flex-wrap items-center gap-1 align-middle"><Input className="h-7 w-44 text-xs" aria-label="Agent" list={`cq-agents-${callId}`} autoFocus value={value} placeholder="Name des Agenten" onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save.mutate({ callId, agentName: value.trim() || null }); if (event.key === "Escape") setEditing(false); }} /><datalist id={`cq-agents-${callId}`}>{(agents.data ?? []).map((item) => <option key={item.name} value={item.name} />)}</datalist><Button size="sm" className="h-7" disabled={save.isPending} onClick={() => save.mutate({ callId, agentName: value.trim() || null })}>{save.isPending ? "…" : "Speichern"}</Button><Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(false)}>Abbrechen</Button></span>;
 }
 /** Längere Belege: zwei Zeilen zeigen, Rest per Klick aufklappen – der Text selbst ist immer vollständig. */
@@ -225,7 +226,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
                 <span className="gq-who-line"><b>{contact ?? call.phone ?? "Unbekannt"}</b>{call.leadPublicId ? <span className="gq-lead-id" title="Diesem Lead zugeordnet">{call.leadPublicId}</span> : call.rawContactName ? <span className="gq-raw" title="Kontakt aus den Rohdaten – wird bei Freigabe zum Lead">Rohdaten</span> : null}{contact && call.phone ? <span className="gq-phone">{call.phone}</span> : null}{call.category && <span className="gq-chip is-cat cq-category" title="Lead-Kategorie – von der KI aus dem Gespräch erkannt">{call.category.emoji ? `${call.category.emoji} ` : ""}{call.category.name}</span>}</span>
                 {gist && <span className={`gq-summary ${gist.cls}`} title={gist.text}>{gist.text}</span>}
               </td>
-              <td className="gq-agent"><span className="gq-agent-cell">{call.agentName ? <AgentFace name={call.agentName} avatarUrl={pictureOf(call.agentName)} /> : <span className="gq-who is-none" aria-hidden="true">–</span>}<span className="gq-agent-lines"><b className={call.agentName ? "" : "gq-none"}>{call.agentName ?? "Ohne Agent"}</b><small title={`Kampagne: ${call.campaign ?? call.provider}`}>{call.campaign ?? call.provider}</small></span></span></td>
+              <td className="gq-agent"><span className="gq-agent-cell">{call.agentName ? <AgentFace name={call.agentName} avatarUrl={pictureOf(call.agentName)} /> : <span className="gq-who is-none" aria-hidden="true">–</span>}<span className="gq-agent-lines"><b className={call.agentName ? "" : "gq-none"} title={(call as { agentAlias?: string | null }).agentAlias ? `Am Telefon: ${(call as { agentAlias?: string | null }).agentAlias}` : undefined}>{call.agentName ?? "Ohne Agent"}</b><small title={`Kampagne: ${call.campaign ?? call.provider}`}>{call.campaign ?? call.provider}</small></span></span></td>
               <td className="gq-result"><span className={`gq-pill is-${call.decision}`}>{decisionLabel[call.decision]}{call.decidedBy === "manuell" ? <i title="Von Hand entschieden"> · von Hand</i> : null}</span>{optIn && <span className="gq-optin"><OptInBadge status={optIn.status} kind={optIn.kind} buyerName={optIn.buyerName} missing={optIn.missing} compact /></span>}</td>
               <td className="gq-col-go" aria-hidden="true"><ChevronRight /></td>
             </tr>; })}
@@ -502,7 +503,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
         </div>
       </div>
       <dl className="gq-call-facts">
-        <div><dt>Agent</dt><dd><AgentEdit bare callId={data.id} agentName={data.agentName ?? null} manual={data.agentSource === "manuell"} fromDialer={data.agentSource === "dialer"} onChanged={() => { call.refetch(); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); utils.leadops.dialerAgentReport.invalidate(); utils.leadops.callAgentNames.invalidate(); }} /></dd></div>
+        <div><dt>Agent</dt><dd><AgentEdit bare callId={data.id} agentName={data.agentName ?? null} manual={data.agentSource === "manuell"} fromDialer={data.agentSource === "dialer"} alias={(data as { agentAlias?: string | null }).agentAlias || null} viaAlias={data.agentSource === "alias"} onChanged={() => { call.refetch(); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); utils.leadops.dialerAgentReport.invalidate(); utils.leadops.callAgentNames.invalidate(); }} /></dd></div>
         <div><dt>Kampagne</dt><dd>{data.campaign ?? data.provider}</dd></div>
         {data.category ? <div><dt>Lead-Kategorie</dt><dd title={dialer?.category ? `Leadsparte laut Dialer: ${dialer.category}` : "Von der KI aus dem Gespräch erkannt"}>{data.category.emoji ? `${data.category.emoji} ` : ""}{data.category.name}</dd></div> : null}
         <div><dt>Einwilligung zur Aufnahme</dt><dd>{data.consent ? `Ja (${data.consentSource ?? "Dialer"})` : "Nein"}</dd></div>
@@ -584,8 +585,8 @@ function Transcript({ text, fallback }: { text: string | null; fallback: string 
 }
 
 /* ─────────────── Dialer & Bewertung: links die Abschnitte mit ihrem Stand, rechts immer genau ein Abschnitt ─────────────── */
-type SettingsTab = "anbindung" | "vorlagen" | "bewertung" | "regeln" | "daten" | "beispiele" | "testen";
-const SETTINGS_TABS: Array<[SettingsTab, typeof Cable, string]> = [["anbindung", Cable, "Anbindung"], ["vorlagen", LayoutTemplate, "Vorlagen"], ["bewertung", Gauge, "Kriterien und Ampel"], ["regeln", ListOrdered, "Eigene Regeln"], ["daten", TextSearch, "Daten auslesen"], ["beispiele", BookOpenText, "Beispiele für die KI"], ["testen", FlaskConical, "Ausprobieren"]];
+type SettingsTab = "anbindung" | "alias" | "vorlagen" | "bewertung" | "regeln" | "daten" | "beispiele" | "testen";
+const SETTINGS_TABS: Array<[SettingsTab, typeof Cable, string]> = [["anbindung", Cable, "Anbindung"], ["alias", Users, "Alias-Namen"], ["vorlagen", LayoutTemplate, "Vorlagen"], ["bewertung", Gauge, "Kriterien und Ampel"], ["regeln", ListOrdered, "Eigene Regeln"], ["daten", TextSearch, "Daten auslesen"], ["beispiele", BookOpenText, "Beispiele für die KI"], ["testen", FlaskConical, "Ausprobieren"]];
 /** Welche Felder zu welchem Abschnitt gehören – daraus entsteht der Punkt „ungespeichert“ in der Leiste. */
 const SETTINGS_FIELDS: Partial<Record<SettingsTab, string[]>> = { anbindung: ["enabled", "autoDeliver", "consentRequired", "fieldMapping", "recordingAuthHeader", "transcriptionProvider", "transcriptionLanguage"], bewertung: ["criteria", "instructions", "autoApproveThreshold", "autoRejectThreshold", "retentionDays"], regeln: ["decisionRules"], daten: ["extractFields"], beispiele: ["examples"] };
 const RULE_IDEAS = [{ label: "Warnsignal vorhanden", field: "redFlags", op: "any", value: "", decision: "zurueckgewiesen", then: "zurückweisen" }, { label: "Transkript enthält „Mieter“", field: "transcript", op: "contains", value: "Mieter", decision: "pruefen", then: "zur Prüfung" }, { label: "Gesamtpunkte höchstens 30", field: "score", op: "lte", value: "30", decision: "zurueckgewiesen", then: "zurückweisen" }] as const;
@@ -655,11 +656,13 @@ function SettingsForm({ data, onDone, tab, onTab, onOpenCall }: { data: Settings
   const renameExtract = (index: number, label: string) => setForm((current) => ({ ...current, extractFields: current.extractFields.map((item, i) => i === index ? { ...item, label, key: !item.key || (!savedFields.has(item.key) && item.key === keyOf(item.label)) ? keyOf(label) : item.key } : item) }));
   const setExample = (index: number, changes: Partial<Form["examples"][number]>) => setForm((current) => ({ ...current, examples: current.examples.map((item, i) => i === index ? { ...item, ...changes } : item) }));
 
+  const aliasOverview = trpc.leadops.agentAliasOverview.useQuery(undefined, { retry: false, staleTime: 30_000 }); const aliasCount = aliasOverview.data ? aliasOverview.data.aliases.filter((item) => item.name).length : null;
   const weightTotal = form.criteria.reduce((sum, criterion) => sum + (Number(criterion.weight) || 0), 0);
   const low = Math.max(0, Math.min(100, form.autoRejectThreshold)); const high = Math.max(0, Math.min(100, form.autoApproveThreshold)); const scaleOk = low < high;
   const activeRules = form.decisionRules.filter((rule) => rule.active).length;
   const status: Record<SettingsTab, string> = {
     anbindung: !form.enabled ? "Ausgeschaltet" : textService ? "Eingeschaltet" : "Text-Dienst fehlt",
+    alias: aliasCount === null ? "Name am Telefon → echter Name" : aliasCount ? `${aliasCount} ${aliasCount === 1 ? "Zuordnung" : "Zuordnungen"}` : "Noch keine",
     vorlagen: `${CALL_QA_PRESETS.length} fertige Vorlagen`,
     bewertung: `${form.criteria.length} Kriterien, grün ab ${form.autoApproveThreshold} %`,
     regeln: form.decisionRules.length ? `${activeRules} von ${form.decisionRules.length} aktiv` : "Noch keine",
@@ -678,6 +681,7 @@ function SettingsForm({ data, onDone, tab, onTab, onOpenCall }: { data: Settings
     </button>)}</nav>
 
     <div className="gs-main">
+      {tab === "alias" && <AgentAliasSettings />}
       {tab === "anbindung" && <section className="surface-panel operations-panel gs-card" aria-labelledby="gs-h">
         <header className="gs-head"><div><h2 id="gs-h">Anbindung an den Dialer</h2><p>Der Dialer meldet jedes beendete Gespräch an deine Adresse. Den Rest erledigt die Software von selbst.</p></div><Switch checked={form.enabled} onChange={(value) => patch({ enabled: value })} label="Gesprächsbewertung" hint={enabledHint} /></header>
         <DialerIntake />

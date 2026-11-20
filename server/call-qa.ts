@@ -614,7 +614,7 @@ async function knownAgentNames(db: Db, tenantId: number) {
 export async function mergeSimilarAgentNames(db: Db, onlyTenantId?: number): Promise<number> {
   const tenants = onlyTenantId ? [onlyTenantId] : (await db.selectDistinct({ tenantId: callRecords.tenantId }).from(callRecords)).map((row) => row.tenantId);
   let changed = 0;
-  for (const tenantId of tenants) for (const merge of agentNameMerges(await knownAgentNames(db, tenantId))) { await db.update(callRecords).set({ agentName: merge.to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.agentName, merge.from), or(isNull(callRecords.agentSource), and(ne(callRecords.agentSource, "manuell"), ne(callRecords.agentSource, "dialer"))))) /* von Hand gesetzte und vom Dialer genannte Namen bleiben, wie sie sind */; changed += 1; }
+  for (const tenantId of tenants) for (const merge of agentNameMerges(await knownAgentNames(db, tenantId))) { await db.update(callRecords).set({ agentName: merge.to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.agentName, merge.from), or(isNull(callRecords.agentSource), and(ne(callRecords.agentSource, "manuell"), ne(callRecords.agentSource, "dialer"), ne(callRecords.agentSource, "alias"))))) /* von Hand gesetzte, vom Dialer genannte und über einen Alias zugeordnete Namen bleiben, wie sie sind */; changed += 1; }
   return changed;
 }
 /**
@@ -628,7 +628,7 @@ export async function reassignAgentsFromTranscripts(db: Db, onlyTenantId?: numbe
     const known = await knownAgentNames(db, tenantId); const names = known.map((item) => item.name);
     const rows = await db.select({ id: callRecords.id, agentName: callRecords.agentName, agentSource: callRecords.agentSource, transcript: callRecords.transcript }).from(callRecords).where(eq(callRecords.tenantId, tenantId));
     for (const row of rows) {
-      if (row.agentSource === "manuell" || row.agentSource === "dialer") continue; // von Hand gesetzt oder vom Dialer genannt: gilt
+      if (row.agentSource === "manuell" || row.agentSource === "dialer" || row.agentSource === "alias") continue; // von Hand gesetzt, vom Dialer genannt oder über einen Alias zugeordnet: gilt
       const stored = row.agentName?.trim() || null; const junk = Boolean(stored) && isJunkAgentName(stored); const current = junk ? null : stored; // „Mein Name“, „Woche“ … zählen als „kein Agent“
       const detected = row.transcript ? detectAgent(row.transcript, names) : null;
       const usable = detected?.sure ? canonicalAgentName(detected.name, known) : null; // nur eindeutige Vorstellungen zählen hier – alles andere prüft die KI (verifyAgentsWithAi)
@@ -684,8 +684,11 @@ export async function setCallAgent(db: Db, tenantId: number, callId: number, age
   const call = (await db.select({ id: callRecords.id }).from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0];
   if (!call) throw new Error("Gespräch wurde nicht gefunden.");
   const name = (agentName ?? "").replace(/\s+/g, " ").trim().slice(0, 160) || null;
-  await db.update(callRecords).set({ agentName: name, agentSource: name ? "manuell" : null }).where(eq(callRecords.id, callId));
-  return { success: true as const, agentName: name };
+  await db.update(callRecords).set({ agentName: name, agentSource: name ? "manuell" : null, agentAlias: null }).where(eq(callRecords.id, callId));
+  // Wurde von Hand ein Alias eingetragen, gilt der echte Name dazu (der Alias bleibt am Gespräch stehen)
+  if (name) { try { const { applyAgentAliases } = await import("./agent-alias"); await applyAgentAliases(db, tenantId); } catch { /* bleibt beim eingetragenen Namen */ } }
+  const final = (await db.select({ agentName: callRecords.agentName }).from(callRecords).where(eq(callRecords.id, callId)).limit(1))[0]?.agentName ?? name;
+  return { success: true as const, agentName: final };
 }
 /** Thema → Lead-Kategorie des Mandanten: vorhandene Kategorie mit passendem Namen, sonst neu anlegen (z. B. KI erkennt „Treppenlift“). */
 export async function resolveCallCategory(db: Db, tenantId: number, topic: string | null | undefined): Promise<number | null> {
@@ -800,7 +803,7 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     // Dauer aus der Transkription und Name des Mitarbeiters aus der Vorstellung („hier ist Maya Becker …“) – nur, wenn der Dialer nichts geliefert hat
     const durationSeconds = call.durationSeconds ?? transcription?.duration ?? null;
     // Agent: Die Vorstellung im Transkript gilt (auch gegenüber einem schon eingetragenen Namen) – außer der Agent wurde von Hand gesetzt oder der Dialer hat ihn genannt
-    const agentManual = call.agentSource === "manuell" || call.agentSource === "dialer"; const knownAgents = agentManual ? [] : await knownAgentNames(db, call.tenantId).catch(() => []);
+    const agentManual = call.agentSource === "manuell" || call.agentSource === "dialer" || call.agentSource === "alias"; const knownAgents = agentManual ? [] : await knownAgentNames(db, call.tenantId).catch(() => []);
     const detectedAgent = agentManual ? null : detectAgent(transcript, knownAgents.map((item) => item.name));
     let agentName = call.agentName?.trim() || null; let agentSource = call.agentSource ?? null;
     if (!agentManual && isJunkAgentName(agentName)) agentName = null; // „Mein Name“ & Co. sind kein Agent
@@ -836,6 +839,8 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
       if (Object.keys(evaluation.extracted).length) { const meta = target.metadata && typeof target.metadata === "object" && !Array.isArray(target.metadata) ? (target.metadata as Record<string, unknown>) : {}; await db.update(leads).set({ metadata: { ...meta, ...evaluation.extracted, callExtractedAt: new Date().toISOString() } }).where(eq(leads.id, target.id)); }
       await applyDecision(db, config, callId, target, decision, evaluation, null);
     }
+    // Alias-Namen: Nennt der Dialer den echten Namen, wird der Name der Vorstellung gemerkt (daraus lernt die Zuordnung). Läuft das Gespräch unter einem Alias, bekommt es den echten Namen.
+    try { const { aliasAfterEvaluation } = await import("./agent-alias"); await aliasAfterEvaluation(db, callId, transcript, evaluation.agentName); } catch (error) { console.error("[Gespräche] Alias-Namen:", error instanceof Error ? error.message : error); }
     await noteAfterEvaluation(db, call.tenantId, callId); // automatische Gesprächsnotiz mit Transkript (Dialer-Anrufe)
     return { status: "bewertet" as const, score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, decision, error: null };
   } catch (error) {

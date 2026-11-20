@@ -5,7 +5,8 @@
  * Ansatz-Umstellung und das Schreiben im Versandlauf. Was du selbst anklickst (Entwurf schreiben, zweite Fassung), geht immer.
  * Preise (Anthropic, USD je 1 Mio. Tokens, umgerechnet mit 0,92 €/$): Sonnet 3 / 15 (Cache lesen 0,30, Cache schreiben 3,75), Haiku 1 / 5 (0,10 / 1,25).
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
+import { aiUsageHistory as buildAiUsageHistory, purposeInfo } from "../shared/ai-usage";
 import { aiUsageDays, mailSettings } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
 
@@ -56,12 +57,20 @@ export async function setAiDailyBudget(db: Db, tenantId: number, euros: number) 
   forgetSpentCache();
   return { budgetCents: cents };
 }
-const PURPOSE_LABEL: Record<string, string> = { vorschlaege: "E-Mail-Entwürfe", kategoriepruefung: "Kategorie-Prüfung", webseite: "Webseiten lesen", sonstiges: "Sonstiges (Hilfe, Auswertungen)" };
 /** KI heute: Kosten, Budget und Aufteilung nach Zweck – für die Anzeige. */
 export async function aiUsageToday(db: Db, tenantId: number) {
   const day = dayKey(); const rows = await db.select().from(aiUsageDays).where(and(eq(aiUsageDays.day, day)));
   const spentCents = Math.round(rows.reduce((sum, row) => sum + row.costMilliCents, 0) / 1000);
   const budgetCents = await aiBudgetCents(db, tenantId);
-  const parts = rows.map((row) => ({ purpose: row.purpose, label: PURPOSE_LABEL[row.purpose] ?? row.purpose, calls: row.calls, cents: Math.round(row.costMilliCents / 1000) })).sort((a, b) => b.cents - a.cents);
+  const parts = rows.map((row) => ({ purpose: row.purpose, label: purposeInfo(row.purpose).label, calls: row.calls, cents: Math.round(row.costMilliCents / 1000) })).sort((a, b) => b.cents - a.cents);
   return { day, spentCents, budgetCents, reached: spentCents >= budgetCents, calls: rows.reduce((sum, row) => sum + row.calls, 0), parts };
+}
+
+/** KI-Verbrauch der letzten Tage: je Tag die Kosten, aufgeteilt nach Bereich und Zweck – dazu das Tagesbudget. */
+export async function aiUsageHistory(db: Db, tenantId: number, count = 30) {
+  const today = dayKey(); const span = Math.max(1, Math.min(92, Math.round(count)));
+  const from = new Date(`${today}T12:00:00Z`); from.setUTCDate(from.getUTCDate() - (span - 1)); const first = from.toISOString().slice(0, 10);
+  const rows = await db.select({ day: aiUsageDays.day, purpose: aiUsageDays.purpose, calls: aiUsageDays.calls, costMilliCents: aiUsageDays.costMilliCents }).from(aiUsageDays).where(gte(aiUsageDays.day, first));
+  const history = buildAiUsageHistory(rows, today, span); const budgetCents = await aiBudgetCents(db, tenantId);
+  return { ...history, budgetCents, todayCents: history.days[history.days.length - 1]?.cents ?? 0 };
 }

@@ -73,3 +73,138 @@ html:not(.dark) .cl-folder-more:hover{background:rgba(188,0,29,.1)}
   .cl-folder,.cl-folder svg,.cl-folder i,.cl-folder-more{transition:none}
   .cl-folder:hover{transform:none}
 }
+
+
+/* ─────────────────────────── KI-Verbrauch (Klick auf „KI heute“) ───────────────────────────
+   Säulen je Tag, aufgeteilt nach Bereich. Fünf feste Farben je Bereich (geprüft: farbfehlsichtig unterscheidbar, je Schema eigene Stufen).
+   Schrift trägt nie die Bereichsfarbe; zwischen den Abschnitten einer Säule liegen 2 px in der Farbe des Untergrunds. */
+.ai-usage{
+  --au-surface:#17152e;--au-ink:#f3f1ff;--au-dim:#aeabd0;--au-faint:#8581a8;--au-line:rgba(255,255,255,.1);--au-soft:rgba(255,255,255,.045);--au-pick:rgba(255,255,255,.07);--au-warn:#ffa341;
+  --au-gespraeche:#3987e5;--au-kampagnen:#d95926;--au-firmen:#199e70;--au-assistenten:#c98500;--au-sonstiges:#d55181;
+  --au-btn-bg:#f6f4ff;--au-btn-ink:#17142c;--au-tip-bg:#ffffff;--au-tip-ink:#17142c;--au-tip-dim:#4a4763;
+  width:min(900px,95vw)!important;max-width:min(900px,95vw)!important;max-height:92vh;overflow:auto;padding:24px 26px!important;gap:16px!important;background:var(--au-surface)!important;color:var(--au-ink)
+}
+html:not(.dark) .ai-usage{
+  --au-surface:#ffffff;--au-ink:#17130f;--au-dim:#5b6472;--au-faint:#7c8594;--au-line:#e4e7ec;--au-soft:#f7f8fa;--au-pick:#f2f4f7;--au-warn:#c2410c;
+  --au-gespraeche:#2a78d6;--au-kampagnen:#eb6834;--au-firmen:#1baf7a;--au-assistenten:#eda100;--au-sonstiges:#e87ba4;
+  --au-btn-bg:linear-gradient(90deg,#bc001d,#fb2c36);--au-btn-ink:#ffffff;--au-tip-bg:#17130f;--au-tip-ink:#ffffff;--au-tip-dim:#d0d3da
+}
+.ai-usage h2,.ai-usage h3{color:var(--au-ink)!important}
+.ai-usage [data-slot="dialog-description"],.ai-usage>div>p{color:var(--au-dim)}
+.au-wait{margin:0;padding:22px 0;text-align:center;font-size:13px;color:var(--au-dim)}
+.au-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.au-tile{display:grid;gap:2px;align-content:start;padding:14px 16px;border:1px solid var(--au-line);border-radius:14px;background:var(--au-soft)}
+.au-tile span{font-size:12.5px;font-weight:600;color:var(--au-dim)}
+.au-tile strong{font-size:26px;line-height:1.15;font-weight:800;letter-spacing:-.03em;color:var(--au-ink);font-variant-numeric:tabular-nums}
+.au-tile small{font-size:12px;color:var(--au-faint)}
+.au-meter{display:block;height:5px;margin-top:8px;border-radius:999px;background:var(--au-line);overflow:hidden}
+.au-meter b{display:block;height:100%;border-radius:999px;background:var(--au-ink)}
+.au-tile.is-full .au-meter b{background:var(--au-warn)}
+.au-block{display:grid;gap:12px;padding:16px;border:1px solid var(--au-line);border-radius:14px}
+.au-block-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 18px}
+.au-block-head h3{margin:0;font-size:14.5px;font-weight:700;letter-spacing:-.01em}
+.au-block-head p{margin:0;font-size:13px;color:var(--au-dim)}.au-block-head p b{color:var(--au-ink);font-weight:700}
+.au-legend{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0;padding:0;list-style:none;font-size:12px;color:var(--au-dim)}
+.au-legend li{display:inline-flex;align-items:center;gap:6px}.au-legend b{font-weight:600;color:var(--au-ink);font-variant-numeric:tabular-nums}
+.au-swatch{flex:none;display:inline-block;width:10px;height:10px;border-radius:3px}
+.au-swatch.is-gespraeche,.au-seg.is-gespraeche{background:var(--au-gespraeche)}.au-swatch.is-kampagnen,.au-seg.is-kampagnen{background:var(--au-kampagnen)}.au-swatch.is-firmen,.au-seg.is-firmen{background:var(--au-firmen)}.au-swatch.is-assistenten,.au-seg.is-assistenten{background:var(--au-assistenten)}.au-swatch.is-sonstiges,.au-seg.is-sonstiges{background:var(--au-sonstiges)}
+.au-chart{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 10px;padding-top:16px} /* Platz über der Zeichenfläche für die Beschriftung der Budget-Linie */
+.au-y{display:flex;flex-direction:column;justify-content:space-between;height:150px;font-size:11px;color:var(--au-faint);text-align:right;font-variant-numeric:tabular-nums}
+.au-y span{line-height:1;transform:translateY(-50%)}.au-y span:last-child{transform:translateY(50%)}
+.au-plot{position:relative;min-width:0}
+.au-grid{position:absolute;left:0;right:0;height:1px;background:var(--au-line)}
+.au-budget{position:absolute;left:0;right:0;height:1px;background:var(--au-faint)}
+.au-budget em{position:absolute;right:0;bottom:3px;padding:0 4px;font-style:normal;font-size:10.5px;font-weight:600;color:var(--au-dim);background:var(--au-surface)}
+.au-cols{position:absolute;inset:0;display:flex;align-items:stretch;gap:2px}
+.au-col{position:relative;flex:1 1 0;min-width:0;display:flex;align-items:flex-end;justify-content:center;padding:0;border:0;border-radius:6px 6px 0 0;background:none;cursor:pointer}
+.au-col:hover,.au-col.is-on{background:var(--au-pick)}
+.au-col:focus-visible{outline:2px solid var(--au-ink);outline-offset:1px}
+.au-stack{display:flex;flex-direction:column-reverse;gap:2px;width:100%;max-width:24px}
+.au-seg{display:block;width:100%}.au-seg.is-top{border-radius:4px 4px 0 0}
+.au-tip{position:absolute;left:50%;bottom:calc(100% + 8px);z-index:5;display:none;gap:3px;min-width:210px;padding:10px 12px;border-radius:10px;background:var(--au-tip-bg);color:var(--au-tip-ink);font-size:12px;line-height:1.35;text-align:left;transform:translateX(-50%);box-shadow:0 14px 30px rgba(0,0,0,.35);pointer-events:none}
+.au-col.is-left .au-tip{left:0;transform:none}.au-col.is-right .au-tip{left:auto;right:0;transform:none}
+.au-col:hover .au-tip,.au-col:focus-visible .au-tip{display:grid}
+.au-tip b{font-weight:700}.au-tip em{font-style:normal;color:var(--au-tip-dim);margin-bottom:3px}
+.au-tip span{display:flex;align-items:center;gap:7px;white-space:nowrap}.au-tip u{margin-left:auto;padding-left:14px;text-decoration:none;font-weight:600;font-variant-numeric:tabular-nums}
+.au-x{grid-column:2;display:flex;gap:2px;margin-top:6px;font-size:10.5px;color:var(--au-faint)}
+.au-x span{flex:1 1 0;min-width:0;text-align:center;white-space:nowrap;overflow:visible}.au-x span.is-on{color:var(--au-ink);font-weight:700}
+.au-areas{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.au-area{display:grid;gap:6px;align-content:start;padding:12px 14px;border-radius:12px;background:var(--au-soft)}
+.au-area-head{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--au-ink)}
+.au-area-head b{font-weight:700}.au-area-head span{font-size:12px;color:var(--au-faint)}.au-area-head strong{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
+.au-area ul{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.au-area li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:baseline;gap:12px;font-size:12.5px;color:var(--au-dim)}
+.au-area li span{min-width:0;color:var(--au-ink)}.au-area li em{font-style:normal;font-size:12px;color:var(--au-faint);white-space:nowrap}.au-area li b{min-width:62px;text-align:right;font-weight:600;color:var(--au-ink);font-variant-numeric:tabular-nums}
+.au-table summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--au-ink)}
+.au-table-scroll{max-height:260px;margin-top:10px;overflow:auto;border:1px solid var(--au-line);border-radius:12px}
+.au-table table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.au-table th{position:sticky;top:0;padding:8px 12px;background:var(--au-surface);color:var(--au-dim);font-weight:600;text-align:right;white-space:nowrap;box-shadow:inset 0 -1px 0 var(--au-line)}
+.au-table td{padding:7px 12px;border-top:1px solid var(--au-line);color:var(--au-ink);text-align:right;white-space:nowrap}
+.au-table th:first-child,.au-table td:first-child{text-align:left}
+.au-table td button{padding:0;border:0;background:none;color:inherit;font:inherit;text-decoration:underline;text-decoration-color:var(--au-line);text-underline-offset:3px;cursor:pointer}
+.au-table tr.is-on td{background:var(--au-pick)}
+.au-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px}
+.au-foot p{flex:1 1 380px;margin:0;font-size:12.5px;line-height:1.5;color:var(--au-dim)}
+.au-budget-btn{height:38px;padding:0 16px;border:0;border-radius:11px;background:var(--au-btn-bg);color:var(--au-btn-ink);font-size:13px;font-weight:700;cursor:pointer}
+.au-budget-btn:hover{opacity:.9}.au-budget-btn:focus-visible{outline:2px solid var(--au-ink);outline-offset:2px}
+@media(max-width:700px){.ai-usage{padding:18px 14px!important}.au-tiles,.au-areas{grid-template-columns:minmax(0,1fr)}.au-x span{font-size:9.5px}}
+@media(prefers-reduced-motion:no-preference){.au-col{transition:background-color .12s}}
+
+
+/* ─────────────────────────── Version 346: Farbauswahl, Tags, Teams, Leads-Tabelle, Listen, Kampagnen-Filter ───────────────────────────
+   Steht hier (und nicht in index.css), damit die hellen Farben von Hand gelten und nicht automatisch übersetzt werden. */
+/* Farbauswahl (Tags, Teams): zwölf feste Farben und „Eigene Farbe“ */
+.color-palette{display:flex;flex-wrap:wrap;align-items:center;gap:7px}
+.color-dot,.color-own{flex:none;width:28px;height:28px;border-radius:999px;border:2px solid transparent;cursor:pointer;transition:transform .15s,opacity .15s}
+.color-dot{opacity:.86;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}.color-dot:hover,.color-dot.is-on{opacity:1} /* der feine Rand hält auch die dunkelste Farbe im dunklen Design sichtbar */
+html:not(.dark) .color-dot{box-shadow:inset 0 0 0 1px rgba(16,24,40,.08)}
+.color-own{display:grid;place-items:center;margin-left:3px;border:1px solid rgba(255,255,255,.22);color:#cbd5e1}
+.color-own svg{width:14px;height:14px}.color-own.is-on svg{color:#fff;mix-blend-mode:difference}
+html:not(.dark) .color-own{border-color:#cfd4dc!important;color:#475467!important}
+.color-dot:focus-visible,.color-own:focus-within{outline:2px solid #8b5cf6;outline-offset:2px}
+html:not(.dark) .color-dot:focus-visible,html:not(.dark) .color-own:focus-within{outline-color:#bc001d}
+.team-color{display:grid;gap:8px}.team-color-label{font-size:12px;font-weight:600;color:#a8a9c0}
+html:not(.dark) .team-color-label{color:#475467!important}
+.team-delete:hover:not(:disabled),.tag-bulk-delete:hover:not(:disabled){border-color:rgba(248,113,113,.6)!important;color:#fca5a5!important}
+html:not(.dark) .team-delete:hover:not(:disabled),html:not(.dark) .tag-bulk-delete:hover:not(:disabled){border-color:#dc2626!important;color:#b91c1c!important;background:#fef2f2!important}
+/* Tags: Punkt und Name des meistgenutzten Tags auf einer Linie; Auswahl für Sammelaktionen */
+.tag-top{display:inline-flex;align-items:center;gap:10px;max-width:100%;min-width:0}
+.tag-top i{flex:none;width:12px;height:12px;border-radius:999px}
+.tag-top span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag-check{flex:none;width:17px;height:17px;margin:0;cursor:pointer;accent-color:#8b5cf6}
+html:not(.dark) .tag-check{accent-color:#bc001d}
+.tag-bulk{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;min-height:50px;padding:8px 20px;border-bottom:1px solid rgba(255,255,255,.07);font-size:12.5px;color:#a8a9c0}
+.tag-bulk.is-on{background:rgba(139,92,246,.1)}
+.tag-bulk-all{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:#e5e1fd;cursor:pointer}
+.tag-bulk-count{font-weight:600;color:#e5e1fd}.tag-bulk-tools{display:inline-flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.tag-row.is-picked{background:rgba(139,92,246,.07)}
+html:not(.dark) .tag-bulk{border-bottom-color:#e8ecf1!important;color:#5b6472!important}
+html:not(.dark) .tag-bulk.is-on{background:#fdf1f2!important}
+html:not(.dark) .tag-bulk-all,html:not(.dark) .tag-bulk-count{color:#17130f!important}
+html:not(.dark) .tag-row.is-picked{background:#fdf6f6!important}
+
+/* Leads-Tabelle, Spalte „Kategorie“: Kürzel als Schild, daneben der Name – ohne Emoji */
+.live-leads-workspace .lead-panel .lead-category-cell .lead-category{display:flex!important;align-items:center;gap:8px;min-width:0}
+.live-leads-workspace .lead-panel .lead-category .lead-category-pill{flex:none;min-width:36px}
+/* der Name darf in zwei Zeilen stehen („Barrierefreies Bad“) – abgeschnitten wird er nicht mitten im Wort */
+.live-leads-workspace .lead-panel .lead-category .lead-category-name{display:-webkit-box!important;-webkit-box-orient:vertical;-webkit-line-clamp:2;min-width:0;overflow:hidden;white-space:normal;overflow-wrap:normal;word-break:normal;hyphens:auto;text-overflow:ellipsis;font-size:12.5px;line-height:1.25;font-weight:500;color:#d7d5ee}
+html:not(.dark) .live-leads-workspace .lead-panel .lead-category .lead-category-name{color:#344054!important}
+/* „Liste ansehen“: die breite Tabelle rollt in ihrem Rahmen – die Karte der Liste wird davon nicht breiter */
+.list-preview{width:100%;box-sizing:border-box}
+.list-preview-note{overflow-wrap:anywhere;line-height:1.9}
+.list-row{min-width:0;max-width:100%}.list-row-wide{flex:1 1 100%;width:100%;min-width:0;max-width:100%;overflow:hidden}
+.pipeline-lists-grid>section{min-width:0;max-width:100%}
+/* E-Mail-Kampagnen: Alle / Aktiv / Inaktiv */
+.cl-state{display:inline-flex;height:34px;padding:3px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04)}
+.cl-state button{display:inline-flex;align-items:center;gap:7px;padding:0 11px;border-radius:7px;font-size:12.5px;font-weight:600;color:#c9c6ee;transition:background-color .15s,color .15s}
+.cl-state button span{min-width:18px;padding:1px 6px;border-radius:999px;background:rgba(255,255,255,.09);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;text-align:center}
+.cl-state button:hover{color:#fff}
+.cl-state button.is-on{background:linear-gradient(135deg,#8b5cf6,#6d5df6);color:#fff}.cl-state button.is-on span{background:rgba(0,0,0,.2)}
+.cl-state button:focus-visible{outline:2px solid #a78bfa;outline-offset:2px}
+html:not(.dark) .cl-state{border-color:#dde1e7!important;background:#ffffff!important}
+html:not(.dark) .cl-state button{color:#475467!important}
+html:not(.dark) .cl-state button span{background:#eef0f3!important;color:#344054!important}
+html:not(.dark) .cl-state button:hover{color:#17130f!important}
+html:not(.dark) .cl-state button.is-on{background:linear-gradient(90deg,#bc001d,#fb2c36)!important;color:#fff!important}
+html:not(.dark) .cl-state button.is-on span{background:rgba(255,255,255,.22)!important;color:#fff!important}
+html:not(.dark) .cl-state button:focus-visible{outline-color:#bc001d}

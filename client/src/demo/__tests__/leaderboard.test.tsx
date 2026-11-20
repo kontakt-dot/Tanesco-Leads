@@ -36,7 +36,7 @@ async function openBoard() {
   return { ...mounted, root: mounted.view.container, panel };
 }
 const rowsOf = (panel: HTMLElement) => Array.from(panel.querySelectorAll<HTMLElement>(".bl-rows > li"));
-const nameOfRow = (row: HTMLElement) => row.querySelector(".bl-agent-lines > b")?.textContent ?? "";
+const nameOfRow = (row: HTMLElement) => row.querySelector(".bl-agent-lines b")?.textContent ?? "";
 
 describe("Gespräche – Bestenliste der Agenten", () => {
   beforeEach(() => { cleanup(); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); resetStore(); forgetLeaderboard(); calm(true); });

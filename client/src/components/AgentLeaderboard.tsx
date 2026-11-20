@@ -204,7 +204,7 @@ export default function AgentLeaderboard({ onShowCalls }: { onShowCalls: (agentN
   const ranked = useMemo(() => (data?.agents ?? []).filter((agent) => agent.rank !== null), [data]); const nobody = (data?.agents ?? []).find((agent) => agent.rank === null) ?? null;
   const leader = ranked[0]; const second = ranked[1]; const most = Math.max(1, leader?.approved ?? 0);
   const podium = useMemo(() => ranked.filter((agent) => agent.approved > 0).slice(0, 3), [ranked]); // ohne Lead kein Treppchen
-  const needle = query.trim().toLocaleLowerCase("de"); const found = needle ? ranked.filter((agent) => agent.name.toLocaleLowerCase("de").includes(needle)) : ranked;
+  const needle = query.trim().toLocaleLowerCase("de"); const aliasesOfAgent = (agent: Agent) => ((agent as { aliases?: string[] }).aliases ?? []); const found = needle ? ranked.filter((agent) => agent.name.toLocaleLowerCase("de").includes(needle) || aliasesOfAgent(agent).some((alias) => alias.toLocaleLowerCase("de").includes(needle))) : ranked; // die Suche findet einen Agenten auch über seinen Alias-Namen
   const rows = needle || showAll ? found : found.slice(0, TOP_ROWS); const hidden = found.length - rows.length;
   const campaignNames = Array.from(new Set([...(campaigns.data ?? []).map((item) => item.name), ...(campaign ? [campaign] : [])]));
   const heading = `${periodInfo.label}${data?.campaign ? ` · ${data.campaign}` : ""}`;
@@ -244,7 +244,7 @@ export default function AgentLeaderboard({ onShowCalls }: { onShowCalls: (agentN
         <ol className="bl-rows">{rows.map((agent) => { const gap = gapText(agent, second); const share = Math.round((agent.approved / most) * 100);
           return <li key={keyOf(agent)} className={`bl-row ${agent.rank && agent.rank <= 3 && agent.approved > 0 ? `is-top is-p${agent.rank}` : ""} ${fresh.has(keyOf(agent)) ? "is-fresh" : ""}`}>
             <span className="bl-place"><b aria-label={`Platz ${agent.rank}`}>{agent.rank}</b><Move agent={agent} before={periodInfo.before} /></span>
-            <span className="bl-agent"><AgentFace name={agent.name} avatarUrl={pictureOf(agent)} /><span className="bl-agent-lines"><b title={agent.name}>{agent.name}</b><small><Level agent={agent} />{agent.level.next ? <span>noch {agent.level.next.missing} bis {agent.level.next.name}</span> : <span>höchste Stufe</span>}</small></span></span>
+            <span className="bl-agent"><AgentFace name={agent.name} avatarUrl={pictureOf(agent)} /><span className="bl-agent-lines"><span className="bl-name"><b title={agent.name}>{agent.name}</b>{aliasesOfAgent(agent).length > 0 && <em className="bl-alias" title={`So nennt sich ${agent.name} am Telefon: ${aliasesOfAgent(agent).join(", ")}`}>({aliasesOfAgent(agent)[0]})</em>}</span><small><Level agent={agent} />{agent.level.next ? <span>noch {agent.level.next.missing} bis {agent.level.next.name}</span> : <span>höchste Stufe</span>}</small></span></span>
             <span className="bl-leads" data-label="Leads"><span className="bl-leads-top"><b>{agent.approved}</b>{agent.approvedToday > 0 && <em title="Leads heute">+{agent.approvedToday} heute</em>}</span><i className="bl-bar" aria-hidden="true"><i style={{ width: `${Math.max(agent.approved > 0 ? 4 : 0, share)}%` }} /></i>{gap && <small>{gap}</small>}</span>
             <span className="bl-stats">
             <span className="bl-num" data-label="Quote">{agent.greenRate !== null ? <><b>{agent.greenRate} %</b><small>{agent.approved} von {agent.evaluated}</small></> : <small>noch nichts bewertet</small>}</span>

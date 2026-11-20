@@ -843,7 +843,7 @@ describe("Gespräche – Agenten und der untere Teil eines Gesprächs", () => {
     const rows = Array.from(panel.querySelectorAll<HTMLElement>(".bl-rows > li")); expect(rows.length).toBeGreaterThan(1);
     expect(rows.map((row) => row.querySelector(".bl-place b")?.textContent)).toEqual(rows.map((_, index) => String(index + 1)));
     expect(root.querySelector(".agent-table")).toBeNull(); expect(root.querySelector(".agent-total")).toBeNull(); expect(root.querySelector(".gq-alist")).toBeNull(); // die Tabellen und Karten von früher sind weg
-    const name = rows[0].querySelector(".bl-agent-lines > b")!.textContent!;
+    const name = rows[0].querySelector(".bl-agent-lines b")!.textContent!;
     await click(rows[0].querySelector(".gq-open-calls"), 800);
     expect(root.querySelector(".cq-list-panel .gq-table")).toBeTruthy();
     expect(root.querySelector(".gq-pick-button.has-value b")?.textContent).toBe(name);
@@ -879,7 +879,7 @@ describe("Gespräche – Dialer & Bewertung: Abschnitte mit Stand, ein Abschnitt
 
   it("links stehen die Abschnitte mit ihrem Stand, rechts genau einer – der Weg eines Gesprächs zeigt, was fehlt", async () => {
     const root = await open();
-    expect(Array.from(root.querySelectorAll(".gs-rail .gs-nav b")).map((node) => node.textContent)).toEqual(["Anbindung", "Vorlagen", "Kriterien und Ampel", "Eigene Regeln", "Daten auslesen", "Beispiele für die KI", "Ausprobieren"]);
+    expect(Array.from(root.querySelectorAll(".gs-rail .gs-nav b")).map((node) => node.textContent)).toEqual(["Anbindung", "Alias-Namen", "Vorlagen", "Kriterien und Ampel", "Eigene Regeln", "Daten auslesen", "Beispiele für die KI", "Ausprobieren"]);
     expect(root.querySelectorAll(".gs-main .gs-card").length).toBe(1); expect(heading(root)).toBe("Anbindung an den Dialer");
     expect(root.querySelector(".gq-settings .eyebrow")).toBeNull(); // keine Schilder mehr als Überschrift
     const steps = Array.from(root.querySelectorAll<HTMLElement>(".gs-flow li")); expect(steps.length).toBe(4);
