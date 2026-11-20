@@ -2204,7 +2204,11 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 .territory-chip i{width:11px;height:11px;border-radius:999px;background:var(--c);box-shadow:0 0 0 2px rgba(255,255,255,.12)}
 .territory-chip small{font-weight:500;color:#9a9ec0}
 .territory-chip.is-off{opacity:.42;text-decoration:line-through}
-.territory-chip.is-focus{border-color:var(--c);box-shadow:0 0 0 1px var(--c) inset;background:color-mix(in srgb,var(--c) 18%,transparent)}.territory-chips:has(.is-focus) .territory-chip:not(.is-focus){opacity:.45}
+.territory-chip.is-focus{border-color:var(--c);box-shadow:0 0 0 1px var(--c) inset;background:color-mix(in srgb,var(--c) 18%,transparent)}
+/* „Alle“ vor den Kunden: an, solange kein Kunde hervorgehoben ist. Die anderen Kunden werden NICHT blass – sie bleiben ja auf der Karte. */
+.territory-chip-all{padding:0 13px}.territory-chip-all.is-on{border-color:transparent;background:linear-gradient(135deg,#8b5cf6,#6d5df6);color:#fff}
+html:not(.dark) .territory-chip.territory-chip-all.is-on{border-color:transparent!important;background:linear-gradient(90deg,#bc001d,#fb2c36)!important;color:#fff!important;box-shadow:0 6px 16px rgba(220,38,38,.25)}
+html:not(.dark) .territory-chip.is-focus{border-color:var(--c)!important;box-shadow:0 0 0 1px var(--c) inset}
 .territory-toggle{display:inline-flex;align-items:center;gap:8px;margin-left:auto;font-size:12.5px;color:#c9c5f5;cursor:pointer;align-self:center}
 /* Verkaufs-Stufe: 1× / 2× / 3× / mehr als 3× */
 .territory-levels .dashboard-segments button{display:inline-flex;align-items:center;gap:6px}.territory-levels .dashboard-segments button small{font-size:10.5px;padding:1px 6px;border-radius:999px;background:rgba(255,255,255,.08);color:inherit;opacity:.85}.territory-levels .dashboard-segments button.active small{background:rgba(0,0,0,.18)}
@@ -2224,12 +2228,13 @@ button.profile-orb:hover,button.profile-orb.is-open{background:rgba(255,255,255,
 .territory-region-label{font-size:7px;font-weight:700;fill:rgba(255,255,255,.5);text-anchor:middle;dominant-baseline:middle;pointer-events:none;paint-order:stroke;stroke:rgba(0,0,0,.45);stroke-width:1.6px;stroke-linejoin:round}
 .territory-regions-toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#c9c5f5}.territory-regions-toggle .territory-switch{transform:scale(.8);transform-origin:left center}
 .territory-tooltip small{display:block;color:#9a9ec0;font-size:11px}
-.territory-dot{opacity:1;stroke:rgba(9,9,24,.6);stroke-width:.4;transition:opacity .15s}.territory-dot.is-overlap{stroke:rgba(0,0,0,.7);stroke-width:.8;opacity:1}.territory-dot.is-dim{opacity:.12;stroke:none}
+.territory-dot{opacity:1;stroke:rgba(9,9,24,.6);stroke-width:.4;transition:opacity .15s}.territory-dot.is-overlap{stroke:rgba(0,0,0,.7);stroke-width:.8;opacity:1}.territory-dot.is-dim{opacity:.12;stroke:none}.territory-dot.is-other{opacity:.36;stroke:none}
 .territory-tooltip{position:absolute;transform:translate(-50%,-115%);display:grid;gap:2px;min-width:160px;max-width:260px;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(17,18,40,.96);font-size:12px;color:#e5e1fd;pointer-events:none;z-index:5;box-shadow:0 10px 30px rgba(0,0,0,.35)}
 .territory-tooltip strong{color:#fff}.territory-tooltip span{display:inline-flex;align-items:center;gap:6px}.territory-tooltip span i{width:9px;height:9px;border-radius:999px;display:inline-block}.territory-tooltip em{font-style:normal;color:#fde68a}
 .territory-empty{position:absolute;inset:40% 0 auto;text-align:center;font-size:13px;color:#9a9ec0}
 .territory-legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin-top:10px;font-size:11.5px;color:#9a9ec0}
 .territory-legend span{display:inline-flex;align-items:center;gap:6px}.territory-legend i{width:10px;height:10px;border-radius:999px;display:inline-block}.territory-legend small{margin-left:auto;color:#6f739a}
+.territory-legend .territory-legend-customers{flex-wrap:wrap;gap:4px 12px}.territory-legend-customer{display:inline-flex;align-items:center;gap:6px;font:inherit;color:#d9d6f7;cursor:pointer;transition:opacity .15s}.territory-legend-customer.is-pale{opacity:.55}.territory-legend-customer:hover{opacity:1;text-decoration:underline;text-underline-offset:3px}.territory-legend em{font-style:normal}
 .territory-side{display:grid;gap:14px}
 .territory-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .territory-list li{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02)}

@@ -4393,6 +4393,22 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // von Hand freigeben → Lead; ohne Kategorie am Kontakt gilt die Kategorie der Liste oder die des Gesprächs
     await owner.leadops.reviewCall({ callId: (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-k-5")))[0].id, decision: "freigegeben", note: "Rückruf war gut." });
     const flatAfter = (await db.select().from(rawTable).where(eq(rawTable.id, flatRaw.id)))[0]; expect(flatAfter.status).toBe("konvertiert"); expect(flatAfter.leadId).toBeTruthy();
+    // (c2) grünes Gespräch OHNE Kontakt vom Dialer: Der Lead entsteht trotzdem – Name und Ort kommen aus dem Gespräch
+    const spoken = await post({ call_id: "od-k-s1", phone: "+49 2238 5550166", agent: "Deniz Kaya", consent: true, transcript: `Agent: Guten Tag Herr Wegner, Sie wohnen in 50259 Pulheim? Kunde: Ja. ${good} Agent: Danke, Herr Wegner.` });
+    expect(spoken.json).toMatchObject({ ok: true, contact: "none", decision: "freigegeben" }); expect(spoken.json.lead_id).toBeTruthy();
+    const spokenLead = await leadRow(spoken.json.lead_id); expect(spokenLead).toMatchObject({ lastName: "Wegner", postcode: "50259", city: "Pulheim", phone: "+4922385550166" }); expect(["genehmigt", "zugewiesen"]).toContain(spokenLead.status); // „zugewiesen“, wenn die Auslieferung eingeschaltet ist
+    expect((await db.select().from(rawTable).where(eq(rawTable.phone, "+4922385550166")))[0]).toMatchObject({ status: "konvertiert", note: expect.stringContaining("Gesprächsbewertung") });
+    // dieselbe Nummer noch einmal grün: kein zweiter Lead
+    const spokenAgain = await post({ call_id: "od-k-s2", phone: "02238 5550166", consent: true, transcript: good }); expect(spokenAgain.json.lead_id).toBe(spoken.json.lead_id);
+    // Nachholen: ein altes grünes Gespräch ohne Lead (so sah es vor dieser Version aus) bekommt seinen Lead; die Übersicht zählt mit
+    const { leadsFromApprovedCalls } = await import("./call-qa"); const tenantOfCalls = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-k-s1")))[0].tenantId;
+    await db.insert(callsTable).values({ tenantId: tenantOfCalls, provider: "ondialer", externalCallId: "od-k-alt", phone: "+49 2238 5550177", status: "bewertet", decision: "freigegeben", consent: true, score: 100, verdict: "verkaufbar", transcript: "Agent: Guten Tag Frau Albers aus 50667 Köln. Kunde: Ja.", payload: { call_id: "od-k-alt" } });
+    expect((await owner.leadops.dialerIntake()).approvedWithoutLead).toBeGreaterThanOrEqual(1);
+    expect((await leadsFromApprovedCalls(db, { tenantId: tenantOfCalls })).leads).toBeGreaterThanOrEqual(1);
+    const oldCall = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-k-alt")))[0]; expect(oldCall.leadId).toBeTruthy();
+    expect((await db.select().from(rawTable).where(eq(rawTable.id, oldCall.rawContactId!)))[0]).toMatchObject({ lastName: "Albers", city: "Köln", status: "konvertiert" });
+    const intake = await owner.leadops.dialerIntake(); expect(intake.today.leads).toBeGreaterThanOrEqual(2); expect(intake.verdict.tone).not.toBe("bad"); expect(intake.fields).toContain("call_id");
+    expect((await owner.leadops.leadsFromApprovedCalls()).leads).toBe(0);
     // (d) eigene Regel auf das Ergebnis im Dialer: „kein Interesse“ weist zurück, auch wenn das Gespräch gut klingt – der Kontakt wird verworfen
     const current = await owner.leadops.getCallQaSettings();
     await owner.leadops.saveCallQaSettings({ ...current, recordingAuthHeader: "••••••••", decisionRules: [...current.decisionRules, { id: "r-dialer", label: "Kein Interesse laut Dialer", field: "dialerResult", op: "contains", value: "kein interesse", decision: "zurueckgewiesen", active: true }] } as never);

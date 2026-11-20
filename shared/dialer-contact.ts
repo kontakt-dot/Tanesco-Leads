@@ -23,7 +23,8 @@ export type DialerContact = {
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
-const norm = (key: string) => key.toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+/** Feldnamen vergleichbar machen – auch türkische Buchstaben (ş, ı, ğ, ç), denn der Dialer kommt aus der Türkei. */
+const norm = (key: string) => key.toLowerCase().replace(/ş/g, "s").replace(/ı/g, "i").replace(/ğ/g, "g").replace(/ç/g, "c").replace(/[^a-z0-9äöüß]/g, "");
 const clean = (value: unknown, max: number): string | null => {
   const raw = typeof value === "number" && Number.isFinite(value) ? String(value) : typeof value === "boolean" ? (value ? "ja" : "nein") : value;
   if (typeof raw !== "string") return null; const text = raw.replace(/\s+/g, " ").trim(); return text ? text.slice(0, max) : null;
@@ -31,29 +32,29 @@ const clean = (value: unknown, max: number): string | null => {
 const readPath = (value: unknown, path: string | undefined): unknown => (path ? path.split(".").filter(Boolean).reduce<unknown>((current, segment) => (isObject(current) ? current[segment] : undefined), value) : undefined);
 
 const ALIASES = {
-  firstName: ["firstname", "vorname", "givenname", "forename"],
-  lastName: ["lastname", "nachname", "surname", "familyname"],
-  fullName: ["name", "fullname", "kontaktname", "contactname", "kundenname", "customername"],
-  company: ["company", "firma", "companyname", "firmenname", "organisation", "organization"],
-  street: ["street", "strasse", "straße", "address", "adresse", "streetaddress", "address1", "anschrift"],
+  firstName: ["firstname", "vorname", "givenname", "forename", "ad", "adi", "isim"],
+  lastName: ["lastname", "nachname", "surname", "familyname", "soyad", "soyadi", "soyisim"],
+  fullName: ["name", "fullname", "kontaktname", "contactname", "kundenname", "customername", "adsoyad", "adisoyadi", "musteriadi", "müsteriadi", "musteri"],
+  company: ["company", "firma", "companyname", "firmenname", "organisation", "organization", "sirket", "sirketadi", "firmaadi"],
+  street: ["street", "strasse", "straße", "address", "adresse", "streetaddress", "address1", "anschrift", "adres", "sokak", "cadde"],
   houseNumber: ["housenumber", "hausnummer", "streetnumber", "hnr", "hausnr"],
-  postcode: ["postcode", "postalcode", "zip", "zipcode", "plz", "postleitzahl"],
-  city: ["city", "ort", "stadt", "town", "wohnort"],
-  country: ["country", "land", "countrycode"],
-  email: ["email", "mail", "emailaddress", "emailadresse"],
-  phone: ["phone", "telefon", "tel", "mobile", "mobil", "handy", "phonenumber", "telefonnummer", "rufnummer"],
+  postcode: ["postcode", "postalcode", "zip", "zipcode", "plz", "postleitzahl", "postakodu", "pk"],
+  city: ["city", "ort", "stadt", "town", "wohnort", "sehir", "il", "ilce"],
+  country: ["country", "land", "countrycode", "ulke", "ülke"],
+  email: ["email", "mail", "emailaddress", "emailadresse", "eposta", "epostaadresi"],
+  phone: ["phone", "telefon", "tel", "mobile", "mobil", "handy", "phonenumber", "telefonnummer", "rufnummer", "telefonno", "gsm", "cep", "ceptelefonu"],
   id: ["id", "contactid", "kontaktid", "customerid", "kundenid", "kundennummer", "contactnumber"],
   category: ["category", "kategorie", "leadcategory", "sparte"],
   fields: ["fields", "customfields", "zusatzfelder", "felder", "data", "extra", "attributes"],
-  result: ["result", "disposition", "outcome", "ergebnis", "abschluss", "abschlussgrund", "callresult", "dispo", "dispositioncode"],
-  note: ["note", "notes", "comment", "comments", "kommentar", "notiz", "agentnote", "bemerkung"],
+  result: ["result", "disposition", "outcome", "ergebnis", "abschluss", "abschlussgrund", "callresult", "dispo", "dispositioncode", "sonuc", "sonuç", "durum"],
+  note: ["note", "notes", "comment", "comments", "kommentar", "notiz", "agentnote", "bemerkung", "not", "aciklama", "yorum"],
   callbackAt: ["callbackat", "callback", "rueckruf", "rückruf", "wiedervorlage", "appointmentat", "appointment", "termin"],
 } as const;
 type AliasKey = keyof typeof ALIASES;
 /** Flach neben `phone` zählen allgemeine Namen nicht (dort hieße `id` oder `name` etwas anderes) – nur eindeutige oder mit Vorsatz wie `contact_`. */
-const AMBIGUOUS_AT_TOP: Partial<Record<AliasKey, string[]>> = { fullName: ["name"], id: ["id"], fields: ["fields", "data", "extra", "attributes"], phone: ["phone", "telefon", "tel", "mobile", "mobil", "handy", "phonenumber", "telefonnummer", "rufnummer"], category: [] };
-const TOP_PREFIXES = ["contact", "kontakt", "customer", "kunde"];
-const CONTAINER_KEYS = ["contact", "kontakt", "customer", "kunde", "lead", "person"];
+const AMBIGUOUS_AT_TOP: Partial<Record<AliasKey, string[]>> = { firstName: ["ad", "adi", "isim"], city: ["il", "ilce"], fullName: ["name", "musteri"], result: ["durum"], note: ["not"], id: ["id"], fields: ["fields", "data", "extra", "attributes"], phone: ["phone", "telefon", "tel", "mobile", "mobil", "handy", "phonenumber", "telefonnummer", "rufnummer", "telefonno", "gsm", "cep", "ceptelefonu"], category: [] };
+const TOP_PREFIXES = ["contact", "kontakt", "customer", "kunde", "musteri", "müsteri"];
+const CONTAINER_KEYS = ["contact", "kontakt", "customer", "kunde", "lead", "person", "musteri", "müsteri", "kisi"];
 
 const findIn = (source: Record<string, unknown> | null, key: AliasKey, top: boolean): { key: string; value: unknown } | null => {
   if (!source) return null; const names = ALIASES[key] as readonly string[]; const blocked = top ? AMBIGUOUS_AT_TOP[key] ?? [] : [];

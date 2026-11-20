@@ -1252,6 +1252,8 @@ html:not(.dark) .territory-kpis .metric-card.is-accent { background: linear-grad
 html:not(.dark) .territory-chip { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; color: #0f172a !important; }
 html:not(.dark) .territory-chip i { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .territory-chip small { color: #4b5568 !important; }
+html:not(.dark) .territory-chip-all.is-on { background: linear-gradient(135deg, #2a2e3a, #111318) !important; color: #0f172a !important; }
+html:not(.dark) html:not(.dark) .territory-chip.territory-chip-all.is-on { background: linear-gradient(180deg, #ffffff, #f6f8fc) !important; color: #0f172a !important; box-shadow: 0 6px 16px rgba(15, 23, 42, .05) !important; }
 html:not(.dark) .territory-toggle { color: #4b5568 !important; }
 html:not(.dark) .territory-levels .dashboard-segments button small { background: #f8fafb !important; }
 html:not(.dark) .territory-levels .dashboard-segments button.active small { background: #f3f6f8 !important; }
@@ -1271,6 +1273,7 @@ html:not(.dark) .territory-tooltip em { color: #8b7e4b !important; }
 html:not(.dark) .territory-empty { color: #4b5568 !important; }
 html:not(.dark) .territory-legend { color: #4b5568 !important; }
 html:not(.dark) .territory-legend small { color: #8a94a6 !important; }
+html:not(.dark) .territory-legend-customer { color: #0f172a !important; }
 html:not(.dark) .territory-list li { border: 1px solid #e8ecf1 !important; background: #f8fafb !important; }
 html:not(.dark) .territory-list li.is-focus { border-color: #d9dfe7 !important; background: #f8fafb !important; }
 html:not(.dark) .territory-list-main i { box-shadow: 0 0 0 2px rgba(15, 23, 42, .05) !important; }

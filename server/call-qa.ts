@@ -17,6 +17,8 @@ import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, op
 import { batchCategoryIds, convertRawContact, normalizeRawPhone } from "./raw-data";
 import { CONTACT_MAPPING, dialerInfo, extractDialerContact, matchDialerCategory, mergeDialerData, type DialerContact } from "../shared/dialer-contact";
 import { invokeLLM } from "./_core/llm";
+import { cleanSpokenContact, contactFromTranscript, contactParts, EMPTY_INTAKE, intakeVerdict, payloadFieldNames, withSpokenContact, type IntakeCounts, type SpokenContact } from "../shared/dialer-intake";
+import { berlinDay } from "../shared/agent-ranking";
 import { noteAfterEvaluation } from "./call-notes";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import { triggerLeadAutomations, type Db } from "./lead-pipeline";
@@ -271,11 +273,11 @@ async function namedDialerCategory(db: Db, tenantId: number, contact: DialerCont
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
   const hit = matchDialerCategory(categories, contact.category); return hit ? { id: hit.id, name: hit.name } : null;
 }
-async function createDialerContact(db: Db, config: Pick<CallQaConfig, "tenantId" | "provider">, input: { phone: string; campaign: string | null; contact: DialerContact }) {
+async function createDialerContact(db: Db, config: Pick<CallQaConfig, "tenantId" | "provider">, input: { phone: string; campaign: string | null; contact: DialerContact }, note = "Vom Dialer gemeldet") {
   const batch = await ensureDialerBatch(db, config); if (!batch) return undefined;
   const categoryId = await dialerCategoryId(db, config.tenantId, input.contact, input.campaign); if (categoryId) await allowBatchCategory(db, batch, categoryId);
   const phone = normalizeRawPhone(input.phone) ?? input.phone;
-  const inserted = await db.insert(rawContacts).values({ tenantId: config.tenantId, batchId: batch.id, categoryId, firstName: input.contact.firstName, lastName: input.contact.lastName, company: input.contact.company, phone, email: input.contact.email, postcode: input.contact.postcode, city: input.contact.city, country: input.contact.country, data: mergeDialerData({}, input.contact).data, status: "in_liste", note: "Vom Dialer gemeldet" });
+  const inserted = await db.insert(rawContacts).values({ tenantId: config.tenantId, batchId: batch.id, categoryId, firstName: input.contact.firstName, lastName: input.contact.lastName, company: input.contact.company, phone, email: input.contact.email, postcode: input.contact.postcode, city: input.contact.city, country: input.contact.country, data: mergeDialerData({}, input.contact).data, status: "in_liste", note });
   await db.update(rawBatches).set({ rowCount: sql`${rawBatches.rowCount} + 1` }).where(eq(rawBatches.id, batch.id));
   return { id: Number(inserted[0]?.insertId) || 0, phone, status: "in_liste" as const, leadId: null };
 }
@@ -828,6 +830,8 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
       if (decision === "freigegeben") { const categoryId = await dialerContactCategory(db, call.tenantId, call.rawContactId, callId); const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}`, skipAutomations: !config.autoDeliver, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
       else if (decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Gesprächsbewertung ${scoreText(evaluation)}: ${evaluation.verdict}` }).where(and(eq(rawContacts.id, call.rawContactId), eq(rawContacts.status, "in_liste")));
     }
+    // Grün, aber der Dialer hat keinen Kontakt mitgeschickt: Der Lead entsteht trotzdem – Name und Ort kommen aus dem Gespräch
+    if (!target && !call.rawContactId && decision === "freigegeben") target = await leadFromApprovedCall(db, config, callId, { actorUserId: null, note: `Gesprächsbewertung ${scoreText(evaluation)}` });
     if (target) {
       if (Object.keys(evaluation.extracted).length) { const meta = target.metadata && typeof target.metadata === "object" && !Array.isArray(target.metadata) ? (target.metadata as Record<string, unknown>) : {}; await db.update(leads).set({ metadata: { ...meta, ...evaluation.extracted, callExtractedAt: new Date().toISOString() } }).where(eq(leads.id, target.id)); }
       await applyDecision(db, config, callId, target, decision, evaluation, null);
@@ -861,6 +865,82 @@ async function applyDecision(db: Db, config: CallQaConfig, callId: number, lead:
   if (decision === "freigegeben" && config.autoDeliver && nextStatus !== current.status) await triggerLeadAutomations(db, { tenantId: config.tenantId, actorUserId, leadId: lead.id, triggerType: "status_geändert" });
 }
 
+/* ------------------------------------------------------------------ Grünes Gespräch → Lead, auch ohne Kontakt vom Dialer */
+
+/** Gespräche aus diesen Quellen sind Proben (Text eingefügt, Datei oder Link hochgeladen) – daraus entsteht von selbst kein Lead. */
+const TRIAL_PROVIDERS = ["test", "datei", "link"];
+/** Die KI nach dem Kunden fragen: Name, Anschrift und E-Mail, so wie sie im Gespräch fallen. Ohne KI greift die einfache Erkennung über Wörter. */
+export async function askCustomerContact(transcript: string): Promise<SpokenContact> {
+  const fallback = contactFromTranscript(transcript);
+  if (!process.env.ANTHROPIC_API_KEY || !transcript.trim()) return fallback;
+  // Sparsam: Name und Anschrift fallen am Anfang (Begrüßung) und am Ende (Daten bestätigen) – bei langen Gesprächen reichen diese beiden Stücke
+  const excerpt = transcript.length > 10_000 ? `${transcript.slice(0, 4_000)}\n[…]\n${transcript.slice(-6_000)}` : transcript;
+  const field = (description: string) => ({ type: "string", description });
+  const schema = { name: "kunde", schema: { type: "object", additionalProperties: false, required: ["firstName", "lastName", "street", "postcode", "city", "email"], properties: { firstName: field("Vorname des Kunden – leer, wenn er nicht fällt"), lastName: field("Nachname des Kunden"), street: field("Straße mit Hausnummer des Kunden – leer, wenn nicht genannt"), postcode: field("Postleitzahl des Kunden (5 Ziffern) – leer, wenn nicht genannt"), city: field("Wohnort des Kunden – leer, wenn nicht genannt"), email: field("E-Mail-Adresse des Kunden – leer, wenn nicht genannt") } } };
+  try {
+    const response = await invokeLLM({ model: "fast", maxTokens: 400, messages: [{ role: "system", content: "Du liest ein Telefongespräch (automatisch transkribiert, ohne Kennzeichnung der Sprecher). Ein Callcenter-Mitarbeiter ruft einen Kunden an. Nenne die Angaben zum KUNDEN (dem Angerufenen), so wie sie im Gespräch fallen: Vorname, Nachname, Straße mit Hausnummer, Postleitzahl, Ort, E-Mail. Der Kunde wird meist mit „Herr …“ oder „Frau …“ angesprochen. Nicht den Namen des Mitarbeiters und keinen Firmennamen des Callcenters. Was nicht genannt wird, bleibt leer – nichts raten, nichts ergänzen." }, { role: "user", content: `Gespräch:\n"""\n${excerpt}\n"""` }], outputSchema: schema, purpose: "kontakt_aus_gespraech" });
+    let parsed: unknown; try { parsed = JSON.parse(response.choices[0]?.message.content ?? "{}"); } catch { parsed = {}; }
+    const spoken = cleanSpokenContact(parsed);
+    return { ...spoken, lastName: spoken.lastName ?? (spoken.firstName ? null : fallback.lastName), postcode: spoken.postcode ?? fallback.postcode, city: spoken.city ?? fallback.city };
+  } catch (error) { console.error("[Gespräche] Kunde aus dem Gespräch nicht gelesen:", error instanceof Error ? error.message : error); return fallback; }
+}
+/**
+ * Ein freigegebenes Gespräch ohne Lead und ohne Kontakt bekommt seinen Lead: schon bekannte Rufnummer → dieser Lead; sonst wird der Kontakt
+ * in „Kontakte vom Dialer“ angelegt (Angaben des Dialers, ergänzt um Name und Ort aus dem Gespräch) und zum Lead gemacht.
+ * Fehler halten die Bewertung nie auf – das Gespräch bleibt grün, der Lead wird später nachgeholt.
+ */
+export async function leadFromApprovedCall(db: Db, config: CallQaConfig, callId: number, options: { actorUserId: number | null; note: string; quiet?: boolean }): Promise<typeof leads.$inferSelect | undefined> {
+  try {
+    const call = (await db.select().from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, config.tenantId))).limit(1))[0];
+    if (!call || call.decision !== "freigegeben" || TRIAL_PROVIDERS.includes(call.provider)) return undefined;
+    if (call.leadId) return (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0];
+    const phone = call.phone?.trim() || ""; if (!phone && !call.rawContactId) return undefined; // ohne Rufnummer gibt es niemanden, den man erreichen könnte
+    let rawContactId = call.rawContactId;
+    if (!rawContactId) {
+      const known = await findDialerTarget(db, config.tenantId, "", phone);
+      if (known.lead) { await db.update(callRecords).set({ leadId: known.lead.id }).where(eq(callRecords.id, call.id)); return known.lead; } // dieselbe Rufnummer: kein zweiter Lead
+      if (known.rawContact) rawContactId = known.rawContact.id;
+      else {
+        const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }; const fromDialer = extractDialerContact(call.payload, mapping);
+        const contact = fromDialer.hasIdentity ? fromDialer : withSpokenContact(fromDialer, await askCustomerContact(call.transcript ?? ""));
+        const created = await createDialerContact(db, config, { phone, campaign: call.campaign, contact }, fromDialer.hasIdentity ? "Vom Dialer gemeldet" : "Aus dem Gespräch gelesen"); if (!created) return undefined;
+        rawContactId = created.id;
+      }
+      await db.update(callRecords).set({ rawContactId }).where(eq(callRecords.id, call.id));
+    }
+    const categoryId = await dialerContactCategory(db, config.tenantId, rawContactId, call.id);
+    const converted = await convertRawContact(db, config.tenantId, rawContactId, { actorUserId: options.actorUserId, initialStatus: "genehmigt", note: options.note, skipAutomations: options.quiet || !config.autoDeliver, ...(categoryId ? { categoryId } : {}) });
+    await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id));
+    return (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0];
+  } catch (error) { console.error("[Gespräche] Lead aus grünem Gespräch nicht angelegt:", error instanceof Error ? error.message : error); return undefined; }
+}
+/** Nachholen: grüne Gespräche vom Dialer, die noch keinen Lead haben (z. B. weil der Dialer keinen Kontakt mitgeschickt hat). Leise – es wird nichts weitergeleitet. */
+export async function leadsFromApprovedCalls(db: Db, options: { tenantId?: number; days?: number; max?: number } = {}): Promise<{ checked: number; leads: number }> {
+  const since = new Date(Date.now() - (options.days ?? 30) * 86_400_000);
+  const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId }).from(callRecords).where(and(eq(callRecords.decision, "freigegeben"), isNull(callRecords.leadId), gte(callRecords.createdAt, since), ...(options.tenantId ? [eq(callRecords.tenantId, options.tenantId)] : []))).orderBy(desc(callRecords.id)).limit(options.max ?? 400);
+  let made = 0; const configs = new Map<number, CallQaConfig>();
+  for (const row of rows) {
+    const config = configs.get(row.tenantId) ?? await ensureCallQaConfig(db, row.tenantId); configs.set(row.tenantId, config);
+    const call = (await db.select().from(callRecords).where(eq(callRecords.id, row.id)).limit(1))[0]; if (!call || call.leadId) continue;
+    const lead = await leadFromApprovedCall(db, config, row.id, { actorUserId: null, note: "Grünes Gespräch – Lead nachgeholt", quiet: true }); if (!lead) continue;
+    if (!call.rawContactId || lead.status === "genehmigt") await applyDecision(db, { ...config, autoDeliver: false }, row.id, lead, "freigegeben", { score: call.score ?? 0, unscored: call.score === null, verdict: call.verdict ?? "unklar", summary: call.summary ?? "" }, null).catch(() => undefined);
+    made += 1;
+  }
+  return { checked: rows.length, leads: made };
+}
+/** Was kommt vom Dialer an? Zahlen für heute und 7 Tage, die Felder der letzten Meldung und ein Urteil in einem Satz. */
+export async function dialerIntake(db: Db, tenantId: number, now: Date = new Date()) {
+  const config = await ensureCallQaConfig(db, tenantId);
+  const weekStart = new Date(now.getTime() - 7 * 86_400_000); const today = berlinDay(now);
+  const rows = await db.select({ id: callRecords.id, createdAt: callRecords.createdAt, status: callRecords.status, decision: callRecords.decision, leadId: callRecords.leadId, rawContactId: callRecords.rawContactId }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.provider, config.provider), gte(callRecords.createdAt, weekStart))).orderBy(desc(callRecords.id)).limit(20_000);
+  const count = (list: typeof rows): IntakeCounts => ({ ...EMPTY_INTAKE, received: list.length, withContact: list.filter((row) => row.rawContactId || row.leadId).length, noConsent: list.filter((row) => row.status === "ohne_einwilligung").length, failed: list.filter((row) => row.status === "fehlgeschlagen").length, approved: list.filter((row) => row.decision === "freigegeben").length, review: list.filter((row) => row.decision === "pruefen").length, rejected: list.filter((row) => row.decision === "zurueckgewiesen").length, leads: list.filter((row) => row.decision === "freigegeben" && row.leadId).length, approvedNoLead: list.filter((row) => row.decision === "freigegeben" && !row.leadId).length });
+  const week = count(rows); const day = count(rows.filter((row) => berlinDay(new Date(row.createdAt)) === today));
+  const last = (await db.select({ createdAt: callRecords.createdAt, payload: callRecords.payload }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.provider, config.provider))).orderBy(desc(callRecords.id)).limit(1))[0];
+  const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) };
+  const openEver = Number((await db.select({ n: sql<number>`count(*)` }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.decision, "freigegeben"), isNull(callRecords.leadId), sql`${callRecords.phone} is not null and ${callRecords.phone} <> ''`, ne(callRecords.provider, "test"), ne(callRecords.provider, "datei"), ne(callRecords.provider, "link"))))[0]?.n ?? 0);
+  return { enabled: config.enabled, today: day, week, lastAt: last?.createdAt ?? null, fields: last ? payloadFieldNames(last.payload) : [], contact: last ? contactParts(last.payload, mapping) : null, approvedWithoutLead: openEver, verdict: intakeVerdict({ enabled: config.enabled, today: day, week, lastAt: last?.createdAt ?? null }) };
+}
+
 export async function reviewCall(db: Db, tenantId: number, userId: number, input: { callId: number; decision: "freigegeben" | "pruefen" | "zurueckgewiesen"; note?: string }) {
   const call = (await db.select().from(callRecords).where(and(eq(callRecords.id, input.callId), eq(callRecords.tenantId, tenantId))).limit(1))[0];
   if (!call) throw new Error("Gespräch wurde nicht gefunden.");
@@ -871,6 +951,7 @@ export async function reviewCall(db: Db, tenantId: number, userId: number, input
     if (input.decision === "freigegeben") { const categoryId = await dialerContactCategory(db, tenantId, call.rawContactId, call.id); const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, skipAutomations: !config.autoDeliver, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
     else if (input.decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Manuell zurückgewiesen${input.note ? `: ${input.note}` : ""}` }).where(and(eq(rawContacts.id, call.rawContactId), inArray(rawContacts.status, ["neu", "in_liste"])));
   }
+  if (!lead && !call.rawContactId && input.decision === "freigegeben") lead = await leadFromApprovedCall(db, config, call.id, { actorUserId: userId, note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}` });
   if (lead) await applyDecision(db, config, call.id, lead, input.decision, { score: call.score ?? 0, unscored: call.score === null, verdict: call.verdict ?? "unklar", summary: input.note ?? call.summary ?? "" }, userId);
   return { success: true as const };
 }

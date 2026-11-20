@@ -91,3 +91,28 @@ describe("Kontakt in der Meldung des Dialers", () => {
     expect(dialerInfo({ phone: "+49 30 1", category: "PV", contact: { first_name: "Murat" } })?.category).toBe("PV");
   });
 });
+
+import { cleanSpokenContact, contactFromTranscript, contactParts, EMPTY_INTAKE, intakeVerdict, payloadFieldNames, withSpokenContact } from "../shared/dialer-intake";
+describe("Eingang vom Dialer: Kontakt aus dem Gespräch und Urteil", () => {
+  it("erkennt türkische Feldnamen", () => {
+    expect(extractDialerContact({ phone: "1", musteri: { ad: "Murat", soyad: "Yilmaz", "şehir": "Köln", "posta kodu": "50667", eposta: "m@example.de" } })).toMatchObject({ firstName: "Murat", lastName: "Yilmaz", city: "Köln", postcode: "50667", email: "m@example.de", hasIdentity: true });
+    expect(extractDialerContact({ phone: "1", musteri_adi: "Deniz Kaya" })).toMatchObject({ hasIdentity: true });
+    expect(extractDialerContact({ phone: "1", ad: "Kampagne" }).hasIdentity).toBe(false);
+  });
+  it("liest Name und Ort aus der Abschrift und ergänzt nur, was der Dialer nicht nennt", () => {
+    const spoken = contactFromTranscript("Guten Tag Herr Wegner, hier ist Deniz Kaya. Sie wohnen in 50259 Pulheim, richtig? Ja. Danke Herr Wegner.");
+    expect(spoken).toMatchObject({ lastName: "Wegner", postcode: "50259", city: "Pulheim" });
+    const empty = extractDialerContact({ phone: "1" }); expect(withSpokenContact(empty, spoken)).toMatchObject({ lastName: "Wegner", city: "Pulheim", hasIdentity: true });
+    expect(withSpokenContact(extractDialerContact({ contact: { last_name: "Berg" } }), spoken)).toMatchObject({ lastName: "Berg", city: "Pulheim" });
+    expect(cleanSpokenContact({ firstName: " unbekannt ", lastName: "Roth", postcode: "5025", email: "x" })).toMatchObject({ firstName: null, lastName: "Roth", postcode: "5025", email: null });
+    expect(contactFromTranscript(null)).toMatchObject({ lastName: null });
+  });
+  it("nennt die Felder ohne Werte und sagt in einem Satz, wo es hängt", () => {
+    expect(payloadFieldNames({ call_id: "x", contact: { first_name: "A", fields: { Dach: "1" } } })).toEqual(["call_id", "contact.first_name", "contact.fields.Dach"]);
+    expect(contactParts({ phone: "1" })).toMatchObject({ name: false, address: false }); expect(contactParts({ contact: { last_name: "B", city: "Ulm" } })).toMatchObject({ name: true, address: true });
+    const day = { ...EMPTY_INTAKE, received: 25, approved: 18, leads: 0, approvedNoLead: 18, review: 1, rejected: 6 };
+    expect(intakeVerdict({ enabled: true, today: day, week: day, lastAt: new Date() })).toMatchObject({ tone: "warn" }); expect(intakeVerdict({ enabled: true, today: day, week: day, lastAt: new Date() }).title).toContain("18 grüne Gespräche");
+    expect(intakeVerdict({ enabled: false, today: day, week: day, lastAt: null }).tone).toBe("bad"); expect(intakeVerdict({ enabled: true, today: EMPTY_INTAKE, week: EMPTY_INTAKE, lastAt: null }).tone).toBe("idle");
+    expect(intakeVerdict({ enabled: true, today: { ...day, leads: 18, approvedNoLead: 0, review: 0 }, week: day, lastAt: new Date() })).toMatchObject({ tone: "ok" });
+  });
+});

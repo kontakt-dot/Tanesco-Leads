@@ -1,3 +1,4 @@
+import DialerIntake from "@/components/DialerIntake";
 import { Badge } from "@/components/ui/badge";
 import { SCOPE_LABEL } from "../../../shared/call-qualification";
 import OptInPanel, { OptInBadge } from "@/components/OptInPanel";
@@ -64,7 +65,7 @@ export default function CallQaWorkspace() {
   const stats = trpc.leadops.callStatistics.useQuery(statsInput, { retry: false, placeholderData: (previous) => previous, refetchInterval: 30_000 });
   const categoryOptions = trpc.leadops.callCategoryOptions.useQuery(undefined, { retry: false, staleTime: 30_000 });
   return <>
-    <header className="page-intro compact"><div><span className="eyebrow">CALLCENTER</span><h1>Gespräche</h1><p>Jedes Telefonat aus dem Dialer wird mitgeschnitten, in Text umgewandelt und von der KI bewertet. Was passt, wird als Lead freigegeben.</p></div><div className="people-header-actions"><Button variant={view === "liste" ? "default" : "outline"} className={view === "liste" ? "flux-button" : ""} onClick={() => go("liste", null)}>Gespräche</Button><Button variant={view === "agenten" ? "default" : "outline"} className={view === "agenten" ? "flux-button" : ""} onClick={() => go("agenten", null)}><Users className="h-4 w-4" /> Agenten</Button><Button variant={view === "einstellungen" ? "default" : "outline"} className={view === "einstellungen" ? "flux-button" : ""} onClick={() => go("einstellungen", null)}>Dialer & Bewertung</Button></div></header>
+    <header className="page-intro compact"><div><span className="eyebrow">CALLCENTER</span><h1>Gespräche</h1><p>Jedes Telefonat aus dem Dialer wird mitgeschnitten, in Text umgewandelt und von der KI bewertet. Was passt, wird als Lead freigegeben und steht unter „Leads“.</p></div><div className="people-header-actions"><Button variant={view === "liste" ? "default" : "outline"} className={view === "liste" ? "flux-button" : ""} onClick={() => go("liste", null)}>Gespräche</Button><Button variant={view === "agenten" ? "default" : "outline"} className={view === "agenten" ? "flux-button" : ""} onClick={() => go("agenten", null)}><Users className="h-4 w-4" /> Agenten</Button><Button variant={view === "einstellungen" ? "default" : "outline"} className={view === "einstellungen" ? "flux-button" : ""} onClick={() => go("einstellungen", null)}>Dialer & Bewertung</Button></div></header>
     {view === "einstellungen" ? <CallQaSettings onOpenCall={(id) => go("liste", id)} /> : view === "agenten" ? <AgentLeaderboard onShowCalls={(name, filter) => { setAgent(name); setCampaign(filter.campaign ?? ""); setRange({ period: filter.period, from: "", to: "" }); setDecision(""); setCategoryId(null); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} />}
   </>;
 }
@@ -679,6 +680,7 @@ function SettingsForm({ data, onDone, tab, onTab, onOpenCall }: { data: Settings
     <div className="gs-main">
       {tab === "anbindung" && <section className="surface-panel operations-panel gs-card" aria-labelledby="gs-h">
         <header className="gs-head"><div><h2 id="gs-h">Anbindung an den Dialer</h2><p>Der Dialer meldet jedes beendete Gespräch an deine Adresse. Den Rest erledigt die Software von selbst.</p></div><Switch checked={form.enabled} onChange={(value) => patch({ enabled: value })} label="Gesprächsbewertung" hint={enabledHint} /></header>
+        <DialerIntake />
         <ol className="gs-flow" aria-label="So läuft ein Gespräch durch">
           <li className={form.enabled ? "is-ok" : "is-off"}><span className="gs-flow-icon"><PhoneIncoming aria-hidden="true" /></span><b>Der Dialer meldet das Gespräch</b><small>{form.enabled ? "Die Adresse nimmt Gespräche an." : "Ausgeschaltet – es wird nichts angenommen."}</small></li>
           <li className="is-ok"><span className="gs-flow-icon"><Download aria-hidden="true" /></span><b>Die Aufnahme wird geholt</b><small>Noch nicht fertig? Dann holen wir sie nach – bis zu 8 Versuche in etwa 4 Stunden.</small></li>
