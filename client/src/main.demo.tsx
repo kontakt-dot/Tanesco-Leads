@@ -8,6 +8,7 @@ import { localDemoLink } from "./demo/link";
 import "./index.css";
 import "./theme-light.css";
 import "./gespraeche.css"; // Gespräche: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
+import "./bestenliste.css"; // Bestenliste der Agenten: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
 import "./bausteine.css"; // Ordner-Leiste u. a.: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
 import "./vertraege.css"; // Verträge: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
 

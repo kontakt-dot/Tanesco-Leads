@@ -3,7 +3,9 @@
  * Anrufe laufen über den Telefonie-Anbieter (sipgate oder Simulation); Ereignisse (klingelt, verbunden, beendet,
  * Anrufbeantworter, Aufzeichnung) kommen als Webhooks zurück und werden hier verarbeitet.
  */
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { berlinDay, berlinOffsetMinutes, emptyBucket, finishAgentReport, isNoAgent, nameKey, NO_AGENT, previousSpan, type AgentBucket, type AgentReportPeriod, type AgentWin } from "../shared/agent-ranking";
+import { callPeriodRange } from "../shared/call-period";
 import { nanoid } from "nanoid";
 import { agentSessions, callRecords, dialerCalls, dialerCampaigns, dialerQueueItems, leadStatusEvents, leadTagAssignments, leads, phoneNumbers, rawBatches, rawContacts, telephonySettings, users, type AgentSession, type DialerCall, type DialerCampaign, type TelephonySettings } from "../drizzle/schema";
 import { batchCategoryIds, convertRawContact } from "./raw-data";
@@ -703,72 +705,101 @@ export async function liveBoard(db: Db, tenantId: number, now = new Date()) {
 }
 
 /**
- * Auswertung je Agent („wer macht was“): Anrufe, Erreicht-Quote, Gesprächszeit, Ergebnisse (Termine, Interessiert,
- * Wiedervorlagen, kein Interesse), KI-Bewertung (Ø Punkte, Freigaben, Zurückweisungen) – für einen Zeitraum und
- * wahlweise eine Kampagne. Grundlage sind die Dialer-Anrufe; Gespräche ohne Dialer (Test, Import) zählen über den
- * Agentennamen dazu. Reihenfolge: Termine, dann Interessiert, dann Ø Punkte.
+ * Bestenliste der Agenten („wer hat was erreicht“): je Agent Gespräche, Gesprächszeit, Ergebnisse und Leads (freigegebene Gespräche) –
+ * für einen Zeitraum (deutsche Tage, wie in der Gesprächsliste) und wahlweise eine Kampagne. Dazu, was den Wettbewerb ausmacht:
+ * Platz und Auf- oder Abstieg gegenüber dem Abschnitt davor, Serie, bester Tag, Leads heute, Stufe (Leads insgesamt), Bestwerte
+ * und die zuletzt erreichten Leads. Grundlage sind die Anrufe im eigenen Dialer und die Gespräche, die ein anderer Dialer meldet;
+ * Letztere werden in der Datenbank gezählt – so stimmt es auch bei sehr vielen Gesprächen und vielen Agenten.
+ * `campaign` filtert nach der Kampagne der Gespräche (Name), `campaignId` nach einer Kampagne des eigenen Dialers.
  */
-export type AgentReportPeriod = "heute" | "7" | "30" | "alle";
-export async function agentReport(db: Db, tenantId: number, input: { period?: AgentReportPeriod; campaignId?: number | null; now?: Date } = {}) {
+export type { AgentReportPeriod } from "../shared/agent-ranking";
+export async function agentReport(db: Db, tenantId: number, input: { period?: AgentReportPeriod; campaignId?: number | null; campaign?: string | null; now?: Date } = {}) {
   const now = input.now ?? new Date();
   const period: AgentReportPeriod = input.period ?? "30";
-  const from = period === "heute" ? new Date(now.getFullYear(), now.getMonth(), now.getDate()) : period === "7" ? new Date(now.getTime() - 7 * 86_400_000) : period === "30" ? new Date(now.getTime() - 30 * 86_400_000) : null;
-  const where = [eq(dialerCalls.tenantId, tenantId)];
+  const from = callPeriodRange({ period }, now).from;
+  const today = berlinDay(now); const offset = berlinOffsetMinutes(now);
+  const campaignRows = await db.select({ id: dialerCampaigns.id, name: dialerCampaigns.name }).from(dialerCampaigns).where(eq(dialerCampaigns.tenantId, tenantId)).orderBy(asc(dialerCampaigns.name));
+  // Kampagne: der Name aus den Gesprächen – trägt eine Kampagne des eigenen Dialers denselben Namen, zählen deren Anrufe mit
+  const campaign = input.campaign?.trim() || null; const campaignId = campaign ? null : input.campaignId ?? null;
+  const sameName = campaign ? campaignRows.filter((row) => row.name === campaign).map((row) => row.id) : [];
+  const count = (condition: SQL) => sql<number>`coalesce(sum(case when ${condition} then 1 else 0 end), 0)`;
+  const isLead = sql`${callRecords.decision} = 'freigegeben'`; const isScored = sql`${callRecords.score} is not null`;
+
+  // 1) Anrufe im eigenen Dialer – einzeln, dort stehen Ergebnis (Termin, Interesse …) und Gesprächszeit
+  const where: SQL[] = [eq(dialerCalls.tenantId, tenantId)];
   if (from) where.push(gte(dialerCalls.startedAt, from));
-  if (input.campaignId) where.push(eq(dialerCalls.campaignId, input.campaignId));
+  if (campaignId) where.push(eq(dialerCalls.campaignId, campaignId));
+  if (campaign) where.push(sameName.length ? or(eq(callRecords.campaign, campaign), inArray(dialerCalls.campaignId, sameName))! : eq(callRecords.campaign, campaign));
   const rows = await db.select({ call: dialerCalls, score: callRecords.score, verdict: callRecords.verdict, decision: callRecords.decision, agent: users.name })
     .from(dialerCalls).leftJoin(callRecords, eq(callRecords.id, dialerCalls.callRecordId)).leftJoin(users, eq(users.id, dialerCalls.agentUserId))
     .where(and(...where)).orderBy(desc(dialerCalls.startedAt)).limit(20_000);
-  // Gespräche ohne Dialer-Anruf (Test, Import): nur über den Namen zuordenbar, ohne Kampagnenfilter
-  const looseWhere = [eq(callRecords.tenantId, tenantId), isNull(dialerCalls.id)];
-  if (from) looseWhere.push(gte(callRecords.createdAt, from));
-  const loose = input.campaignId ? [] : await db.select({ record: callRecords }).from(callRecords).leftJoin(dialerCalls, eq(dialerCalls.callRecordId, callRecords.id)).where(and(...looseWhere)).limit(5000);
+  // 2) Gespräche ohne Anruf im eigenen Dialer (vom Dialer gemeldet, hochgeladen, Test): je Agent gezählt, nur über den Namen zuordenbar
+  const looseWhere: SQL[] = [eq(callRecords.tenantId, tenantId), isNull(dialerCalls.id)];
+  if (from) looseWhere.push(gte(callRecords.startedAt, from));
+  if (campaign) looseWhere.push(eq(callRecords.campaign, campaign));
+  const loose = campaignId ? [] : await db.select({
+    name: callRecords.agentName, calls: sql<number>`count(*)`, talkSeconds: sql<number>`coalesce(sum(${callRecords.durationSeconds}), 0)`, evaluated: count(isScored), scoreSum: sql<number>`coalesce(sum(${callRecords.score}), 0)`,
+    approved: count(isLead), review: count(sql`${callRecords.decision} = 'pruefen'`), rejected: count(sql`${callRecords.decision} = 'zurueckgewiesen'`),
+    verkaufbar: count(sql`${callRecords.verdict} = 'verkaufbar'`), nachfassen: count(sql`${callRecords.verdict} = 'nachfassen'`), nichtVerkaufbar: count(sql`${callRecords.verdict} = 'nicht_verkaufbar'`),
+    lastCallAt: sql<Date | null>`max(${callRecords.startedAt})`.mapWith(callRecords.startedAt),
+  }).from(callRecords).leftJoin(dialerCalls, eq(dialerCalls.callRecordId, callRecords.id)).where(and(...looseWhere)).groupBy(callRecords.agentName);
 
-  type Bucket = { userId: number | null; name: string; calls: number; reached: number; talkSeconds: number; dispositions: Record<string, number>; evaluated: number; scoreSum: number; approved: number; review: number; rejected: number; verkaufbar: number; nachfassen: number; nichtVerkaufbar: number; lastCallAt: Date | null };
-  const buckets = new Map<string, Bucket>();
-  const bucketFor = (userId: number | null, name: string) => { const key = userId ? `u${userId}` : `n:${name}`; let bucket = buckets.get(key); if (!bucket) { bucket = { userId, name, calls: 0, reached: 0, talkSeconds: 0, dispositions: {}, evaluated: 0, scoreSum: 0, approved: 0, review: 0, rejected: 0, verkaufbar: 0, nachfassen: 0, nichtVerkaufbar: 0, lastCallAt: null }; buckets.set(key, bucket); } return bucket; };
-  const countRecord = (bucket: Bucket, record: { score: number | null; verdict: string | null; decision: string | null }) => {
-    if (typeof record.score === "number") { bucket.evaluated += 1; bucket.scoreSum += record.score; }
-    if (record.decision === "freigegeben") bucket.approved += 1; else if (record.decision === "pruefen") bucket.review += 1; else if (record.decision === "zurueckgewiesen") bucket.rejected += 1;
-    if (record.verdict === "verkaufbar") bucket.verkaufbar += 1; else if (record.verdict === "nachfassen") bucket.nachfassen += 1; else if (record.verdict === "nicht_verkaufbar") bucket.nichtVerkaufbar += 1;
-  };
+  const buckets = new Map<string, AgentBucket>();
+  const bucketFor = (userId: number | null, name: string) => { const key = userId ? `u${userId}` : `n:${name}`; let bucket = buckets.get(key); if (!bucket) { bucket = emptyBucket(userId, name); buckets.set(key, bucket); } return bucket; };
+  const later = (a: Date | string | null, b: Date | string | null) => (!a ? b : !b ? a : new Date(a) >= new Date(b) ? a : b);
   for (const row of rows) {
-    const bucket = bucketFor(row.call.agentUserId ?? null, row.agent ?? "Ohne Agent");
+    const bucket = bucketFor(row.call.agentUserId ?? null, row.agent ?? NO_AGENT);
     bucket.calls += 1;
     if (row.call.status === "beendet") bucket.reached += 1;
     bucket.talkSeconds += row.call.talkSeconds ?? 0;
     if (row.call.disposition) bucket.dispositions[row.call.disposition] = (bucket.dispositions[row.call.disposition] ?? 0) + 1;
-    if (!bucket.lastCallAt || row.call.startedAt > bucket.lastCallAt) bucket.lastCallAt = row.call.startedAt;
-    countRecord(bucket, { score: row.score, verdict: row.verdict, decision: row.decision });
+    bucket.lastCallAt = later(bucket.lastCallAt, row.call.startedAt);
+    if (typeof row.score === "number") { bucket.evaluated += 1; bucket.scoreSum += row.score; }
+    if (row.decision === "freigegeben") bucket.approved += 1; else if (row.decision === "pruefen") bucket.review += 1; else if (row.decision === "zurueckgewiesen") bucket.rejected += 1;
+    if (row.verdict === "verkaufbar") bucket.verkaufbar += 1; else if (row.verdict === "nachfassen") bucket.nachfassen += 1; else if (row.verdict === "nicht_verkaufbar") bucket.nichtVerkaufbar += 1;
   }
-  for (const { record } of loose) {
-    const named = Array.from(buckets.values()).find((bucket) => bucket.name === (record.agentName ?? ""));
-    const bucket = named ?? bucketFor(null, record.agentName ?? "Ohne Agent");
-    bucket.calls += 1; bucket.reached += 1; bucket.talkSeconds += record.durationSeconds ?? 0;
-    if (!bucket.lastCallAt || (record.startedAt && record.startedAt > bucket.lastCallAt)) bucket.lastCallAt = record.startedAt ?? bucket.lastCallAt;
-    countRecord(bucket, { score: record.score, verdict: record.verdict, decision: record.decision });
+  const nameOf = (value: string | null) => value?.trim() || NO_AGENT;
+  for (const row of loose) {
+    const name = nameOf(row.name); const named = Array.from(buckets.values()).find((bucket) => nameKey(bucket.name) === nameKey(name) && isNoAgent(bucket.name) === isNoAgent(name));
+    const bucket = named ?? bucketFor(null, name); const calls = Number(row.calls) || 0;
+    bucket.calls += calls; bucket.reached += calls; bucket.talkSeconds += Number(row.talkSeconds) || 0;
+    bucket.evaluated += Number(row.evaluated) || 0; bucket.scoreSum += Number(row.scoreSum) || 0;
+    bucket.approved += Number(row.approved) || 0; bucket.review += Number(row.review) || 0; bucket.rejected += Number(row.rejected) || 0;
+    bucket.verkaufbar += Number(row.verkaufbar) || 0; bucket.nachfassen += Number(row.nachfassen) || 0; bucket.nichtVerkaufbar += Number(row.nichtVerkaufbar) || 0;
+    const last = row.lastCallAt && !Number.isNaN(new Date(row.lastCallAt).getTime()) ? new Date(row.lastCallAt) : null; bucket.lastCallAt = later(bucket.lastCallAt, last);
   }
-  const pct = (part: number, total: number) => total ? Math.round((part / total) * 100) : null;
-  const agents = Array.from(buckets.values()).map((bucket) => {
-    const appointments = bucket.dispositions.verkauft ?? 0; const interested = bucket.dispositions.interessiert ?? 0;
-    return {
-      userId: bucket.userId, name: bucket.name, initials: bucket.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
-      calls: bucket.calls, reached: bucket.reached, reachRate: pct(bucket.reached, bucket.calls), talkSeconds: bucket.talkSeconds, averageTalkSeconds: bucket.reached ? Math.round(bucket.talkSeconds / bucket.reached) : null,
-      appointments, interested, followUps: bucket.dispositions.wiedervorlage ?? 0, noInterest: bucket.dispositions.kein_interesse ?? 0, notReached: bucket.dispositions.nicht_erreicht ?? 0, wrongNumber: bucket.dispositions.falsche_nummer ?? 0, doNotCall: bucket.dispositions.nicht_anrufen ?? 0,
-      successRate: pct(appointments + interested, bucket.reached), evaluated: bucket.evaluated, averageScore: bucket.evaluated ? Math.round(bucket.scoreSum / bucket.evaluated) : null,
-      approved: bucket.approved, review: bucket.review, rejected: bucket.rejected, verkaufbar: bucket.verkaufbar, nachfassen: bucket.nachfassen, nichtVerkaufbar: bucket.nichtVerkaufbar, lastCallAt: bucket.lastCallAt,
-    };
-  }).sort((a, b) => {
-    // Bester Agent oben: „Ohne Agent“ ganz nach unten; dann meiste grüne (freigegeben), höchster Grün-Anteil, Termine, Interessenten, meiste Anrufe
-    const noAgent = (agent: { userId: number | null; name: string }) => (agent.userId === null && /^ohne agent$/i.test(agent.name) ? 1 : 0);
-    const greenShare = (agent: { approved: number; evaluated: number }) => (agent.evaluated ? agent.approved / agent.evaluated : -1);
-    return noAgent(a) - noAgent(b) || b.approved - a.approved || greenShare(b) - greenShare(a) || b.appointments - a.appointments || b.interested - a.interested || b.calls - a.calls || (b.averageScore ?? -1) - (a.averageScore ?? -1);
-  });
-  const sum = (key: "calls" | "reached" | "talkSeconds" | "appointments" | "interested" | "evaluated" | "approved" | "rejected" | "review") => agents.reduce((acc, agent) => acc + agent[key], 0);
-  const scored = agents.filter((agent) => agent.averageScore !== null);
-  const totals = { agents: agents.length, calls: sum("calls"), reached: sum("reached"), reachRate: pct(sum("reached"), sum("calls")), talkSeconds: sum("talkSeconds"), appointments: sum("appointments"), interested: sum("interested"), successRate: pct(sum("appointments") + sum("interested"), sum("reached")), evaluated: sum("evaluated"), approved: sum("approved"), review: sum("review"), rejected: sum("rejected"), averageScore: scored.length ? Math.round(scored.reduce((acc, agent) => acc + (agent.averageScore ?? 0) * agent.evaluated, 0) / Math.max(1, sum("evaluated"))) : null };
-  const campaignRows = await db.select({ id: dialerCampaigns.id, name: dialerCampaigns.name }).from(dialerCampaigns).where(eq(dialerCampaigns.tenantId, tenantId)).orderBy(asc(dialerCampaigns.name));
-  return { period, from, now, agents, totals, campaigns: campaignRows };
+
+  // 3) Was den Wettbewerb ausmacht – aus den Gesprächen gezählt (dort steht, was freigegeben wurde)
+  const scope: SQL[] = [eq(callRecords.tenantId, tenantId)];
+  if (campaign) scope.push(eq(callRecords.campaign, campaign));
+  if (campaignId) scope.push(inArray(callRecords.id, db.select({ id: dialerCalls.callRecordId }).from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), eq(dialerCalls.campaignId, campaignId)))));
+  // je Agent und Tag (deutsche Zeit): für Serie, „heute“, den besten Tag und den Abschnitt davor. Das Fenster reicht weiter zurück als der Zeitraum.
+  const todayStart = callPeriodRange({ period: "heute" }, now).from ?? now; const since = new Date(todayStart.getTime() - ((period === "alle" ? 366 : 62) - 1) * 86_400_000);
+  const day = sql<string>`date_format(date_add(${callRecords.startedAt}, interval ${sql.raw(String(offset))} minute), '%Y-%m-%d')`.as("tag");
+  const dayRows = await db.select({ name: callRecords.agentName, day, calls: sql<number>`count(*)`, approved: count(isLead), evaluated: count(isScored) }).from(callRecords).where(and(...scope, gte(callRecords.startedAt, since))).groupBy(callRecords.agentName, day);
+  const days = dayRows.map((row) => ({ name: nameOf(row.name), day: String(row.day), calls: Number(row.calls) || 0, approved: Number(row.approved) || 0, evaluated: Number(row.evaluated) || 0 }));
+  // Leads insgesamt je Agent – daraus die Stufe (über alle Kampagnen: die Stufe gehört zum Agenten, nicht zur Kampagne)
+  const allTime = await db.select({ name: callRecords.agentName, approved: sql<number>`count(*)` }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.decision, "freigegeben"))).groupBy(callRecords.agentName);
+  const wins = await db.select({ callId: callRecords.id, name: callRecords.agentName, at: callRecords.startedAt, campaign: callRecords.campaign }).from(callRecords).where(and(...scope, eq(callRecords.decision, "freigegeben"), ...(from ? [gte(callRecords.startedAt, from)] : []))).orderBy(desc(callRecords.startedAt), desc(callRecords.id)).limit(8);
+
+  const previous = previousSpan(period, today, days);
+  const report = finishAgentReport({ buckets: Array.from(buckets.values()), days, allTime: allTime.map((row) => ({ name: nameOf(row.name), approved: Number(row.approved) || 0 })), previous, today, fromDay: from ? berlinDay(from) : null });
+  const recentWins: AgentWin[] = wins.map((row) => ({ callId: row.callId, name: row.name?.trim() || null, at: row.at ?? null, campaign: row.campaign ?? null }));
+  return { period, from, now, today, campaign, previous, ...report, recentWins, campaigns: campaignRows };
+}
+
+/**
+ * Namen der Agenten – für Vorschläge beim Zuordnen und für die Profilbilder (Name → Benutzer). Leicht: liest nur Namen, zählt nichts.
+ * Aus den Gesprächen kommen die Agenten der letzten 90 Tage (die Abfrage bleibt so auch bei sehr vielen Gesprächen im Index), aus dem eigenen Dialer alle.
+ */
+export const AGENT_NAME_DAYS = 90;
+export async function agentNames(db: Db, tenantId: number, now: Date = new Date()): Promise<Array<{ name: string; userId: number | null }>> {
+  const members = await db.selectDistinct({ userId: dialerCalls.agentUserId, name: users.name }).from(dialerCalls).innerJoin(users, eq(users.id, dialerCalls.agentUserId)).where(eq(dialerCalls.tenantId, tenantId));
+  const fromCalls = await db.select({ name: callRecords.agentName }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), gte(callRecords.startedAt, new Date(now.getTime() - AGENT_NAME_DAYS * 86_400_000)))).groupBy(callRecords.agentName);
+  const map = new Map<string, { name: string; userId: number | null }>();
+  for (const row of members) { const name = row.name?.trim(); if (name && !isNoAgent(name)) map.set(name, { name, userId: row.userId }); }
+  for (const row of fromCalls) { const name = row.name?.trim(); if (name && !isNoAgent(name) && !map.has(name)) map.set(name, { name, userId: null }); }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "de"));
 }
 
 /** Teamleiter steuert einen Agenten: Pause, wieder bereit, abmelden (nicht während eines Gesprächs), Kampagne wechseln. */

@@ -4882,6 +4882,87 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     }
   }, 90000);
 
+  it("63zx. Bestenliste der Agenten: Plätze nach Leads, Kampagne der Gespräche als Filter, Serie, bester Tag, Auf- und Abstieg, Stufe, zuletzt erreichte Leads – in der Datenbank gezählt, Tage in deutscher Zeit; Namen der Agenten als leichte Abfrage", async () => {
+    const { callRecords: callsTable } = await import("../drizzle/schema"); const { agentReport } = await import("./dialer"); const { callPeriodRange } = await import("../shared/call-period"); const { berlinDay, shiftDay } = await import("../shared/agent-ranking");
+    const tenantId = S.tenantId; const dayMs = 86_400_000; const hour = 3_600_000;
+    const T0 = callPeriodRange({ period: "heute" }, new Date()).from!; const today = berlinDay(new Date(T0.getTime() + 12 * hour)); // heute, 0 Uhr deutscher Zeit
+    const CAMPAIGN = "Bestenliste-Test"; const OTHER = "Bestenliste-Andere";
+    let seq = 0;
+    const mk = async (agentName: string | null, daysAgo: number, atHour: number, decision: "freigegeben" | "pruefen" | "zurueckgewiesen", campaign = CAMPAIGN) => { seq += 1; return Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: `bl-${seq}`, phone: "+49 30 7788", agentName, campaign, startedAt: new Date(T0.getTime() - daysAgo * dayMs + atHour * hour), durationSeconds: 100, consent: true, status: "bewertet", score: decision === "freigegeben" ? 85 : decision === "pruefen" ? 55 : 15, verdict: decision === "freigegeben" ? "verkaufbar" : decision === "pruefen" ? "nachfassen" : "nicht_verkaufbar", decision, decidedBy: "automatisch" }))[0].insertId); };
+    // Ada: heute zwei Leads (und ein zurückgewiesenes), gestern und vorgestern je einer, davor ein Tag ohne Lead – und zwei Leads im Abschnitt davor
+    await mk("BL Ada", 0, 9, "freigegeben"); const adaLast = await mk("BL Ada", 0, 10, "freigegeben"); await mk("BL Ada", 0, 10.5, "zurueckgewiesen"); await mk("BL Ada", 1, 10, "freigegeben"); await mk("BL Ada", 2, 10, "freigegeben"); await mk("BL Ada", 3, 10, "pruefen"); await mk("BL Ada", 10, 10, "freigegeben"); await mk("BL Ada", 10, 11, "freigegeben");
+    // Ben: heute noch ohne Lead, gestern drei (bester Tag), davor einer
+    await mk("BL Ben", 0, 9.5, "pruefen"); await mk("BL Ben", 1, 9, "freigegeben"); await mk("BL Ben", 1, 10, "freigegeben"); await mk("BL Ben", 1, 11, "freigegeben"); await mk("BL Ben", 8, 10, "freigegeben");
+    // Cem: neu dabei – ein Lead heute um 0:30 Uhr deutscher Zeit (nach Weltzeit noch der Vortag)
+    const cemCall = await mk("BL Cem", 0, 0.5, "freigegeben");
+    // Dua: nur im Abschnitt davor; Eve: ein Lead gestern um 23:30 Uhr deutscher Zeit (zählt für gestern)
+    await mk("BL Dua", 9, 9, "freigegeben"); await mk("BL Dua", 9, 10, "freigegeben"); await mk("BL Dua", 9, 11, "freigegeben"); await mk("BL Eve", 1, 23.5, "freigegeben");
+    // ohne Agent: zählt für niemanden; und ein Lead von Ada in einer anderen Kampagne
+    const nobodyCall = await mk(null, 0, 12, "freigegeben"); await mk("BL Ada", 0, 13, "freigegeben", OTHER);
+    await mk("BL Alt", 120, 10, "freigegeben"); // vor vier Monaten zuletzt telefoniert: nur noch in „Gesamt“ und nicht mehr unter den Vorschlägen
+    try {
+      const report = await owner.leadops.dialerAgentReport({ period: "7", campaign: CAMPAIGN });
+      expect(report.campaign).toBe(CAMPAIGN); expect(report.today).toBe(today); expect(report.previous).toEqual({ fromDay: shiftDay(today, -13), beforeDay: shiftDay(today, -6) });
+      const of = (name: string, source = report) => source.agents.find((agent) => agent.name === name)!;
+      // Plätze: meiste Leads zuerst; „Ohne Agent“ ohne Platz ganz unten
+      expect(report.agents.map((agent) => [agent.name, agent.rank, agent.approved])).toEqual([["BL Ada", 1, 4], ["BL Ben", 2, 3], ["BL Cem", 3, 1], ["BL Eve", 4, 1], ["Ohne Agent", null, 1]]);
+      expect(of("BL Ada")).toMatchObject({ userId: null, calls: 6, reached: 6, talkSeconds: 600, evaluated: 6, review: 1, rejected: 1, greenRate: 67, averageScore: Math.round((4 * 85 + 55 + 15) / 6), verkaufbar: 4, nachfassen: 1, nichtVerkaufbar: 1 });
+      expect(new Date(of("BL Ada").lastCallAt!).getTime()).toBe(T0.getTime() + 10.5 * hour);
+      // Abstand nach vorn
+      expect(of("BL Ada").gap).toBeNull(); expect(of("BL Ben").gap).toEqual({ rank: 1, name: "BL Ada", missing: 1 }); expect(of("BL Cem").gap).toEqual({ rank: 2, name: "BL Ben", missing: 2 }); expect(of("BL Eve").gap).toEqual({ rank: 3, name: "BL Cem", missing: 0 });
+      // Tage in deutscher Zeit: 0:30 Uhr zählt heute, 23:30 Uhr gestern
+      expect([of("BL Ada").approvedToday, of("BL Ben").approvedToday, of("BL Cem").approvedToday, of("BL Eve").approvedToday]).toEqual([2, 0, 1, 0]);
+      expect(of("BL Eve").bestDay).toEqual({ day: shiftDay(today, -1), approved: 1 }); expect(of("BL Cem").bestDay).toEqual({ day: today, approved: 1 });
+      // Serie: Ada heute, gestern, vorgestern – der Tag davor hatte Gespräche ohne Lead. Ben: heute läuft noch, gestern und der Arbeitstag davor zählen
+      expect([of("BL Ada").streak, of("BL Ben").streak, of("BL Cem").streak, of("BL Eve").streak]).toEqual([3, 2, 1, 1]);
+      expect(of("BL Ada").bestDay).toEqual({ day: today, approved: 2 }); expect(of("BL Ben").bestDay).toEqual({ day: shiftDay(today, -1), approved: 3 });
+      // Auf- und Abstieg gegenüber den 7 Tagen davor (dort: Dua 3, Ada 2, Ben 1) – Cem und Eve sind neu
+      expect([of("BL Ada").previousRank, of("BL Ada").rankChange, of("BL Ada").isNew]).toEqual([2, 1, false]); expect([of("BL Ben").previousRank, of("BL Ben").rankChange]).toEqual([3, 1]);
+      expect([of("BL Cem").previousRank, of("BL Cem").rankChange, of("BL Cem").isNew]).toEqual([null, null, true]); expect(of("BL Eve").isNew).toBe(true); expect(of("Ohne Agent").isNew).toBe(false);
+      // Stufe aus den Leads insgesamt – über alle Kampagnen
+      expect([of("BL Ada").approvedAllTime, of("BL Ada").level.name, of("BL Ada").level.next]).toEqual([7, "Neuling", { name: "Talent", at: 10, missing: 3 }]); expect(of("BL Ben").approvedAllTime).toBe(4);
+      // Summen der Kampagne – „Ohne Agent“ zählt mit; heute; der Abschnitt davor
+      expect(report.totals).toMatchObject({ agents: 5, calls: 13, approved: 10, review: 2, rejected: 1, evaluated: 13, talkSeconds: 1300, approvedToday: 4, callsToday: 6, approvedBefore: 6 });
+      // Bestwerte
+      const award = (key: string) => report.awards.find((item) => item.key === key);
+      expect(award("quote")).toMatchObject({ name: "BL Ada", value: 67, extra: 6 }); expect(award("serie")).toMatchObject({ name: "BL Ada", value: 3 }); expect(award("tag")).toMatchObject({ name: "BL Ben", value: 3, extra: shiftDay(today, -1) });
+      expect(award("aufsteiger")).toMatchObject({ name: "BL Ada", value: 1, extra: 2 }); expect(award("gespraeche")).toMatchObject({ name: "BL Ada", value: 6 }); expect(award("telefon")).toMatchObject({ name: "BL Ada", value: 600 }); expect(award("termine")).toBeUndefined();
+      // zuletzt erreicht: nur Leads der Kampagne im Zeitraum, der jüngste zuerst, höchstens acht
+      expect(report.recentWins.length).toBe(8); expect(report.recentWins.slice(0, 4).map((win) => [win.callId, win.name])).toEqual([[nobodyCall, null], [adaLast, "BL Ada"], [adaLast - 1, "BL Ada"], [cemCall, "BL Cem"]]);
+      expect(report.recentWins.every((win) => win.campaign === CAMPAIGN)).toBe(true); for (let index = 1; index < report.recentWins.length; index += 1) expect(new Date(report.recentWins[index - 1].at!).getTime()).toBeGreaterThanOrEqual(new Date(report.recentWins[index].at!).getTime());
+
+      // 30 Tage: Dua ist dabei; verglichen wird mit den 30 Tagen davor – dort war niemand, also sind alle neu
+      const month = await owner.leadops.dialerAgentReport({ period: "30", campaign: CAMPAIGN });
+      expect(month.agents.filter((agent) => agent.rank !== null).map((agent) => [agent.name, agent.rank, agent.approved])).toEqual([["BL Ada", 1, 6], ["BL Ben", 2, 4], ["BL Dua", 3, 3], ["BL Cem", 4, 1], ["BL Eve", 5, 1]]);
+      expect(month.previous).toEqual({ fromDay: shiftDay(today, -59), beforeDay: shiftDay(today, -29) }); expect(month.totals.approvedBefore).toBe(0); expect(month.agents.filter((agent) => agent.rank !== null).every((agent) => agent.isNew && agent.rankChange === null)).toBe(true);
+      // Heute: verglichen wird mit dem letzten Tag mit Gesprächen (gestern)
+      const day = await owner.leadops.dialerAgentReport({ period: "heute", campaign: CAMPAIGN });
+      expect(day.agents.map((agent) => [agent.name, agent.rank, agent.approved])).toEqual([["BL Ada", 1, 2], ["BL Cem", 2, 1], ["BL Ben", 3, 0], ["Ohne Agent", null, 1]]);
+      expect(day.previous).toEqual({ fromDay: shiftDay(today, -1), beforeDay: today }); expect(day.totals.approvedBefore).toBe(5); expect(of("BL Ada", day)).toMatchObject({ previousRank: 2, rankChange: 1, isNew: false }); expect(of("BL Cem", day).isNew).toBe(true);
+      // Gesamt: kein Vergleich
+      const total = await owner.leadops.dialerAgentReport({ period: "alle", campaign: CAMPAIGN });
+      expect(total.previous).toBeNull(); expect(total.totals.approvedBefore).toBeNull(); expect(total.agents.every((agent) => !agent.isNew && agent.rankChange === null && agent.previousRank === null)).toBe(true); expect(total.awards.some((item) => item.key === "aufsteiger")).toBe(false); expect(of("BL Alt", total)).toMatchObject({ approved: 1, streak: 0, approvedToday: 0 }); expect(month.agents.some((agent) => agent.name === "BL Alt")).toBe(false);
+      // ohne Kampagne zählt Adas Lead aus der anderen Kampagne mit; eine Kampagne ohne Gespräche ist leer
+      const every = await owner.leadops.dialerAgentReport({ period: "7" }); expect(every.campaign).toBeNull(); expect(of("BL Ada", every)).toMatchObject({ calls: 7, approved: 5, approvedToday: 3 }); expect(every.totals.calls).toBeGreaterThan(report.totals.calls);
+      const other = await owner.leadops.dialerAgentReport({ period: "7", campaign: OTHER }); expect(other.agents.map((agent) => [agent.name, agent.rank, agent.approved, agent.approvedAllTime])).toEqual([["BL Ada", 1, 1, 7]]); expect(other.recentWins.map((win) => win.campaign)).toEqual([OTHER]);
+      const empty = await owner.leadops.dialerAgentReport({ period: "7", campaign: "Gibt es nicht" }); expect(empty.agents).toEqual([]); expect(empty.recentWins).toEqual([]); expect(empty.totals).toMatchObject({ agents: 0, calls: 0, approved: 0, approvedToday: 0 });
+      // am nächsten Tag: Bens heutiger Tag blieb ohne Lead → seine Serie ist vorbei; Adas läuft weiter
+      const tomorrow = await agentReport(db, tenantId, { period: "7", campaign: CAMPAIGN, now: new Date(T0.getTime() + dayMs + 15 * hour) });
+      expect(tomorrow.today).toBe(shiftDay(today, 1)); expect([of("BL Ada", tomorrow).streak, of("BL Ben", tomorrow).streak, of("BL Ada", tomorrow).approvedToday]).toEqual([3, 0, 0]);
+
+      // Namen der Agenten: leichte Abfrage, sortiert, ohne „Ohne Agent“ und ohne Agenten, die seit über 90 Tagen nicht telefoniert haben – der eigene Dialer bringt den Benutzer mit
+      const names = await owner.leadops.callAgentNames();
+      expect(names.filter((item) => item.name.startsWith("BL "))).toEqual(["BL Ada", "BL Ben", "BL Cem", "BL Dua", "BL Eve"].map((name) => ({ name, userId: null })));
+      expect(names.map((item) => item.name)).toEqual([...names.map((item) => item.name)].sort((a, b) => a.localeCompare(b, "de"))); expect(names.some((item) => /^ohne agent$/i.test(item.name) || !item.name.trim())).toBe(false); expect(names.some((item) => item.userId === ownerUserId)).toBe(true);
+      await expect(invitee.leadops.callAgentNames()).rejects.toThrow("vorbehalten");
+      // die Abfragen laufen über eigene Indizes (Migration 0113)
+      const indexNames = async (table: string) => new Set(((await db.execute(sql.raw(`show index from \`${table}\``))) as unknown as [Array<{ Key_name: string }>])[0].map((row) => row.Key_name));
+      const callIndexes = await indexNames("callRecords"); expect(callIndexes.has("call_records_tenant_started_idx")).toBe(true); expect(callIndexes.has("call_records_tenant_decision_idx")).toBe(true); expect((await indexNames("dialerCalls")).has("dialer_calls_record_idx")).toBe(true);
+    } finally {
+      await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), inArray(callsTable.campaign, [CAMPAIGN, OTHER])));
+    }
+  }, 30000);
+
   it("63o. Kampagnen zusammenführen: Kontakte mit Stand, Verlauf und Entwürfen ins Ziel – gleicher Schritt, Doppelte nur einmal (der weitere), Quelle ins Archiv, Pipeline/Posteingang/Gesendet zeigen aufs Ziel, Wartende laufen im Ziel weiter", async () => {
     const { starterBlocks } = await import("../shared/email-design"); const { activityLog } = await import("../drizzle/schema"); const { audienceLists } = await import("../shared/email-campaigns");
     const starter = await owner.leadops.emailCampaignStarter(); const window = { enabled: false, weekdays: [1, 2, 3, 4, 5], from: "07:30", to: "17:00", timezone: "Europe/Berlin" };

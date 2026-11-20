@@ -210,7 +210,8 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
     window.history.replaceState(null, "", "/?page=Gespräche");
     const { view } = mount();
     await settle(400);
-    const before = view.container.querySelectorAll(".flux-table tbody tr.gq-call").length; expect(before).toBeGreaterThan(1);
+    const before = getStore().tables.callRecords.length; expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBeGreaterThan(1);
+    const idsBefore = getStore().tables.callRecords.map((row) => row.id);
     const box = view.container.querySelector<HTMLInputElement>(".flux-table tbody tr.gq-call input[type=checkbox]")!;
     fireEvent.click(box); await settle(100);
     const button = Array.from(view.container.querySelectorAll<HTMLButtonElement>(".cq-bulk button")).find((node) => /Ausgewählte löschen/.test(node.textContent ?? ""))!;
@@ -218,7 +219,10 @@ describe("Gespräche – Aufnahmen per Link testen (Prototyp)", () => {
     const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.trim() === "Löschen");
     if (confirm) { await act(async () => { fireEvent.click(confirm); }); }
     await settle(500);
-    expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBe(before - 1);
+    expect(getStore().tables.callRecords.length).toBe(before - 1); // genau eines ist weg
+    const idsAfter = new Set(getStore().tables.callRecords.map((row) => row.id)); expect(idsBefore.filter((id) => !idsAfter.has(id)).length).toBe(1);
+    expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBe(200); // die Liste rückt nach
+    expect(view.container.querySelector(".gq-more span")?.textContent).toBe(`Die Liste zeigt die neuesten 200 von ${before - 1} Gesprächen.`);
   });
 });
 
@@ -512,7 +516,7 @@ describe("Gespräche – Liste: Zähler als Filter, Zeilen als ruhiges Protokoll
 
   it("zeigt Leiste und Zähler; ein Klick auf einen Zähler filtert die Liste – der Verlauf ist weg", async () => {
     const view = await open(); const root = view.container;
-    const total = callRows(root).length; expect(total).toBeGreaterThan(5);
+    const total = getStore().tables.callRecords.length; expect(total).toBeGreaterThan(400); expect(callRows(root).length).toBe(200); // die Liste beginnt mit den neuesten 200
     // oben dominiert nichts: kein Feld über der Liste, kein Knopf „Verlauf“ – die Leiste nennt die Summe in Worten
     expect(root.querySelector(".gq-stage")).toBeNull(); expect(root.querySelector(".gq-wave-toggle")).toBeNull(); expect(root.querySelector(".gq-wave")).toBeNull(); expect(root.querySelector(".gq-slot")).toBeNull();
     expect(Array.from(root.querySelectorAll(".gq-toolbar button")).some((node) => /Verlauf/.test(node.textContent ?? ""))).toBe(false);
@@ -525,12 +529,20 @@ describe("Gespräche – Liste: Zähler als Filter, Zeilen als ruhiges Protokoll
     // Zähler „Zur Prüfung“ → nur diese Gespräche; die Zähler zählen weiter alle
     await act(async () => { fireEvent.click(tally(root, "Zur Prüfung")); }); await settle(400);
     expect(tally(root, "Zur Prüfung").getAttribute("aria-pressed")).toBe("true");
-    expect(callRows(root).length).toBe(counts[1]); expect(callRows(root).every((row) => /^Zur Prüfung/.test(row.querySelector(".gq-pill")?.textContent ?? ""))).toBe(true);
+    expect(callRows(root).length).toBe(Math.min(200, counts[1])); expect(callRows(root).every((row) => /^Zur Prüfung/.test(row.querySelector(".gq-pill")?.textContent ?? ""))).toBe(true);
+    if (counts[1] > 200) expect(root.querySelector(".gq-more span")?.textContent).toBe(`Die Liste zeigt die neuesten 200 von ${counts[1]} Gesprächen.`); else expect(root.querySelector(".gq-more")).toBeNull();
     expect(["Freigegeben", "Zur Prüfung", "Zurückgewiesen", "Offen"].map((label) => Number(tally(root, label).querySelector("strong")?.textContent))).toEqual(counts);
     expect(root.querySelector(".gq-result-line")?.textContent).toContain("„Zur Prüfung“");
     // derselbe Zähler noch einmal hebt den Filter auf
     await act(async () => { fireEvent.click(tally(root, "Zur Prüfung")); }); await settle(400);
-    expect(callRows(root).length).toBe(total); expect(root.querySelector(".gq-result-line")).toBeNull();
+    expect(callRows(root).length).toBe(200); expect(root.querySelector(".gq-result-line")).toBeNull();
+    // mehr als 200 Gespräche: die Liste sagt es und lädt auf Wunsch weitere – ein Filter beginnt wieder bei 200
+    const more = () => root.querySelector<HTMLElement>(".gq-more")!; expect(more().getAttribute("role")).toBe("status");
+    expect(more().querySelector("span")?.textContent).toBe(`Die Liste zeigt die neuesten 200 von ${total} Gesprächen.`); expect(more().querySelector("button")?.textContent).toBe("Weitere 200 zeigen");
+    await act(async () => { fireEvent.click(more().querySelector("button")!); }); await settle(900);
+    expect(callRows(root).length).toBe(400); expect(more().querySelector("span")?.textContent).toBe(`Die Liste zeigt die neuesten 400 von ${total} Gesprächen.`);
+    await act(async () => { fireEvent.click(tally(root, "Freigegeben")); }); await settle(600);
+    expect(callRows(root).length).toBe(Math.min(200, counts[0])); expect(callRows(root).every((row) => /^Freigegeben/.test(row.querySelector(".gq-pill")?.textContent ?? ""))).toBe(true);
   });
 
   it("Smileys sind matte Kugeln mit eingeprägtem Gesicht: in der Liste für sich, groß im Gespräch im feinen Ring – jede Kugel bringt ihre eigenen Verläufe mit", async () => {
@@ -600,7 +612,7 @@ describe("Gespräche – Liste: Zähler als Filter, Zeilen als ruhiges Protokoll
   });
 
   it("Agent wählen: eine Auswahl mit Suche statt je Agent ein Schild – Liste und Zahlen gelten dann für ihn", async () => {
-    const view = await open(); const root = view.container; const total = callRows(root).length;
+    const view = await open(); const root = view.container; const total = getStore().tables.callRecords.length;
     const button = () => root.querySelector<HTMLButtonElement>(".gq-pick-button")!; const pop = () => root.querySelector<HTMLElement>(".gq-pick-pop"); const options = () => Array.from(root.querySelectorAll<HTMLElement>(".gq-pick-option"));
     expect(root.querySelector(".gq-agent-chip")).toBeNull(); // keine Reihe von Schildern mehr – auch 80 Agenten brauchen nur eine Zeile
     const agents = new Set(getStore().tables.callRecords.map((item: any) => item.agentName).filter(Boolean)).size; expect(agents).toBeGreaterThan(3);
@@ -633,7 +645,7 @@ describe("Gespräche – Liste: Zähler als Filter, Zeilen als ruhiges Protokoll
     expect(button().querySelector("b")?.textContent).toBe(listed[0].name); expect(callRows(root).length).toBe(listed[0].count);
     const clear = root.querySelector<HTMLButtonElement>(".gq-pick-clear")!; expect(clear.getAttribute("aria-label")).toBe("Filter aufheben – wieder alle Agenten zeigen");
     await act(async () => { fireEvent.click(clear); }); await settle(500);
-    expect(callRows(root).length).toBe(total); expect(button().querySelector("b")?.textContent).toBe("Alle Agenten"); expect(root.querySelector(".gq-pick-clear")).toBeNull();
+    expect(callRows(root).length).toBe(Math.min(200, total)); expect(button().querySelector("b")?.textContent).toBe("Alle Agenten"); expect(root.querySelector(".gq-pick-clear")).toBeNull();
     // ein Klick daneben schließt die Auswahl
     await act(async () => { fireEvent.click(button()); }); await settle(100); expect(pop()).toBeTruthy();
     await act(async () => { fireEvent.mouseDown(root.querySelector(".gq-table")!); }); await settle(50); expect(pop()).toBeNull();
@@ -823,17 +835,15 @@ describe("Gespräche – Agenten und der untere Teil eines Gesprächs", () => {
   beforeEach(() => { cleanup(); resetStore(); }); afterEach(() => { cleanup(); resetStore(); });
   const click = async (node: Element | null | undefined, wait = 400) => { expect(node).toBeTruthy(); await act(async () => { fireEvent.click(node!); }); await settle(wait); };
 
-  it("Agenten: Kennzahlen, Bestwerte und je Agent eine Karte – „Gespräche“ führt zur Liste dieses Agenten", async () => {
+  it("Agenten: der Reiter zeigt die Bestenliste – „Gespräche“ in einer Zeile führt zur Liste dieses Agenten (Einzelheiten: leaderboard.test.tsx)", async () => {
     window.history.replaceState(null, "", "/?page=Gespräche"); const { view } = mount(); await settle(500); const root = view.container;
-    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".people-header-actions button")).find((node) => /Agenten/.test(node.textContent ?? "")), 800);
-    const panel = root.querySelector<HTMLElement>(".gq-agents-panel")!; expect(panel).toBeTruthy();
-    expect(Array.from(panel.querySelectorAll(".gq-stats dt")).map((node) => node.textContent)).toEqual(["Agenten", "Anrufe", "Am Telefon", "Termine", "Freigegeben"]);
-    const rows = Array.from(panel.querySelectorAll<HTMLElement>(".gq-alist > li")); expect(rows.length).toBeGreaterThan(1);
-    expect(rows.map((row) => row.querySelector(".gq-rank")?.textContent)).toEqual(rows.map((_, index) => String(index + 1)));
-    for (const row of rows) { expect((row.querySelector(".gq-agent-lines b")?.textContent ?? "").length).toBeGreaterThan(0); expect(row.querySelectorAll(".gq-astats > span").length).toBe(6); }
-    expect(panel.querySelectorAll(".gq-best li").length).toBeGreaterThan(0);
-    expect(root.querySelector(".agent-table")).toBeNull(); expect(root.querySelector(".agent-total")).toBeNull(); // die breite Tabelle und die Kacheln von früher sind weg
-    const name = rows[0].querySelector(".gq-agent-lines b")!.textContent!;
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".people-header-actions button")).find((node) => /Agenten/.test(node.textContent ?? "")), 900);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("Agenten");
+    const panel = root.querySelector<HTMLElement>(".gq-agents-panel")!; expect(panel).toBeTruthy(); expect(panel.querySelector(".bl-stage .bl-podium")).toBeTruthy();
+    const rows = Array.from(panel.querySelectorAll<HTMLElement>(".bl-rows > li")); expect(rows.length).toBeGreaterThan(1);
+    expect(rows.map((row) => row.querySelector(".bl-place b")?.textContent)).toEqual(rows.map((_, index) => String(index + 1)));
+    expect(root.querySelector(".agent-table")).toBeNull(); expect(root.querySelector(".agent-total")).toBeNull(); expect(root.querySelector(".gq-alist")).toBeNull(); // die Tabellen und Karten von früher sind weg
+    const name = rows[0].querySelector(".bl-agent-lines > b")!.textContent!;
     await click(rows[0].querySelector(".gq-open-calls"), 800);
     expect(root.querySelector(".cq-list-panel .gq-table")).toBeTruthy();
     expect(root.querySelector(".gq-pick-button.has-value b")?.textContent).toBe(name);

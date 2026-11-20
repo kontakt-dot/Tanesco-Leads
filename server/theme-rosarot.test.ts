@@ -92,6 +92,30 @@ describe("Helles Design – rosarot wie vor Version 333", () => {
     expect(calls).not.toContain(".gq-stage .gq-pill{"); // im Kopf des Gesprächs gelten dieselben Farben wie in der Liste
   });
 
+  it("Bestenliste der Agenten: Bühne in beiden Designs dunkel (hell: weinrot), darunter weiß und rosarot – Markenrot nur im hellen Design, Bewegung abschaltbar", () => {
+    const board = css("bestenliste.css"); const boardRules = rules(board); const last = effective(board);
+    // Markenrot und Rosa stehen nur in Regeln für das helle Design
+    const stray = boardRules.filter((rule) => /#bc001d|#fb2c36|#fff1f2|#fff5f5|#fff8f8|#fde8ea|rgba\(188,0,29/.test(rule.body) && !rule.selector.split(",").every((part) => part.trim().startsWith("html:not(.dark)")));
+    expect(stray.map((rule) => rule.selector)).toEqual([]);
+    const lightTokens = tight(last.get("html:not(.dark) .bl-scope")); const darkTokens = tight(last.get(".bl-scope"));
+    expect(lightTokens).toContain("--bl-accent:#bc001d"); expect(lightTokens).toContain("--bl-bar:linear-gradient(90deg,#bc001d,#fb2c36)"); expect(lightTokens).toContain("--bl-row:#fff8f8"); expect(lightTokens).toContain("--bl-tile:#ffffff");
+    expect(lightTokens).toContain("linear-gradient(162deg,#8f0c210%,#5d091c48%,#2b0612100%)"); expect(darkTokens).toContain("linear-gradient(162deg,#2a24680%,#1a164248%,#0f0d24100%)"); // der Vorhang
+    expect(darkTokens).toContain("--bl-accent:#b3a9ff"); expect(darkTokens).not.toMatch(/#bc001d|#fb2c36/);
+    // im hellen Design keine graue Fläche
+    const grey = boardRules.filter((rule) => rule.selector.startsWith("html:not(.dark)") && /background(-color)?:(#f9fafb|#f8fafb|#f4f5f7|#f2f4f7)/i.test(tight(rule.body))); expect(grey.map((rule) => rule.selector)).toEqual([]);
+    // die Überschrift auf der Bühne bleibt weiß, obwohl Überschriften im hellen Design sonst dunkel sind
+    expect(tight(last.get("html:not(.dark) .bl-stage .bl-stage-head h2"))).toContain("color:#ffffff!important");
+    // Treppchen: der Erste in der Mitte; Gold, Silber, Bronze
+    expect(tight(last.get(".bl-pod.is-p1"))).toContain("order:2;--bl-medal:var(--bl-gold)"); expect(tight(last.get(".bl-pod.is-p2"))).toContain("order:1;--bl-medal:var(--bl-silver)"); expect(tight(last.get(".bl-pod.is-p3"))).toContain("order:3;--bl-medal:var(--bl-bronze)");
+    // wer weniger Bewegung möchte: kein Konfetti, nichts fliegt herein
+    const calm = board.slice(board.indexOf("@media(prefers-reduced-motion:reduce)")); expect(calm.length).toBeGreaterThan(50);
+    expect(tight(calm)).toContain(".bl-confetti{display:none}"); expect(tight(calm)).toContain(".bl-pod,.bl-feedli,.bl-cheer,.bl-livei,.bl-pod.is-fresh.bl-pod-face,.bl-chaseli.is-fresh{animation:none}");
+    // die Großansicht liegt über der ganzen Seite
+    const wide = tight(last.get(".bl-wide")); expect(wide).toContain("position:fixed;inset:0"); expect(wide).toContain("background:var(--bl-curtain-wide)"); expect(tight(last.get("html.bl-wide-open"))).toBe("overflow:hidden");
+    // die Auswertung von früher ist aus den Gesprächs-Regeln verschwunden
+    expect(css("gespraeche.css")).not.toMatch(/\.gq-(stats|best|agent-wrap|alist|arow|astats|rank|meter|agents-note)\b/);
+  });
+
   it("Smileys: weicher Schatten in der Ampelfarbe statt grauem Schlagschatten", () => {
     const callRules = effective(css("gespraeche.css"));
     expect(tight(callRules.get(".cq-face"))).toContain("filter:drop-shadow(01.5px2.5pxvar(--cq-glow))");

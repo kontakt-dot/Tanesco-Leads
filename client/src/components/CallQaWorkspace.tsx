@@ -11,7 +11,7 @@ import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { BookOpenText, Cable, CalendarCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileCheck2, FileText, FlaskConical, Gauge, Inbox, Info, LayoutTemplate, ListOrdered, PhoneCall, PhoneIncoming, Play, Plus, RefreshCw, Repeat, Search, Send, Settings2, ShieldCheck, Sparkles, TextSearch, Timer, TriangleAlert, Trophy, Upload, Users, X } from "lucide-react";
+import { BookOpenText, Cable, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileCheck2, FileText, FlaskConical, Gauge, Inbox, Info, LayoutTemplate, ListOrdered, PhoneIncoming, Play, Plus, RefreshCw, Search, Send, Settings2, ShieldCheck, Sparkles, TextSearch, TriangleAlert, Upload, Users, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
@@ -19,9 +19,10 @@ import { Face, FACE_COLOR, MOOD, MoodFace, moodOf } from "@/components/CallMood"
 import { CallPlayer, type CallPlayerHandle, type PlayerMark } from "@/components/CallPlayer";
 import { clock, criterionMark, questionMark, segmentIndexAt, type CallSegment } from "../../../shared/call-timeline";
 import { CallPeriodControl, CallTally, overviewSummary, dayKey, dayLabel, timeText, DECISION_LABEL, type CallRange, type DecisionFilter } from "@/components/CallScoreboard";
-import { AvatarContent, useAvatarOf } from "@/components/AvatarUpload";
+import { useAvatarOf } from "@/components/AvatarUpload";
+import { AgentFace, Split } from "@/components/AgentFace";
+import AgentLeaderboard from "@/components/AgentLeaderboard";
 import { clockText } from "../../../shared/call-overview";
-import { initialsOf } from "../../../shared/avatar";
 
 type Settings = inferRouterOutputs<AppRouter>["leadops"]["getCallQaSettings"];
 type CallRow = inferRouterOutputs<AppRouter>["leadops"]["listCalls"][number];
@@ -32,17 +33,16 @@ const decisionClass = (decision: string) => decision === "freigegeben" ? "border
 /** Agent im Gespräch: Name aus dem Transkript – von Hand korrigierbar (bleibt dann fest, auch bei neuer Bewertung). */
 function AgentEdit({ callId, agentName, manual, fromDialer = false, onChanged, bare = false }: { callId: number; agentName: string | null; manual: boolean; /** der Dialer hat den Agenten genannt */ fromDialer?: boolean; onChanged: () => void; /** nur der Name – die Beschriftung „Agent“ steht schon daneben */ bare?: boolean }) {
   const [editing, setEditing] = useState(false); const [value, setValue] = useState(agentName ?? "");
-  const agents = trpc.leadops.dialerAgentReport.useQuery({ period: "alle" }, { retry: false, staleTime: 60_000, enabled: editing });
+  const agents = trpc.leadops.callAgentNames.useQuery(undefined, { retry: false, staleTime: 60_000, enabled: editing });
   const save = trpc.leadops.setCallAgent.useMutation({ onSuccess: (result) => { toast.success(result.agentName ? `Agent auf „${result.agentName}“ gesetzt.` : "Agent wird wieder automatisch aus dem Transkript erkannt."); setEditing(false); onChanged(); }, onError: (error) => toast.error(error.message) });
   if (!editing) return <span className="cq-agent">{bare ? "" : "Agent "}{agentName ?? (bare ? "nicht erkannt" : "–")}{manual ? " (von Hand)" : fromDialer ? " (laut Dialer)" : ""} <button type="button" className="cq-agent-edit underline" title="Agent korrigieren – bleibt dann fest, auch wenn das Gespräch neu bewertet wird" onClick={() => { setValue(agentName ?? ""); setEditing(true); }}>ändern</button></span>;
-  return <span className="cq-agent inline-flex flex-wrap items-center gap-1 align-middle"><Input className="h-7 w-44 text-xs" aria-label="Agent" list={`cq-agents-${callId}`} autoFocus value={value} placeholder="Name des Agenten" onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save.mutate({ callId, agentName: value.trim() || null }); if (event.key === "Escape") setEditing(false); }} /><datalist id={`cq-agents-${callId}`}>{(agents.data?.agents ?? []).filter((item) => item.name).map((item) => <option key={item.name} value={item.name} />)}</datalist><Button size="sm" className="h-7" disabled={save.isPending} onClick={() => save.mutate({ callId, agentName: value.trim() || null })}>{save.isPending ? "…" : "Speichern"}</Button><Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(false)}>Abbrechen</Button></span>;
+  return <span className="cq-agent inline-flex flex-wrap items-center gap-1 align-middle"><Input className="h-7 w-44 text-xs" aria-label="Agent" list={`cq-agents-${callId}`} autoFocus value={value} placeholder="Name des Agenten" onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save.mutate({ callId, agentName: value.trim() || null }); if (event.key === "Escape") setEditing(false); }} /><datalist id={`cq-agents-${callId}`}>{(agents.data ?? []).map((item) => <option key={item.name} value={item.name} />)}</datalist><Button size="sm" className="h-7" disabled={save.isPending} onClick={() => save.mutate({ callId, agentName: value.trim() || null })}>{save.isPending ? "…" : "Speichern"}</Button><Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(false)}>Abbrechen</Button></span>;
 }
 /** Längere Belege: zwei Zeilen zeigen, Rest per Klick aufklappen – der Text selbst ist immer vollständig. */
 function Expandable({ text, quote = false, className = "" }: { text: string; quote?: boolean; className?: string }) {
   const [open, setOpen] = useState(false); const long = text.length > 150;
   return <span className={`cq-expand ${className} ${long && !open ? "is-clamped" : ""}`}><span className="cq-expand-text">{quote ? `„${text}“` : text}</span>{long && <button type="button" className="cq-expand-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "weniger anzeigen" : "alles anzeigen"}</button>}</span>;
 }
-const duration = (seconds: number | null) => seconds === null ? "–" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} min`;
 
 export default function CallQaWorkspace() {
   const params = new URLSearchParams(window.location.search);
@@ -65,7 +65,7 @@ export default function CallQaWorkspace() {
   const categoryOptions = trpc.leadops.callCategoryOptions.useQuery(undefined, { retry: false, staleTime: 30_000 });
   return <>
     <header className="page-intro compact"><div><span className="eyebrow">CALLCENTER</span><h1>Gespräche</h1><p>Jedes Telefonat aus dem Dialer wird mitgeschnitten, in Text umgewandelt und von der KI bewertet. Was passt, wird als Lead freigegeben.</p></div><div className="people-header-actions"><Button variant={view === "liste" ? "default" : "outline"} className={view === "liste" ? "flux-button" : ""} onClick={() => go("liste", null)}>Gespräche</Button><Button variant={view === "agenten" ? "default" : "outline"} className={view === "agenten" ? "flux-button" : ""} onClick={() => go("agenten", null)}><Users className="h-4 w-4" /> Agenten</Button><Button variant={view === "einstellungen" ? "default" : "outline"} className={view === "einstellungen" ? "flux-button" : ""} onClick={() => go("einstellungen", null)}>Dialer & Bewertung</Button></div></header>
-    {view === "einstellungen" ? <CallQaSettings onOpenCall={(id) => go("liste", id)} /> : view === "agenten" ? <AgentReport onShowCalls={(name) => { setAgent(name); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} />}
+    {view === "einstellungen" ? <CallQaSettings onOpenCall={(id) => go("liste", id)} /> : view === "agenten" ? <AgentLeaderboard onShowCalls={(name, filter) => { setAgent(name); setCampaign(filter.campaign ?? ""); setRange({ period: filter.period, from: "", to: "" }); setDecision(""); setCategoryId(null); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} />}
   </>;
 }
 
@@ -83,14 +83,11 @@ function groupCallsByDay(rows: CallRow[]): DayGroup[] {
   }
   return groups;
 }
-/** Farbton eines Agenten – immer derselbe je Name, damit man ihn in der Liste wiedererkennt (bewusst keine Ampelfarben). */
-const toneOf = (name: string) => { let hash = 0; for (let index = 0; index < name.length; index += 1) hash = (hash * 31 + name.charCodeAt(index)) >>> 0; return hash % 6; };
-const AgentFace = ({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) => <span className={`gq-who is-tone-${toneOf(name)}`} aria-hidden="true"><AvatarContent avatarUrl={avatarUrl} initials={initialsOf(name)} /></span>;
-/** Schmaler Balken: Anteile freigegeben / zur Prüfung / zurückgewiesen / offen. */
-const Split = ({ approved, review, rejected, open }: { approved: number; review: number; rejected: number; open: number }) => <span className="gq-split" aria-hidden="true">{approved > 0 && <i className="is-approved" style={{ flexGrow: approved }} />}{review > 0 && <i className="is-review" style={{ flexGrow: review }} />}{rejected > 0 && <i className="is-rejected" style={{ flexGrow: rejected }} />}{open > 0 && <i className="is-open" style={{ flexGrow: open }} />}</span>;
 /** Hinweis unter dem Ergebnis, solange ein Gespräch noch nicht fertig bewertet ist. */
 const statusNote = (status: string): { cls: string; text: string } | null => status === "eingegangen" ? { cls: "is-working", text: "Eingegangen – Text folgt" } : status === "transkribiert" ? { cls: "is-working", text: "Text liegt vor – Bewertung folgt" } : status === "fehlgeschlagen" ? { cls: "is-warn", text: "Fehlgeschlagen" } : status === "ohne_einwilligung" ? { cls: "is-warn", text: "Ohne Einwilligung" } : null;
 type AgentOption = { name: string; total: number; approved: number; review: number; rejected: number; open: number };
+/** Die Gesprächsliste lädt in Schritten: erst die neuesten 200, höchstens 1000 – ältere findet man über die Filter. */
+const LIST_STEP = 200; const LIST_MAX = 1000;
 /**
  * Agent wählen – eine Auswahl mit Suche statt je Agent ein Schild: passt auch bei 80 Agenten in eine Zeile.
  * Die Liste zeigt je Agent die Zahl seiner Gespräche im Zeitraum und wie sie ausgingen (meiste Gespräche zuerst).
@@ -154,8 +151,11 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
   const reevaluateMany = trpc.leadops.reevaluateCalls.useMutation({ onSuccess: (result) => { toast.success(`${result.queued} ${result.queued === 1 ? "Gespräch wird" : "Gespräche werden"} neu bewertet – die Liste aktualisiert sich von selbst.`); setSelected(new Set()); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); }, onError: (error) => toast.error(error.message) });
   const removeMany = trpc.leadops.deleteCalls.useMutation({ onSuccess: (result) => { toast.success(`${result.deleted} ${result.deleted === 1 ? "Gespräch" : "Gespräche"} gelöscht.`); setSelected(new Set()); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); }, onError: (error) => toast.error(error.message) });
   const campaigns = trpc.leadops.listCallQaCampaigns.useQuery(undefined, { retry: false });
-  const calls = trpc.leadops.listCalls.useQuery({ decision: decision || null, campaign: campaign || null, agentName: agent || null, period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, categoryId }, { retry: false, placeholderData: (previous) => previous, refetchInterval: (query) => ((query.state.data as Array<{ status: string }> | undefined)?.some((row) => row.status === "eingegangen" || row.status === "transkribiert") ? 5_000 : 30_000) });
-  const agentNames = trpc.leadops.dialerAgentReport.useQuery({ period: "alle" }, { retry: false, staleTime: 60_000 });
+  // Die Liste zeigt die neuesten Gespräche – bei sehr vielen erst 200, auf Wunsch mehr. Ändert sich ein Filter, beginnt sie wieder bei 200.
+  const [limit, setLimit] = useState(LIST_STEP);
+  useEffect(() => { setLimit(LIST_STEP); }, [decision, campaign, agent, range.period, range.from, range.to, categoryId]);
+  const calls = trpc.leadops.listCalls.useQuery({ decision: decision || null, campaign: campaign || null, agentName: agent || null, period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, categoryId, limit }, { retry: false, placeholderData: (previous) => previous, refetchInterval: (query) => ((query.state.data as Array<{ status: string }> | undefined)?.some((row) => row.status === "eingegangen" || row.status === "transkribiert") ? 5_000 : 30_000) });
+  const agentNames = trpc.leadops.callAgentNames.useQuery(undefined, { retry: false, staleTime: 60_000 });
   const [showSettings, setShowSettings] = useState(false); const [showImport, setShowImport] = useState(false); const settingsDirty = useRef(false); const closeAsking = useRef(false); // ungespeicherte Änderungen im Einstellen-Fenster
   /** Einstellen-Fenster schließen – mit ungespeicherten Änderungen erst nach Rückfrage (die Esc-Taste, die die Rückfrage schließt, löst keine zweite aus). */
   const closeSettings = async (open: boolean) => {
@@ -170,7 +170,10 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
     settingsDirty.current = false; setShowSettings(false);
   };
   const rows: CallRow[] = calls.data ?? []; const days = groupCallsByDay(rows);
-  const avatarOf = useAvatarOf(); const userIdOf = new Map((agentNames.data?.agents ?? []).filter((item) => item.userId && item.name).map((item) => [item.name, item.userId] as const));
+  // So viele Gespräche gibt es laut Übersicht für die gewählten Filter – stehen mehr dort, als die Liste zeigt, sagt sie es
+  const expected = !overview ? 0 : decision === "freigegeben" ? overview.approved : decision === "pruefen" ? overview.review : decision === "zurueckgewiesen" ? overview.rejected : decision === "offen" ? overview.open : overview.total;
+  const cut = rows.length >= limit && expected > rows.length;
+  const avatarOf = useAvatarOf(); const userIdOf = new Map((agentNames.data ?? []).filter((item) => item.userId).map((item) => [item.name, item.userId] as const));
   const pictureOf = (name: string | null | undefined) => (name ? avatarOf(userIdOf.get(name) ?? null) : null);
   const agentChips = overview?.byAgent ?? [];
   const allSelected = Boolean(rows.length) && selected.size === rows.length;
@@ -227,6 +230,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
             </tr>; })}
         </tbody>)}
       </table></div>}
+      {cut && <div className="gq-more" role="status"><span>Die Liste zeigt die neuesten <b>{rows.length}</b> von <b>{expected}</b> Gesprächen.</span>{limit < LIST_MAX ? <button type="button" className="gq-link" disabled={calls.isFetching} onClick={() => setLimit((current) => Math.min(LIST_MAX, current + LIST_STEP))}>{calls.isFetching ? "Lädt …" : `Weitere ${Math.min(LIST_STEP, expected - rows.length, LIST_MAX - limit)} zeigen`}</button> : <span>Für ältere Gespräche bitte Zeitraum, Kampagne oder Agent eingrenzen.</span>}</div>}
       {!rows.length && <p className="gq-empty">{calls.isLoading ? "Gespräche werden geladen …" : <>Noch keine Gespräche{decision ? ` mit dem Ergebnis „${DECISION_LABEL[decision]}“` : ""}{campaign ? ` in der Kampagne „${campaign}“` : ""}{agent ? ` von ${agent}` : ""}{range.from || range.to || range.period !== "alle" ? " im gewählten Zeitraum" : ""}{categoryId ? " in dieser Lead-Kategorie" : ""}. Sobald der Dialer Gespräche meldet, erscheinen sie hier – oder teste die Bewertung mit „Aufnahmen testen“.</>}</p>}
     </section>
     <Dialog open={showSettings} onOpenChange={closeSettings}><DialogContent className="cq-dialog" onInteractOutside={(event) => event.preventDefault()}><DialogHeader><DialogTitle>Kampagne einstellen</DialogTitle><DialogDescription>{campaign ? `„${campaign}“` : "Standard"} – Kriterien, Prüffragen und Auswertung. Einmal einstellen, danach läuft die Bewertung automatisch.</DialogDescription></DialogHeader>{showSettings && <CampaignPanel campaigns={campaigns.data ?? []} campaign={campaign} onSelect={onCampaign} onChanged={() => campaigns.refetch()} onDirty={(dirty) => { settingsDirty.current = dirty; }} />}</DialogContent></Dialog>
@@ -251,50 +255,8 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
           </section>
         </div>
         <div className="gi-meta"><label className="gs-field">Agent<Input value={linkAgent} placeholder="optional" list="gi-agents" onChange={(event) => setLinkAgent(event.target.value)} /></label><label className="gs-field">Kampagne<Input value={linkCampaign} placeholder="Standard: Aufnahmen-Test" list="gi-campaigns" onChange={(event) => setLinkCampaign(event.target.value)} /></label><p>Gilt für beide Wege. Ohne Angabe landet alles in der Kampagne „Aufnahmen-Test“. Anhören geht danach direkt im Gespräch.</p>
-          <datalist id="gi-agents">{(agentNames.data?.agents ?? []).filter((item) => item.name && !/^ohne agent$/i.test(item.name)).map((item) => <option key={item.name} value={item.name} />)}</datalist><datalist id="gi-campaigns">{(campaigns.data ?? []).filter((item) => item.name).map((item) => <option key={item.name} value={item.name} />)}</datalist></div>
+          <datalist id="gi-agents">{(agentNames.data ?? []).map((item) => <option key={item.name} value={item.name} />)}</datalist><datalist id="gi-campaigns">{(campaigns.data ?? []).filter((item) => item.name).map((item) => <option key={item.name} value={item.name} />)}</datalist></div>
       </div></DialogContent></Dialog></>;
-}
-
-type AgentReportData = inferRouterOutputs<AppRouter>["leadops"]["dialerAgentReport"];
-type AgentRow = AgentReportData["agents"][number];
-const talkTime = (seconds: number) => seconds >= 3600 ? `${Math.floor(seconds / 3600)} h ${Math.round((seconds % 3600) / 60)} min` : `${Math.round(seconds / 60)} min`;
-const PERIODS: Array<[AgentReportData["period"], string]> = [["heute", "Heute"], ["7", "7 Tage"], ["30", "30 Tage"], ["alle", "Gesamt"]];
-/** Wer macht was: je Agent Anrufe, Erreicht-Quote, Gesprächszeit, Ergebnisse und KI-Bewertung – mit Bestenliste und Sprung in die Gespräche des Agenten. */
-function AgentReport({ onShowCalls }: { onShowCalls: (agentName: string) => void }) {
-  const [period, setPeriod] = useState<AgentReportData["period"]>("30");
-  const [campaignId, setCampaignId] = useState<number | null>(null);
-  const report = trpc.leadops.dialerAgentReport.useQuery({ period, campaignId }, { retry: false, refetchInterval: 30_000 });
-  const agents = report.data?.agents ?? []; const totals = report.data?.totals; const avatarOf = useAvatarOf();
-  const best = (pick: (agent: AgentRow) => number | null, min = 1) => { const ranked = agents.filter((agent) => (pick(agent) ?? -1) >= min).sort((a, b) => (pick(b) ?? -1) - (pick(a) ?? -1)); return ranked[0] ?? null; };
-  const real = agents.filter((agent) => !/^ohne agent$/i.test(agent.name)); const bestGreen = real.filter((agent) => agent.approved > 0).sort((a, b) => b.approved - a.approved || (b.approved / Math.max(1, b.evaluated)) - (a.approved / Math.max(1, a.evaluated)))[0] ?? null; const bestReach = best((agent) => agent.reachRate); const bestAppointments = best((agent) => agent.appointments); const mostCalls = best((agent) => agent.calls); const bestTalk = best((agent) => agent.talkSeconds);
-  const stats: Array<[string, string, string]> = totals ? [["Agenten", String(totals.agents), "mit Anrufen im Zeitraum"], ["Anrufe", String(totals.calls), `${totals.reached} erreicht${totals.reachRate !== null ? `, das sind ${totals.reachRate} %` : ""}`], ["Am Telefon", talkTime(totals.talkSeconds), "alle zusammen"], ["Termine", String(totals.appointments), `${totals.interested} interessiert${totals.successRate !== null ? `, ${totals.successRate} % der Erreichten` : ""}`], ["Freigegeben", String(totals.approved), `${totals.review} zur Prüfung, ${totals.rejected} zurückgewiesen – ${totals.evaluated} bewertet`]] : [];
-  const winners = [bestGreen && [Trophy, "Meiste grüne Gespräche", bestGreen.name, `${bestGreen.approved} von ${bestGreen.evaluated}`], bestAppointments && [CalendarCheck, "Meiste Termine", bestAppointments.name, `${bestAppointments.appointments}`], bestReach && [PhoneCall, "Beste Erreichbarkeit", bestReach.name, `${bestReach.reachRate} %`], mostCalls && !/^ohne agent$/i.test(mostCalls.name) && [Repeat, "Meiste Anrufe", mostCalls.name, `${mostCalls.calls}`], bestTalk && [Timer, "Am längsten am Telefon", bestTalk.name, talkTime(bestTalk.talkSeconds)]].filter((item): item is [typeof Trophy, string, string, string] => Boolean(item));
-  const lastCall = (value: Date | string | null) => value ? new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null;
-  return <section className="surface-panel operations-panel cq-list-panel gq-agents-panel">
-    <div className="gq-toolbar">
-      <div className="gq-period-row"><span className="gq-label">Zeitraum</span><div className="gq-periods" role="group" aria-label="Zeitraum">{PERIODS.map(([key, label]) => <button key={key} type="button" className={period === key ? "active" : ""} aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div>
-        <label className="gq-category"><span className="gq-label">Kampagne</span><select className="filter-select h-8" aria-label="Kampagne" value={campaignId ?? ""} onChange={(event) => setCampaignId(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kampagnen</option>{(report.data?.campaigns ?? []).map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label></div>
-    </div>
-    {totals && <dl className="gq-stats">{stats.map(([label, value, hint]) => <div key={label}><dt>{label}</dt><dd>{value}</dd><small>{hint}</small></div>)}</dl>}
-    {agents.length > 1 && winners.length > 0 && <ul className="gq-best" aria-label="Bestwerte im Zeitraum">{winners.map(([Icon, label, name, value]) => <li key={label}><Icon aria-hidden="true" /><span>{label}</span><b>{name}</b><em>{value}</em></li>)}</ul>}
-    {report.isLoading ? <p className="gq-empty">Auswertung wird geladen …</p> : !agents.length ? <p className="gq-empty">Im gewählten Zeitraum gibt es noch keine Anrufe. Sobald Agenten über den Dialer telefonieren, steht hier, wer was gemacht hat.</p> : <div className="gq-table-wrap gq-agent-wrap">
-      <div className="gq-arow is-head" aria-hidden="true"><span>Platz</span><span>Agent</span><span>Anrufe</span><span>Erreicht</span><span>Am Telefon</span><span>Termine</span><span>Interesse</span><span>Ergebnis der Gespräche</span><span /></div>
-      <ol className="gq-alist">{agents.map((agent, index) => { const last = lastCall(agent.lastCallAt); return <li key={agent.userId ?? agent.name} className="gq-arow">
-        <span className="gq-rank" aria-label={`Platz ${index + 1}`}>{index + 1}</span>
-        <span className="gq-agent-cell"><AgentFace name={agent.name} avatarUrl={avatarOf(agent.userId ?? null)} /><span className="gq-agent-lines"><b>{agent.name}</b><small>{agent.userId === null ? "nur Gespräche ohne Dialer" : last ? `zuletzt ${last} Uhr` : "noch kein Anruf"}</small></span></span>
-        <span className="gq-astats">
-          <span className="gq-num" data-label="Anrufe"><b>{agent.calls}</b></span>
-          <span className="gq-num" data-label="Erreicht"><b>{agent.reached}</b>{agent.reachRate !== null && <small>{agent.reachRate} %</small>}<i className="gq-meter" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(100, agent.reachRate ?? 0))}%` }} /></i></span>
-          <span className="gq-num" data-label="Am Telefon"><b>{talkTime(agent.talkSeconds)}</b>{agent.averageTalkSeconds !== null && <small>im Schnitt {duration(agent.averageTalkSeconds)}</small>}</span>
-          <span className="gq-num" data-label="Termine"><b>{agent.appointments}</b>{agent.successRate !== null && <small title="Termine und Interessierte, bezogen auf die erreichten Gespräche">{agent.successRate} % Erfolg</small>}</span>
-          <span className="gq-num" data-label="Interesse"><b>{agent.interested}</b><small>{agent.followUps} Wiedervorlage, {agent.noInterest} kein Interesse</small></span>
-          <span className="gq-outcome" data-label="Ergebnis der Gespräche">{agent.evaluated ? <><Split approved={agent.approved} review={agent.review} rejected={agent.rejected} open={0} /><small title={`${agent.approved} freigegeben, ${agent.review} zur Prüfung, ${agent.rejected} zurückgewiesen von ${agent.evaluated} bewerteten`}><b>{agent.approved}</b> freigegeben, {agent.review} zur Prüfung, {agent.rejected} zurückgewiesen</small></> : <small>noch nichts bewertet</small>}</span>
-        </span>
-        <button type="button" className="gq-open-calls" onClick={() => onShowCalls(agent.name)}>Gespräche<ChevronRight aria-hidden="true" /></button>
-      </li>; })}</ol>
-      <p className="gq-agents-note">Reihenfolge: Wer die meisten grünen Gespräche hat, steht oben – dann der Grün-Anteil, Termine und Anrufe. „Ohne Agent“ steht immer unten.</p>
-    </div>}
-  </section>;
 }
 
 /** Kampagne wählen, ihre Qualifizierungsfragen pflegen und die Auswertung (Ja-Anteil je Frage) sehen. */
@@ -539,7 +501,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
         </div>
       </div>
       <dl className="gq-call-facts">
-        <div><dt>Agent</dt><dd><AgentEdit bare callId={data.id} agentName={data.agentName ?? null} manual={data.agentSource === "manuell"} fromDialer={data.agentSource === "dialer"} onChanged={() => { call.refetch(); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); utils.leadops.dialerAgentReport.invalidate(); }} /></dd></div>
+        <div><dt>Agent</dt><dd><AgentEdit bare callId={data.id} agentName={data.agentName ?? null} manual={data.agentSource === "manuell"} fromDialer={data.agentSource === "dialer"} onChanged={() => { call.refetch(); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); utils.leadops.dialerAgentReport.invalidate(); utils.leadops.callAgentNames.invalidate(); }} /></dd></div>
         <div><dt>Kampagne</dt><dd>{data.campaign ?? data.provider}</dd></div>
         {data.category ? <div><dt>Lead-Kategorie</dt><dd title={dialer?.category ? `Leadsparte laut Dialer: ${dialer.category}` : "Von der KI aus dem Gespräch erkannt"}>{data.category.emoji ? `${data.category.emoji} ` : ""}{data.category.name}</dd></div> : null}
         <div><dt>Einwilligung zur Aufnahme</dt><dd>{data.consent ? `Ja (${data.consentSource ?? "Dialer"})` : "Nein"}</dd></div>

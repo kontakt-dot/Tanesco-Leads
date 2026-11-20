@@ -234,6 +234,9 @@ html:not(.dark) .gq-pill:not(.is-freigegeben):not(.is-pruefen):not(.is-zurueckge
 .gq-col-go svg{display:block;width:16px;height:16px}
 .gq-call:hover td.gq-col-go,.gq-call:focus-visible td.gq-col-go{color:var(--gl-accent);transform:translateX(2px)}
 .gq-empty{margin:0;padding:38px 24px 42px;text-align:center;font-size:13.5px;line-height:1.5;color:var(--gl-dim);border-top:1px solid var(--gl-line)}
+.gq-more{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 14px;margin:0 12px;padding:14px 8px 16px;border-top:1px solid var(--gl-line);font-size:13px;line-height:1.45;color:var(--gl-dim)}
+.gq-more b{font-weight:700;color:var(--gl-ink);font-variant-numeric:tabular-nums}
+.gq-more .gq-link{font-size:13px}
 
 /* ─────────────────────────── Schmale Bildschirme ─────────────────────────── */
 /* Tablet: Zeile zweizeilig – Agent rutscht unter das Gespräch, das Ergebnis steht rechts */
@@ -407,48 +410,13 @@ html.dark .gq-stage .cq-agent button{color:var(--gq-ink)!important}
 .gq-turn.is-speaker-1,.gq-turn.is-speaker-3{justify-self:end;border-radius:14px 14px 4px 14px;background:var(--gl-card);box-shadow:inset 0 0 0 1px var(--gl-edge)}
 .gq-transcript{max-height:560px;overflow:auto;margin:0;padding:14px 16px;border:1px solid var(--gl-line);border-radius:12px;background:var(--gl-softer);color:var(--gl-ink);font-family:inherit;font-size:13.5px;line-height:1.6;white-space:pre-wrap}
 
-/* ─────────────────────────── Agenten ─────────────────────────── */
+/* ─────────────────────────── Agenten: die Bestenliste selbst steht in bestenliste.css ─────────────────────────── */
 .gq-agents-panel .gq-toolbar{padding-bottom:14px}
-.gq-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:0 12px 16px;padding:16px 0 0;border-top:1px solid var(--gl-line)}
-.gq-stats>div{min-width:0;padding:0 18px}
-.gq-stats>div:first-child{padding-left:0}
-.gq-stats>div+div{border-left:1px solid var(--gl-line)}
-.gq-stats dt{font-size:12px;color:var(--gl-dim)}
-.gq-stats dd{margin:4px 0 5px;font-size:24px;line-height:1;font-weight:800;letter-spacing:-.03em;color:var(--gl-ink);font-variant-numeric:tabular-nums}
-.gq-stats small{display:block;font-size:12px;line-height:1.4;color:var(--gl-dim)}
-.gq-best{display:flex;flex-wrap:wrap;gap:6px;margin:0 12px 16px;padding:0;list-style:none}
-.gq-best li{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px 0 9px;border-radius:999px;border:1px solid var(--gl-line);background:var(--gl-card);font-size:12px;color:var(--gl-dim);white-space:nowrap}
-.gq-best svg{width:14px;height:14px;color:var(--gl-accent)}
-.gq-best b{font-weight:600;color:var(--gl-ink)}
-.gq-best em{font-style:normal;font-weight:700;color:var(--gl-ink);font-variant-numeric:tabular-nums}
-.gq-agent-wrap{--gq-acols:34px minmax(170px,1.25fr) 62px 104px 118px 104px minmax(130px,1fr) minmax(190px,1.35fr) 112px;padding:0 12px 12px}
-.gq-alist{display:grid;gap:8px;margin:0;padding:0;list-style:none}
-.gq-arow{display:grid;grid-template-columns:var(--gq-acols);align-items:center;column-gap:14px;padding:12px 12px 12px 14px;border:1px solid var(--gl-line);border-radius:16px;background:var(--gl-card);transition:border-color .15s,box-shadow .15s}
-.gq-arow:not(.is-head):hover{border-color:var(--gl-edge);box-shadow:var(--gl-lift)}
-.gq-arow.is-head{padding-top:12px;padding-bottom:8px;border-color:transparent;background:none;font-size:11.5px;font-weight:600;color:var(--gl-faint)}
-.gq-astats{display:contents}
-.gq-rank{display:grid;place-items:center;width:28px;height:28px;border-radius:999px;background:var(--gl-soft);color:var(--gl-ink);font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
-.gq-alist>li:first-child .gq-rank{background:var(--gq-on-bg);color:var(--gq-on-ink)}
-.gq-num{display:grid;gap:2px;min-width:0}
-.gq-num b{font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--gl-ink);font-variant-numeric:tabular-nums}
-.gq-num small,.gq-outcome small{font-size:11.5px;line-height:1.35;color:var(--gl-dim)}
-.gq-outcome small b{font-weight:700;color:var(--gl-ink)}
-.gq-meter{display:block;width:100%;max-width:74px;height:3px;margin-top:3px;border-radius:999px;background:var(--gl-soft);overflow:hidden}
-.gq-meter i{display:block;height:100%;border-radius:inherit;background:var(--gl-ink)}
-.gq-outcome{display:grid;gap:6px;min-width:0}
-.gq-outcome .gq-split{max-width:190px;height:5px}
 .gq-open-calls{display:inline-flex;align-items:center;gap:2px;height:34px;padding:0 6px 0 12px;border-radius:10px;border:1px solid var(--gl-edge);background:var(--gl-card);color:var(--gl-ink);font-family:inherit;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:border-color .15s,background-color .15s}
 .gq-open-calls:hover{border-color:var(--gl-ink);background:var(--gl-soft)}
 .gq-open-calls svg{width:16px;height:16px}
-.gq-agents-note{margin:12px 4px 0;font-size:12px;line-height:1.45;color:var(--gl-faint)}
 @media(max-width:1180px){
   .gq-detail-grid{grid-template-columns:minmax(0,1fr)}
-  .gq-arow.is-head{display:none}
-  .gq-arow{grid-template-columns:34px minmax(0,1fr) auto;row-gap:12px}
-  .gq-astats{display:grid;grid-column:1 / -1;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px 16px;padding-top:12px;border-top:1px solid var(--gl-line)}
-  .gq-astats>span::before{content:attr(data-label);display:block;font-size:11px;font-weight:600;color:var(--gl-faint)}
-  .gq-stats{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:16px}
-  .gq-stats>div:nth-child(4){padding-left:0;border-left:0}
 }
 @media(max-width:760px){
   .gq-panel{padding:16px 14px}
@@ -458,12 +426,6 @@ html.dark .gq-stage .cq-agent button{color:var(--gq-ink)!important}
   .gq-q{flex-direction:column}
   .gq-answers{width:100%}.gq-answer{flex:1}
   .gq-turn{max-width:94%}
-  .gq-stats{grid-template-columns:repeat(2,minmax(0,1fr));margin:0 2px 14px}
-  .gq-stats>div,.gq-stats>div:first-child{padding:0 12px 0 0;border-left:0}
-  .gq-best{margin:0 2px 14px}
-  .gq-agent-wrap{padding:0 8px 10px}
-  .gq-arow{grid-template-columns:34px minmax(0,1fr)}
-  .gq-open-calls{grid-column:1 / -1;justify-content:center}
 }
 /* ─────────────────────────── Fenster „Kampagne einstellen“ und „Aufnahmen testen“ ─────────────────────────── */
 .cq-dialog .cq-tabs{gap:2px;border-bottom:1px solid var(--gl-line)}

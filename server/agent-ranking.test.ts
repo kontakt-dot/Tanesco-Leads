@@ -1,0 +1,178 @@
+import { describe, expect, it } from "vitest";
+import { AGENT_LEVELS, agentLevel, berlinDay, berlinOffsetMinutes, bestDayOf, compareAgents, countAgentDays, countAgents, countFromDays, daysBetween, emptyBucket, finishAgentReport, isNoAgent, nameKey, NO_AGENT, previousSpan, QUOTE_MIN_CALLS, shiftDay, streakOf, type AgentBucket, type AgentDay } from "../shared/agent-ranking";
+
+/** Bestenliste der Agenten: Plätze, Auf- und Abstieg, Serie, Stufe, Bestwerte – dieselbe Rechnung für Server und Vorschau. */
+const bucket = (name: string, values: Partial<AgentBucket> = {}, userId: number | null = null): AgentBucket => ({ ...emptyBucket(userId, name), ...values });
+const day = (name: string, date: string, calls: number, approved: number, evaluated = calls): AgentDay => ({ name, day: date, calls, approved, evaluated });
+const TODAY = "2026-11-19"; // Donnerstag
+
+describe("Bestenliste – Tage und Zeit", () => {
+  it("deutscher Kalendertag: kurz vor Mitternacht deutscher Zeit ist noch derselbe Tag, danach der nächste", () => {
+    expect(berlinDay(new Date("2026-11-19T22:59:00Z"))).toBe("2026-11-19"); expect(berlinDay(new Date("2026-11-19T23:00:00Z"))).toBe("2026-11-20");
+    expect(berlinDay(new Date("2026-07-01T21:59:00Z"))).toBe("2026-07-01"); expect(berlinDay(new Date("2026-07-01T22:00:00Z"))).toBe("2026-07-02"); // Sommerzeit
+  });
+  it("Abstand zur Weltzeit: 60 Minuten im Winter, 120 im Sommer", () => { expect(berlinOffsetMinutes(new Date("2026-11-19T12:00:00Z"))).toBe(60); expect(berlinOffsetMinutes(new Date("2026-07-01T12:00:00Z"))).toBe(120); });
+  it("Tage verschieben und zählen – auch über Monats- und Jahresgrenzen", () => { expect(shiftDay("2026-03-01", -1)).toBe("2026-02-28"); expect(shiftDay("2026-12-31", 1)).toBe("2027-01-01"); expect(daysBetween("2026-11-12", "2026-11-19")).toBe(7); expect(daysBetween("2026-11-19", "2026-11-12")).toBe(-7); });
+  it("„Ohne Agent“ wird in jeder Schreibweise erkannt", () => { for (const name of [null, undefined, "", "   ", "Ohne Agent", " ohne agent "]) expect(isNoAgent(name), String(name)).toBe(true); expect(isNoAgent("Deniz Kaya")).toBe(false); });
+  it("Schlüssel eines Namens: Groß-/Kleinschreibung, Akzente und Leerzeichen am Rand spielen keine Rolle – wie in der Datenbank", () => {
+    expect(nameKey(" José Álvarez ")).toBe("jose alvarez"); expect(nameKey("JOSE ALVAREZ")).toBe("jose alvarez"); expect(nameKey("Çağla Öztürk")).toBe(nameKey("cagla ozturk")); expect(nameKey("İpek Şahin")).toBe(nameKey("ipek sahin"));
+    expect(nameKey("Deniz Kaya")).not.toBe(nameKey("Deniz Kara")); for (const name of [null, undefined, "", "  ", "Ohne Agent"]) expect(nameKey(name), String(name)).toBe("");
+  });
+});
+
+describe("Bestenliste – Stufen", () => {
+  it("sieben Stufen von Neuling bis Legende – mit dem Weg zur nächsten", () => {
+    expect(AGENT_LEVELS.map((level) => level.name)).toEqual(["Neuling", "Talent", "Profi", "Experte", "Meister", "Champion", "Legende"]);
+    expect(agentLevel(0)).toMatchObject({ index: 0, name: "Neuling", progress: 0, next: { name: "Talent", at: 10, missing: 10 } });
+    expect(agentLevel(9).name).toBe("Neuling"); expect(agentLevel(10).name).toBe("Talent"); expect(agentLevel(24).next).toEqual({ name: "Profi", at: 25, missing: 1 });
+    expect(agentLevel(75)).toMatchObject({ name: "Experte", progress: 0.5, next: { name: "Meister", at: 100, missing: 25 } });
+    expect(agentLevel(500)).toMatchObject({ index: 6, name: "Legende", next: null, progress: 1 }); expect(agentLevel(9999).name).toBe("Legende");
+  });
+  it("unbrauchbare Zahlen zählen als null", () => { for (const value of [-5, Number.NaN, Number.POSITIVE_INFINITY]) expect(agentLevel(value).name, String(value)).toBe("Neuling"); expect(agentLevel(10.9).name).toBe("Talent"); });
+});
+
+describe("Bestenliste – Serie und bester Tag", () => {
+  it("Serie zählt Arbeitstage in Folge mit mindestens einem Lead – freie Tage und das Wochenende unterbrechen nicht", () => {
+    const days = [day("A", "2026-11-19", 4, 1), day("A", "2026-11-18", 3, 2), day("A", "2026-11-17", 5, 1), day("A", "2026-11-16", 2, 1), /* Wochenende */ day("A", "2026-11-13", 6, 3), day("A", "2026-11-12", 4, 0), day("A", "2026-11-11", 3, 2)];
+    expect(streakOf(days, TODAY)).toBe(5); // Fr, Mo, Di, Mi, Do – der Donnerstag davor (0 Leads) beendet die Serie
+  });
+  it("der heutige Tag unterbricht erst, wenn er ohne Lead zu Ende ist", () => {
+    const days = [day("A", "2026-11-19", 3, 0), day("A", "2026-11-18", 3, 2), day("A", "2026-11-17", 5, 1)];
+    expect(streakOf(days, TODAY)).toBe(2); // heute läuft noch
+    expect(streakOf(days, "2026-11-20")).toBe(0); // am nächsten Tag ist der 19. ein Arbeitstag ohne Lead
+  });
+  it("nach mehr als einer Woche Pause ist die Serie vorbei; ohne Gespräche gibt es keine", () => {
+    expect(streakOf([day("A", "2026-11-11", 3, 2), day("A", "2026-11-10", 3, 2)], TODAY)).toBe(0);
+    expect(streakOf([day("A", "2026-11-12", 3, 2), day("A", "2026-11-11", 3, 2)], TODAY)).toBe(2); // genau eine Woche
+    expect(streakOf([], TODAY)).toBe(0); expect(streakOf([day("A", "2026-11-19", 2, 0)], TODAY)).toBe(0);
+    expect(streakOf([day("A", "2026-11-25", 2, 2), day("A", "2026-11-19", 2, 1)], TODAY)).toBe(1); // Tage in der Zukunft zählen nicht
+  });
+  it("bester Tag: die meisten Leads an einem Tag im Zeitraum – bei Gleichstand der jüngere", () => {
+    const days = [day("A", "2026-11-10", 9, 4), day("A", "2026-11-17", 8, 4), day("A", "2026-11-18", 5, 2), day("A", "2026-10-01", 9, 7)];
+    expect(bestDayOf(days, "2026-11-01")).toEqual({ day: "2026-11-17", approved: 4 }); expect(bestDayOf(days, null)).toEqual({ day: "2026-10-01", approved: 7 });
+    expect(bestDayOf([day("A", "2026-11-18", 5, 0)], null)).toBeNull();
+  });
+});
+
+describe("Bestenliste – womit verglichen wird", () => {
+  const days = [day("A", "2026-11-19", 2, 1), day("A", "2026-11-18", 2, 1), day("B", "2026-11-13", 2, 1)];
+  it("„Heute“ vergleicht mit dem letzten Tag, an dem telefoniert wurde – am Montag also mit dem Freitag", () => {
+    expect(previousSpan("heute", TODAY, days)).toEqual({ fromDay: "2026-11-18", beforeDay: "2026-11-19" });
+    expect(previousSpan("heute", "2026-11-16", days)).toEqual({ fromDay: "2026-11-13", beforeDay: "2026-11-14" });
+    expect(previousSpan("heute", "2026-11-30", days)).toBeNull(); // mehr als eine Woche her
+    expect(previousSpan("heute", TODAY, [])).toBeNull();
+  });
+  it("7 und 30 Tage vergleichen mit genauso vielen Tagen davor; „Gesamt“ hat keinen Vergleich", () => {
+    expect(previousSpan("7", TODAY, days)).toEqual({ fromDay: "2026-11-06", beforeDay: "2026-11-13" }); // Zeitraum selbst: 13.–19.
+    expect(previousSpan("30", TODAY, days)).toEqual({ fromDay: "2026-09-21", beforeDay: "2026-10-21" }); // Zeitraum selbst: 21.10.–19.11.
+    expect(previousSpan("alle", TODAY, days)).toBeNull();
+  });
+  it("Tageszeilen eines Abschnitts werden je Agent zusammengezählt – „Ohne Agent“ bleibt für die Summe dabei", () => {
+    const rows = countFromDays([day("A", "2026-11-06", 3, 1, 2), day("A", "2026-11-12", 2, 1, 2), day("A", "2026-11-13", 9, 9), day(NO_AGENT, "2026-11-10", 4, 1, 3)], { fromDay: "2026-11-06", beforeDay: "2026-11-13" });
+    expect(rows).toEqual(expect.arrayContaining([{ name: "A", calls: 5, approved: 2, evaluated: 4 }, { name: NO_AGENT, calls: 4, approved: 1, evaluated: 3 }])); expect(rows.length).toBe(2);
+  });
+});
+
+describe("Bestenliste – Reihenfolge", () => {
+  it("meiste Leads zuerst, dann der höhere Grün-Anteil, dann Termine, Interessenten, Gespräche, Punkte – zuletzt der Name", () => {
+    const list = [{ name: "D", approved: 5, evaluated: 10, calls: 10 }, { name: "A", approved: 5, evaluated: 20, calls: 20 }, { name: "C", approved: 7, evaluated: 30, calls: 30 }, { name: "B", approved: 5, evaluated: 20, calls: 20 }];
+    expect([...list].sort(compareAgents).map((item) => item.name)).toEqual(["C", "D", "A", "B"]);
+    expect([{ name: "X", approved: 2, evaluated: 4, calls: 4 }, { name: "Y", approved: 2, evaluated: 4, calls: 4, appointments: 1 }].sort(compareAgents).map((item) => item.name)).toEqual(["Y", "X"]);
+    expect([{ name: "X", approved: 2, evaluated: 4, calls: 4 }, { name: "Y", approved: 2, evaluated: 4, calls: 9 }].sort(compareAgents).map((item) => item.name)).toEqual(["Y", "X"]);
+  });
+  it("„Ohne Agent“ steht immer unten – außer ein Benutzer heißt wirklich so", () => {
+    expect([{ name: NO_AGENT, approved: 99, evaluated: 99, calls: 99 }, { name: "A", approved: 0, evaluated: 0, calls: 1 }].sort(compareAgents).map((item) => item.name)).toEqual(["A", NO_AGENT]);
+    expect([{ name: "A", approved: 0, evaluated: 0, calls: 1 }, { name: NO_AGENT, userId: 7, approved: 99, evaluated: 99, calls: 99 }].sort(compareAgents).map((item) => item.name)).toEqual([NO_AGENT, "A"]);
+  });
+});
+
+describe("Bestenliste – fertige Liste", () => {
+  // 7 Tage: 13.–19.11. – verglichen mit 6.–12.11.
+  const span = { fromDay: "2026-11-06", beforeDay: "2026-11-13" };
+  const days: AgentDay[] = [
+    // Ada: jeden Arbeitstag ein Lead, heute zwei
+    day("Ada", "2026-11-19", 6, 2), day("Ada", "2026-11-18", 5, 1), day("Ada", "2026-11-17", 5, 1), day("Ada", "2026-11-16", 4, 1), day("Ada", "2026-11-13", 4, 1), day("Ada", "2026-11-12", 3, 1), day("Ada", "2026-11-10", 3, 0),
+    // Ben: davor stark (Platz 1), jetzt schwächer
+    day("Ben", "2026-11-19", 4, 0), day("Ben", "2026-11-17", 6, 3), day("Ben", "2026-11-11", 8, 5), day("Ben", "2026-11-09", 6, 3),
+    // Cem: neu dabei – erstes Gespräch im Zeitraum
+    day("Cem", "2026-11-18", 7, 4), day("Cem", "2026-11-19", 3, 1),
+    // Dua: vorher hinten, jetzt vorn dabei
+    day("Dua", "2026-11-16", 6, 5), day("Dua", "2026-11-07", 2, 0),
+    day(NO_AGENT, "2026-11-19", 2, 1), day(NO_AGENT, "2026-11-08", 5, 2),
+  ];
+  const buckets = [
+    bucket("Ada", { calls: 24, reached: 24, talkSeconds: 5400, evaluated: 24, scoreSum: 24 * 70, approved: 6, review: 10, rejected: 8 }),
+    bucket("Ben", { calls: 10, reached: 10, talkSeconds: 9000, evaluated: 10, scoreSum: 10 * 60, approved: 3, review: 3, rejected: 4 }),
+    bucket("Cem", { calls: 10, reached: 10, talkSeconds: 2400, evaluated: 8, scoreSum: 8 * 80, approved: 5, review: 2, rejected: 1 }),
+    bucket("Dua", { calls: 6, reached: 6, talkSeconds: 1500, evaluated: 6, scoreSum: 6 * 90, approved: 5, review: 1, rejected: 0 }),
+    bucket(NO_AGENT, { calls: 2, reached: 2, talkSeconds: 300, evaluated: 2, scoreSum: 100, approved: 1, review: 0, rejected: 1 }),
+  ];
+  const report = finishAgentReport({ buckets, days, allTime: [{ name: "Ada", approved: 120 }, { name: "Ben", approved: 26 }, { name: "Dua", approved: 2 }], previous: span, today: TODAY, fromDay: "2026-11-13" });
+  const of = (name: string) => report.agents.find((agent) => agent.name === name)!;
+
+  it("Plätze: meiste Leads zuerst, bei Gleichstand der höhere Grün-Anteil – „Ohne Agent“ ohne Platz ganz unten", () => {
+    expect(report.agents.map((agent) => [agent.name, agent.rank])).toEqual([["Ada", 1], ["Dua", 2], ["Cem", 3], ["Ben", 4], [NO_AGENT, null]]);
+    expect(of("Dua").greenRate).toBe(83); expect(of("Cem").greenRate).toBe(63); // 5 von 6 schlägt 5 von 8
+  });
+  it("Auf- und Abstieg gegenüber dem Abschnitt davor; „neu“ nur, wer vorher gar nicht telefoniert hat", () => {
+    // davor: Ben 8 Leads (Platz 1), Ada 1 (Platz 2), Dua 0 (Platz 3) – Cem war nicht dabei
+    expect([of("Ben").previousRank, of("Ben").rankChange]).toEqual([1, -3]); expect([of("Ada").previousRank, of("Ada").rankChange]).toEqual([2, 1]); expect([of("Dua").previousRank, of("Dua").rankChange]).toEqual([3, 1]);
+    expect([of("Cem").previousRank, of("Cem").rankChange, of("Cem").isNew]).toEqual([null, null, true]); expect(of("Ada").isNew).toBe(false); expect(of(NO_AGENT).isNew).toBe(false);
+  });
+  it("Abstand zum Platz davor in Leads – 0 heißt gleichauf", () => {
+    expect(of("Ada").gap).toBeNull(); expect(of("Dua").gap).toEqual({ rank: 1, name: "Ada", missing: 1 }); expect(of("Cem").gap).toEqual({ rank: 2, name: "Dua", missing: 0 }); expect(of("Ben").gap).toEqual({ rank: 3, name: "Cem", missing: 2 }); expect(of(NO_AGENT).gap).toBeNull();
+  });
+  it("Serie, Leads heute und bester Tag je Agent", () => {
+    expect([of("Ada").streak, of("Ada").approvedToday, of("Ada").bestDay]).toEqual([6, 2, { day: "2026-11-19", approved: 2 }]); // 12.,13.,16.,17.,18.,19. – der 10. (0 Leads) beendet sie
+    expect([of("Ben").streak, of("Ben").approvedToday]).toEqual([3, 0]); // heute läuft noch: 17., 11., 9.
+    expect(of("Cem").bestDay).toEqual({ day: "2026-11-18", approved: 4 }); expect(of(NO_AGENT).streak).toBe(0); expect(of(NO_AGENT).bestDay).toBeNull();
+  });
+  it("Stufe aus den Leads insgesamt – mindestens so viele wie im Zeitraum", () => {
+    expect([of("Ada").approvedAllTime, of("Ada").level.name]).toEqual([120, "Meister"]); expect(of("Ben").level.name).toBe("Profi");
+    expect([of("Dua").approvedAllTime, of("Dua").level.name]).toEqual([5, "Neuling"]); // „insgesamt“ hinkt hinterher – es zählt der höhere Wert
+    expect([of("Cem").approvedAllTime, of("Cem").level.next]).toEqual([5, { name: "Talent", at: 10, missing: 5 }]);
+  });
+  it("Summen: alle zusammen, heute und der Abschnitt davor – „Ohne Agent“ zählt in den Summen mit", () => {
+    expect(report.totals).toMatchObject({ agents: 5, calls: 52, approved: 20, review: 16, rejected: 14, evaluated: 50, talkSeconds: 18600, approvedToday: 4, callsToday: 15, approvedBefore: 11 });
+    expect(report.totals.averageScore).toBe(Math.round((24 * 70 + 10 * 60 + 8 * 80 + 6 * 90 + 100) / 50));
+  });
+  it("Bestwerte: Quote braucht genug Gespräche, Serie und bester Tag mindestens zwei – „Ohne Agent“ gewinnt nie", () => {
+    const awards = Object.fromEntries(report.awards.map((award) => [award.key, award]));
+    expect(awards.quote).toMatchObject({ name: "Dua", value: 83, extra: 6 }); expect(awards.serie).toMatchObject({ name: "Ada", value: 6 });
+    expect(awards.tag).toMatchObject({ name: "Dua", value: 5, extra: "2026-11-16" }); expect(awards.aufsteiger).toMatchObject({ name: "Ada", value: 1, extra: 2 }); // Ada und Dua je +1 – die mit mehr Leads
+    expect(awards.gespraeche).toMatchObject({ name: "Ada", value: 24 }); expect(awards.telefon).toMatchObject({ name: "Ben", value: 9000 }); expect(awards.termine).toBeUndefined();
+    expect(QUOTE_MIN_CALLS).toBe(5);
+    const few = finishAgentReport({ buckets: [bucket("Eli", { calls: 1, reached: 1, evaluated: 1, approved: 1 }), bucket("Fee", { calls: 9, reached: 9, evaluated: 9, approved: 2, dispositions: { verkauft: 2, interessiert: 1 } }, 4)], days: [], allTime: [], previous: null, today: TODAY, fromDay: null });
+    expect(few.awards.find((award) => award.key === "quote")).toMatchObject({ name: "Fee", value: 22 }); // Eli: 1 von 1 reicht nicht
+    expect(few.awards.find((award) => award.key === "termine")).toMatchObject({ name: "Fee", value: 2, userId: 4 }); expect(few.awards.some((award) => award.key === "serie" || award.key === "tag" || award.key === "aufsteiger")).toBe(false);
+    expect(few.agents[0]).toMatchObject({ name: "Fee", appointments: 2, interested: 1, successRate: 33, previousRank: null, rankChange: null, isNew: false }); expect(few.totals.approvedBefore).toBeNull();
+  });
+  it("doppelte Tageszeilen (Leerzeichen am Namen) zählen nicht doppelt", () => {
+    const merged = finishAgentReport({ buckets: [bucket("Ada", { calls: 4, evaluated: 4, approved: 2 })], days: [day("Ada", "2026-11-19", 2, 1), day("Ada ", "2026-11-19", 2, 1), day("Ada", "2026-11-18", 1, 1)], allTime: [{ name: "Ada", approved: 3 }, { name: " Ada", approved: 4 }], previous: null, today: TODAY, fromDay: null });
+    expect(merged.agents[0]).toMatchObject({ streak: 2, approvedToday: 2, approvedAllTime: 7, bestDay: { day: "2026-11-19", approved: 2 } }); expect(merged.totals.callsToday).toBe(4);
+  });
+  it("verschiedene Schreibweisen eines Namens finden zusammen: Tage, Leads insgesamt und der Abschnitt davor zählen für denselben Agenten", () => {
+    // Die Datenbank fasst „José“ und „jose“ zusammen und liefert je Abfrage eine der Schreibweisen – in der Liste steht die aus dem Zeitraum
+    const mixed = finishAgentReport({
+      buckets: [bucket("José Álvarez", { calls: 4, evaluated: 4, approved: 3 }), bucket("Ben", { calls: 4, evaluated: 4, approved: 1 })],
+      days: [day("jose alvarez", "2026-11-19", 2, 2), day("JOSÉ ÁLVAREZ", "2026-11-18", 2, 1), day("Jose Alvarez ", "2026-11-10", 5, 0), day("Ben", "2026-11-19", 4, 1), day("Ben", "2026-11-11", 6, 4)],
+      allTime: [{ name: "jose alvarez", approved: 30 }, { name: "José Álvarez", approved: 2 }, { name: "Ben", approved: 5 }], previous: { fromDay: "2026-11-06", beforeDay: "2026-11-13" }, today: TODAY, fromDay: "2026-11-13",
+    });
+    expect(mixed.agents.map((agent) => agent.name)).toEqual(["José Álvarez", "Ben"]);
+    expect(mixed.agents[0]).toMatchObject({ streak: 2, approvedToday: 2, bestDay: { day: "2026-11-19", approved: 2 }, approvedAllTime: 32, previousRank: 2, rankChange: 1, isNew: false }); expect(mixed.agents[0].level.name).toBe("Profi");
+    expect(mixed.agents[1]).toMatchObject({ previousRank: 1, rankChange: -1 });
+  });
+  it("leer bleibt leer", () => { const empty = finishAgentReport({ buckets: [], days: [], allTime: [], previous: null, today: TODAY, fromDay: null }); expect(empty.agents).toEqual([]); expect(empty.awards).toEqual([]); expect(empty.totals).toMatchObject({ agents: 0, calls: 0, approved: 0, averageScore: null, reachRate: null }); });
+});
+
+describe("Bestenliste – Bausteine aus einzelnen Gesprächen (Vorschau)", () => {
+  const facts = [
+    { name: "Ada", at: new Date("2026-11-19T09:00:00Z"), approved: true, evaluated: true }, { name: " Ada ", at: new Date("2026-11-19T10:00:00Z"), approved: false, evaluated: true },
+    { name: "Ada", at: new Date("2026-11-18T23:30:00Z"), approved: true, evaluated: false }, // nach Mitternacht deutscher Zeit → zählt zum 19.
+    { name: null, at: new Date("2026-11-19T11:00:00Z"), approved: true, evaluated: true }, { name: "Ben", at: null, approved: true, evaluated: true },
+  ];
+  it("je Agent und Tag in deutscher Zeit; ohne Uhrzeit zählt ein Gespräch dort nicht", () => {
+    expect(countAgentDays(facts)).toEqual(expect.arrayContaining([{ name: "Ada", day: "2026-11-19", calls: 3, approved: 2, evaluated: 2 }, { name: NO_AGENT, day: "2026-11-19", calls: 1, approved: 1, evaluated: 1 }])); expect(countAgentDays(facts).length).toBe(2);
+  });
+  it("je Agent insgesamt – ohne „Ohne Agent“", () => { expect(countAgents(facts)).toEqual(expect.arrayContaining([{ name: "Ada", calls: 3, approved: 2, evaluated: 2 }, { name: "Ben", calls: 1, approved: 1, evaluated: 1 }])); expect(countAgents(facts).length).toBe(2); });
+});

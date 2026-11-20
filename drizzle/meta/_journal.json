@@ -792,6 +792,13 @@
       "when": 1795800000000,
       "tag": "0112_gespraech_zeitmarken",
       "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "5",
+      "when": 1795900000000,
+      "tag": "0113_gespraeche_schneller",
+      "breakpoints": true
     }
   ]
 }

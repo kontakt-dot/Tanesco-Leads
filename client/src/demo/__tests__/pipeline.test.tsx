@@ -167,9 +167,10 @@ describe("Gesprächsbewertung im Chat-Build", () => {
     const settings = await call("leadops.getCallQaSettings");
     expect(settings.enabled).toBe(true); expect(settings.criteria).toHaveLength(6);
     const calls = await call("leadops.listCalls", {});
-    expect(calls.length).toBeGreaterThanOrEqual(5);
+    expect(calls.length).toBe(200); // die Liste liefert die neuesten 200 – die Übersicht zählt alle
     const stats = await call("leadops.callStatistics");
-    expect(stats.total).toBe(calls.length);
+    expect(stats.total).toBe(getStore().tables.callRecords.length); expect(stats.total).toBeGreaterThan(calls.length);
+    expect((await call("leadops.listCalls", { limit: 1000 })).length).toBe(Math.min(1000, stats.total));
     const detail = await call("leadops.getCall", { callId: calls[calls.length - 1].id });
     expect(detail.criteria).toHaveLength(6);
     const lead = await call("leadops.importLead", { categoryId: getStore().tables.leadCategories[0].id, firstName: "Test", lastName: "Anruf", city: "Kiel" });
@@ -1671,13 +1672,17 @@ describe("sipgate als Telefonie-Anbieter (Chat-Build)", () => {
 
 describe("Agenten-Auswertung und Rohdaten je Kategorie (Chat-Build)", () => {
   beforeAll(() => resetStore());
-  it("Gespräche → Agenten: drei Agenten mit Anrufen, Erreicht-Quote, Terminen und Ø Punkten; Zeitraum und Kampagne filtern; Liste nach Agent", async () => {
+  it("Gespräche → Agenten: Agenten des eigenen Dialers mit Anrufen, Erreicht-Quote, Terminen und Ø Punkten; Reihenfolge nach Leads; Zeitraum und Kampagne filtern; Liste nach Agent", async () => {
     const report = await call("leadops.dialerAgentReport", { period: "30" });
     const names = report.agents.map((agent: any) => agent.name);
-    expect(names).toEqual(expect.arrayContaining(["Taner Tanesco", "Francesco Rossi", "Lena Vogt"]));
+    expect(names).toEqual(expect.arrayContaining(["Taner Tanesco", "Francesco Rossi", "Lena Vogt", "Deniz Kaya"]));
     const taner = report.agents.find((agent: any) => agent.name === "Taner Tanesco");
-    expect(taner.calls).toBeGreaterThanOrEqual(8); expect(taner.appointments).toBeGreaterThanOrEqual(3); expect(taner.averageScore).toBeGreaterThan(60); expect(taner.reachRate).not.toBeNull();
-    expect(report.agents[0].name).toBe("Taner Tanesco"); // meiste Termine zuerst
+    expect(taner.userId).toBeGreaterThan(0); expect(taner.calls).toBeGreaterThanOrEqual(8); expect(taner.appointments).toBeGreaterThanOrEqual(3); expect(taner.averageScore).toBeGreaterThan(60); expect(taner.reachRate).not.toBeNull();
+    // Reihenfolge: meiste Leads (freigegebene Gespräche) zuerst – die Plätze zählen durch
+    const real = report.agents.filter((agent: any) => agent.rank !== null);
+    expect(real.map((agent: any) => agent.rank)).toEqual(real.map((_: unknown, index: number) => index + 1));
+    for (let index = 1; index < real.length; index += 1) expect(real[index - 1].approved).toBeGreaterThanOrEqual(real[index].approved);
+    expect(report.awards.find((award: any) => award.key === "termine")).toMatchObject({ name: "Taner Tanesco", userId: taner.userId });
     const lena = report.agents.find((agent: any) => agent.name === "Lena Vogt");
     expect(lena.notReached).toBeGreaterThanOrEqual(1); expect(lena.interested).toBeGreaterThanOrEqual(2);
     expect(report.totals.calls).toBe(report.agents.reduce((sum: number, agent: any) => sum + agent.calls, 0));
@@ -1687,7 +1692,11 @@ describe("Agenten-Auswertung und Rohdaten je Kategorie (Chat-Build)", () => {
     const live = report.campaigns.find((campaign: any) => campaign.name === "Dachdecker Hessen – Nachfassen");
     const perCampaign = await call("leadops.dialerAgentReport", { period: "alle", campaignId: live.id });
     expect(perCampaign.totals.calls).toBe(4); // drei beendete + das laufende Gespräch
-    expect(perCampaign.agents.some((agent: any) => agent.name === "Lena Vogt")).toBe(false);
+    expect(perCampaign.agents.some((agent: any) => agent.name === "Lena Vogt")).toBe(false); expect(perCampaign.agents.some((agent: any) => agent.name === "Deniz Kaya")).toBe(false);
+    // dieselbe Kampagne über ihren Namen (so wählt sie die Seite): dieselben Anrufe
+    const byName = await call("leadops.dialerAgentReport", { period: "alle", campaign: "Dachdecker Hessen – Nachfassen" });
+    expect(byName.campaign).toBe("Dachdecker Hessen – Nachfassen"); expect(byName.totals.calls).toBe(4); expect(byName.agents.map((agent: any) => agent.name).sort()).toEqual(perCampaign.agents.map((agent: any) => agent.name).sort());
+    expect(byName.recentWins.every((win: any) => win.campaign === "Dachdecker Hessen – Nachfassen")).toBe(true); expect(byName.recentWins.length).toBe(3);
     const calls = await call("leadops.listCalls", { agentName: "Francesco Rossi" });
     expect(calls.length).toBeGreaterThanOrEqual(4); expect(calls.every((row: any) => row.agentName === "Francesco Rossi")).toBe(true);
   });
