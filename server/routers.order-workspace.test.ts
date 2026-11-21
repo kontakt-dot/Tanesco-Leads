@@ -37,7 +37,7 @@ describe("Bestellarbeitsbereich-Router", () => {
     state.reset();
     const caller = appRouter.createCaller({ user: { id: 21 } } as never);
 
-    const result = await caller.leadops.createDeliveryChain({ orderId: 812, categoryId: 150001, name: "PV-Mehrabnehmer", priority: 1, sellTarget: 1, distributionMode: "lieferketten_round_robin", status: "aktiv" });
+    const result = await caller.leadops.createDeliveryChain({ orderId: 812, categoryId: 150001, name: "PV-Mehrabnehmer", priority: 1, sellTarget: 1, status: "aktiv" });
 
     expect(result).toEqual({ success: true, chainId: 812 });
     expect(state.inserts[0]).toMatchObject({ tenantId: 71, orderId: 812, categoryId: 150001, name: "PV-Mehrabnehmer", status: "aktiv" });

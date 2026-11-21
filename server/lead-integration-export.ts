@@ -1,3 +1,4 @@
+import { outboundMeta } from "../shared/lead-fields";
 export type ExportableLead = {
   publicId: string;
   categoryId: number;
@@ -20,7 +21,7 @@ export function assertSafeExportUrl(callbackUrl: string) {
 }
 
 export function buildLeadExportPayload(lead: ExportableLead) {
-  return { lead: { publicId: lead.publicId, categoryId: lead.categoryId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, fields: lead.metadata ?? {} } };
+  return { lead: { publicId: lead.publicId, categoryId: lead.categoryId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, fields: outboundMeta(lead.metadata) } };
 }
 
 export type IntegrationExportConfig = { authMethod?: "api_key" | "bearer" | "basic" | "ohne"; headers?: Record<string, string>; payloadMapping?: Record<string, string>; [key: string]: unknown };
@@ -30,7 +31,7 @@ export type IntegrationExportConfig = { authMethod?: "api_key" | "bearer" | "bas
  * Zielschlüssel ← Quellfeld des Leads, "publisherId" (Partner-/Location-ID der Integration) oder "metadata" (alle Zusatzfelder).
  */
 export function buildProviderPayload(lead: ExportableLead, mapping: Record<string, string>, publisherId?: string | null, provider?: string) {
-  const fields = lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata) ? (lead.metadata as Record<string, unknown>) : {};
+  const fields = outboundMeta(lead.metadata); // ohne die Merker der Software (z. B. „API-Fehler abgehakt am …“)
   const source: Record<string, unknown> = { ...fields, publicId: lead.publicId, categoryId: lead.categoryId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, publisherId: publisherId ?? null, metadata: fields };
   const payload: Record<string, unknown> = {};
   for (const [target, key] of Object.entries(mapping)) {

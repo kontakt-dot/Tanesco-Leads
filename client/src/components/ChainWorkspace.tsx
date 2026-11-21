@@ -5,13 +5,16 @@ import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, Plus, Trash2, UserRoundCog, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, ChevronRight, GripVertical, Plus, Trash2, UserRoundCog, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
+import { ruleSentence, suggestChainName, supplierText } from "../../../shared/chain-rules";
 
 type Range = "heute" | "gestern" | "7_tage" | "14_tage" | "30_tage" | "maximal";
 type Overview = inferRouterOutputs<AppRouter>["leadops"]["chainOverview"];
+type OverviewChain = Overview["chains"][number];
+type Pickers = inferRouterOutputs<AppRouter>["leadops"]["chainPickers"];
 type Detail = inferRouterOutputs<AppRouter>["leadops"]["chainDetail"];
 type Stop = Detail["stops"][number];
 type StopDelivery = inferRouterOutputs<AppRouter>["leadops"]["listStopDeliveries"][number];
@@ -42,43 +45,107 @@ function RangeSelect({ range, setRange }: { range: Range; setRange: (value: Rang
 }
 
 /* ------------------------------------------------------------------ Übersicht */
+/**
+ * Übersicht: feste Verteilung. Je Kategorie stehen die Ketten in ihrer festen Reihenfolge – mit „Von“ (Lieferanten) und „An“ (Kunden der Reihe nach).
+ * Es wird nicht abgewechselt: Passen mehrere Ketten zu einem Lead, kommt immer zuerst die obere.
+ */
 function ChainOverviewPage({ range, setRange, onOpen }: { range: Range; setRange: (value: Range) => void; onOpen: (id: number) => void }) {
   const utils = trpc.useUtils();
   const overview = trpc.leadops.chainOverview.useQuery({ range }, { retry: false });
   const pickers = trpc.leadops.chainPickers.useQuery(undefined, { retry: false });
   const refresh = () => { utils.leadops.chainOverview.invalidate(); utils.leadops.listDeliveryChains.invalidate(); };
-  const setMode = trpc.leadops.setChainDistributionMode.useMutation({ onSuccess: () => { refresh(); toast.success("Verteilmodus gespeichert."); }, onError: (error) => toast.error(error.message) });
-  const createChain = trpc.leadops.createDeliveryChain.useMutation({ onSuccess: (result) => { refresh(); setDraft(null); toast.success("Kette angelegt."); onOpen(result.chainId); }, onError: (error) => toast.error(error.message) });
-  const updateChain = trpc.leadops.updateDeliveryChain.useMutation({ onSuccess: refresh, onError: (error) => toast.error(error.message) });
-  const deleteChain = trpc.leadops.deleteDeliveryChain.useMutation({ onSuccess: () => { refresh(); toast.success("Kette gelöscht."); }, onError: (error) => toast.error(error.message) });
-  const [draft, setDraft] = useState<{ name: string; categoryId: string; priority: string; sellTarget: string } | null>(null);
-  const categories = pickers.data?.categories ?? [];
-  const mode = overview.data?.distributionMode ?? "lieferketten_round_robin";
-  const modeButton = (value: typeof mode, label: string) => <button type="button" className={`h-9 whitespace-nowrap rounded-md px-2 text-xs font-medium transition sm:px-3 sm:text-sm ${mode === value ? "bg-violet-500/20 text-white shadow-inner" : "text-slate-400 hover:text-slate-100"}`} onClick={() => mode !== value && setMode.mutate({ mode: value })} aria-pressed={mode === value}>{label}</button>;
-  return <>
-    <header className="page-intro compact"><div><span className="eyebrow">ROUTING ENGINE</span><h1>Lieferkette</h1><p>Wasserfall-Ketten: ein Lead wird der Reihe nach an Käufer angeboten. Pro Lead-Kategorie legst du eine Kette an und fügst dann die Stops (Käufer + Preis) hinzu.</p></div>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-slate-950/40 p-1" title="Verteilmodus – gilt für alle Ketten"><span className="hidden px-2 text-[11px] uppercase tracking-[.12em] text-slate-500 sm:inline">Verteilmodus</span>{modeButton("lieferketten_round_robin", "Lieferketten Round-Robin")}{modeButton("bestellungen_round_robin", "Bestellungen Round-Robin")}</div>
-        <RangeSelect range={range} setRange={setRange} />
-        <Button className="flux-button" onClick={() => setDraft({ name: "", categoryId: String(categories[0]?.id ?? ""), priority: "1", sellTarget: "1" })}><Plus className="h-4 w-4" /> Neue Kette</Button>
-      </div></header>
-    {draft && <section className="surface-panel mb-4 p-5"><h2 className="text-base font-semibold text-slate-100">Neue Kette</h2><p className="mt-1 text-xs text-slate-500">Namenskonvention: „Quelle Kategorie: Käufer1 → Käufer2“. Die Stops fügst du danach auf der Detailseite hinzu.</p>
-      <div className="mt-4 grid gap-3 md:grid-cols-[2fr_1.2fr_.6fr_.6fr]"><label className="grid gap-1 text-xs text-slate-400">Name<Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="z. B. Ondialer PV: Hyperenergie → Leadnodes" /></label>
-        <label className="grid gap-1 text-xs text-slate-400">Lead-Kategorie<select className={field} value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-        <label className="grid gap-1 text-xs text-slate-400">Priorität<Input type="number" min={1} value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value })} /></label>
-        <label className="grid gap-1 text-xs text-slate-400">Verkaufsziel<Input type="number" min={1} value={draft.sellTarget} onChange={(event) => setDraft({ ...draft, sellTarget: event.target.value })} /></label></div>
-      <div className="mt-4 flex gap-2"><Button className="flux-button" disabled={createChain.isPending || draft.name.trim().length < 2 || !draft.categoryId} onClick={() => createChain.mutate({ name: draft.name.trim(), categoryId: Number(draft.categoryId), priority: Number(draft.priority) || 1, sellTarget: Number(draft.sellTarget) || 1, status: "inaktiv" })}>Kette anlegen</Button><Button variant="outline" onClick={() => setDraft(null)}>Abbrechen</Button></div></section>}
-    <section className="surface-panel lead-panel overflow-hidden">
-      {overview.isLoading ? <p className="p-6 text-sm text-slate-400">Ketten werden geladen …</p> : overview.error ? <p className="p-6 text-sm text-red-200">{overview.error.message}</p> : !overview.data?.chains.length ? <p className="p-6 text-sm text-slate-400">Noch keine Lieferkette. Lege mit „Neue Kette“ die erste an.</p> :
-        <div className="overflow-x-auto"><table className="flux-table"><thead><tr><th>Name</th><th>Kategorie</th><th>Priorität</th><th>Stops</th><th>Ziel</th><th title="Gesamt / Angenommen / Abgelehnt">Ges. / Ang. / Abg.</th><th>Status</th><th>Aktion</th></tr></thead><tbody>
-          {overview.data.chains.map((chain) => <tr key={chain.id} className="cursor-pointer hover:bg-white/[.03]" onClick={() => onOpen(chain.id)}>
-            <td className="font-medium text-slate-100">{chain.name}{chain.orderNumber && <span className="ml-2 text-xs text-slate-500">Bestellung {chain.orderNumber}</span>}</td><td>{chain.categoryName}</td><td>{chain.priority}</td><td>{chain.stops}</td><td>{chain.sellTarget}</td>
-            <td className="whitespace-nowrap font-mono text-sm"><span className="text-slate-100">{chain.stats.total}</span> / <span className="text-emerald-300">{chain.stats.accepted}</span> / <span className="text-red-300">{chain.stats.rejected}</span></td>
-            <td><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></td>
-            <td onClick={(event) => event.stopPropagation()}><div className="flex gap-2 whitespace-nowrap"><Button size="sm" variant="outline" onClick={() => updateChain.mutate({ id: chain.id, status: chain.status === "aktiv" ? "inaktiv" : "aktiv" })}>{chain.status === "aktiv" ? "Deaktivieren" : "Aktivieren"}</Button><Button size="sm" variant="outline" onClick={() => onOpen(chain.id)}>Öffnen</Button><Button size="sm" variant="ghost" aria-label="Kette löschen" onClick={async () => { if (await confirmAction(`Kette „${chain.name}“ wirklich löschen?`)) deleteChain.mutate({ chainId: chain.id }); }}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}
-        </tbody></table></div>}
-    </section>
-  </>;
+  const onError = (error: { message: string }) => toast.error(error.message);
+  const [building, setBuilding] = useState(false);
+  const createRule = trpc.leadops.createChainRule.useMutation({ onSuccess: (result) => { refresh(); setBuilding(false); toast.success(result.created.length === 1 ? "Lieferkette angelegt." : `${result.created.length} Lieferketten angelegt – eine je Kategorie.`); if (result.created.length === 1) onOpen(result.created[0].chainId); }, onError });
+  const updateChain = trpc.leadops.updateDeliveryChain.useMutation({ onSuccess: refresh, onError });
+  const deleteChain = trpc.leadops.deleteDeliveryChain.useMutation({ onSuccess: () => { refresh(); toast.success("Kette gelöscht."); }, onError });
+  const reorder = trpc.leadops.reorderChains.useMutation({ onSuccess: () => { refresh(); toast.success("Reihenfolge gespeichert."); }, onError });
+  const chains = overview.data?.chains ?? [];
+  const groups = useMemo(() => {
+    const byCategory = new Map<number, { categoryId: number; categoryName: string; chains: OverviewChain[] }>();
+    for (const chain of chains) { const group = byCategory.get(chain.categoryId) ?? { categoryId: chain.categoryId, categoryName: chain.categoryName, chains: [] }; group.chains.push(chain); byCategory.set(chain.categoryId, group); }
+    return Array.from(byCategory.values()).map((group) => ({ ...group, chains: group.chains.slice().sort((a, b) => a.place - b.place) })).sort((a, b) => a.categoryName.localeCompare(b.categoryName, "de"));
+  }, [chains]);
+  const move = (group: { categoryId: number; chains: OverviewChain[] }, chainId: number, direction: -1 | 1) => { const ids = group.chains.map((chain) => chain.id); const index = ids.indexOf(chainId); const target = index + direction; if (target < 0 || target >= ids.length) return; [ids[index], ids[target]] = [ids[target], ids[index]]; reorder.mutate({ categoryId: group.categoryId, chainIds: ids }); };
+  const nameOf = (id: number) => chains.find((chain) => chain.id === id)?.name ?? `Kette #${id}`;
+  return <div className="fx-scope lk">
+    <header className="page-intro compact"><div><span className="eyebrow">ROUTING ENGINE</span><h1>Lieferkette</h1><p>Feste Verteilung: Du legst fest, welche Kategorie von welchen Lieferanten an welche Kunden geht. Die Kunden kommen in fester Reihenfolge dran – es wird nicht abgewechselt.</p></div>
+      <div className="flex flex-wrap items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Button className="flux-button" onClick={() => setBuilding(true)} disabled={building}><Plus className="h-4 w-4" /> Neue Lieferkette</Button></div></header>
+    {building && <ChainBuilder pickers={pickers.data} pending={createRule.isPending} onCancel={() => setBuilding(false)} onCreate={(values) => createRule.mutate(values)} />}
+    {overview.isLoading ? <section className="lk-panel"><p className="lk-empty">Ketten werden geladen …</p></section> : overview.error ? <section className="lk-panel"><p className="lk-empty is-error">{overview.error.message}</p></section> : !groups.length ? <section className="lk-panel"><p className="lk-empty">Noch keine Lieferkette. Lege mit „Neue Lieferkette“ fest, welche Kategorie von welchen Lieferanten an welche Kunden geht.</p></section> :
+      groups.map((group) => { const active = group.chains.filter((chain) => chain.status === "aktiv"); const shared = active.some((chain) => chain.before.length > 0); return <section key={group.categoryId} className="lk-panel" aria-label={`Lieferketten für ${group.categoryName}`}>
+        <header className="lk-group"><h2>{group.categoryName}</h2><span>{group.chains.length === 1 ? "1 Kette" : `${group.chains.length} Ketten`}{active.length !== group.chains.length ? ` · ${active.length} aktiv` : ""}</span></header>
+        {shared && <p className="lk-order-note">Zu manchen Leads passen hier mehrere Ketten. Dann gilt immer die Reihenfolge von oben nach unten: Erst wenn in der oberen Kette kein Kunde zugreift, kommt die nächste.</p>}
+        <ol className="lk-list">{group.chains.map((chain, index) => <li key={chain.id} className={`lk-chain ${chain.status === "aktiv" ? "" : "is-off"}`}>
+          <div className="lk-place"><strong title="Platz in der festen Reihenfolge dieser Kategorie">{chain.place}</strong>{group.chains.length > 1 && <span><button type="button" aria-label={`„${chain.name}“ nach oben`} title="Früher drankommen" disabled={index === 0 || reorder.isPending} onClick={() => move(group, chain.id, -1)}><ArrowUp /></button><button type="button" aria-label={`„${chain.name}“ nach unten`} title="Später drankommen" disabled={index === group.chains.length - 1 || reorder.isPending} onClick={() => move(group, chain.id, 1)}><ArrowDown /></button></span>}</div>
+          <div className="lk-body">
+            <div className="lk-title"><button type="button" className="lk-name" onClick={() => onOpen(chain.id)}>{chain.name}</button>{chain.orderNumber && <span className="lk-order">Bestellung {chain.orderNumber}</span>}<span className={`lk-status ${chain.status === "aktiv" ? "is-on" : ""}`}>{chain.status === "aktiv" ? "Aktiv" : "Aus"}</span></div>
+            <div className="lk-flow">
+              <span className="lk-from"><small>Von</small><b>{chain.supplierText}</b>{chain.country && <i>nur {chain.country}</i>}</span>
+              <ArrowRight className="lk-arrow" aria-hidden="true" />
+              <span className="lk-to"><small>An</small>{chain.buyers.length ? <span className="lk-buyers">{chain.buyers.map((buyer, position) => <span key={`${buyer.name}-${position}`} className={`lk-buyer ${buyer.active ? "" : "is-off"}`} title={buyer.active ? `Kunde ${position + 1} · ${money(buyer.unitPrice)}` : "Dieser Kunde ist ausgeschaltet"}><em>{position + 1}</em>{buyer.name}</span>)}</span> : <b className="lk-missing">Noch kein Kunde – diese Kette verteilt nichts</b>}</span>
+            </div>
+            {chain.before.length > 0 && <p className="lk-after">Kommt erst nach: {chain.before.map(nameOf).join(", ")}</p>}
+          </div>
+          <div className="lk-side">
+            <span className="lk-stats" title="Geschickt / angenommen / abgelehnt im gewählten Zeitraum"><b>{chain.stats.total}</b> geschickt · <b className="is-good">{chain.stats.accepted}</b> angenommen · <b className="is-bad">{chain.stats.rejected}</b> abgelehnt</span>
+            <span className="lk-actions"><Button size="sm" variant="outline" disabled={updateChain.isPending} onClick={() => updateChain.mutate({ id: chain.id, status: chain.status === "aktiv" ? "inaktiv" : "aktiv" })}>{chain.status === "aktiv" ? "Ausschalten" : "Einschalten"}</Button><Button size="sm" variant="outline" onClick={() => onOpen(chain.id)}>Öffnen</Button><Button size="sm" variant="ghost" aria-label={`Kette „${chain.name}“ löschen`} title="Kette löschen" onClick={async () => { if (await confirmAction(`Kette „${chain.name}“ wirklich löschen?`)) deleteChain.mutate({ chainId: chain.id }); }}><Trash2 className="h-4 w-4" /></Button></span>
+          </div>
+        </li>)}</ol>
+      </section>; })}
+  </div>;
+}
+
+type BuilderBuyer = { key: number; buyerUserId: number | null; name: string; price: string };
+/** „Neue Lieferkette“: Kategorie(n) → Lieferanten → Kunden in fester Reihenfolge. Darunter steht die Regel als Satz. */
+function ChainBuilder({ pickers, pending, onCancel, onCreate }: { pickers: Pickers | undefined; pending: boolean; onCancel: () => void; onCreate: (values: { categoryIds: number[]; supplierMode: "all" | "include"; supplierIds: number[]; buyers: Array<{ buyerUserId: number | null; buyerName: string | null; unitPrice: number }>; name: string | null; active: boolean }) => void }) {
+  const categories = (pickers?.categories ?? []).filter((category) => category.status === "aktiv" && !category.isTemplate); const suppliers = pickers?.suppliers ?? []; const accounts = pickers?.buyers ?? [];
+  const [categoryIds, setCategoryIds] = useState<number[]>([]); const [supplierMode, setSupplierMode] = useState<"all" | "include">("all"); const [supplierIds, setSupplierIds] = useState<number[]>([]);
+  const [buyers, setBuyers] = useState<BuilderBuyer[]>([]); const [pick, setPick] = useState(""); const [freeName, setFreeName] = useState(""); const [price, setPrice] = useState(""); const [name, setName] = useState(""); const [active, setActive] = useState(true); const [seq, setSeq] = useState(1);
+  const toggle = (list: number[], id: number) => (list.includes(id) ? list.filter((item) => item !== id) : [...list, id]);
+  const supplierNames = supplierIds.map((id) => suppliers.find((supplier) => supplier.id === id)?.label.split(" — ")[0] ?? `Lieferant #${id}`);
+  const categoryNames = categoryIds.map((id) => categories.find((category) => category.id === id)?.name ?? "");
+  const fromText = supplierText(supplierMode, supplierNames);
+  const addBuyer = () => {
+    const account = pick && pick !== "frei" ? accounts.find((buyer) => String(buyer.userId) === pick) : undefined; const label = account ? account.company : freeName.trim();
+    if (!label || label.length < 2) return toast.error("Bitte einen Kunden wählen oder einen Namen eintragen.");
+    if (account && buyers.some((buyer) => buyer.buyerUserId === account.userId)) return toast.error("Dieser Kunde steht schon in der Kette.");
+    setBuyers([...buyers, { key: seq, buyerUserId: account?.userId ?? null, name: label, price: price.trim() || "0" }]); setSeq(seq + 1); setPick(""); setFreeName(""); setPrice("");
+  };
+  const moveBuyer = (index: number, direction: -1 | 1) => { const next = buyers.slice(); const target = index + direction; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; setBuyers(next); };
+  const suggested = categoryNames.length === 1 ? suggestChainName(categoryNames[0], supplierMode === "all" ? [] : supplierNames, buyers.map((buyer) => buyer.name)) : "";
+  const missing = !categoryIds.length ? "Wähle mindestens eine Kategorie." : supplierMode === "include" && !supplierIds.length ? "Wähle mindestens einen Lieferanten – oder „Alle Lieferanten“." : active && !buyers.length ? "Trage mindestens einen Kunden ein – oder lege die Kette ausgeschaltet an." : null;
+  const submit = () => onCreate({ categoryIds, supplierMode, supplierIds: supplierMode === "include" ? supplierIds : [], buyers: buyers.map((buyer) => ({ buyerUserId: buyer.buyerUserId, buyerName: buyer.buyerUserId ? null : buyer.name, unitPrice: Math.max(0, Number(buyer.price.replace(",", ".")) || 0) })), name: name.trim() || null, active });
+  return <section className="lk-panel lk-builder" aria-label="Neue Lieferkette">
+    <header className="lk-builder-head"><div><h2>Neue Lieferkette</h2><p>Drei Angaben, dann steht fest, wohin diese Leads gehen.</p></div><button type="button" className="lk-close" aria-label="Schließen" onClick={onCancel}><X /></button></header>
+    <div className="lk-steps">
+      <fieldset className="lk-step"><legend><em>1</em> Welche Kategorie?</legend>
+        {categories.length ? <div className="lk-chips">{categories.map((category) => <button key={category.id} type="button" className={`lk-chip ${categoryIds.includes(category.id) ? "is-on" : ""}`} aria-pressed={categoryIds.includes(category.id)} onClick={() => setCategoryIds(toggle(categoryIds, category.id))}>{category.name}</button>)}</div> : <p className="lk-hint">Noch keine Lead-Kategorie angelegt.</p>}
+        <p className="lk-hint">Mehrere wählen ist möglich – dann entsteht je Kategorie eine Kette mit denselben Kunden.</p>
+      </fieldset>
+      <fieldset className="lk-step"><legend><em>2</em> Von welchen Lieferanten?</legend>
+        <div className="lk-radio" role="radiogroup" aria-label="Lieferanten"><button type="button" role="radio" aria-checked={supplierMode === "all"} className={supplierMode === "all" ? "is-on" : ""} onClick={() => setSupplierMode("all")}>Alle Lieferanten</button><button type="button" role="radio" aria-checked={supplierMode === "include"} className={supplierMode === "include" ? "is-on" : ""} onClick={() => setSupplierMode("include")}>Nur bestimmte</button></div>
+        {supplierMode === "include" && (suppliers.length ? <div className="lk-chips">{suppliers.map((supplier) => <button key={supplier.id} type="button" className={`lk-chip ${supplierIds.includes(supplier.id) ? "is-on" : ""}`} aria-pressed={supplierIds.includes(supplier.id)} onClick={() => setSupplierIds(toggle(supplierIds, supplier.id))}>{supplier.label.split(" — ")[0]}</button>)}</div> : <p className="lk-hint">Noch kein Lieferant angelegt.</p>)}
+        <p className="lk-hint">{supplierMode === "all" ? "Jeder Lead dieser Kategorie passt – egal, von wem er kommt." : "Nur Leads dieser Lieferanten laufen in die Kette. Alle anderen bleiben für andere Ketten."}</p>
+      </fieldset>
+      <fieldset className="lk-step is-wide"><legend><em>3</em> An welche Kunden – in dieser Reihenfolge</legend>
+        {buyers.length > 0 && <ol className="lk-picked">{buyers.map((buyer, index) => <li key={buyer.key}><em>{index + 1}</em><strong>{buyer.name}</strong><label>Preis<Input aria-label={`Preis für ${buyer.name}`} inputMode="decimal" value={buyer.price} onChange={(event) => setBuyers(buyers.map((item) => item.key === buyer.key ? { ...item, price: event.target.value } : item))} /><span>€</span></label><span className="lk-picked-tools"><button type="button" aria-label={`${buyer.name} nach oben`} disabled={index === 0} onClick={() => moveBuyer(index, -1)}><ArrowUp /></button><button type="button" aria-label={`${buyer.name} nach unten`} disabled={index === buyers.length - 1} onClick={() => moveBuyer(index, 1)}><ArrowDown /></button><button type="button" aria-label={`${buyer.name} entfernen`} onClick={() => setBuyers(buyers.filter((item) => item.key !== buyer.key))}><X /></button></span></li>)}</ol>}
+        <div className="lk-add">
+          <select aria-label="Kunde wählen" className={field} value={pick} onChange={(event) => setPick(event.target.value)}><option value="">Kunde wählen …</option>{accounts.filter((buyer) => !buyers.some((item) => item.buyerUserId === buyer.userId)).map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.label}{buyer.api ? " · API" : ""}</option>)}<option value="frei">Anderer Kunde (nur Name)</option></select>
+          {pick === "frei" && <Input aria-label="Name des Kunden" value={freeName} placeholder="Name des Kunden" onChange={(event) => setFreeName(event.target.value)} />}
+          <label className="lk-add-price"><Input aria-label="Preis je Lead" inputMode="decimal" value={price} placeholder="Preis" onChange={(event) => setPrice(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addBuyer(); } }} /><span>€</span></label>
+          <Button variant="outline" onClick={addBuyer} disabled={!pick}><Plus className="h-4 w-4" /> Kunde hinzufügen</Button>
+        </div>
+        <p className="lk-hint">Kunde 1 bekommt jeden passenden Lead zuerst. Nimmt er ihn nicht (Gebiet, Tagesgrenze, Dublette, Ablehnung), geht der Lead an Kunde 2 und so weiter. Gebiete und Grenzen stellst du danach je Kunde ein.</p>
+      </fieldset>
+    </div>
+    <p className="lk-sentence" aria-live="polite"><span>So wird verteilt</span>{ruleSentence(categoryNames, fromText, buyers.map((buyer) => buyer.name))}</p>
+    <div className="lk-builder-foot">
+      <label className="lk-name-field">Name der Kette (optional)<Input value={name} maxLength={140} placeholder={suggested || "wird aus Kategorie, Lieferanten und Kunden gebildet"} onChange={(event) => setName(event.target.value)} /></label>
+      <label className="lk-switch"><Switch checked={active} onCheckedChange={setActive} aria-label="Gleich einschalten" /><span>{active ? "Gleich einschalten" : "Ausgeschaltet anlegen"}</span></label>
+      <span className="lk-builder-actions">{missing && <small role="status">{missing}</small>}<Button variant="outline" onClick={onCancel}>Abbrechen</Button><Button className="flux-button" disabled={pending || Boolean(missing)} onClick={submit}>{pending ? "Wird angelegt …" : categoryIds.length > 1 ? `${categoryIds.length} Lieferketten anlegen` : "Lieferkette anlegen"}</Button></span>
+    </div>
+  </section>;
 }
 
 /* ------------------------------------------------------------------ Detailseite */
@@ -100,12 +167,18 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
   if (detail.isLoading) return <section className="surface-panel p-6 text-sm text-slate-400">Kette wird geladen …</section>;
   if (detail.error || !detail.data) return <section className="surface-panel p-6 text-sm text-red-200">{detail.error?.message ?? "Kette nicht gefunden."}<div className="mt-3"><Button variant="outline" onClick={onBack}>Zurück zu den Ketten</Button></div></section>;
   const { chain, stops, buyers, suppliers, reasons, activity } = detail.data;
+  const fromText = supplierText(chain.supplierFilterMode, chain.supplierIds.map((id) => suppliers.find((supplier) => supplier.id === id)?.label.split(" — ")[0] ?? `Lieferant #${id}`));
   const moveStop = (stopId: number, direction: -1 | 1) => { const ids = stops.map((stop) => stop.id); const index = ids.indexOf(stopId); const target = index + direction; if (target < 0 || target >= ids.length) return; [ids[index], ids[target]] = [ids[target], ids[index]]; reorder.mutate({ chainId, stopIds: ids }); };
   const dropOn = (targetId: number) => { if (dragId === null || dragId === targetId) return; const ids = stops.map((stop) => stop.id); const from = ids.indexOf(dragId); const to = ids.indexOf(targetId); ids.splice(from, 1); ids.splice(to, 0, dragId); setDragId(null); reorder.mutate({ chainId, stopIds: ids }); };
   return <>
     {!embedded && <button type="button" className="mb-3 text-sm text-violet-200 hover:underline" onClick={onBack}>← Zurück zu den Ketten</button>}
     {embedded ? <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><span className="eyebrow">LIEFERKETTE DER BESTELLUNG</span><h2 className="text-lg font-semibold text-slate-100">{chain.name}</h2><p className="text-xs text-slate-500">Die Stops werden von oben nach unten abgelaufen – gleiche Einstellungen wie auf der Seite „Lieferkette“.</p></div><div className="flex items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></div></div>
-    : <header className="page-intro compact"><div><span className="eyebrow">LIEFERKETTE</span><h1>{chain.name}</h1><p>Die Stops werden von oben nach unten abgelaufen.</p></div><div className="flex items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></div></header>}
+    : <header className="page-intro compact"><div><span className="eyebrow">LIEFERKETTE</span><h1>{chain.name}</h1><p>Feste Reihenfolge: Die Kunden kommen von oben nach unten dran – es wird nicht abgewechselt.</p></div><div className="flex items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></div></header>}
+
+    <section className="fx-scope lk-rule" aria-label="Regel dieser Kette">
+      <div className="lk-flow"><span className="lk-from"><small>Kategorie</small><b>{chain.categoryName}</b></span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-from"><small>Von</small><b>{fromText}</b>{chain.country && <i>nur {chain.country}</i>}</span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-to"><small>An</small>{stops.length ? <span className="lk-buyers">{stops.map((stop) => <span key={stop.id} className={`lk-buyer ${stop.active ? "" : "is-off"}`}><em>{stop.position}</em>{stop.buyerCompany}</span>)}</span> : <b className="lk-missing">Noch kein Kunde</b>}</span></div>
+      <p className="lk-sentence"><span>So wird verteilt</span>{ruleSentence([chain.categoryName], fromText, stops.filter((stop) => stop.active).map((stop) => stop.buyerCompany))}</p>
+    </section>
 
     <section className="surface-panel mb-4 overflow-hidden">
       <button type="button" className="flex w-full items-center justify-between px-5 py-4 text-left" onClick={() => setSettingsOpen((value) => !value)} aria-expanded={settingsOpen}><span className="flex items-center gap-2 text-sm font-semibold text-slate-100">{settingsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />} Ketten-Einstellungen</span><Badge variant="outline" className="border-violet-400/30 bg-violet-500/10 text-violet-100">{chain.categoryName}</Badge></button>
@@ -171,22 +244,28 @@ function ChainSettingsForm({ chain, suppliers, pending, onSave }: { chain: Detai
   return <div className="border-t border-white/8 px-5 py-5">
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <label className="grid gap-1 text-xs text-slate-400">Name<Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-      <label className="grid gap-1 text-xs text-slate-400">Priorität<Input type="number" min={1} value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} /><span className="text-[11px] text-slate-500">Kleinere Zahl = höhere Priorität (relevant v. a. im Round-Robin-Wechsel mit Bestellungen).</span></label>
+      <label className="grid gap-1 text-xs text-slate-400">Reihenfolge<Input type="number" min={1} value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} /><span className="text-[11px] text-slate-500">Kleinere Zahl = kommt zuerst dran. Passen mehrere Ketten zu einem Lead, gilt immer diese feste Reihenfolge – es wird nicht abgewechselt.</span></label>
       <label className="grid gap-1 text-xs text-slate-400">Verkaufsziel<Input type="number" min={1} value={form.sellTarget} onChange={(event) => setForm({ ...form, sellTarget: event.target.value })} /><span className="text-[11px] text-slate-500">1 = exklusiv (ein Käufer). N = an N verschiedene Käufer.</span></label>
       <label className="grid gap-1 text-xs text-slate-400">Tageshöchstgrenze<Input type="number" min={1} value={form.dailyCap} placeholder="unbegrenzt" onChange={(event) => setForm({ ...form, dailyCap: event.target.value })} /><span className="text-[11px] text-slate-500">Max. Kontakte pro Tag durch diese Kette. Leer = unbegrenzt.</span></label>
       <label className="grid gap-1 text-xs text-slate-400">Maximale Leads insgesamt<Input type="number" min={1} value={form.totalCap} placeholder="unbegrenzt" onChange={(event) => setForm({ ...form, totalCap: event.target.value })} /><span className="text-[11px] text-slate-500">Obergrenze über die gesamte Laufzeit. Ist sie erreicht, nimmt die Kette keine weiteren Leads mehr an.</span></label>
       <label className="grid gap-1 text-xs text-slate-400">Kette aktiv<span className="flex h-10 items-center gap-2"><Switch checked={form.active} onCheckedChange={(checked) => setForm({ ...form, active: checked })} aria-label="Kette aktiv" /><span className="text-sm text-slate-200">{form.active ? "An" : "Aus"}</span></span><span className="text-[11px] text-slate-500">Inaktive Ketten verteilen keine Leads.</span></label>
     </div>
     <div className="mt-5 rounded-lg border border-white/10 bg-slate-950/30 p-4">
+      <h3 className="text-sm font-semibold text-slate-100">Welche Leads laufen in diese Kette?</h3>
+      <p className="mt-1 text-xs leading-5 text-slate-500">Die Kategorie steht fest ({chain.categoryName}). Hier legst du fest, von welchen Lieferanten die Leads kommen dürfen – und aus welchem Land.</p>
+      <div className="mt-3 grid gap-4 md:grid-cols-3">
+        <label className="grid gap-1 text-xs text-slate-400">Von welchen Lieferanten?<select className={field} value={form.supplierFilterMode} onChange={(event) => setForm({ ...form, supplierFilterMode: event.target.value as typeof form.supplierFilterMode })}><option value="all">Alle Lieferanten</option><option value="include">Nur diese Lieferanten</option><option value="exclude">Alle außer diese Lieferanten</option></select><span className="text-[11px] text-slate-500">Ein Lead, den keine Kette annimmt, bleibt liegen und steht unter „API-Fehler“.</span></label>
+        <label className="grid gap-1 text-xs text-slate-400">Land der Kette (optional)<select className={field} value={form.country} onChange={(event) => setForm({ ...form, country: event.target.value })}>{COUNTRIES.map((country) => <option key={country.value} value={country.value}>{country.label}</option>)}</select><span className="text-[11px] text-slate-500">Nur Leads dieses Landes laufen in die Kette.</span></label>
+      </div>
+      {form.supplierFilterMode !== "all" && <div className="mt-3"><span className="text-xs text-slate-400">{form.supplierFilterMode === "include" ? "Nur diese Lieferanten" : "Alle außer diesen"}</span><div className="mt-1 flex flex-wrap items-center gap-2">{form.supplierIds.map((id) => <span key={id} className="flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-100">{supplierName(id)}<button type="button" aria-label="Entfernen" onClick={() => setForm({ ...form, supplierIds: form.supplierIds.filter((item) => item !== id) })}><X className="h-3 w-3" /></button></span>)}
+        <select className={small} value={addSupplier} onChange={(event) => setAddSupplier(event.target.value)}><option value="">+ Lieferant hinzufügen</option>{suppliers.filter((supplier) => !form.supplierIds.includes(supplier.id)).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.label}</option>)}</select>{addSupplier && <Button size="sm" variant="outline" onClick={() => { setForm({ ...form, supplierIds: [...form.supplierIds, Number(addSupplier)] }); setAddSupplier(""); }}>Hinzufügen</Button>}</div>{form.supplierFilterMode === "include" && !form.supplierIds.length && <p className="mt-2 text-xs text-amber-300">Noch kein Lieferant gewählt – so nimmt die Kette keinen Lead an.</p>}</div>}
+    </div>
+    <div className="mt-5 rounded-lg border border-white/10 bg-slate-950/30 p-4">
       <h3 className="text-sm font-semibold text-slate-100">Lead ohne Abnehmer (erschöpft)</h3>
-      <p className="mt-1 text-xs leading-5 text-slate-500">Läuft ein Lead durch die ganze Kette, ohne dass ihn ein Käufer nimmt, geht er entweder zurück an die Quelle (Reklamation beim Lieferanten bzw. Kooperationspartner) oder wird freigegeben — zuerst für deine weiteren Lieferketten nach Priorität, und erst wenn keine greift, für deine Bestellungen.</p>
+      <p className="mt-1 text-xs leading-5 text-slate-500">Läuft ein Lead durch die ganze Kette, ohne dass ihn ein Käufer nimmt, geht er entweder zurück an die Quelle (Reklamation beim Lieferanten bzw. Kooperationspartner) oder wird freigegeben — zuerst für deine weiteren Lieferketten in ihrer festen Reihenfolge, und erst wenn keine greift, für deine Bestellungen.</p>
       <div className="mt-3 grid gap-4 md:grid-cols-3">
         <label className="grid gap-1 text-xs text-slate-400">Standard für alle Lieferanten{actionSelect(form.exhaustedAction, (value) => setForm({ ...form, exhaustedAction: value }))}</label>
-        <label className="grid gap-1 text-xs text-slate-400">Land der Kette (optional)<select className={field} value={form.country} onChange={(event) => setForm({ ...form, country: event.target.value })}>{COUNTRIES.map((country) => <option key={country.value} value={country.value}>{country.label}</option>)}</select><span className="text-[11px] text-slate-500">Nur Leads dieses Landes werden in die Kette geroutet.</span></label>
-        <label className="grid gap-1 text-xs text-slate-400">Lieferanten-Filter<select className={field} value={form.supplierFilterMode} onChange={(event) => setForm({ ...form, supplierFilterMode: event.target.value as typeof form.supplierFilterMode })}><option value="all">Alle Lieferanten</option><option value="include">Nur diese Lieferanten</option><option value="exclude">Alle außer diese Lieferanten</option></select><span className="text-[11px] text-slate-500">Ein Lead, den keine Kette annimmt, läuft ganz normal in die Aufträge.</span></label>
       </div>
-      {form.supplierFilterMode !== "all" && <div className="mt-3"><span className="text-xs text-slate-400">Lieferanten</span><div className="mt-1 flex flex-wrap items-center gap-2">{form.supplierIds.map((id) => <span key={id} className="flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1 text-xs text-violet-100">{supplierName(id)}<button type="button" aria-label="Entfernen" onClick={() => setForm({ ...form, supplierIds: form.supplierIds.filter((item) => item !== id) })}><X className="h-3 w-3" /></button></span>)}
-        <select className={small} value={addSupplier} onChange={(event) => setAddSupplier(event.target.value)}><option value="">+ Lieferant hinzufügen</option>{suppliers.filter((supplier) => !form.supplierIds.includes(supplier.id)).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.label}</option>)}</select>{addSupplier && <Button size="sm" variant="outline" onClick={() => { setForm({ ...form, supplierIds: [...form.supplierIds, Number(addSupplier)] }); setAddSupplier(""); }}>Hinzufügen</Button>}</div></div>}
       <div className="mt-4"><span className="text-xs text-slate-400">Abweichend pro Lieferant</span><p className="text-[11px] text-slate-500">Standard gilt für alle; hier einzelne Lieferanten hinzufügen, für die eine andere Erschöpft-Regel gilt.</p>
         <div className="mt-2 grid gap-2">{form.overrides.map((override) => <div key={override.supplierId} className="grid items-center gap-2 md:grid-cols-[1fr_1fr_auto]"><span className="text-sm text-slate-200">{supplierName(override.supplierId)}</span>{actionSelect(override.action, (value) => setForm({ ...form, overrides: form.overrides.map((item) => item.supplierId === override.supplierId ? { ...item, action: value } : item) }))}<Button size="sm" variant="ghost" aria-label="Abweichung entfernen" onClick={() => setForm({ ...form, overrides: form.overrides.filter((item) => item.supplierId !== override.supplierId) })}><X className="h-4 w-4" /></Button></div>)}
           {addOverride === null ? <div><Button size="sm" variant="outline" onClick={() => setAddOverride("")}>+ Lieferant hinzufügen</Button></div> : <div className="flex flex-wrap items-center gap-2"><select className={small} value={addOverride} onChange={(event) => setAddOverride(event.target.value)}><option value="">Lieferant wählen …</option>{suppliers.filter((supplier) => !form.overrides.some((item) => item.supplierId === supplier.id)).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.label}</option>)}</select><Button size="sm" variant="outline" disabled={!addOverride} onClick={() => { setForm({ ...form, overrides: [...form.overrides, { supplierId: Number(addOverride), action: form.exhaustedAction === "return" ? "release" : "return" }] }); setAddOverride(null); }}>Hinzufügen</Button><Button size="sm" variant="ghost" onClick={() => setAddOverride(null)}>Abbrechen</Button></div>}</div></div>

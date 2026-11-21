@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { canExecuteAutomation, conditionsMatch, selectNextChain, selectStopPosition } from "./routing";
+import { canExecuteAutomation, conditionsMatch, selectNextChain } from "./routing";
 
 describe("routing", () => {
-  it("priorisiert aktive Lieferketten und verteilt gleichpriorisierte Ketten im Round-Robin", () => {
-    const chains = [{ id: 1, priority: 1, status: "aktiv" as const, cursor: 4, stopCount: 2 }, { id: 2, priority: 1, status: "aktiv" as const, cursor: 3, stopCount: 3 }, { id: 3, priority: 2, status: "aktiv" as const, cursor: 0, stopCount: 2 }];
-    expect(selectNextChain(chains, "lieferketten_round_robin")?.id).toBe(2);
-    expect(selectNextChain(chains, "bestellungen_round_robin")?.id).toBe(1);
-    expect(selectStopPosition(4, 3)).toBe(2);
+  it("feste Verteilung: immer die Kette mit der kleinsten Zahl, bei gleicher Zahl die ältere – es wird nicht abgewechselt", () => {
+    const chains = [{ id: 1, priority: 1, status: "aktiv" as const, stopCount: 2 }, { id: 2, priority: 1, status: "aktiv" as const, stopCount: 3 }, { id: 3, priority: 2, status: "aktiv" as const, stopCount: 2 }];
+    expect(selectNextChain(chains)?.id).toBe(1);
+    expect(selectNextChain(chains)?.id).toBe(1); // derselbe Lead-Typ geht immer denselben Weg
+    expect(selectNextChain(chains.slice().reverse())?.id).toBe(1); // die Reihenfolge der Eingabe spielt keine Rolle
+    expect(selectNextChain(chains.filter((chain) => chain.id !== 1))?.id).toBe(2); // erst wenn Kette 1 den Lead nicht nimmt, kommt Kette 2
+    expect(selectNextChain([{ id: 9, priority: 1, status: "inaktiv" as const, stopCount: 2 }, { id: 10, priority: 5, status: "aktiv" as const, stopCount: 0 }, { id: 11, priority: 7, status: "aktiv" as const, stopCount: 1 }])?.id).toBe(11); // inaktive Ketten und Ketten ohne Kunden zählen nicht
+    expect(selectNextChain([])).toBeUndefined();
   });
 
   it("wertet alle und alternative Feldbedingungen aus", () => {

@@ -1,20 +1,12 @@
-export type ChainCandidate = { id: number; priority: number; status: "aktiv" | "inaktiv"; cursor: number; stopCount: number; hasOrder?: boolean };
+export type ChainCandidate = { id: number; priority: number; status: "aktiv" | "inaktiv"; stopCount: number; hasOrder?: boolean };
 export type FieldCondition = { field: string; operator: "gleich" | "ungleich" | "größer_als" | "kleiner_als" | "größer_gleich" | "kleiner_gleich" | "zwischen" | "nicht_zwischen" | "enthält" | "gesetzt"; value?: string };
 
-export function selectNextChain(chains: ChainCandidate[], mode: "lieferketten_round_robin" | "bestellungen_round_robin") {
-  // Reihenfolge nach Priorität (kleiner = wichtiger); bei gleicher Priorität Round-Robin über den Zähler
-  const active = chains.filter((chain) => chain.status === "aktiv" && chain.stopCount > 0).sort((a, b) => a.priority - b.priority || a.id - b.id);
-  if (!active.length) return undefined;
-  if (mode === "bestellungen_round_robin") return active[0];
-  const priority = active[0].priority;
-  const priorityGroup = active.filter((chain) => chain.priority === priority);
-  const minCursor = Math.min(...priorityGroup.map((chain) => chain.cursor));
-  return priorityGroup.filter((chain) => chain.cursor === minCursor)[0];
-}
-
-export function selectStopPosition(cursor: number, stopCount: number) {
-  if (stopCount < 1) throw new Error("Eine Lieferkette benötigt mindestens einen aktiven Stop.");
-  return (cursor % stopCount) + 1;
+/**
+ * Feste Verteilung: Passen mehrere Ketten zu einem Lead, kommt immer zuerst die mit der kleinsten Zahl bei „Reihenfolge“
+ * (bei gleicher Zahl die ältere Kette). Es wird nicht abgewechselt – dieselbe Art Lead geht immer denselben Weg.
+ */
+export function selectNextChain(chains: ChainCandidate[]) {
+  return chains.filter((chain) => chain.status === "aktiv" && chain.stopCount > 0).sort((a, b) => a.priority - b.priority || a.id - b.id)[0];
 }
 
 export function conditionsMatch(data: Record<string, unknown>, conditions: FieldCondition[], mode: "alle" | "mindestens_eine") {

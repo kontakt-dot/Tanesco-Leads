@@ -13,7 +13,7 @@ import { berlinDay as intakeDay } from "../../../shared/agent-ranking";
 import { isListTag, LIST_TAG_RESERVED } from "../../../shared/list-tags";
 import { emptyLeadCounts, leadsOverview, PULSE_LIMIT, type LeadStatusKey } from "../../../shared/lead-overview";
 import { leadExportTable } from "../../../shared/lead-export";
-import { callAnswerList, cleanFieldValues, extraMetaFields, fieldsFromTranscript, fieldsToRead, isPlaceholder, realText, type LeadFieldDef } from "../../../shared/lead-fields";
+import { callAnswerList, cleanFieldValues, extraMetaFields, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, realText, type LeadFieldDef } from "../../../shared/lead-fields";
 import { matchesCallSearch } from "../../../shared/call-search";
 import { aliasesOf, aliasKey, aliasProblem, learnAliases, mergeAliases, readAliases, resolveAlias, sameSpelling, tidyAgentName, type AgentAlias, type AliasPair } from "../../../shared/agent-alias";
 import { isJunkAgentName } from "../../../shared/agent-names";
@@ -39,7 +39,9 @@ import { assessReplyWithAi, evaluateCallTranscript } from "./ai";
 import { colorForIndex, computeOverlaps, type Territory } from "../../../shared/territories";
 import { buildTerritoryDrafts, describePlan, detectTerritoryLayout, trimTable } from "../../../shared/territory-import";
 import { briefFallback, decideReply, describeAssessment, DEFAULT_REPLY_AI, isAutoReply, matchesAiFilter, type InboxAiFilter, type ReplyAction, type ReplyAiSettings, type ReplyAssessment, type ReplyKind } from "../../../shared/reply-ai";
-import { conditionsMatch, selectNextChain, selectStopPosition, type FieldCondition } from "../../../server/routing";
+import { conditionsMatch, selectNextChain, type FieldCondition } from "../../../server/routing";
+import { byChainOrder, chainPlaces, reorderedPriorities, suggestChainName, supplierText } from "../../../shared/chain-rules";
+import { HEALTH_CHECK, LEAD_FIELD_LABEL, NOT_POSSIBLE_PREFIX, NO_BUYER_NOTE, buildApiErrorOverview, emailProblem, phoneProblem, plainReason, postcodeProblem, type ApiNoteRow, type LeadContactField } from "../../../shared/api-errors";
 import { computeGeoFlows } from "../../../shared/plz-regions";
 import { distinctCampaignNames, sentCardMove, sentIsEntry, sentStage, withSentStage, isColdLike, isCustomSource, isPipelineSource, listCampaignId, matchStage, newCustomSourceKey, pipelineLabel, platformForSource, stagesOf, buildStageSets, contactedStage, entryStage, funnel, interestStage, isStage, lostStage, normalizeStages, PIPELINE_SOURCE_LABEL, pipelineSourceOf, stageLabel, stageNameKey, stagesForLead, summarizeCampaigns, unionStages, wonStage, workingStage, type PipelineSource, type StageDef } from "../../../shared/sales-pipeline";
 import { autoDraftFor, approachOf, dropAdPlatforms, kiAnsatzOf, LEGACY_APPROACH, shortParagraphs } from "../../../shared/email-campaigns";
@@ -185,7 +187,7 @@ type DeliveryResult = { chainId: number; stopId: number; buyerName: string; unit
 function deliverySettings() {
   const row = T().tenantSettings[0];
   const fields = Array.isArray(row?.duplicateFields) ? (row.duplicateFields as unknown[]).map(String).filter((field) => field === "email" || field === "phone") : ["email", "phone"];
-  return { outgoingDuplicateProtection: row?.outgoingDuplicateProtection ?? true, duplicateFields: fields.length ? fields : ["email", "phone"], duplicateWindowHours: row?.duplicateWindowHours ?? 0, incomingPrePing: row?.incomingPrePing ?? false, distributionOrder: (row?.distributionOrder ?? "fifo") as "fifo" | "lifo", chainDistributionMode: (row?.chainDistributionMode ?? "lieferketten_round_robin") as "lieferketten_round_robin" | "bestellungen_round_robin" };
+  return { outgoingDuplicateProtection: row?.outgoingDuplicateProtection ?? true, duplicateFields: fields.length ? fields : ["email", "phone"], duplicateWindowHours: row?.duplicateWindowHours ?? 0, incomingPrePing: row?.incomingPrePing ?? false, distributionOrder: (row?.distributionOrder ?? "fifo") as "fifo" | "lifo" };
 }
 
 const numberList = (value: unknown) => Array.isArray(value) ? (value as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0) : [];
@@ -230,7 +232,21 @@ function passOnAfterClaim(stopId: number | null | undefined, reasonName: string)
   return Boolean(reason?.forwardToNextStop);
 }
 
-function deliverLeadNow(lead: Row, prefer: { chainId?: number | null; orderId?: number | null; allowRepeat?: boolean; now?: Date; ignoreAssignment?: boolean; passedOn?: boolean } = {}): DeliveryResult {
+type DeliverPrefer = { chainId?: number | null; orderId?: number | null; allowRepeat?: boolean; now?: Date; ignoreAssignment?: boolean; passedOn?: boolean };
+/** Wie auf dem Server: Geht die Auslieferung gar nicht los, steht der Grund im Lead-Log – so erscheint der Lead unter „API-Fehler“. */
+function deliverLeadNow(lead: Row, prefer: DeliverPrefer = {}): DeliveryResult {
+  try { return deliverLeadCore(lead, prefer); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message && !message.startsWith("Lead wurde bereits")) {
+      const note = `${NOT_POSSIBLE_PREFIX}${message}`.slice(0, 900); const last = T().leadStatusEvents.filter((row) => row.leadId === lead.id).sort((a, b) => b.id - a.id)[0];
+      if (!(last?.note === note && Date.now() - new Date(last.occurredAt).getTime() < 6 * 3_600_000)) statusEvent(lead.id, lead.status, lead.status, note); // derselbe Grund steht schon da
+    }
+    throw error;
+  }
+}
+
+function deliverLeadCore(lead: Row, prefer: DeliverPrefer = {}): DeliveryResult {
   const metadata = metadataOf(lead); const settings = deliverySettings(); const now = prefer.now ?? new Date();
   const preferChainId = prefer.ignoreAssignment ? prefer.chainId ?? null : prefer.chainId ?? (Number(metadata.assignedDeliveryChainId) || null);
   const preferOrderId = prefer.ignoreAssignment ? prefer.orderId ?? null : prefer.orderId ?? (Number(metadata.assignedOrderId) || null);
@@ -279,10 +295,10 @@ function deliverLeadNow(lead: Row, prefer: { chainId?: number | null; orderId?: 
   const attempts: DeliveryAttempt[] = []; const tried = new Set<number>(); let claimId: number | undefined; const originalStatus = lead.status;
   let lastResult: DeliveryResult | null = null; let stopOnExhausted = false; let passedOn = prefer.passedOn ?? false;
   outer: while (!stopOnExhausted) {
-    const selected = selectNextChain(pool.filter((item) => !tried.has(item.chain.id)).map((item) => ({ id: item.chain.id, priority: item.chain.priority, status: item.chain.status, cursor: item.chain.roundRobinCursor, stopCount: item.stops.length, hasOrder: Boolean(item.chain.orderId) })), settings.chainDistributionMode);
+    // Feste Reihenfolge der Ketten (kleinste Zahl zuerst, bei gleicher Zahl die ältere) – es wird nicht abgewechselt
+    const selected = selectNextChain(pool.filter((item) => !tried.has(item.chain.id)).map((item) => ({ id: item.chain.id, priority: item.chain.priority, status: item.chain.status, stopCount: item.stops.length, hasOrder: Boolean(item.chain.orderId) })));
     if (!selected) break;
     const target = pool.find((item) => item.chain.id === selected.id)!; tried.add(target.chain.id);
-    update(store, "deliveryChains", (row) => row.id === target.chain.id, { roundRobinCursor: target.chain.roundRobinCursor + 1 });
     let sold = 0;
     for (const stop of target.stops) {
       const current = T().leads.find((row) => row.id === lead.id) ?? lead;
@@ -291,7 +307,8 @@ function deliverLeadNow(lead: Row, prefer: { chainId?: number | null; orderId?: 
       if (skip) { insert(store, "leadDeliveries", { tenantId: tenant().id, leadId: lead.id, chainId: target.chain.id, stopId: stop.id, orderId: target.chain.orderId ?? null, buyerName: stop.buyerName, unitPrice: stop.unitPrice, result: "übersprungen", skipReason: skip, windowEndsAt: null, acceptedAt: null, claimId: null, occurredAt: now }); attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: target.chain.orderId ?? null, outcome: "übersprungen", responseStatus: undefined, reason: skip }); continue; }
       const windowHours = Number(stop.reclamationWindowHours ?? 0); const windowEndsAt = new Date(now.getTime() + windowHours * 3_600_000);
       const delivery = insert(store, "leadDeliveries", { tenantId: tenant().id, leadId: lead.id, chainId: target.chain.id, stopId: stop.id, orderId: target.chain.orderId ?? null, buyerName: stop.buyerName, unitPrice: stop.unitPrice, result: "angeboten", windowEndsAt, acceptedAt: windowHours ? null : now, skipReason: null, claimId: null, occurredAt: now });
-      update(store, "leads", (row) => row.id === lead.id, { status: "zugewiesen", assignedAt: now }); if (current.status !== "zugewiesen") statusEvent(lead.id, current.status, "zugewiesen", `Auslieferung an ${stop.buyerName} (${target.chain.name}, Stop ${stop.position})`);
+      const statusBefore = current.status; // vor dem Ändern merken – die Zeile im Speicher ist dieselbe, die gleich „zugewiesen“ wird (sonst fehlte der Vermerk im Lead-Log)
+      update(store, "leads", (row) => row.id === lead.id, { status: "zugewiesen", assignedAt: now }); if (statusBefore !== "zugewiesen") statusEvent(lead.id, statusBefore, "zugewiesen", `Auslieferung an ${stop.buyerName} (${target.chain.name}, Stop ${stop.position})`);
       if (target.order) { const delivered = (target.order.deliveredCount ?? 0) + 1; update(store, "orders", (row) => row.id === target.order!.id, { deliveredCount: delivered, status: delivered >= target.order.quantity ? "erfüllt" : target.order.status }); }
       try { demoRecordOptInUsage(lead.id, { kind: "zustellung", buyerName: String(stop.buyerName), buyerUserId: (stop.buyerUserId as number | null) ?? null, orderId: (target.chain.orderId as number | null) ?? null }); } catch { /* Opt-in optional */ }
       const handOver = buyerUserId ? handOverToBuyerEndpoints(buyerUserId, current) : null;
@@ -1107,7 +1124,7 @@ function summarizeDeliveries(rows: Row[], now = new Date()) {
 }
 function chainPickers() {
   const buyers = T().memberships.filter((row) => row.partnerType === "käufer").map((membership) => { const user = T().users.find((row) => row.id === membership.userId); const own = T().deliveryEndpoints.filter((endpoint) => endpoint.membershipId === membership.id && endpoint.enabled !== false); const company = String(user?.company ?? user?.name ?? "Käufer"); return { userId: membership.userId, membershipId: membership.id, label: `${company} — ${user?.name ?? user?.email ?? ""}`, company, contact: String(user?.name ?? ""), email: String(user?.email ?? ""), status: membership.status, api: own.length > 0 || Boolean(membership.integrationId), endpoint: own[0] ? `${own[0].method} ${own[0].url}` : null }; });
-  return { buyers, suppliers: T().suppliers.map((supplier) => ({ id: supplier.id, label: supplier.email ? `${supplier.name} — ${supplier.email}` : String(supplier.name), status: supplier.status })), categories: T().leadCategories.map((category) => ({ id: category.id, name: category.name, status: category.status })) };
+  return { buyers, suppliers: T().suppliers.map((supplier) => ({ id: supplier.id, label: supplier.email ? `${supplier.name} — ${supplier.email}` : String(supplier.name), status: supplier.status })), categories: T().leadCategories.map((category) => ({ id: category.id, name: category.name, status: category.status, isTemplate: Boolean(category.isTemplate) })) };
 }
 function reorderChainStops(chainId: number, stopIds: number[]) {
   const stops = T().deliveryStops.filter((row) => row.chainId === chainId); const known = new Set(stops.map((stop) => stop.id));
@@ -1221,7 +1238,68 @@ const demoSession = { loggedOut: false, impersonatedUserId: null as number | nul
 
 const AROUNDHOME_PRESET = [{ value: "2", label: "Ungültige Telefonnummer / Spam", reason: "Falsche Telefonnummer" }, { value: "3", label: "Kontaktdaten fehlen / Land nicht unterstützt", reason: "Kontaktdaten fehlen" }, { value: "4", label: "Kein Partner verfügbar", reason: "Kein Partner" }, { value: "5", label: "Kunde existiert bereits (Duplikat)", reason: "Dublette" }, { value: "6", label: "E-Mail auf Sperrliste", reason: "Sperrliste" }];
 
-/** Simulierte Übergabe an die ausgehenden API-Calls des Käufers (URL mit „reject“ → HTTP 422 mit code 5). */
+/* ------------------------------------------------------------------ API-Fehler (Spiegel von server/api-errors.ts) */
+/** Übersicht „API-Fehler“: dieselbe Rechnung wie auf dem Server (shared/api-errors.ts), gefüttert aus den Tabellen der Vorschau. */
+function apiErrorOverviewNow(daysInput: number) {
+  const now = new Date(); const days = Math.min(90, Math.max(1, Number(daysInput) || 30)); const since = now.getTime() - days * 86_400_000; const inWindow = (row: Row) => new Date(row.occurredAt).getTime() >= since;
+  const notes: ApiNoteRow[] = T().leadStatusEvents.filter((row) => inWindow(row) && NO_BUYER_NOTE.test(String(row.note ?? ""))).map((row) => ({ leadId: row.leadId as number, note: String(row.note), occurredAt: row.occurredAt as Date }));
+  for (const row of T().automationExecutionLogs.filter(inWindow)) {
+    const summary = String(row.summary ?? ""); const open = /Auslieferung offen:\s*([\s\S]+)$/.exec(summary)?.[1];
+    const note = open ? `${NOT_POSSIBLE_PREFIX}${open.trim()}` : /^(?:Keine aktive Lieferkette|Die zugeordnete (?:Lieferkette|Bestellung))/.test(summary) ? `${NOT_POSSIBLE_PREFIX}${summary.trim()}` : null;
+    if (note && !notes.some((other) => other.leadId === row.sourceLeadId && other.note === note && Math.abs(new Date(other.occurredAt).getTime() - new Date(row.occurredAt).getTime()) < 120_000)) notes.push({ leadId: row.sourceLeadId as number, note, occurredAt: row.occurredAt as Date });
+  }
+  return buildApiErrorOverview({
+    now, days, notes,
+    leads: salesLeads().map((lead) => ({ id: lead.id, publicId: String(lead.publicId), firstName: lead.firstName ?? null, lastName: lead.lastName ?? null, email: lead.email ?? null, phone: lead.phone ?? null, postcode: lead.postcode ?? null, city: lead.city ?? null, country: lead.country ?? "DE", status: String(lead.status), categoryId: lead.categoryId as number, supplierName: lead.supplierName ?? (lead.supplierId ? (T().suppliers.find((row) => row.id === lead.supplierId)?.name as string | undefined) ?? null : null), metadata: lead.metadata, createdAt: lead.createdAt as Date })),
+    events: T().integrationEvents.filter(inWindow).map((row) => ({ id: row.id, leadId: (row.leadId ?? null) as number | null, integrationId: (row.integrationId ?? null) as number | null, endpointId: (row.endpointId ?? null) as number | null, eventType: String(row.eventType), responseStatus: (row.responseStatus ?? null) as number | null, responseBody: (row.responseBody ?? null) as string | null, externalReference: (row.externalReference ?? null) as string | null, occurredAt: row.occurredAt as Date })),
+    deliveries: T().leadDeliveries.map((row) => ({ leadId: row.leadId as number, buyerName: String(row.buyerName), result: String(row.result), occurredAt: row.occurredAt as Date })),
+    endpoints: T().deliveryEndpoints.map((row) => { const membership = T().memberships.find((item) => item.id === row.membershipId); const user = membership ? T().users.find((item) => item.id === membership.userId) : undefined; return { id: row.id, url: String(row.url), enabled: row.enabled !== false, membershipId: (row.membershipId ?? null) as number | null, buyerName: String(user?.company ?? user?.name ?? "Käufer"), categoryName: (T().leadCategories.find((category) => category.id === row.categoryId)?.name ?? null) as string | null }; }),
+    integrations: T().partnerIntegrations.map((row) => ({ id: row.id, name: String(row.name), status: String(row.status), callbackUrl: (row.callbackUrl ?? null) as string | null })),
+    categories: T().leadCategories.map((row) => ({ id: row.id, name: String(row.name) })),
+  });
+}
+/** Lead von Hand korrigieren – geprüft wie auf dem Server; jede Änderung steht mit altem und neuem Wert im Lead-Log. */
+function correctLeadNow(lead: Row, input: Partial<Record<LeadContactField, string>> & { fields?: Record<string, string> }): string[] {
+  const keys: LeadContactField[] = ["firstName", "lastName", "email", "phone", "street", "postcode", "city"]; const max: Record<LeadContactField, number> = { firstName: 120, lastName: 120, email: 320, phone: 48, street: 200, postcode: 24, city: 120 };
+  const tidy = (value: string) => value.replace(/\s+/g, " ").trim(); const meta = metadataOf(lead); const nextMeta: Record<string, unknown> = { ...meta }; const patch: Record<string, unknown> = {}; const changed: string[] = []; const log: string[] = [];
+  const current: Record<LeadContactField, string> = { firstName: lead.firstName ?? "", lastName: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street: typeof meta.street === "string" ? meta.street : "", postcode: lead.postcode ?? "", city: lead.city ?? "" };
+  for (const key of keys) {
+    const raw = input[key]; if (raw === undefined) continue;
+    let value = tidy(String(raw)).slice(0, max[key]); if (key === "email") value = value.replace(/\s+/g, "").toLowerCase();
+    if (value === tidy(current[key])) continue;
+    if (key === "email" && value) { const problem = emailProblem(value); if (problem) fail(`E-Mail-Adresse: ${problem}`); }
+    if (key === "phone" && value) { const problem = phoneProblem(value); if (problem) fail(`Rufnummer: ${problem}`); }
+    if (key === "postcode" && value) { const problem = postcodeProblem(value, lead.country); if (problem) fail(`PLZ: ${problem}`); }
+    if (key === "street") { if (value) nextMeta.street = value; else delete nextMeta.street; } else patch[key] = value || null;
+    changed.push(LEAD_FIELD_LABEL[key]); log.push(`${LEAD_FIELD_LABEL[key]}: ${current[key] ? `„${current[key]}“` : "leer"} → ${value ? `„${value}“` : "leer"}`);
+  }
+  for (const [key, raw] of Object.entries(input.fields ?? {})) {
+    const def = T().categoryFields.find((field) => field.categoryId === lead.categoryId && field.fieldKey === key) ?? fail(`Das Feld „${key}“ gehört nicht zur Kategorie dieses Leads.`);
+    const value = tidy(String(raw ?? "")).slice(0, 600); const before = meta[key] === undefined || meta[key] === null ? "" : String(meta[key]); if (value === tidy(before)) continue;
+    if (value && def.fieldType === "auswahl") { const options = fieldOptions(def as never); if (options.length && !options.includes(value)) fail(`${def.label}: Bitte eine der Antworten wählen (${options.slice(0, 8).join(", ")}).`); }
+    if (value) nextMeta[key] = value; else delete nextMeta[key];
+    changed.push(String(def.label)); log.push(`${def.label}: ${before ? `„${before}“` : "leer"} → ${value ? `„${value}“` : "leer"}`);
+  }
+  if (!changed.length) return changed;
+  const nextFirst = "firstName" in patch ? patch.firstName : lead.firstName; const nextLast = "lastName" in patch ? patch.lastName : lead.lastName;
+  if (("firstName" in patch || "lastName" in patch) && !nextFirst && !nextLast) fail("Vorname oder Nachname muss stehen bleiben.");
+  update(store, "leads", (row) => row.id === lead.id, { ...patch, metadata: nextMeta, updatedAt: new Date() });
+  statusEvent(lead.id, lead.status, lead.status, `Von Hand korrigiert: ${log.join(" · ")}`.slice(0, 900));
+  return changed;
+}
+/** Leads noch einmal ausliefern – einer nach dem anderen; ein Fehler bei einem Lead hält die anderen nicht auf. */
+function retryDeliveriesNow(rows: Row[], allowRepeat?: boolean) {
+  return rows.map((row) => {
+    const lead = T().leads.find((item) => item.id === row.id) ?? row; const name = leadDisplayName(lead as never) || String(lead.publicId);
+    try {
+      const delivery = deliverLeadNow(lead.status === "fehlerhaft" ? { ...lead, status: "genehmigt" } : lead, { allowRepeat });
+      if (delivery.result === "abgelehnt") return { publicId: String(lead.publicId), name, ok: false, result: "abgelehnt" as const, buyerName: null as string | null, message: delivery.attempts.map((attempt) => `${attempt.buyerName}: ${plainReason(attempt.reason ?? attempt.outcome)}`).join("; ").slice(0, 600) || "Kein Käufer hat den Lead genommen." };
+      return { publicId: String(lead.publicId), name, ok: true, result: delivery.result === "angenommen" ? "angenommen" as const : "angeboten" as const, buyerName: delivery.buyerName as string | null, message: delivery.export ? `An ${delivery.buyerName} übergeben (Antwort ${delivery.export.responseStatus ?? "–"}).` : `An ${delivery.buyerName} zugewiesen.` };
+    } catch (error) { return { publicId: String(lead.publicId), name, ok: false, result: "fehler" as const, buyerName: null as string | null, message: error instanceof Error ? error.message.slice(0, 600) : "Auslieferung nicht möglich." }; }
+  });
+}
+
+/** Simulierte Übergabe an die ausgehenden API-Calls des Käufers (URL mit „reject“ → HTTP 422 mit code 5; falsche E-Mail-Adresse oder Rufnummer → HTTP 422 mit dem Feld). */
 function handOverToBuyerEndpoints(buyerUserId: number, lead: Row) {
   const membership = T().memberships.find((row) => row.userId === buyerUserId); if (!membership) return null;
   const category = T().leadCategories.find((row) => row.id === lead.categoryId);
@@ -1229,7 +1307,9 @@ function handOverToBuyerEndpoints(buyerUserId: number, lead: Row) {
   const targets = selectEndpoints(T().deliveryEndpoints.filter((row) => row.membershipId === membership.id && row.categoryId === lead.categoryId) as any[], lead.supplierId ?? null, values);
   if (!targets.length) return null;
   const settings = memberSettings(membership.id); const results: Array<{ status: number; body: string; ok: boolean; url: string }> = [];
-  for (const endpoint of targets) { const rejected = /reject/i.test(endpoint.url) || String(lead.postcode ?? "").startsWith("0"); const body = rejected ? JSON.stringify({ code: 5, message: "duplicate" }) : JSON.stringify({ uuid: `demo-${randomId(8)}` }); results.push({ status: rejected ? 422 : 200, body, ok: !rejected, url: endpoint.url }); update(store, "deliveryEndpoints", (row) => row.id === endpoint.id, { sentCount: (endpoint.sentCount ?? 0) + 1 }); insert(store, "integrationEvents", { tenantId: tenant().id, integrationId: null, endpointId: endpoint.id, leadId: lead.id, categoryId: lead.categoryId, eventType: rejected ? "abgelehnt" : "geliefert", amount: null, externalReference: lead.publicId, responseStatus: rejected ? 422 : 200, responseBody: body, occurredAt: new Date() }); }
+  // Wie ein echter Empfänger: falsche E-Mail-Adresse oder Rufnummer wird mit dem Namen des Feldes abgelehnt – so lässt sich „Korrigieren und noch einmal ausliefern“ ausprobieren
+  const wrongField = emailProblem(lead.email) ? "email" : phoneProblem(lead.phone) ? "phone" : null;
+  for (const endpoint of targets) { const rejected = Boolean(wrongField) || /reject/i.test(endpoint.url) || String(lead.postcode ?? "").startsWith("0"); const body = wrongField ? JSON.stringify({ errors: { [wrongField]: ["is invalid"] } }) : rejected ? JSON.stringify({ code: 5, message: "duplicate" }) : JSON.stringify({ uuid: `demo-${randomId(8)}` }); results.push({ status: rejected ? 422 : 200, body, ok: !rejected, url: endpoint.url }); update(store, "deliveryEndpoints", (row) => row.id === endpoint.id, { sentCount: (endpoint.sentCount ?? 0) + 1 }); insert(store, "integrationEvents", { tenantId: tenant().id, integrationId: null, endpointId: endpoint.id, leadId: lead.id, categoryId: lead.categoryId, eventType: rejected ? "abgelehnt" : "geliefert", amount: null, externalReference: lead.publicId, responseStatus: rejected ? 422 : 200, responseBody: body, occurredAt: new Date() }); }
   const failed = results.find((row) => !row.ok); const reference = results.find((row) => row.ok)?.body; if (reference) update(store, "leads", (row) => row.id === lead.id, { metadata: { ...metadataOf(lead), partnerReference: JSON.parse(reference).uuid, partnerReferenceAt: new Date().toISOString() } });
   let matchedRule: any = null; if (failed && settings.responseMappingEnabled) { const rule = evaluateResponseRules(T().partnerResponseRules.filter((row) => row.membershipId === membership.id) as any[], failed); if (rule) { const reason = T().reclamationReasons.find((row) => row.id === rule.reasonId); if (reason) matchedRule = { ...rule, reasonName: reason.name, forwardToNextStop: reason.forwardToNextStop ?? true }; } }
   return { ok: !failed, status: (failed ?? results[0]).status, summary: results.map((row) => `${row.url.replace(/^https?:\/\//, "").slice(0, 40)}: HTTP ${row.status}`).join("; "), matchedRule };
@@ -1402,7 +1482,7 @@ function ensureOrderChains(orderId: number) {
   let created = 0;
   for (const categoryId of categoryIds) {
     if (T().deliveryChains.some((chain) => chain.orderId === orderId && chain.categoryId === categoryId)) continue;
-    const chain = insert(store, "deliveryChains", { tenantId: tenant().id, orderId, categoryId, name: `Bestellung ${order.orderNumber}`, priority: config?.priority ?? 1, sellTarget: 1, distributionMode: "lieferketten_round_robin", roundRobinCursor: 0, status: "aktiv", createdAt: new Date(), updatedAt: new Date() });
+    const chain = insert(store, "deliveryChains", { tenantId: tenant().id, orderId, categoryId, name: `Bestellung ${order.orderNumber}`, priority: config?.priority ?? 1, sellTarget: 1, status: "aktiv", createdAt: new Date(), updatedAt: new Date() });
     insert(store, "deliveryStops", { chainId: chain.id, buyerName: order.buyerName, position: 1, unitPrice: order.unitPrice, active: true, createdAt: new Date() }); created += 1;
   }
   for (const chain of T().deliveryChains.filter((row) => row.orderId === orderId)) { const stops = T().deliveryStops.filter((row) => row.chainId === chain.id); if (stops.length === 1 && (stops[0].buyerName !== order.buyerName || stops[0].unitPrice !== order.unitPrice)) update(store, "deliveryStops", (row) => row.id === stops[0].id, { buyerName: order.buyerName, unitPrice: order.unitPrice }); }
@@ -2175,7 +2255,16 @@ const procedures: Record<string, Handler> = {
   "leadops.customerTickets": () => { const user = effectiveUser(); const names = new Set([user.name, user.company, user.email].filter(Boolean)); return T().supportTickets.filter((ticket) => names.has(ticket.requesterName)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 100); },
   "leadops.customerEndpoints": () => { const user = effectiveUser(); const membership = T().memberships.find((row) => row.userId === user.id); const settings = membership ? T().memberOperationalSettings.find((row) => row.membershipId === membership.id) : undefined; return { webhookUrl: settings?.webhookUrl ?? null, endpoints: membership ? T().deliveryEndpoints.filter((row) => row.membershipId === membership.id).map((row) => ({ id: row.id, categoryName: T().leadCategories.find((category) => category.id === row.categoryId)?.name ?? "–", enabled: row.enabled !== false, method: row.method, url: row.url })) : [] }; },
   /* ---- Lieferkette (Wasserfall): Übersicht, Detail, Stops, Gründe, Aktivität (Spiegel von server/chain-admin.ts) */
-  "leadops.chainOverview": (input) => { const range = chainRangeBounds(input?.range ?? "maximal"); const chains = [...T().deliveryChains].sort((a, b) => a.priority - b.priority || a.id - b.id); return { distributionMode: (T().tenantSettings[0]?.chainDistributionMode ?? "lieferketten_round_robin") as "lieferketten_round_robin" | "bestellungen_round_robin", chains: chains.map((chain) => ({ id: chain.id, name: chain.name, categoryId: chain.categoryId, categoryName: T().leadCategories.find((category) => category.id === chain.categoryId)?.name ?? "–", orderId: chain.orderId ?? null, orderNumber: T().orders.find((order) => order.id === chain.orderId)?.orderNumber ?? null, priority: chain.priority, stops: T().deliveryStops.filter((stop) => stop.chainId === chain.id).length, sellTarget: chain.sellTarget, status: chain.status, stats: summarizeDeliveries(chainDeliveries(chain.id, range)) })) }; },
+  "leadops.chainOverview": (input) => {
+    // feste Verteilung: Ketten in ihrer Reihenfolge, je Kette „von welchen Lieferanten“ und „an welche Kunden“ (Spiegel von chainOverview)
+    const range = chainRangeBounds(input?.range ?? "maximal"); const chains = [...T().deliveryChains].sort((a, b) => byChainOrder(a as never, b as never));
+    const places = chainPlaces(chains.map((chain) => ({ id: chain.id, name: chain.name, categoryId: chain.categoryId, priority: chain.priority, status: chain.status, supplierFilterMode: chain.supplierFilterMode ?? "all", supplierIds: numberList(chain.supplierIds) })));
+    return { chains: chains.map((chain) => {
+      const supplierIds = numberList(chain.supplierIds); const supplierNames = supplierIds.map((id) => String(T().suppliers.find((supplier) => supplier.id === id)?.name ?? `Lieferant #${id}`)); const mode = (chain.supplierFilterMode ?? "all") as "all" | "include" | "exclude";
+      const own = T().deliveryStops.filter((stop) => stop.chainId === chain.id).sort((a, b) => a.position - b.position); const place = places.get(chain.id);
+      return { id: chain.id as number, name: chain.name as string, categoryId: chain.categoryId as number, categoryName: String(T().leadCategories.find((category) => category.id === chain.categoryId)?.name ?? "–"), orderId: (chain.orderId ?? null) as number | null, orderNumber: (T().orders.find((order) => order.id === chain.orderId)?.orderNumber ?? null) as string | null, priority: chain.priority as number, place: place?.place ?? 1, overlapsWith: place?.overlapsWith ?? [], before: place?.before ?? [], supplierFilterMode: mode, supplierIds, supplierNames, supplierText: supplierText(mode, supplierNames), country: (chain.country ?? null) as string | null, buyers: own.map((stop) => ({ name: String(stop.buyerName), active: stop.active !== false, unitPrice: String(stop.unitPrice ?? "0.00") })), stops: own.length, sellTarget: chain.sellTarget as number, status: chain.status as "aktiv" | "inaktiv", stats: summarizeDeliveries(chainDeliveries(chain.id, range)) };
+    }) };
+  },
   "leadops.chainPickers": () => chainPickers(),
   "leadops.chainDetail": (input) => {
     const chain = T().deliveryChains.find((row) => row.id === input.chainId) ?? fail("Lieferkette wurde nicht gefunden."); const range = chainRangeBounds(input.range ?? "maximal"); const pickers = chainPickers(); const rows = chainDeliveries(chain.id, range); const allRows = T().leadDeliveries.filter((row) => row.chainId === chain.id); const now = new Date();
@@ -2190,7 +2279,24 @@ const procedures: Record<string, Handler> = {
     };
   },
   "leadops.listStopDeliveries": (input) => { const stop = T().deliveryStops.find((row) => row.id === input.stopId) ?? fail("Stop wurde nicht gefunden."); const now = new Date(); return chainDeliveries(stop.chainId, chainRangeBounds(input.range ?? "maximal")).filter((row) => row.stopId === stop.id).slice(0, 200).map((row) => { const lead = T().leads.find((item) => item.id === row.leadId); const status = row.result === "angenommen" && !row.acceptedAt && row.windowEndsAt && new Date(row.windowEndsAt).getTime() > now.getTime() ? "im_fenster" : row.result; return { deliveryId: row.id, leadId: row.leadId, publicId: lead?.publicId ?? "", name: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() || lead.publicId : `Lead #${row.leadId}`, city: lead?.city ?? "", status, info: row.result === "übersprungen" ? row.skipReason ?? "" : status === "im_fenster" ? `angenommen ab ${new Date(row.windowEndsAt).toLocaleString("de-DE")}` : "", occurredAt: row.occurredAt }; }); },
-  "leadops.setChainDistributionMode": (input) => { const row = T().tenantSettings[0]; if (row) update(store, "tenantSettings", (item) => item.id === row.id, { chainDistributionMode: input.mode }); else insert(store, "tenantSettings", { tenantId: tenant().id, chainDistributionMode: input.mode }); return { success: true }; },
+  "leadops.createChainRule": (input) => {
+    // feste Zuordnung: je Kategorie eine Kette – von diesen Lieferanten, an diese Kunden in dieser Reihenfolge (Spiegel von createFixedChains)
+    const categoryIds: number[] = Array.from(new Set<number>(input.categoryIds ?? [])); const categories = categoryIds.map((id) => T().leadCategories.find((row) => row.id === id)); if (!categories.length || categories.some((row) => !row)) fail("Bitte mindestens eine Lead-Kategorie wählen.");
+    const mode = (input.supplierMode ?? "all") as "all" | "include" | "exclude"; const supplierIds: number[] = mode === "all" ? [] : Array.from(new Set<number>(input.supplierIds ?? []));
+    if (supplierIds.some((id) => !T().suppliers.some((row) => row.id === id))) fail("Ein gewählter Lieferant wurde nicht gefunden."); if (mode === "include" && !supplierIds.length) fail("Bitte mindestens einen Lieferanten wählen – oder „Alle Lieferanten“.");
+    const buyers: Array<{ buyerUserId?: number | null; buyerName?: string | null; unitPrice?: number; reclamationWindowHours?: number }> = input.buyers ?? []; if (input.active && !buyers.length) fail("Eine aktive Kette braucht mindestens einen Kunden.");
+    const buyerNames = buyers.map((buyer) => { let name = String(buyer.buyerName ?? "").trim(); if (buyer.buyerUserId) { const user = T().users.find((row) => row.id === buyer.buyerUserId) ?? fail("Käufer-Konto wurde nicht gefunden."); name = name || String(user.company ?? user.name ?? "Käufer"); } if (!name) fail("Bitte bei jedem Kunden ein Käufer-Konto wählen oder einen Namen angeben."); return name; });
+    const supplierNames = supplierIds.map((id) => String(T().suppliers.find((row) => row.id === id)?.name ?? "")); const created: Array<{ chainId: number; name: string; categoryId: number; priority: number }> = [];
+    for (const categoryId of categoryIds) {
+      const category = T().leadCategories.find((row) => row.id === categoryId)!; const priority = Math.min(999, T().deliveryChains.filter((row) => row.categoryId === categoryId).reduce((highest, row) => Math.max(highest, Number(row.priority) || 0), 0) + 1);
+      const custom = String(input.name ?? "").trim(); const name = (custom ? (categoryIds.length > 1 ? `${custom} – ${category.name}` : custom) : suggestChainName(String(category.name), mode === "exclude" ? [`Alle außer ${supplierNames.join(", ")}`] : supplierNames, buyerNames)).slice(0, 160);
+      const chain = insert(store, "deliveryChains", { tenantId: tenant().id, orderId: null, categoryId, name, priority, sellTarget: 1, status: input.active ? "aktiv" : "inaktiv", supplierFilterMode: mode, supplierIds, createdAt: new Date(), updatedAt: new Date() });
+      buyers.forEach((buyer, index) => insert(store, "deliveryStops", { chainId: chain.id, buyerName: buyerNames[index], buyerUserId: buyer.buyerUserId ?? null, position: index + 1, unitPrice: money(buyer.unitPrice ?? 0), active: true, reclamationWindowHours: buyer.reclamationWindowHours ?? 24, maxLeads: null, geoCountry: null, geoMode: "landesweit", geoValues: [], fieldFilters: [], excludedSupplierIds: [], excludedBuyerUserIds: [], excludeAutomationDuplicates: false, phoneFilter: "all", maxLeadAgeMinutes: null, createdAt: new Date() }));
+      created.push({ chainId: chain.id, name, categoryId, priority });
+    }
+    return { success: true, created };
+  },
+  "leadops.reorderChains": (input) => { const rows = T().deliveryChains.filter((row) => row.categoryId === input.categoryId).sort((a, b) => byChainOrder(a as never, b as never)); const known = new Set(rows.map((row) => row.id)); const ordered: number[] = (input.chainIds as number[]).filter((id) => known.has(id)); for (const row of rows) if (!ordered.includes(row.id)) ordered.push(row.id); const next = reorderedPriorities(ordered); for (const item of next) update(store, "deliveryChains", (row) => row.id === item.id, { priority: item.priority }); return { success: true, order: next }; },
   "leadops.addChainStop": (input) => { const chain = T().deliveryChains.find((row) => row.id === input.chainId) ?? fail("Lieferkette wurde nicht gefunden."); let buyerName = String(input.buyerName ?? "").trim(); if (input.buyerUserId) { const user = T().users.find((row) => row.id === input.buyerUserId) ?? fail("Käufer-Konto wurde nicht gefunden."); buyerName = buyerName || String(user.company ?? user.name ?? "Käufer"); } if (!buyerName) fail("Bitte einen Käufer wählen oder einen Käufernamen angeben."); const existing = T().deliveryStops.filter((row) => row.chainId === chain.id); const position = existing.length ? Math.max(...existing.map((row) => row.position)) + 1 : 1; const stop = insert(store, "deliveryStops", { chainId: chain.id, buyerName, buyerUserId: input.buyerUserId ?? null, position, unitPrice: money(input.unitPrice ?? 0), active: true, reclamationWindowHours: input.reclamationWindowHours ?? 24, maxLeads: input.maxLeads ?? null, geoCountry: null, geoMode: "landesweit", geoValues: [], fieldFilters: [], excludedSupplierIds: [], excludedBuyerUserIds: [], excludeAutomationDuplicates: false, phoneFilter: "all", maxLeadAgeMinutes: null, createdAt: new Date() }); return { success: true, stopId: stop.id, position }; },
   "leadops.updateChainStop": (input) => { const { id, unitPrice, ...rest } = input; T().deliveryStops.find((row) => row.id === id) ?? fail("Stop wurde nicht gefunden."); if (rest.buyerUserId && !rest.buyerName) { const user = T().users.find((row) => row.id === rest.buyerUserId) ?? fail("Käufer-Konto wurde nicht gefunden."); rest.buyerName = String(user.company ?? user.name ?? "Käufer"); } update(store, "deliveryStops", (row) => row.id === id, { ...rest, unitPrice: unitPrice === undefined ? undefined : money(unitPrice) }); return { success: true }; },
   "leadops.saveStopRules": (input) => { T().deliveryStops.find((row) => row.id === input.stopId) ?? fail("Stop wurde nicht gefunden."); remove(store, "deliveryStopReasons", (row) => row.stopId === input.stopId); for (const rule of input.rules) insert(store, "deliveryStopReasons", { stopId: input.stopId, reasonId: rule.reasonId, allowed: rule.allowed, passOn: rule.passOn }); return { success: true }; },
@@ -2199,11 +2305,25 @@ const procedures: Record<string, Handler> = {
   "leadops.deleteDeliveryChain": (input) => { T().deliveryChains.find((row) => row.id === input.chainId) ?? fail("Lieferkette wurde nicht gefunden."); const stopIds = T().deliveryStops.filter((row) => row.chainId === input.chainId).map((row) => row.id); remove(store, "deliveryStopReasons", (row) => stopIds.includes(row.stopId)); remove(store, "deliveryStops", (row) => row.chainId === input.chainId); remove(store, "deliveryChains", (row) => row.id === input.chainId); return { success: true }; },
   "leadops.listDeliveryChains": () => [...T().deliveryChains].sort((a, b) => a.priority - b.priority).map((chain) => ({ ...chain, stops: T().deliveryStops.filter((stop) => stop.chainId === chain.id).sort((a, b) => a.position - b.position) })),
   "leadops.getDeliveryChainMetrics": () => { const metrics = new Map<number, any>(); for (const row of T().leadDeliveries) { if (!row.chainId) continue; const current = metrics.get(row.chainId) ?? { offered: 0, accepted: 0, rejected: 0, skipped: 0, revenue: 0 }; current.offered += 1; if (row.result === "angenommen") { current.accepted += 1; current.revenue += Number(row.unitPrice); } else if (row.result === "abgelehnt") current.rejected += 1; else if (row.result === "übersprungen") current.skipped += 1; metrics.set(row.chainId, current); } return Array.from(metrics.entries()).map(([chainId, values]) => ({ chainId, ...values })); },
-  "leadops.createDeliveryChain": (input) => { if (input.orderId && !T().orders.some((row) => row.id === input.orderId)) fail("Bestellung wurde nicht gefunden."); const chain = insert(store, "deliveryChains", { tenantId: tenant().id, orderId: input.orderId ?? null, categoryId: input.categoryId, name: input.name, priority: input.priority ?? 1, sellTarget: input.sellTarget ?? 1, distributionMode: input.distributionMode ?? "lieferketten_round_robin", roundRobinCursor: 0, status: input.status ?? "inaktiv" }); return { success: true, chainId: chain.id }; },
+  "leadops.createDeliveryChain": (input) => { if (input.orderId && !T().orders.some((row) => row.id === input.orderId)) fail("Bestellung wurde nicht gefunden."); const chain = insert(store, "deliveryChains", { tenantId: tenant().id, orderId: input.orderId ?? null, categoryId: input.categoryId, name: input.name, priority: input.priority ?? 1, sellTarget: input.sellTarget ?? 1, status: input.status ?? "inaktiv" }); return { success: true, chainId: chain.id }; },
   "leadops.updateDeliveryChain": (input) => { const { id, ...updates } = input; update(store, "deliveryChains", (row) => row.id === id, updates); return { success: true }; },
   "leadops.addDeliveryStop": (input) => { T().deliveryChains.find((row) => row.id === input.chainId) ?? fail("Lieferkette wurde nicht gefunden."); if (T().deliveryStops.some((row) => row.chainId === input.chainId && row.position === input.position)) fail("Diese Position ist in der Lieferkette bereits belegt."); insert(store, "deliveryStops", { chainId: input.chainId, buyerName: input.buyerName, position: input.position, unitPrice: money(input.unitPrice), active: input.active ?? true }); return { success: true }; },
   "leadops.updateDeliveryStop": (input) => { const { id, unitPrice, ...rest } = input; update(store, "deliveryStops", (row) => row.id === id, { ...rest, unitPrice: unitPrice === undefined ? undefined : money(unitPrice) }); return { success: true }; },
   "leadops.deliverLead": (input) => deliverLeadNow(requireSalesLead(input.publicId), { chainId: input.chainId, orderId: input.orderId, allowRepeat: input.allowRepeat }),
+  /* ---- API-Fehler (Spiegel von server/api-errors.ts): Übersicht, korrigieren, noch einmal ausliefern, abhaken, Schnittstellen prüfen */
+  "leadops.apiErrorOverview": (input) => apiErrorOverviewNow(input?.days ?? 30),
+  "leadops.apiErrorCount": () => { const overview = apiErrorOverviewNow(30); return { open: overview.counts.open, broken: overview.counts.schnittstellenGestoert }; },
+  "leadops.correctLead": (input) => { const lead = requireSalesLead(input.publicId); const changed = correctLeadNow(lead, input.changes ?? {}); const delivery = input.deliver ? retryDeliveriesNow([requireSalesLead(input.publicId)], input.allowRepeat)[0] : null; return { publicId: String(lead.publicId), changed, delivery }; },
+  "leadops.retryLeadDeliveries": (input) => { const results = retryDeliveriesNow(selectedLeads(Array.from(new Set<string>(input.publicIds))), input.allowRepeat); return { results, delivered: results.filter((row) => row.ok).length, failed: results.filter((row) => !row.ok).length }; },
+  "leadops.dismissApiErrors": (input) => { const rows = selectedLeads(Array.from(new Set<string>(input.publicIds))); const at = new Date().toISOString(); for (const lead of rows) { update(store, "leads", (row) => row.id === lead.id, { metadata: { ...metadataOf(lead), apiErrorsDismissedAt: at } }); statusEvent(lead.id, lead.status, lead.status, "API-Fehler als erledigt abgehakt"); } return { dismissed: rows.length }; },
+  "leadops.checkInterfacesNow": () => {
+    // Probe der Erreichbarkeit (in der Vorschau gespielt): erreichbar, außer die letzten echten Übergaben sind alle ohne Antwort gescheitert
+    const probe = (rows: Row[]) => { const real = rows.filter((row) => row.externalReference !== HEALTH_CHECK).sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()).slice(0, 3); return !(real.length >= 2 && real.every((row) => row.eventType === "abgelehnt" && !row.responseStatus)); };
+    let healthy = 0; let warnings = 0;
+    for (const integration of T().partnerIntegrations.filter((row) => row.status === "aktiv")) { const ok = Boolean(integration.callbackUrl) && probe(T().integrationEvents.filter((row) => row.integrationId === integration.id)); if (ok) healthy += 1; else warnings += 1; insert(store, "integrationEvents", { tenantId: tenant().id, integrationId: integration.id, endpointId: null, leadId: null, categoryId: null, eventType: ok ? "offen" : "abgelehnt", amount: null, externalReference: HEALTH_CHECK, responseStatus: ok ? 204 : null, responseBody: ok ? "Endpunkt erreichbar · HTTP 204" : integration.callbackUrl ? "Endpunkt nicht erreichbar: fetch failed" : "Gesundheitscheck übersprungen: Es fehlt eine sichere öffentliche HTTPS-Adresse.", occurredAt: new Date() }); }
+    for (const endpoint of T().deliveryEndpoints.filter((row) => row.enabled !== false)) { const ok = probe(T().integrationEvents.filter((row) => row.endpointId === endpoint.id)); if (ok) healthy += 1; else warnings += 1; insert(store, "integrationEvents", { tenantId: tenant().id, integrationId: null, endpointId: endpoint.id, leadId: null, categoryId: null, eventType: ok ? "offen" : "abgelehnt", amount: null, externalReference: HEALTH_CHECK, responseStatus: ok ? 204 : null, responseBody: ok ? "Endpunkt erreichbar · HTTP 204" : "Endpunkt nicht erreichbar: fetch failed", occurredAt: new Date() }); }
+    return { checked: healthy + warnings, healthy, warnings, checkedAt: new Date() };
+  },
   "leadops.runScheduledDeliveries": () => runScheduledDeliveries(),
   "leadops.listLeadDeliveries": (input) => { const lead = T().leads.find((row) => row.publicId === input.publicId); return lead ? T().leadDeliveries.filter((row) => row.leadId === lead.id).sort(byDesc("occurredAt")) : []; },
   "leadops.getLeadDetail": (input) => {
@@ -2217,7 +2337,7 @@ const procedures: Record<string, Handler> = {
       call: demoLeadCall(lead.id), fieldsFromCallAt: typeof metadata.callFieldsAt === "string" ? metadata.callFieldsAt : null,
       category: category ? { id: category.id, name: category.name, shortcode: category.shortcode } : null,
       supplier: supplier ? { id: supplier.id, name: supplier.name, email: supplier.email ?? null, status: supplier.status } : lead.supplierName ? { id: null, name: lead.supplierName, email: null, status: null } : null,
-      fields: [...T().categoryFields].filter((row) => row.categoryId === lead.categoryId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id).map((field) => ({ key: field.fieldKey, label: field.label, type: field.fieldType, value: metadata[field.fieldKey] ?? null })),
+      fields: [...T().categoryFields].filter((row) => row.categoryId === lead.categoryId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id).map((field) => ({ key: field.fieldKey, label: field.label, type: field.fieldType, value: metadata[field.fieldKey] ?? null, options: fieldOptions(field as never) })),
       metadata,
       deliveries: [...T().leadDeliveries].filter((row) => row.leadId === lead.id).sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()).map((row) => { const chain = T().deliveryChains.find((item) => item.id === row.chainId); const stop = T().deliveryStops.find((item) => item.id === row.stopId); const order = T().orders.find((item) => item.id === row.orderId); return { id: row.id, buyerName: row.buyerName, unitPrice: row.unitPrice, result: row.result, occurredAt: row.occurredAt, windowEndsAt: row.windowEndsAt ?? null, inWindow: row.result === "angenommen" && !row.acceptedAt && Boolean(row.windowEndsAt) && new Date(row.windowEndsAt).getTime() > now, skipReason: row.skipReason ?? null, chainName: chain?.name ?? null, stopPosition: stop?.position ?? null, orderNumber: order?.orderNumber ?? null, orderName: order?.name ?? null, chainId: row.chainId ?? null, orderId: row.orderId ?? null }; }),
       claims: [...T().claims].filter((row) => row.leadId === lead.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((claim) => ({ id: claim.id, reason: claim.reason, details: claim.details ?? "", status: claim.status, refundAmount: claim.refundAmount ?? null, createdAt: claim.createdAt, dueAt: claim.dueAt ?? null, resolvedAt: claim.resolvedAt ?? null })),

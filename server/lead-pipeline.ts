@@ -15,10 +15,11 @@ import type { getDb } from "./db";
 import { decryptIntegrationSecret } from "./integration-secrets";
 import { dispatchLeadExport, type ExportableLead, type IntegrationExportConfig } from "./lead-integration-export";
 import { evaluateOrderEligibility } from "./order-eligibility";
-import { conditionsMatch, selectNextChain, selectStopPosition, type FieldCondition } from "./routing";
+import { conditionsMatch, selectNextChain, type FieldCondition } from "./routing";
 import { extractPartnerReference, handOverToBuyerEndpoints, notifySupplierReturn } from "./outbound-endpoints";
 import { suppliers } from "../drizzle/schema";
 import { logActivity } from "./activity";
+import { NOT_POSSIBLE_PREFIX } from "../shared/api-errors";
 
 export type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 export type LeadRow = typeof leads.$inferSelect;
@@ -40,13 +41,13 @@ function integrationConfig(integration: Pick<IntegrationRow, "config">): Integra
 
 export type ExportOutcome = { eventType: "geliefert" | "abgelehnt"; externalReference: string; responseStatus: number | undefined; responseBody: string | null };
 
-export type DeliverySettings = { outgoingDuplicateProtection: boolean; duplicateFields: string[]; duplicateWindowHours: number; skipEmptyApiFields: boolean; incomingPrePing: boolean; distributionOrder: "fifo" | "lifo"; chainDistributionMode: "lieferketten_round_robin" | "bestellungen_round_robin" };
+export type DeliverySettings = { outgoingDuplicateProtection: boolean; duplicateFields: string[]; duplicateWindowHours: number; skipEmptyApiFields: boolean; incomingPrePing: boolean; distributionOrder: "fifo" | "lifo" };
 
 /** Mandanteneinstellungen für Übergabe und Verteilung (Einstellungen → System). */
 export async function loadDeliverySettings(db: Db, tenantId: number): Promise<DeliverySettings> {
   const row = (await db.select().from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).limit(1))[0];
   const fields = Array.isArray(row?.duplicateFields) ? (row!.duplicateFields as unknown[]).map(String).filter((field) => field === "email" || field === "phone") : ["email", "phone"];
-  return { outgoingDuplicateProtection: row?.outgoingDuplicateProtection ?? true, duplicateFields: fields.length ? fields : ["email", "phone"], duplicateWindowHours: row?.duplicateWindowHours ?? 0, skipEmptyApiFields: row?.skipEmptyApiFields ?? false, incomingPrePing: row?.incomingPrePing ?? false, distributionOrder: row?.distributionOrder ?? "fifo", chainDistributionMode: row?.chainDistributionMode ?? "lieferketten_round_robin" };
+  return { outgoingDuplicateProtection: row?.outgoingDuplicateProtection ?? true, duplicateFields: fields.length ? fields : ["email", "phone"], duplicateWindowHours: row?.duplicateWindowHours ?? 0, skipEmptyApiFields: row?.skipEmptyApiFields ?? false, incomingPrePing: row?.incomingPrePing ?? false, distributionOrder: row?.distributionOrder ?? "fifo" };
 }
 
 /** HTTPS-Export eines Leads an eine aktive Integration inkl. Zugangsdaten und Provider-Mapping; schreibt immer ein integrationEvent. */
@@ -161,7 +162,7 @@ export async function ensureOrderChains(db: Db, tenantId: number, orderId: numbe
   let created = 0;
   for (const categoryId of categoryIds) {
     if (existing.some((chain) => chain.categoryId === categoryId)) continue;
-    const inserted = await db.insert(deliveryChains).values({ tenantId, orderId: order.id, categoryId, name: `Bestellung ${order.orderNumber}`, priority: config?.priority ?? 1, sellTarget: 1, distributionMode: "lieferketten_round_robin", status: "aktiv" });
+    const inserted = await db.insert(deliveryChains).values({ tenantId, orderId: order.id, categoryId, name: `Bestellung ${order.orderNumber}`, priority: config?.priority ?? 1, sellTarget: 1, status: "aktiv" });
     const chainId = Number(inserted[0]?.insertId) || 0;
     if (chainId) { await db.insert(deliveryStops).values({ chainId, buyerName: order.buyerName, position: 1, unitPrice: order.unitPrice, active: true }); created += 1; }
   }
@@ -189,7 +190,30 @@ export async function passOnAfterClaim(db: Db, tenantId: number, stopId: number 
   return reason?.forwardToNextStop ?? false;
 }
 
-export async function deliverLeadNow(db: Db, input: { tenantId: number; actorUserId: number | null; lead: LeadRow; preferChainId?: number | null; preferOrderId?: number | null; allowRepeat?: boolean; now?: Date; settings?: DeliverySettings; excludeChainIds?: number[]; ignoreAssignment?: boolean; passedOn?: boolean }): Promise<DeliveryResult> {
+export type DeliverLeadInput = { tenantId: number; actorUserId: number | null; lead: LeadRow; preferChainId?: number | null; preferOrderId?: number | null; allowRepeat?: boolean; now?: Date; settings?: DeliverySettings; excludeChainIds?: number[]; ignoreAssignment?: boolean; passedOn?: boolean };
+
+/**
+ * Lead ausliefern. Geht es gar nicht los (keine aktive Lieferkette, die zugeordnete Kette nimmt ihn nicht an …), steht der Grund
+ * im Lead-Log – so taucht der Lead unter „API-Fehler“ auf, egal wer die Auslieferung angestoßen hat (Knopf, Regel, Zeitplan, Schnittstelle).
+ */
+export async function deliverLeadNow(db: Db, input: DeliverLeadInput): Promise<DeliveryResult> {
+  try { return await deliverLeadCore(db, input); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    // „Bereits ausgeliefert“ ist ein Schutz vor doppelter Auslieferung, kein Problem des Leads
+    if (message && !message.startsWith("Lead wurde bereits")) await noteDeliveryFailure(db, input.tenantId, input.lead, message, input.actorUserId).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function noteDeliveryFailure(db: Db, tenantId: number, lead: LeadRow, message: string, actorUserId: number | null) {
+  const note = `${NOT_POSSIBLE_PREFIX}${message}`.slice(0, 900);
+  const last = (await db.select({ note: leadStatusEvents.note, occurredAt: leadStatusEvents.occurredAt }).from(leadStatusEvents).where(eq(leadStatusEvents.leadId, lead.id)).orderBy(desc(leadStatusEvents.id)).limit(1))[0];
+  if (last?.note === note && Date.now() - last.occurredAt.getTime() < 6 * 3_600_000) return; // derselbe Grund steht schon da (der Zeitplan versucht es regelmäßig wieder)
+  await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId, note });
+}
+
+async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<DeliveryResult> {
   const { tenantId, lead } = input; const now = input.now ?? new Date();
   const settings = input.settings ?? await loadDeliverySettings(db, tenantId);
   const metadata = metadataOf(lead);
@@ -261,14 +285,14 @@ export async function deliverLeadNow(db: Db, input: { tenantId: number; actorUse
   if (!pool.length) throw new Error(`Keine aktive Lieferkette mit Stop für diese Lead-Kategorie verfügbar (${explain(candidates)}).`);
 
   const attempts: DeliveryAttempt[] = []; const tried = new Set<number>(); let claimId: number | undefined;
-  const toCandidate = (item: Candidate) => ({ id: item.chain.id, priority: item.chain.priority, status: item.chain.status, cursor: item.chain.roundRobinCursor, stopCount: item.stops.length, hasOrder: Boolean(item.chain.orderId) });
+  const toCandidate = (item: Candidate) => ({ id: item.chain.id, priority: item.chain.priority, status: item.chain.status, stopCount: item.stops.length, hasOrder: Boolean(item.chain.orderId) });
   let lastResult: DeliveryResult | null = null; let stopOnExhausted = false; let passedOn = input.passedOn ?? false;
   const suppliersDelivered = new Set<number>();
   outer: while (!stopOnExhausted) {
-    const selected = selectNextChain(pool.filter((item) => !tried.has(item.chain.id)).map(toCandidate), settings.chainDistributionMode);
+    // Feste Reihenfolge der Ketten (kleinste Zahl zuerst, bei gleicher Zahl die ältere) – es wird nicht abgewechselt
+    const selected = selectNextChain(pool.filter((item) => !tried.has(item.chain.id)).map(toCandidate));
     if (!selected) break;
     const target = pool.find((item) => item.chain.id === selected.id)!; tried.add(target.chain.id);
-    await db.update(deliveryChains).set({ roundRobinCursor: target.chain.roundRobinCursor + 1 }).where(eq(deliveryChains.id, target.chain.id));
     let sold = 0;
     // Wasserfall: Stops von oben nach unten
     for (const stop of target.stops) {

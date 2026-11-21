@@ -3,7 +3,8 @@
  * Ein Lead läuft der Reihe nach über die Stops (Käufer + Preis); passt eine Bedingung nicht, wird der Stop übersprungen (keine Lieferung, keine Belastung).
  */
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
-import { deliveryChains, deliveryEndpoints, deliveryStopReasons, deliveryStops, leadCategories, leadDeliveries, leads, memberships, orders, reclamationReasons, suppliers, tenantSettings, users } from "../drizzle/schema";
+import { deliveryChains, deliveryEndpoints, deliveryStopReasons, deliveryStops, leadCategories, leadDeliveries, leads, memberships, orders, reclamationReasons, suppliers, users } from "../drizzle/schema";
+import { byChainOrder, chainPlaces, reorderedPriorities, suggestChainName, supplierText, type SupplierFilterMode } from "../shared/chain-rules";
 import type { Db } from "./lead-pipeline";
 
 export type ChainRange = "heute" | "gestern" | "7_tage" | "14_tage" | "30_tage" | "maximal";
@@ -48,18 +49,80 @@ async function deliveriesFor(db: Db, tenantId: number, chainIds: number[], range
   return db.select().from(leadDeliveries).where(and(...conditions)).orderBy(desc(leadDeliveries.occurredAt));
 }
 
-/** Übersichtsseite: alle Ketten mit Kategorie, Stops, Ziel, Ges./Ang./Abg. im Zeitraum. */
+const idList = (value: unknown): number[] => (Array.isArray(value) ? value.map(Number).filter((id) => Number.isInteger(id) && id > 0) : []);
+
+/**
+ * Übersichtsseite: alle Ketten in ihrer festen Reihenfolge – je Kette die Kategorie, von welchen Lieferanten, an welche Kunden
+ * (in Reihenfolge), Ziel und Ges./Ang./Abg. im Zeitraum. `place` = Platz in der Kategorie, `before` = Ketten, die bei demselben Lead vorher drankommen.
+ */
 export async function chainOverview(db: Db, tenantId: number, range: ChainRange) {
   const chains = await db.select().from(deliveryChains).where(eq(deliveryChains.tenantId, tenantId)).orderBy(deliveryChains.priority, deliveryChains.id);
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
-  const stops = chains.length ? await db.select({ id: deliveryStops.id, chainId: deliveryStops.chainId, active: deliveryStops.active }).from(deliveryStops).where(inArray(deliveryStops.chainId, chains.map((chain) => chain.id))) : [];
+  const stops = chains.length ? await db.select({ id: deliveryStops.id, chainId: deliveryStops.chainId, active: deliveryStops.active, buyerName: deliveryStops.buyerName, position: deliveryStops.position, unitPrice: deliveryStops.unitPrice }).from(deliveryStops).where(inArray(deliveryStops.chainId, chains.map((chain) => chain.id))).orderBy(deliveryStops.position) : [];
   const orderRows = chains.some((chain) => chain.orderId) ? await db.select({ id: orders.id, orderNumber: orders.orderNumber }).from(orders).where(eq(orders.tenantId, tenantId)) : [];
+  const supplierRows = chains.some((chain) => chain.supplierFilterMode !== "all") ? await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).where(eq(suppliers.tenantId, tenantId)) : [];
   const rows = await deliveriesFor(db, tenantId, chains.map((chain) => chain.id), range);
-  const settings = (await db.select({ mode: tenantSettings.chainDistributionMode }).from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).limit(1))[0];
+  const places = chainPlaces(chains.map((chain) => ({ id: chain.id, name: chain.name, categoryId: chain.categoryId, priority: chain.priority, status: chain.status, supplierFilterMode: chain.supplierFilterMode, supplierIds: idList(chain.supplierIds) })));
   return {
-    distributionMode: settings?.mode ?? "lieferketten_round_robin",
-    chains: chains.map((chain) => ({ id: chain.id, name: chain.name, categoryId: chain.categoryId, categoryName: categories.find((category) => category.id === chain.categoryId)?.name ?? "–", orderId: chain.orderId, orderNumber: orderRows.find((order) => order.id === chain.orderId)?.orderNumber ?? null, priority: chain.priority, stops: stops.filter((stop) => stop.chainId === chain.id).length, sellTarget: chain.sellTarget, status: chain.status, stats: summarize(rows.filter((row) => row.chainId === chain.id)) })),
+    chains: chains.map((chain) => {
+      const supplierIds = idList(chain.supplierIds); const supplierNames = supplierIds.map((id) => supplierRows.find((supplier) => supplier.id === id)?.name ?? `Lieferant #${id}`);
+      const own = stops.filter((stop) => stop.chainId === chain.id); const place = places.get(chain.id);
+      return {
+        id: chain.id, name: chain.name, categoryId: chain.categoryId, categoryName: categories.find((category) => category.id === chain.categoryId)?.name ?? "–", orderId: chain.orderId, orderNumber: orderRows.find((order) => order.id === chain.orderId)?.orderNumber ?? null,
+        priority: chain.priority, place: place?.place ?? 1, overlapsWith: place?.overlapsWith ?? [], before: place?.before ?? [],
+        supplierFilterMode: chain.supplierFilterMode, supplierIds, supplierNames, supplierText: supplierText(chain.supplierFilterMode, supplierNames), country: chain.country,
+        buyers: own.map((stop) => ({ name: stop.buyerName, active: stop.active, unitPrice: stop.unitPrice })), stops: own.length, sellTarget: chain.sellTarget, status: chain.status, stats: summarize(rows.filter((row) => row.chainId === chain.id)),
+      };
+    }),
   };
+}
+
+export type FixedChainInput = { categoryIds: number[]; supplierMode: SupplierFilterMode; supplierIds: number[]; buyers: Array<{ buyerUserId?: number | null; buyerName?: string | null; unitPrice: number; reclamationWindowHours?: number }>; name?: string | null; active: boolean };
+/**
+ * Feste Zuordnung anlegen: je gewählter Kategorie eine Kette – von diesen Lieferanten, an diese Kunden in dieser Reihenfolge.
+ * Eine neue Kette kommt in ihrer Kategorie hinter die vorhandenen (sie nimmt niemandem den Platz weg).
+ */
+export async function createFixedChains(db: Db, tenantId: number, input: FixedChainInput) {
+  const categoryIds = Array.from(new Set(input.categoryIds));
+  const categoryRows = categoryIds.length ? await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(and(eq(leadCategories.tenantId, tenantId), inArray(leadCategories.id, categoryIds))) : [];
+  if (!categoryRows.length || categoryRows.length !== categoryIds.length) throw new Error("Bitte mindestens eine Lead-Kategorie wählen.");
+  const supplierIds = input.supplierMode === "all" ? [] : Array.from(new Set(input.supplierIds));
+  const supplierRows = supplierIds.length ? await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).where(and(eq(suppliers.tenantId, tenantId), inArray(suppliers.id, supplierIds))) : [];
+  if (supplierRows.length !== supplierIds.length) throw new Error("Ein gewählter Lieferant wurde nicht gefunden.");
+  if (input.supplierMode === "include" && !supplierIds.length) throw new Error("Bitte mindestens einen Lieferanten wählen – oder „Alle Lieferanten“.");
+  if (input.active && !input.buyers.length) throw new Error("Eine aktive Kette braucht mindestens einen Kunden.");
+  // Namen der Kunden vorab klären (für den Namen der Kette und damit ein Fehler nichts halb anlegt)
+  const buyerNames: string[] = [];
+  for (const buyer of input.buyers) {
+    let name = (buyer.buyerName ?? "").trim();
+    if (buyer.buyerUserId) { const row = (await db.select({ name: users.name, company: users.company }).from(users).innerJoin(memberships, eq(memberships.userId, users.id)).where(and(eq(users.id, buyer.buyerUserId), eq(memberships.tenantId, tenantId))).limit(1))[0]; if (!row) throw new Error("Käufer-Konto wurde nicht gefunden."); name = name || `${row.company ?? row.name ?? "Käufer"}`; }
+    if (!name) throw new Error("Bitte bei jedem Kunden ein Käufer-Konto wählen oder einen Namen angeben.");
+    buyerNames.push(name);
+  }
+  const existing = await db.select({ categoryId: deliveryChains.categoryId, priority: deliveryChains.priority }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), inArray(deliveryChains.categoryId, categoryIds)));
+  const supplierNames = supplierIds.map((id) => supplierRows.find((row) => row.id === id)?.name ?? "");
+  const created: Array<{ chainId: number; name: string; categoryId: number; priority: number }> = [];
+  for (const categoryId of categoryIds) {
+    const category = categoryRows.find((row) => row.id === categoryId)!;
+    const priority = Math.min(999, existing.filter((row) => row.categoryId === categoryId).reduce((highest, row) => Math.max(highest, row.priority), 0) + 1);
+    const custom = (input.name ?? "").trim();
+    const name = (custom ? (categoryIds.length > 1 ? `${custom} – ${category.name}` : custom) : suggestChainName(category.name, input.supplierMode === "exclude" ? [`Alle außer ${supplierNames.join(", ")}`] : supplierNames, buyerNames)).slice(0, 160);
+    const inserted = await db.insert(deliveryChains).values({ tenantId, categoryId, name, priority, sellTarget: 1, status: input.active ? "aktiv" : "inaktiv", supplierFilterMode: input.supplierMode, supplierIds });
+    const chainId = Number(inserted[0]?.insertId) || 0;
+    for (const buyer of input.buyers) await addStop(db, tenantId, { chainId, buyerUserId: buyer.buyerUserId ?? null, buyerName: buyer.buyerName ?? null, unitPrice: buyer.unitPrice, reclamationWindowHours: buyer.reclamationWindowHours });
+    created.push({ chainId, name, categoryId, priority });
+  }
+  return { success: true, created };
+}
+
+/** Feste Reihenfolge der Ketten einer Kategorie neu setzen: Die Ketten bekommen die Zahlen 1, 2, 3 … in der gewünschten Folge. */
+export async function reorderChains(db: Db, tenantId: number, categoryId: number, chainIds: number[]) {
+  const rows = (await db.select({ id: deliveryChains.id, priority: deliveryChains.priority }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.categoryId, categoryId)))).sort(byChainOrder);
+  const known = new Set(rows.map((row) => row.id));
+  const ordered = chainIds.filter((id) => known.has(id)); for (const row of rows) if (!ordered.includes(row.id)) ordered.push(row.id);
+  const next = reorderedPriorities(ordered);
+  for (const item of next) if (rows.find((row) => row.id === item.id)?.priority !== item.priority) await db.update(deliveryChains).set({ priority: item.priority }).where(and(eq(deliveryChains.id, item.id), eq(deliveryChains.tenantId, tenantId)));
+  return { success: true, order: next };
 }
 
 /** Käufer-Konten (Mitglieder vom Typ Käufer) und Lieferanten für die Auswahlfelder. */
@@ -70,7 +133,7 @@ export async function chainPickers(db: Db, tenantId: number) {
   return {
     buyers: buyers.map((buyer) => { const own = endpoints.filter((endpoint) => endpoint.membershipId === buyer.membershipId && endpoint.enabled); return { userId: buyer.userId, membershipId: buyer.membershipId, label: `${buyer.company ?? buyer.name ?? "Käufer"} — ${buyer.name ?? buyer.email ?? ""}`, company: buyer.company ?? buyer.name ?? "Käufer", contact: buyer.name ?? "", email: buyer.email ?? "", status: buyer.status, api: own.length > 0 || Boolean(buyer.integrationId), endpoint: own[0] ? `${own[0].method} ${own[0].url}` : null }; }),
     suppliers: supplierRows.map((supplier) => ({ id: supplier.id, label: supplier.email ? `${supplier.name} — ${supplier.email}` : supplier.name, status: supplier.status })),
-    categories: await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)),
+    categories: await db.select({ id: leadCategories.id, name: leadCategories.name, status: leadCategories.status, isTemplate: leadCategories.isTemplate }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)),
   };
 }
 

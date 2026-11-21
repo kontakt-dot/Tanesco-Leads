@@ -61,6 +61,14 @@ const TECHNICAL = new Set([
 /** Vermerk der Software (z. B. Nummer des Gesprächs, Name der Liste) – keine Angabe des Kunden, also kein Fachfeld. */
 export const isTechnicalMeta = (key: string): boolean => TECHNICAL.has(key);
 
+/** Reine Merker der Software über ihre eigene Arbeit – sie gehen nie an einen Käufer oder Partner mit (auch nicht als „weitere Felder“). */
+const NEVER_SENT = new Set(["apiErrorsDismissedAt", "callFieldsAt", "callFieldsTries", "callFieldsCallId"]);
+/** Zusatzfelder eines Leads für die Übergabe nach außen: alles wie bisher, nur ohne die Merker der Software. */
+export function outboundMeta(metadata: unknown): Record<string, unknown> {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  return Object.fromEntries(Object.entries(metadata as Record<string, unknown>).filter(([key]) => !NEVER_SENT.has(key)));
+}
+
 const META_LABELS: Record<string, string> = { street: "Straße", company: "Firma", anrede: "Anrede", salutation: "Anrede", dialerResult: "Ergebnis im Dialer", dialerNote: "Notiz im Dialer", dialerCallbackAt: "Rückruf laut Dialer", utm_source: "Quelle (Anzeige)", utm_campaign: "Kampagne (Anzeige)", utm_medium: "Medium (Anzeige)" };
 /** Lesbarer Name für ein Zusatzfeld ohne eigene Definition („monatliche_stromkosten“ → „Monatliche Stromkosten“). */
 export function metaLabel(key: string): string {

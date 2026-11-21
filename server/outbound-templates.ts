@@ -2,6 +2,8 @@
  * Reine Template-, Filter- und Mapping-Logik der ausgehenden API-Calls – ohne Node-/Datenbankabhängigkeiten,
  * damit Server und Browser-Demo dieselben Regeln nutzen.
  */
+import { outboundMeta } from "../shared/lead-fields";
+
 export type TemplateLead = { id: number; publicId: string; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; postcode: string | null; city: string | null; country: string | null; metadata: unknown; createdAt: Date | string };
 export type EndpointLike = { id: number; enabled: boolean; url: string; sourceFilterMode: "alle" | "nur" | "ausser"; sourceSupplierIds: unknown; fieldFilters: unknown; rotate: boolean; sentCount: number; position: number; bodyTemplate: string | null; omitAutoFields: boolean; valueMappings: unknown };
 export type RuleLike = { id: number; source: "body" | "status"; field: string | null; op: "gleich" | "beginnt" | "enthaelt"; value: string; active: boolean; position: number };
@@ -16,7 +18,7 @@ export const PLACEHOLDERS = ["lead_id", "lead_number", "salutation", "first_name
 /* ------------------------------------------------------------------ Vorlagen */
 
 export function leadTemplateValues(lead: TemplateLead, category?: { name: string; shortcode: string } | null, extra: Record<string, unknown> = {}) {
-  const custom = lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata) ? (lead.metadata as Record<string, unknown>) : {};
+  const custom = outboundMeta(lead.metadata); // ohne die Merker der Software (z. B. „API-Fehler abgehakt am …“)
   const street = String(custom.street ?? custom.strasse ?? "");
   const match = /^(.*?)[\s,]*(\d+[a-zA-Z]?(?:[-/]\d+[a-zA-Z]?)?)\s*$/.exec(street);
   const values: Record<string, unknown> = { lead_id: lead.publicId, lead_number: lead.id, salutation: String(custom.salutation ?? custom.anrede ?? ""), first_name: lead.firstName ?? "", last_name: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street, street_name: match ? match[1].trim() : street, house_number: match ? match[2] : "", postal_code: lead.postcode ?? "", city: lead.city ?? "", country_code: lead.country ?? "DE", lead_type: category?.name ?? "", lead_type_shortcode: category?.shortcode ?? "", date: new Date(lead.createdAt).toISOString(), ...extra };

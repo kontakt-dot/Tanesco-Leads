@@ -149,6 +149,14 @@ beforeAll(async () => {
       if (/^lg-77[78]$/.test(path)) return json({ id: path, created_time: new Date().toISOString(), field_data: [{ name: "email", values: ["meta.lead@beispiel.de"] }, { name: "phone_number", values: ["+49 160 7777777"] }, { name: "full_name", values: ["Mia Meta"] }, { name: "zip_code", values: ["80331"] }, { name: "city", values: ["München"] }, { name: "hausbesitzer", values: ["Ja"] }], ad_id: "ad-1", ad_name: "Video", adset_id: "as-1", adset_name: "Eigenheim", campaign_id: "cmp-1", campaign_name: "PV Süd", form_id: "form-pv", platform: "instagram" });
       return json({ ok: true });
     }
+    if (url.includes("v348-")) { // API-Fehler (v348): Dieser Empfänger prüft die E-Mail-Adresse. S.v348 = "netz" (keine Verbindung) | "stoerung" (HTTP 503) | "zugang" (HTTP 401)
+      if (S.v348 === "netz") throw new TypeError("fetch failed");
+      if (S.v348 === "stoerung") return new Response("Service Unavailable", { status: 503 });
+      if (S.v348 === "zugang") return new Response(JSON.stringify({ message: "Invalid token" }), { status: 401, headers: { "content-type": "application/json" } });
+      if ((init?.method ?? "GET") === "OPTIONS") return new Response(null, { status: 204 });
+      const email = String((parsedBody as { email?: unknown } | null)?.email ?? "");
+      return !/^[^@\s]+@[^@\s.][^@\s]*\.[a-z]{2,}$/i.test(email) ? new Response(JSON.stringify({ errors: { email: ["is invalid"] } }), { status: 422, headers: { "content-type": "application/json" } }) : new Response(JSON.stringify({ uuid: `v348-${outbound.length}` }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     if (url.includes("secured") && headers["x-auth-token"] !== "tok-12345") return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
     if (url.includes("duplicate")) return new Response(JSON.stringify({ code: 5, message: "Kunde existiert bereits" }), { status: 400, headers: { "content-type": "application/json" } });
     return new Response(JSON.stringify(url.includes("crm") ? { uuid: `ah-${outbound.length}`, ok: true } : { ok: true }), { status: url.includes("reject") ? 422 : 200, headers: { "content-type": "application/json", "x-request-id": `req-${outbound.length}` } });
@@ -245,7 +253,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.updatePartnerIntegration({ id: S.integrationId, status: "aktiv" });
     await owner.leadops.updateMembership({ id: S.membership.id, integrationId: S.integrationId });
 
-    await owner.leadops.createDeliveryChain({ orderId: S.orderId, categoryId: S.wp.id, name: "WP → Partner Solar", priority: 1, sellTarget: 1, distributionMode: "lieferketten_round_robin" });
+    await owner.leadops.createDeliveryChain({ orderId: S.orderId, categoryId: S.wp.id, name: "WP → Partner Solar", priority: 1, sellTarget: 1 });
     const chain = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "WP → Partner Solar")!; S.chainId = chain.id;
     expect(chain.status).toBe("inaktiv"); // neue Ketten starten inaktiv
     await owner.leadops.addDeliveryStop({ chainId: S.chainId, buyerName: "Partner Solar GmbH", position: 1, unitPrice: 48 });
@@ -376,16 +384,21 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(call.body.customFields).toEqual(expect.arrayContaining([{ key: "heizungsart", field_value: "Gas" }, { key: "wohnflaeche", field_value: "140" }]));
     expect(call.body.lead).toBeUndefined();
 
-    // (d) Auslieferung folgt der Bestellzuordnung, auch wenn eine fremde Kette den niedrigeren Round-Robin-Zähler hat
-    await owner.leadops.createDeliveryChain({ categoryId: S.wp.id, name: "Zweite Kette ohne Bestellung", priority: 1, sellTarget: 1, distributionMode: "lieferketten_round_robin" });
+    // (d) Auslieferung folgt der Bestellzuordnung; ohne Zuordnung gilt die feste Reihenfolge der Ketten (kein Abwechseln)
+    await owner.leadops.createDeliveryChain({ categoryId: S.wp.id, name: "Zweite Kette ohne Bestellung", priority: 1, sellTarget: 1 });
     const other = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "Zweite Kette ohne Bestellung")!;
     await owner.leadops.addDeliveryStop({ chainId: other.id, buyerName: "Anderer Käufer", position: 1, unitPrice: 30 });
     await owner.leadops.updateDeliveryChain({ id: other.id, status: "aktiv" });
     const assigned = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Zuge", lastName: "Ordnet", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } }); // Strom → keine Bestellregel
     await owner.leadops.assignLeadsToOrder({ publicIds: [assigned.publicId], orderId: S.orderId });
     const free = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Frei", lastName: "Verteilt", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
-    expect((await owner.leadops.deliverLead({ publicId: assigned.publicId })).chainId).toBe(S.chainId); // Bestellkette trotz höherem Zähler
-    expect((await owner.leadops.deliverLead({ publicId: free.publicId })).chainId).toBe(other.id); // ohne Zuordnung: Round-Robin
+    expect((await owner.leadops.deliverLead({ publicId: assigned.publicId })).chainId).toBe(S.chainId); // Bestellkette laut Zuordnung
+    // ohne Zuordnung: feste Reihenfolge – die Kette mit der kleineren Zahl bekommt den Lead, und zwar jedes Mal (es wird nicht abgewechselt)
+    await owner.leadops.updateDeliveryChain({ id: S.chainId, priority: 2 });
+    const free2 = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Frei", lastName: "Nochmal", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
+    expect((await owner.leadops.deliverLead({ publicId: free.publicId })).chainId).toBe(other.id);
+    expect((await owner.leadops.deliverLead({ publicId: free2.publicId })).chainId).toBe(other.id); // wieder dieselbe Kette – früher wäre jetzt die andere dran gewesen
+    await owner.leadops.updateDeliveryChain({ id: S.chainId, priority: 1 }); // zurück: bei gleicher Zahl kommt die ältere Kette zuerst
 
     // (e) Rechteprüfung: Käufer (manager) darf keine Mandanteneinstellungen ändern, viewer darf nichts löschen
     await expect(invitee.leadops.updateTenantSettings({ leadDeactivationHours: 1 })).rejects.toThrow("steht Käufer-Zugängen nicht zur Verfügung");
@@ -467,7 +480,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Bestellung mit täglichem Intervall (keine Echtzeit), Käufer ohne Integration
     const daily = await owner.leadops.createOrder({ name: "WP täglich", buyerName: "Tages-Käufer", categoryId: S.wp.id, quantity: 10, unitPrice: 40, status: "aktiv" });
     await owner.leadops.saveOrderWorkspace({ orderId: daily.orderId, name: "WP täglich", buyerName: "Tages-Käufer", buyerUserId: null, categoryId: S.wp.id, categoryIds: [S.wp.id], quantity: 10, unitPrice: 40, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "täglich", compensateClaims: false, priority: 1, realtimeDelivery: false, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
-    await owner.leadops.createDeliveryChain({ orderId: daily.orderId, categoryId: S.wp.id, name: "Tageskette", priority: 1, sellTarget: 1, distributionMode: "lieferketten_round_robin" });
+    await owner.leadops.createDeliveryChain({ orderId: daily.orderId, categoryId: S.wp.id, name: "Tageskette", priority: 1, sellTarget: 1 });
     const dailyChain = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "Tageskette")!;
     await owner.leadops.addDeliveryStop({ chainId: dailyChain.id, buyerName: "Tages-Käufer", position: 1, unitPrice: 40 });
     await owner.leadops.updateDeliveryChain({ id: dailyChain.id, status: "aktiv" });
@@ -1321,8 +1334,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect(detail.stops[0].stats).toMatchObject({ total: 1, reclaimed: 1, rejected: 1, skipped: 2 }); expect(detail.stops[1].stats).toMatchObject({ total: 2, accepted: 2, skipped: 0, acceptanceRate: 100 });
       expect(detail.stops[1].activity.recent.map((row) => row.status)).toEqual(["angenommen", "angenommen"]); expect(detail.stops[0].activity.recent.map((row) => row.status)).toEqual(expect.arrayContaining(["reklamiert", "übersprungen"]));
       expect((await owner.leadops.listStopDeliveries({ stopId: stop2.stopId, range: "maximal" })).length).toBe(2);
-      expect((await owner.leadops.chainOverview({ range: "heute" })).distributionMode).toBe("lieferketten_round_robin");
-      await owner.leadops.setChainDistributionMode({ mode: "bestellungen_round_robin" }); expect((await owner.leadops.chainOverview({ range: "heute" })).distributionMode).toBe("bestellungen_round_robin"); await owner.leadops.setChainDistributionMode({ mode: "lieferketten_round_robin" });
+      // Seit v348 gibt es keinen Verteilmodus mehr: Die Übersicht zeigt je Kette die feste Regel – von welchen Lieferanten, an welche Kunden in welcher Reihenfolge
+      expect(await owner.leadops.chainOverview({ range: "heute" })).not.toHaveProperty("distributionMode"); await expect((owner.leadops as unknown as { setChainDistributionMode: (input: unknown) => Promise<unknown> }).setChainDistributionMode({ mode: "bestellungen_round_robin" })).rejects.toThrow();
+      expect(entry).toMatchObject({ supplierFilterMode: "all", supplierText: "Alle Lieferanten", supplierNames: [], country: "DE" }); expect(entry.buyers.map((buyer) => [buyer.name, buyer.active])).toEqual([["Hyper Energy Solutions", true], ["Leadnodes", true]]); expect(entry.place).toBeGreaterThanOrEqual(1);
       await owner.leadops.deleteChainStop({ stopId: stop2.stopId }); expect((await owner.leadops.chainDetail({ chainId, range: "maximal" })).stops).toHaveLength(1);
       await owner.leadops.deleteDeliveryChain({ chainId }); expect((await owner.leadops.chainOverview({ range: "maximal" })).chains.some((chain) => chain.id === chainId)).toBe(false);
     } finally { await restore(); }
@@ -5692,4 +5706,192 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.callStatistics({ search: "Suchkampagne" } as never)).total).toBe(3); expect((await owner.leadops.callStatistics({ search: "gibtesnichtxyz" } as never)).total).toBe(0);
     await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), like(callsTable.externalCallId, "suche-%")));
   }, 60000);
+
+  it("v348a. Lieferkette mit fester Verteilung: eine Regel „Kategorie · Lieferanten · Kunden“ legt je Kategorie eine Kette an; passen mehrere Ketten, gilt immer dieselbe Reihenfolge – es wird nicht abgewechselt; geht nichts los, steht der Grund im Lead-Log", async () => {
+    const { deliveryChains: chainsTable, deliveryStops: stopsTable } = await import("../drizzle/schema"); const tenantId = S.tenantId as number; const stamp = Date.now().toString(36);
+    const dach = (await owner.leadops.createCategory({ shortcode: "V348-DACH", name: "V348 Dach", defaultLeadPrice: "10.00" })).id!; const fassade = (await owner.leadops.createCategory({ shortcode: "V348-FAS", name: "V348 Fassade", defaultLeadPrice: "10.00" })).id!;
+    await owner.leadops.createOrganizationProfile({ partnerType: "lieferant", name: "V348 Quelle Nord", email: `nord-${stamp}@quelle.example` }); await owner.leadops.createOrganizationProfile({ partnerType: "lieferant", name: "V348 Quelle Süd", email: `sued-${stamp}@quelle.example` });
+    const supplierList = await owner.leadops.listSuppliers(); const nord = supplierList.find((row) => row.name === "V348 Quelle Nord")!.id; const sued = supplierList.find((row) => row.name === "V348 Quelle Süd")!.id;
+    const chainsOf = async (categoryId: number) => (await db.select().from(chainsTable).where(and(eq(chainsTable.tenantId, tenantId), eq(chainsTable.categoryId, categoryId)))).sort((a, b) => a.priority - b.priority || a.id - b.id);
+    const buyers = [{ buyerName: "V348 Kunde Eins", unitPrice: 20 }, { buyerName: "V348 Kunde Zwei", unitPrice: 15.5, reclamationWindowHours: 0 }];
+    let seq = 0; const lead = async (categoryId: number, supplierId?: number) => { seq += 1; return (await owner.leadops.importLead({ categoryId, firstName: "Vera", lastName: `Verteilt${seq}`, email: `verteilt-${seq}-${stamp}@example.de`, phone: `+49 151 2348${1000 + seq}`, postcode: "48249", city: "Dülmen", ...(supplierId ? { supplierId } : {}) })).publicId; };
+    const deliver = async (publicId: string) => { const result = await owner.leadops.deliverLead({ publicId }); return [result.chainId, result.buyerName, result.result]; };
+    const failNotes = async (publicId: string) => (await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, (await leadRow(publicId)).id)).orderBy(leadStatusEvents.id)).map((row) => row.note ?? "").filter((note) => note.startsWith("Auslieferung nicht möglich:"));
+
+    // (a) Eine Regel ist erst vollständig, wenn Kategorie, Lieferanten und Kunden feststehen – vorher wird nichts angelegt (auch nichts halb)
+    await expect(owner.leadops.createChainRule({ categoryIds: [dach], supplierMode: "include", supplierIds: [], buyers, active: true })).rejects.toThrow(/mindestens einen Lieferanten/);
+    await expect(owner.leadops.createChainRule({ categoryIds: [dach], supplierMode: "all", supplierIds: [], buyers: [], active: true })).rejects.toThrow(/mindestens einen Kunden/);
+    await expect(owner.leadops.createChainRule({ categoryIds: [dach, 99999999], supplierMode: "all", supplierIds: [], buyers, active: true })).rejects.toThrow(/Lead-Kategorie/);
+    await expect(owner.leadops.createChainRule({ categoryIds: [dach], supplierMode: "include", supplierIds: [nord, 99999999], buyers, active: true })).rejects.toThrow(/Lieferant wurde nicht gefunden/);
+    await expect(owner.leadops.createChainRule({ categoryIds: [dach], supplierMode: "all", supplierIds: [], buyers: [{ buyerName: "V348 Kunde Eins", unitPrice: 20 }, { unitPrice: 5 }], active: true })).rejects.toThrow(/Käufer-Konto wählen oder einen Namen/);
+    expect(await chainsOf(dach)).toHaveLength(0);
+    // … und ohne Kette geht ein Lead nicht raus: Der Grund steht im Lead-Log – einmal, auch wenn es mehrmals versucht wird (der Zeitplan versucht es regelmäßig)
+    const waiting = await lead(dach, nord);
+    await expect(owner.leadops.deliverLead({ publicId: waiting })).rejects.toThrow(/Keine aktive Lieferkette/); await expect(owner.leadops.deliverLead({ publicId: waiting })).rejects.toThrow(/Keine aktive Lieferkette/);
+    expect(await failNotes(waiting)).toEqual(["Auslieferung nicht möglich: Keine aktive Lieferkette mit Stop für diese Lead-Kategorie verfügbar."]); expect((await leadRow(waiting)).status).toBe("neu");
+
+    // (b) Eine Regel für zwei Kategorien = je Kategorie eine Kette: Leads von „Quelle Nord“ gehen zuerst an Kunde Eins, sonst an Kunde Zwei
+    const rule = await owner.leadops.createChainRule({ categoryIds: [dach, fassade], supplierMode: "include", supplierIds: [nord], buyers, active: true });
+    expect(rule.created.map((row) => [row.categoryId, row.priority, row.name])).toEqual([[dach, 1, "V348 Dach: V348 Quelle Nord → V348 Kunde Eins → V348 Kunde Zwei"], [fassade, 1, "V348 Fassade: V348 Quelle Nord → V348 Kunde Eins → V348 Kunde Zwei"]]);
+    const chainA = rule.created[0].chainId; const chainF = rule.created[1].chainId;
+    expect((await db.select().from(stopsTable).where(eq(stopsTable.chainId, chainA))).sort((a, b) => a.position - b.position).map((stop) => [stop.position, stop.buyerName, stop.unitPrice, stop.reclamationWindowHours, stop.active])).toEqual([[1, "V348 Kunde Eins", "20.00", 24, true], [2, "V348 Kunde Zwei", "15.50", 0, true]]);
+    expect((await chainsOf(dach)).map((chain) => [chain.id, chain.status, chain.supplierFilterMode, chain.supplierIds, chain.sellTarget])).toEqual([[chainA, "aktiv", "include", [nord], 1]]);
+    // Auffangkette für alle anderen Lieferanten (mit eigenem Namen) – in ihrer Kategorie kommt sie an zweiter Stelle
+    const rest = await owner.leadops.createChainRule({ categoryIds: [dach], supplierMode: "all", supplierIds: [], buyers: [{ buyerName: "V348 Kunde Drei", unitPrice: 9 }], name: "V348 Auffangkette", active: true });
+    expect(rest.created).toEqual([{ chainId: expect.any(Number), name: "V348 Auffangkette", categoryId: dach, priority: 2 }]); const chainB = rest.created[0].chainId;
+    // Übersicht: je Kette die feste Regel – Platz, Lieferanten, Kunden in ihrer Reihenfolge; dazu, welche Kette beim selben Lead vorher drankommt
+    const rowsOf = async () => new Map((await owner.leadops.chainOverview({ range: "maximal" })).chains.map((chain) => [chain.id, chain]));
+    let rows = await rowsOf();
+    expect(rows.get(chainA)).toMatchObject({ categoryName: "V348 Dach", place: 1, priority: 1, supplierFilterMode: "include", supplierIds: [nord], supplierNames: ["V348 Quelle Nord"], supplierText: "V348 Quelle Nord", overlapsWith: [chainB], before: [], stops: 2, status: "aktiv" });
+    expect(rows.get(chainA)!.buyers).toEqual([{ name: "V348 Kunde Eins", active: true, unitPrice: "20.00" }, { name: "V348 Kunde Zwei", active: true, unitPrice: "15.50" }]);
+    expect(rows.get(chainB)).toMatchObject({ place: 2, priority: 2, supplierText: "Alle Lieferanten", overlapsWith: [chainA], before: [chainA] }); expect(rows.get(chainF)).toMatchObject({ categoryName: "V348 Fassade", place: 1, overlapsWith: [], before: [] });
+
+    // (c) Feste Verteilung: Leads von „Quelle Nord“ gehen JEDES Mal an die erste Kette (Kunde Eins) – früher wechselten sich passende Ketten ab
+    expect([await deliver(await lead(dach, nord)), await deliver(await lead(dach, nord)), await deliver(await lead(dach, nord))]).toEqual([[chainA, "V348 Kunde Eins", "angeboten"], [chainA, "V348 Kunde Eins", "angeboten"], [chainA, "V348 Kunde Eins", "angeboten"]]);
+    // andere Lieferanten und Leads ohne Lieferant passen nur zur Auffangkette; die andere Kategorie hat ihre eigene Kette
+    expect(await deliver(await lead(dach, sued))).toEqual([chainB, "V348 Kunde Drei", "angeboten"]); expect(await deliver(await lead(dach))).toEqual([chainB, "V348 Kunde Drei", "angeboten"]); expect(await deliver(await lead(fassade, nord))).toEqual([chainF, "V348 Kunde Eins", "angeboten"]);
+    expect(await deliver(waiting)).toEqual([chainA, "V348 Kunde Eins", "angeboten"]); // der wartende Lead von vorhin geht jetzt raus
+
+    // (d) Reihenfolge ändern: Die Auffangkette kommt nach vorn – ab sofort bekommt sie auch die Leads von „Quelle Nord“
+    expect((await owner.leadops.reorderChains({ categoryId: dach, chainIds: [chainB, chainA] })).order).toEqual([{ id: chainB, priority: 1 }, { id: chainA, priority: 2 }]);
+    rows = await rowsOf(); expect(rows.get(chainB)).toMatchObject({ place: 1, before: [] }); expect(rows.get(chainA)).toMatchObject({ place: 2, before: [chainB] });
+    expect([await deliver(await lead(dach, nord)), await deliver(await lead(dach, nord))]).toEqual([[chainB, "V348 Kunde Drei", "angeboten"], [chainB, "V348 Kunde Drei", "angeboten"]]);
+    // unbekannte Nummern und Ketten anderer Kategorien werden übergangen; nicht genannte Ketten bleiben in ihrer Folge dahinter
+    expect((await owner.leadops.reorderChains({ categoryId: dach, chainIds: [99999999, chainF, chainA] })).order).toEqual([{ id: chainA, priority: 1 }, { id: chainB, priority: 2 }]);
+    expect((await chainsOf(fassade)).map((chain) => [chain.id, chain.priority])).toEqual([[chainF, 1]]);
+    expect(await deliver(await lead(dach, nord))).toEqual([chainA, "V348 Kunde Eins", "angeboten"]);
+
+    // (e) Kette A aus → auch „Quelle Nord“ landet in der Auffangkette
+    await owner.leadops.updateDeliveryChain({ id: chainA, status: "inaktiv" }); expect(await deliver(await lead(dach, nord))).toEqual([chainB, "V348 Kunde Drei", "angeboten"]);
+    // nur Kette A ist an: Ein Lead von „Quelle Süd“ passt zu keiner Kette – nichts geht raus, der Grund nennt die Kette beim Namen und steht unter „API-Fehler“
+    await owner.leadops.updateDeliveryChain({ id: chainA, status: "aktiv" }); await owner.leadops.updateDeliveryChain({ id: chainB, status: "inaktiv" });
+    const south = await lead(dach, sued); await expect(owner.leadops.deliverLead({ publicId: south })).rejects.toThrow(/Lieferant nicht in dieser Kette freigegeben/);
+    expect(await failNotes(south)).toEqual(["Auslieferung nicht möglich: Keine aktive Lieferkette mit Stop für diese Lead-Kategorie verfügbar (V348 Dach: V348 Quelle Nord → V348 Kunde Eins → V348 Kunde Zwei: Lieferant nicht in dieser Kette freigegeben)."]);
+    const problem = (await owner.leadops.apiErrorOverview({ days: 7 })).problems.find((row) => row.publicId === south)!;
+    expect(problem).toMatchObject({ kind: "kein_abnehmer", fix: "lieferkette", title: "Keine Lieferkette kann den Lead gerade annehmen.", attempts: 1, httpStatus: null, target: null, supplierName: "V348 Quelle Süd", categoryName: "V348 Dach", status: "neu", dataProblems: [] });
+    expect(problem.parts).toEqual([{ who: "V348 Dach: V348 Quelle Nord → V348 Kunde Eins → V348 Kunde Zwei", why: "Die Kette nimmt keine Leads von diesem Lieferanten" }]); // der Name der Kette enthält selbst einen Doppelpunkt
+    // Sobald die Auffangkette wieder an ist, geht derselbe Lead raus („Erneut ausliefern“) – und steht nicht mehr bei den offenen Problemen
+    await owner.leadops.updateDeliveryChain({ id: chainB, status: "aktiv" });
+    const retried = await owner.leadops.retryLeadDeliveries({ publicIds: [south] });
+    expect(retried).toMatchObject({ delivered: 1, failed: 0 }); expect(retried.results).toEqual([{ publicId: south, name: expect.stringContaining("Vera"), ok: true, result: "angeboten", buyerName: "V348 Kunde Drei", message: "An V348 Kunde Drei zugewiesen." }]);
+    expect((await owner.leadops.apiErrorOverview({ days: 7 })).problems.some((row) => row.publicId === south)).toBe(false);
+
+    // Den alten Verteilmodus gibt es nicht mehr: Die Übersicht kennt ihn nicht, und anlegen lässt sich eine Kette auch ohne ihn
+    expect(Object.keys(rows.get(chainA)!)).not.toContain("distributionMode"); expect(Object.keys(await owner.leadops.chainOverview({ range: "heute" }))).toEqual(["chains"]);
+    for (const chainId of [chainA, chainB, chainF]) await owner.leadops.deleteDeliveryChain({ chainId });
+    expect(await chainsOf(dach)).toHaveLength(0);
+  }, 120000);
+
+  it("v348b. API-Fehler: abgelehnte Übergaben mit Grund, Feld und Empfänger; Lead von Hand korrigieren und noch einmal ausliefern; abhaken; Zustand der Schnittstelle (Absage wegen des Leads ist keine Störung); Partner sehen nichts davon", async () => {
+    const stamp = Date.now().toString(36); const url = "https://v348-kunde.example/api/leads";
+    const categoryId = (await owner.leadops.createCategory({ shortcode: "V348-API", name: "V348 Schnittstelle", defaultLeadPrice: "10.00" })).id!;
+    await owner.leadops.addCategoryField({ categoryId, label: "Dachform (Probe)", fieldKey: "v348_dachform", fieldType: "auswahl", options: ["Satteldach", "Flachdach"], required: false });
+    const member = await owner.leadops.createMember({ firstName: "Lars", lastName: "Lindner", company: "V348 Empfang GmbH", email: `empfang-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const buyerUserId = (await owner.leadops.getMemberDetail({ membershipId: member.membershipId })).user.id;
+    const endpoint = await owner.leadops.saveDeliveryEndpoint({ membershipId: member.membershipId, categoryId, enabled: true, method: "POST", url, sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] });
+    const chain = (await owner.leadops.createChainRule({ categoryIds: [categoryId], supplierMode: "all", supplierIds: [], buyers: [{ buyerUserId, unitPrice: 30, reclamationWindowHours: 0 }], active: true })).created[0];
+    expect(chain.name).toBe("V348 Schnittstelle: Alle Lieferanten → V348 Empfang GmbH");
+    // Lead anlegen; falsche Angaben kommen direkt in die Datenbank (so wie sie ein Dialer oder eine Liste liefert – das Formular würde sie abweisen)
+    let seq = 0; const lead = async (wrong: { email?: string; phone?: string } = {}) => { seq += 1; const created = await owner.leadops.importLead({ categoryId, firstName: "Peter", lastName: `Hansen${seq}`, email: `p.hansen${seq}-${stamp}@example.de`, phone: `+49 151 3348${1000 + seq}`, postcode: "24103", city: "Kiel", metadata: { street: "Hafenstraße 8" } }); if (Object.keys(wrong).length) await db.update(leads).set(wrong).where(eq(leads.publicId, created.publicId)); return created.publicId; };
+    const overview = () => owner.leadops.apiErrorOverview({ days: 7 }); const problemOf = async (publicId: string) => (await overview()).problems.find((row) => row.publicId === publicId);
+    const healthOf = async () => (await overview()).health.find((row) => row.key === `e${endpoint.id}`)!;
+    const notesOf = async (publicId: string) => (await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, (await leadRow(publicId)).id)).orderBy(leadStatusEvents.id)).map((row) => row.note ?? "");
+    const sentFor = (publicId: string) => outbound.filter((call) => call.url === url && call.body?.lead_id === publicId);
+    /** Alles, was mit dem Lead bisher geschah, liegt `minutes` Minuten zurück (die Datenbank merkt sich Zeiten nur auf die Sekunde – im Test geschieht sonst alles in derselben). */
+    const older = async (publicId: string, minutes: number) => { const row = await leadRow(publicId); const at = new Date(Date.now() - minutes * 60_000); await db.update(integrationEvents).set({ occurredAt: at }).where(eq(integrationEvents.leadId, row.id)); await db.update(leadStatusEvents).set({ occurredAt: at }).where(eq(leadStatusEvents.leadId, row.id)); await db.update(leadDeliveries).set({ occurredAt: at }).where(eq(leadDeliveries.leadId, row.id)); };
+    const dismissedAt = async (publicId: string, minutes: number) => { const row = await leadRow(publicId); await db.update(leads).set({ metadata: { ...(row.metadata as Record<string, unknown>), apiErrorsDismissedAt: new Date(Date.now() - minutes * 60_000).toISOString() } }).where(eq(leads.id, row.id)); };
+    try {
+      // (a) Falsche E-Mail-Adresse („name@.de“): Der Empfänger lehnt ab – der Lead steht mit Grund, Feld und Empfänger unter „API-Fehler“
+      const wrong = await lead({ email: "p.hansen@.de" });
+      const refused = await owner.leadops.deliverLead({ publicId: wrong });
+      expect(refused.result).toBe("abgelehnt"); expect(refused.attempts.map((attempt) => [attempt.buyerName, attempt.outcome, attempt.responseStatus])).toEqual([["V348 Empfang GmbH", "abgelehnt", 422]]);
+      expect(sentFor(wrong).map((call) => call.body.email)).toEqual(["p.hansen@.de"]); expect((await leadRow(wrong)).status).toBe("neu"); // nicht verkauft – der Lead liegt wieder bereit
+      const problem = (await problemOf(wrong))!;
+      expect(problem).toMatchObject({ kind: "daten", fix: "lead", field: "email", title: "Der Empfänger lehnt die Angabe „E-Mail-Adresse“ ab.", target: "V348 Empfang GmbH", targetLink: { kind: "kaeufer", membershipId: member.membershipId }, httpStatus: 422, attempts: 1, categoryName: "V348 Schnittstelle", status: "neu", name: "Peter Hansen1" });
+      expect(problem.detail).toContain("is invalid"); expect(problem.dataProblems.map((item) => [item.field, item.title])).toEqual([["email", "Die E-Mail-Adresse ist nicht gültig."]]); expect(problem.lead).toMatchObject({ firstName: "Peter", email: "p.hansen@.de", street: "Hafenstraße 8", postcode: "24103", city: "Kiel", country: "DE" });
+      expect(problem.parts).toEqual([{ who: "V348 Empfang GmbH", why: "Der Empfänger lehnt die Angaben des Leads ab (Antwort 422)" }]); expect(problem.reasons.map((reason) => reason.kind)).toEqual(expect.arrayContaining(["daten", "kein_abnehmer"]));
+      // Die Schnittstelle selbst läuft – sie hat ja geantwortet. Eine Absage wegen der Angaben ist keine Störung.
+      expect(await healthOf()).toMatchObject({ kind: "kaeufer", name: "V348 Empfang GmbH", detail: "V348 Schnittstelle", host: "v348-kunde.example", active: true, membershipId: member.membershipId, state: "gut", stateText: "Erreichbar – ein Lead wurde abgelehnt", sent: 1, failed: 1, refused: 1, rate: 0, lastOkAt: null, lastError: { httpStatus: 422, title: "Der Empfänger lehnt die Angabe „E-Mail-Adresse“ ab." } });
+
+      // (b) Korrigieren wird geprüft, bevor etwas gespeichert wird: E-Mail, Rufnummer, PLZ, Antworten eines Auswahl-Felds, fremde Felder, leerer Name
+      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { email: "p.hansen@beispiel" }, deliver: true })).rejects.toThrow(/^E-Mail-Adresse: /);
+      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { phone: "0151 12" } })).rejects.toThrow(/^Rufnummer: /);
+      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { postcode: "2410" } })).rejects.toThrow("PLZ: Eine deutsche PLZ hat 5 Ziffern.");
+      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { fields: { v348_dachform: "Kuppel" } } })).rejects.toThrow("Dachform (Probe): Bitte eine der Antworten wählen (Satteldach, Flachdach).");
+      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { fields: { gibtsnicht: "x" } } })).rejects.toThrow(/gehört nicht zur Kategorie/);
+      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { firstName: "", lastName: " " } })).rejects.toThrow("Vorname oder Nachname muss stehen bleiben.");
+      await expect(owner.leadops.correctLead({ publicId: "GIBTSNICHT", changes: { city: "Kiel" } })).rejects.toThrow("Lead wurde nicht gefunden.");
+      expect(await leadRow(wrong)).toMatchObject({ email: "p.hansen@.de", firstName: "Peter", postcode: "24103" }); expect(sentFor(wrong)).toHaveLength(1); // nichts halb gespeichert, nichts noch einmal gesendet
+      expect(await owner.leadops.correctLead({ publicId: wrong, changes: { email: "p.hansen@.de", city: " Kiel " } })).toEqual({ publicId: wrong, changed: [], delivery: null }); // nichts geändert → kein Vermerk
+
+      // (c) E-Mail-Adresse und ein Feld der Kategorie korrigieren und gleich noch einmal ausliefern: Der Empfänger nimmt den Lead
+      await older(wrong, 12); // die Ablehnung liegt zwölf Minuten zurück
+      const fixed = await owner.leadops.correctLead({ publicId: wrong, changes: { email: " P.Hansen@Beispiel.de ", fields: { v348_dachform: "Flachdach" } }, deliver: true });
+      expect(fixed.changed).toEqual(["E-Mail-Adresse", "Dachform (Probe)"]); expect(fixed.delivery).toEqual({ publicId: wrong, name: "Peter Hansen1", ok: true, result: "angenommen", buyerName: "V348 Empfang GmbH", message: "An V348 Empfang GmbH übergeben (Antwort 200)." });
+      const fixedRow = await leadRow(wrong); expect(fixedRow).toMatchObject({ email: "p.hansen@beispiel.de", status: "zugewiesen" }); expect(fixedRow.metadata).toMatchObject({ v348_dachform: "Flachdach", street: "Hafenstraße 8" });
+      const sent = sentFor(wrong); expect(sent).toHaveLength(2); expect(sent[1].body).toMatchObject({ lead_id: wrong, first_name: "Peter", email: "p.hansen@beispiel.de", postal_code: "24103" }); expect(sent[1].body.custom_data).toMatchObject({ v348_dachform: "Flachdach", street: "Hafenstraße 8" });
+      const log = await notesOf(wrong); const corrected = log.indexOf("Von Hand korrigiert: E-Mail-Adresse: „p.hansen@.de“ → „p.hansen@beispiel.de“ · Dachform (Probe): leer → „Flachdach“"); expect(corrected).toBeGreaterThan(0);
+      expect(log.findIndex((note, index) => index > corrected && note.startsWith("API-Übergabe an") && note.includes("geliefert (HTTP 200)"))).toBeGreaterThan(corrected); // erst korrigiert, dann übergeben
+      let state = await overview();
+      expect(state.problems.some((row) => row.publicId === wrong)).toBe(false);
+      expect(state.resolved.find((row) => row.publicId === wrong)).toMatchObject({ name: "Peter Hansen1", title: "Der Empfänger lehnt die Angabe „E-Mail-Adresse“ ab.", buyerName: "V348 Empfang GmbH", categoryName: "V348 Schnittstelle" }); // unter „Zuletzt gelöst“
+      expect(await healthOf()).toMatchObject({ state: "gut", stateText: "Erreichbar – ein Lead wurde abgelehnt", sent: 2, failed: 1, refused: 1, rate: 50 }); expect((await healthOf()).lastOkAt).toBeTruthy();
+
+      // (d) Fehler der Schnittstelle selbst – jede Art mit eigenem Rat: Störung (503), kein Zugang (401), keine Verbindung. Der Zustand der Schnittstelle kippt.
+      const broken: string[] = [];
+      for (const [mode, kind, status, fix, title] of [["stoerung", "stoerung", 503, "warten", "Beim Empfänger gibt es gerade eine Störung."], ["zugang", "zugang", 401, "schnittstelle", "Der Empfänger lässt uns nicht hinein."], ["netz", "verbindung", null, "warten", "Keine Verbindung zum Empfänger."]] as const) {
+        S.v348 = mode; const id = await lead(); broken.push(id);
+        expect((await owner.leadops.deliverLead({ publicId: id })).result).toBe("abgelehnt");
+        expect(await problemOf(id)).toMatchObject({ kind, fix, title, httpStatus: status, target: "V348 Empfang GmbH", attempts: 1, field: null, dataProblems: [], status: "neu" });
+      }
+      S.v348 = undefined;
+      expect(await healthOf()).toMatchObject({ state: "gestoert", stateText: "Die letzten Übergaben sind fehlgeschlagen", sent: 5, failed: 4, refused: 1, rate: 20, lastError: { httpStatus: null, title: "Keine Verbindung zum Empfänger." } });
+      state = await overview(); expect(state.counts.schnittstellenGestoert).toBeGreaterThanOrEqual(1); expect(state.counts.open).toBe(state.problems.length); expect(state.counts.daten + state.counts.empfaenger + state.counts.keinAbnehmer).toBe(state.counts.open);
+
+      // (e) Schon vor dem Ausliefern: Ein Lead mit unbrauchbarer Rufnummer steht in der Liste (0 Versuche). Abgehakt verschwindet er – wie jeder abgehakte Eintrag.
+      const shortPhone = await lead({ phone: "0151 12" });
+      expect(await problemOf(shortPhone)).toMatchObject({ kind: "daten", fix: "lead", field: "phone", attempts: 0, httpStatus: null, target: null, title: "Die Rufnummer ist nicht brauchbar.", reasons: [] });
+      expect(await owner.leadops.dismissApiErrors({ publicIds: [shortPhone, broken[0], "GIBTSNICHT"] })).toEqual({ dismissed: 2 });
+      expect(await problemOf(shortPhone)).toBeUndefined(); expect(await problemOf(broken[0])).toBeUndefined(); expect(await problemOf(broken[1])).toBeTruthy();
+      expect(await notesOf(shortPhone)).toContain("API-Fehler als erledigt abgehakt"); expect(typeof ((await leadRow(broken[0])).metadata as Record<string, unknown>).apiErrorsDismissedAt).toBe("string");
+      // … und kommt wieder, sobald derselbe Lead erneut scheitert. Nur die neuen Versuche zählen.
+      await older(broken[0], 30); await dismissedAt(broken[0], 10); await dismissedAt(shortPhone, 10); // gescheitert vor 30 Minuten, abgehakt vor 10
+      expect(await problemOf(broken[0])).toBeUndefined();
+      S.v348 = "stoerung"; const again = await owner.leadops.retryLeadDeliveries({ publicIds: [broken[0], shortPhone] }); S.v348 = undefined;
+      expect(again).toMatchObject({ delivered: 0, failed: 2 }); for (const row of again.results) { expect(row).toMatchObject({ ok: false, result: "abgelehnt", buyerName: null }); expect(row.message).toBe("V348 Empfang GmbH: Beim Empfänger gibt es gerade eine Störung (Antwort 503)"); }
+      expect(await problemOf(broken[0])).toMatchObject({ kind: "stoerung", attempts: 1 }); // der abgehakte Versuch von vorhin zählt nicht mehr mit
+      expect(await problemOf(shortPhone)).toMatchObject({ kind: "stoerung", fix: "lead", field: "phone", attempts: 1, title: "Beim Empfänger gibt es gerade eine Störung." }); // die Störung liegt nicht am Lead – die Rufnummer stimmt trotzdem nicht: Die Zeile führt zum Feld
+      // Rufnummer korrigieren und ausliefern: Der Vermerk „abgehakt“ der Software geht nicht mit zum Empfänger
+      const repaired = await owner.leadops.correctLead({ publicId: shortPhone, changes: { phone: "+49 151 23480099" }, deliver: true });
+      expect(repaired.changed).toEqual(["Rufnummer"]); expect(repaired.delivery).toMatchObject({ ok: true, result: "angenommen", buyerName: "V348 Empfang GmbH" });
+      const lastSent = sentFor(shortPhone).pop()!; expect(lastSent.body.phone).toBe("+49 151 23480099"); expect(lastSent.body.custom_data).toMatchObject({ street: "Hafenstraße 8" }); expect(JSON.stringify(lastSent.body)).not.toContain("apiErrorsDismissedAt");
+
+      // (f) „Erneut ausliefern“ für mehrere auf einmal, sobald die Schnittstelle wieder läuft; schon Ausgeliefertes geht nicht doppelt raus
+      const healed = await owner.leadops.retryLeadDeliveries({ publicIds: [...broken, broken[0]] });
+      expect(healed).toMatchObject({ delivered: 3, failed: 0 }); expect(healed.results.every((row) => row.ok && row.result === "angenommen" && row.buyerName === "V348 Empfang GmbH")).toBe(true);
+      for (const id of broken) { expect(await problemOf(id)).toBeUndefined(); expect((await leadRow(id)).status).toBe("zugewiesen"); }
+      const twice = await owner.leadops.retryLeadDeliveries({ publicIds: [broken[1]] }); expect(twice).toMatchObject({ delivered: 0, failed: 1 }); expect(twice.results[0]).toMatchObject({ ok: false, result: "fehler" }); expect(twice.results[0].message).toMatch(/^Lead wurde bereits an V348 Empfang GmbH ausgeliefert/);
+      expect(sentFor(broken[1])).toHaveLength(2); expect((await notesOf(broken[1])).some((note) => note.startsWith("Auslieferung nicht möglich"))).toBe(false); expect(await problemOf(broken[1])).toBeUndefined(); // „bereits ausgeliefert“ ist kein Problem des Leads
+      expect(await healthOf()).toMatchObject({ state: "warnung", stateText: "Viele Übergaben fehlgeschlagen – die letzte kam an", sent: 11, failed: 6, refused: 1 });
+
+      // (g) Zahl am Menüpunkt = offene Probleme und gestörte Schnittstellen der letzten 30 Tage
+      const month = await owner.leadops.apiErrorOverview({ days: 30 }); expect(await owner.leadops.apiErrorCount()).toEqual({ open: month.counts.open, broken: month.counts.schnittstellenGestoert });
+
+      // (h) „Jetzt prüfen“: Erreichbarkeit jeder Schnittstelle – ohne Daten zu senden. Das Ergebnis steht bei der Schnittstelle und zählt nicht als Übergabe.
+      const probesFrom = outbound.length; const checked = await owner.leadops.checkInterfacesNow();
+      expect(checked.checked).toBe(checked.healthy + checked.warnings); expect(checked.healthy).toBeGreaterThanOrEqual(1);
+      expect(outbound.slice(probesFrom).find((call) => call.url === url)).toMatchObject({ method: "OPTIONS", body: null });
+      expect(await healthOf()).toMatchObject({ sent: 11, lastCheck: { ok: true, text: "Endpunkt erreichbar · HTTP 204" } });
+      S.v348 = "netz"; await owner.leadops.checkInterfacesNow(); S.v348 = undefined;
+      const down = await healthOf(); expect(down.lastCheck).toMatchObject({ ok: false, text: "Endpunkt nicht erreichbar: fetch failed" }); expect(down).toMatchObject({ sent: 11, failed: 6 });
+
+      // (i) Nur intern: Ein Käufer sieht weder die Übersicht noch die Zahl und kann weder korrigieren, erneut ausliefern noch abhaken
+      const buyer = appRouter.createCaller({ user: { id: buyerUserId } } as never);
+      await expect(buyer.leadops.apiErrorOverview()).rejects.toThrow("vorbehalten"); await expect(buyer.leadops.apiErrorCount()).rejects.toThrow("vorbehalten");
+      const denied = /nicht zur Verfügung|darf diese Aktion nicht/;
+      await expect(buyer.leadops.correctLead({ publicId: wrong, changes: { city: "Hamburg" } })).rejects.toThrow(denied); await expect(buyer.leadops.retryLeadDeliveries({ publicIds: [wrong] })).rejects.toThrow(denied); await expect(buyer.leadops.dismissApiErrors({ publicIds: [wrong] })).rejects.toThrow(denied); await expect(buyer.leadops.checkInterfacesNow()).rejects.toThrow(denied);
+      await expect(buyer.leadops.createChainRule({ categoryIds: [categoryId], supplierMode: "all", supplierIds: [], buyers: [{ buyerName: "Ich selbst", unitPrice: 1 }], active: true })).rejects.toThrow(denied); await expect(buyer.leadops.reorderChains({ categoryId, chainIds: [chain.chainId] })).rejects.toThrow(denied);
+      expect((await leadRow(wrong)).city).toBe("Kiel");
+    } finally { S.v348 = undefined; await owner.leadops.deleteDeliveryChain({ chainId: chain.chainId }); await owner.leadops.saveDeliveryEndpoint({ membershipId: member.membershipId, id: endpoint.id, categoryId, enabled: false, method: "POST", url, sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] }); }
+  }, 120000);
 });

@@ -47,7 +47,7 @@ describe("Automatisierungs-Router", () => {
       [automationRules, [{ ...baseRule, actionType: "lead_bestellung_zuordnen", actionConfig: { orderId: 5 } }]],
       [orders, [{ id: 5, tenantId: 1, orderNumber: "ORD-TEST", status: "aktiv", quantity: 10, deliveredCount: 0 }]],
       [orderOperationalConfigs, [{ id: 1, tenantId: 1, orderId: 5, active: true, ongoing: true, startsAt: null, endsAt: null, deliveryDays: [], pauses: [], requestedQuantity: 10, advancedFilters: null, supplierRestrictions: null, realtimeDelivery: true, buyerUserId: null }]],
-      [deliveryChains, [{ id: 21, tenantId: 1, orderId: 5, categoryId: 11, name: "Kette A", priority: 1, status: "aktiv", roundRobinCursor: 0 }]],
+      [deliveryChains, [{ id: 21, tenantId: 1, orderId: 5, categoryId: 11, name: "Kette A", priority: 1, status: "aktiv" }]],
       [deliveryStops, [{ id: 31, chainId: 21, buyerName: "Käufer A", position: 1, unitPrice: "40.00", active: true }]],
     ], { onceTables: [automationRules] });
     const caller = appRouter.createCaller({ user: { id: 9 } } as never);

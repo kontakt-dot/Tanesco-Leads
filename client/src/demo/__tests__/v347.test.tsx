@@ -114,7 +114,7 @@ describe("Version 347", () => {
     for (const technical of ["Source", "Rawbatch", "Callscore", "Callverdict", "Calldecision", "Callrecordid", "Rawcontactid", "Street"]) expect(Object.keys(fields).map((key) => key.toLowerCase())).not.toContain(technical.toLowerCase());
     expect(card("Fachfelder").querySelector(".lead-fields-note")!.textContent).toContain("Aus dem Gespräch übernommen");
     // Gespräch: Entscheidung, Bewertung, Agent mit Alias, Kurzfassung, Antworten auf die Prüffragen, Link zum Gespräch
-    const call = card("Gespräch"); expect(call.querySelector(".lead-call-top")!.textContent).toContain("Freigegeben"); expect(call.querySelector(".lead-call-score")!.textContent).toBe("88 % Bewertung"); expect(call.querySelector(".lead-call-top")!.textContent).toContain("Agent Nele Winter (am Telefon: Sophie Lang)");
+    const call = card("Gespräch"); expect(call.querySelector(".lead-call-top")!.textContent).toContain("Freigegeben"); expect(call.querySelector(".lead-call-score")!.textContent).toBe("88 von 100 Punkten"); expect(call.querySelector(".lead-call-top")!.textContent).toContain("Agent Nele Winter (am Telefon: Sophie Lang)");
     expect(call.querySelector(".lead-call-summary")!.textContent).toContain("Flachdach");
     const answers = Array.from(call.querySelectorAll(".lead-call-answers li")).map((item) => [item.querySelector(".lead-call-answer")!.textContent, item.querySelector("strong")!.textContent]);
     expect(answers).toEqual([["Ja", "Hat der Mitarbeiter nach Photovoltaik gefragt?"], ["Ja", "Hat der Kunde generell Interesse?"], ["Unklar", "Stimmt der Kunde einem Vor-Ort-Termin innerhalb eines Monats zu?"], ["Ja", "Ist eine telefonische Kontaktaufnahme erwünscht?"], ["Nein", "Wurden alle Fragen gestellt?"]]);
