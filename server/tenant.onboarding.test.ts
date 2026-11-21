@@ -58,7 +58,7 @@ describe("Mandanten-Erstanlage", async () => {
     const result = await caller.leadops.dashboard();
 
     expect(ensureTenantForUser).toHaveBeenCalledWith(42);
-    expect(listRecentLeads).toHaveBeenCalledWith(7, 10, { categoryId: null, from: null, until: null }); // Lead-Puls ohne Filter
+    expect(listRecentLeads).toHaveBeenCalledWith(7, 300, { categoryId: null, from: null, until: null }); // Lead-Puls ohne Filter: alle Leads, höchstens 300 auf einmal
     expect(result).toMatchObject({
       tenant: { id: 7, slug: "workspace-42" },
       kpis: { delivered: 0, revenue: 0, registrations: 0, complaints: 0 },

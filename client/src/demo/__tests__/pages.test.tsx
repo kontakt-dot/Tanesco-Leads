@@ -521,7 +521,7 @@ describe("Gespräche – Liste: Zähler als Filter, Zeilen als ruhiges Protokoll
     expect(root.querySelector(".gq-stage")).toBeNull(); expect(root.querySelector(".gq-wave-toggle")).toBeNull(); expect(root.querySelector(".gq-wave")).toBeNull(); expect(root.querySelector(".gq-slot")).toBeNull();
     expect(Array.from(root.querySelectorAll(".gq-toolbar button")).some((node) => /Verlauf/.test(node.textContent ?? ""))).toBe(false);
     expect(root.querySelector(".gq-sum")?.textContent).toMatch(new RegExp(`^${total} Gespräche, .+ am Telefon$`));
-    expect(Array.from(root.querySelectorAll(".gq-toolbar .gq-label")).map((node) => node.textContent)).toEqual(["Zeitraum", "Ergebnis", "Kampagne", "Agent", "Lead-Kategorie"]);
+    expect(Array.from(root.querySelectorAll(".gq-toolbar .gq-label")).map((node) => node.textContent)).toEqual(["Suche", "Zeitraum", "Ergebnis", "Kampagne", "Agent", "Lead-Kategorie"]);
     const counts = ["Freigegeben", "Zur Prüfung", "Zurückgewiesen", "Offen"].map((label) => Number(tally(root, label).querySelector("strong")?.textContent));
     expect(counts.reduce((sum, value) => sum + value, 0)).toBe(total); expect(counts[1]).toBeGreaterThan(0);
     expect(root.querySelectorAll(".gq-day").length).toBeGreaterThan(1); // die Liste ist nach Tagen gebündelt

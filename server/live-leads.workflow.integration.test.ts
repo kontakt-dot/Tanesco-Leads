@@ -16,6 +16,7 @@ const listInput = vi.fn();
 vi.mock("../client/src/lib/trpc", () => ({
   trpc: { useUtils: () => ({ leadops: new Proxy({}, { get: () => ({ invalidate: vi.fn() }) }) }), leadops: new Proxy({}, { get: (_target, key: string) => {
     if (key === "listLeadsPaged") return { useQuery: (input: unknown) => { listInput(input); return { data: { rows: [lead, secondLead], total: 2, page: 1, pageCount: 1, duplicateIds: [] }, isLoading: false, error: null }; } };
+    if (key === "leadsOverview") return { useQuery: () => ({ data: { total: 2, today: 0, yesterday: 0, week: 2, open: 2, ready: 2, delivered: 0, days: [{ day: "2026-08-17", count: 0 }, { day: "2026-08-18", count: 2 }] }, isLoading: false, error: null }) };
     if (key === "listCategories") return { useQuery: () => ({ data: [category], isLoading: false, error: null }) };
     if (key === "listCategoryFields") return { useQuery: () => ({ data: [{ id: 9, label: "Dachausrichtung", fieldKey: "dachausrichtung", fieldType: "auswahl", options: ["Süd", "Ost"], required: false }], isLoading: false, error: null }) };
     if (key === "listSuppliers" || key === "listMembers" || key === "listAutomationRules" || key === "listDeliveryChains" || key === "listOrders" || key === "listPartnerIntegrations" || key === "listLeadImportBatches") return { useQuery: () => ({ data: [], isLoading: false, error: null }) };
@@ -51,16 +52,21 @@ describe("Lead-Verwaltung – UI-Gesamtfluss", () => {
     expect(screen.getByDisplayValue("Alle Leads")).toBeVisible();
     fireEvent.click(screen.getByLabelText(/Lead .*Anna Muster auswählen/));
     fireEvent.click(screen.getByLabelText(/Lead .*Ben Muster auswählen/));
-    expect(screen.getByText("SAMMELAKTION")).toBeVisible();
+    // Seit v347: die Auswahl-Leiste schwebt mittig unten und heißt „Aktion für ausgewählte Leads“.
+    expect(screen.getByRole("region", { name: "Aktion für ausgewählte Leads" })).toBeVisible();
     expect(screen.getByText("2 Leads ausgewählt")).toBeVisible();
     const actionSelect = screen.getByLabelText("Lead-Aktion auswählen");
     fireEvent.change(actionSelect, { target: { value: "chain" } });
     expect(screen.getByLabelText("Lieferkette auswählen")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Sammelaktion ausführen" })).toBeVisible();
-    // Spalte „Ansicht“: beschrifteter Quick-View-Knopf je Zeile (das Lead-Log ist darin und auf der Lead-Seite erreichbar)
-    await waitFor(() => expect(screen.getAllByRole("button", { name: /Quick View für .*Anna Muster öffnen/ }).length).toBeGreaterThan(0));
-    expect(screen.getAllByRole("button", { name: /Quick View für .*Anna Muster öffnen/ })[0].querySelector("svg")).not.toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: /Quick View für .*Anna Muster öffnen/ })[0]);
+    expect(screen.getByRole("button", { name: "Ausführen" })).toBeVisible();
+    // Rechts in jeder Zeile: „Ansicht“ (Auge) und „Lead-Log“ – beide mit Beschriftung für Vorlese-Programme.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Ansicht für .*Anna Muster öffnen/ }).length).toBeGreaterThan(0));
+    expect(screen.getAllByRole("button", { name: /Ansicht für .*Anna Muster öffnen/ })[0].querySelector("svg")).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: /Lead-Log von .*Anna Muster ansehen/ }).length).toBeGreaterThan(0);
+    // Preis und Zahlenleiste sind da.
+    expect(screen.getByRole("columnheader", { name: "Preis" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Leads gesamt/ })).toBeVisible();
+    fireEvent.click(screen.getAllByRole("button", { name: /Ansicht für .*Anna Muster öffnen/ })[0]);
     expect(screen.getByRole("dialog", { name: /Quick View für .*Anna Muster/ })).toBeVisible();
     expect(screen.getByText("Letzte Ereignisse")).toBeVisible();
     expect(screen.getByText("Status geändert")).toBeVisible();

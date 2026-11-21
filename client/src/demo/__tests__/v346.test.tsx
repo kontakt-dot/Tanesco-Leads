@@ -131,9 +131,9 @@ describe("Version 346", () => {
 
   it("Leads-Tabelle: Spalte „Kategorie“ mit Kürzel und Name – ohne Emoji; kein Preisfilter mehr", async () => {
     const root = await open("page=Leads", 1800);
-    const header = Array.from(root.querySelectorAll(".lead-panel thead th, .lead-panel thead td")).map((cell) => cell.textContent?.trim()); expect(header).toContain("Kategorie"); expect(header).not.toContain("Typ");
-    const cells = Array.from(root.querySelectorAll<HTMLElement>(".lead-category-cell")); expect(cells.length).toBeGreaterThan(3);
-    for (const cell of cells.slice(0, 8)) { expect(cell.querySelector(".cat-emoji")).toBeNull(); const code = cell.querySelector(".lead-category-pill b")!.textContent ?? ""; const name = cell.querySelector(".lead-category-name")!.textContent ?? ""; expect(code).toMatch(/^[A-ZÄÖÜ0-9+]{2,6}$/); expect(name.length).toBeGreaterThan(code.length); expect(cell.querySelector(".lead-category")!.getAttribute("title")).toBe(name); }
+    const header = Array.from(root.querySelectorAll(".lead-panel .lt-head .lt-c")).map((cell) => cell.textContent?.trim()); expect(header).toContain("Kategorie"); expect(header).not.toContain("Typ");
+    const cells = Array.from(root.querySelectorAll<HTMLElement>(".lt-row .lt-category")); expect(cells.length).toBeGreaterThan(3);
+    for (const cell of cells.slice(0, 8)) { expect(cell.querySelector(".cat-emoji")).toBeNull(); const code = cell.querySelector(".lt-cat-code")!.textContent ?? ""; const name = cell.querySelector(".lt-cat-name")!.textContent ?? ""; expect(code).toMatch(/^[A-ZÄÖÜ0-9+]{2,6}$/); expect(name.length).toBeGreaterThan(code.length); expect(cell.querySelector(".lt-cat")!.getAttribute("title")).toBe(name); }
     await click(Array.from(root.querySelectorAll("button")).find((button) => button.textContent?.trim().startsWith("Filter")), 500);
     expect(root.querySelector('input[placeholder="Mindestpreis €"]')).toBeNull(); expect(root.querySelector('input[placeholder="Höchstpreis €"]')).toBeNull(); expect(root.querySelector('input[aria-label="Ausgeliefert bis"]')).toBeTruthy();
   }, 30_000);

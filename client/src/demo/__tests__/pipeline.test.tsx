@@ -254,7 +254,7 @@ describe("Rohdaten im Chat-Build", () => {
   it("lädt eine Liste hoch, erkennt Doppel, telefoniert sie ab und macht qualifizierte Kontakte zu Leads", async () => {
     resetStore();
     const before = await call("leadops.listRawBatches");
-    expect(before.length).toBe(2); expect(before.find((batch: any) => batch.name.startsWith("Messe")).counts.duplikat).toBe(1); // Messe-Liste + abtelefonierte Liste „Handwerk Rhein-Main“
+    expect(before.length).toBe(3); expect(before.find((batch: any) => batch.name.startsWith("Messe")).counts.duplikat).toBe(1); // Messe-Liste + abtelefonierte Liste „Handwerk Rhein-Main“ + „Kontakte vom Dialer“ (v347)
     const cat = (await call("leadops.listCategories"))[0];
     const leadsBefore = getStore().tables.leads.length;
     const created = await call("leadops.createRawBatch", { name: "Test-Liste", categoryId: cat.id, rows: [{ firstName: "Rita", lastName: "Roh", phone: "+49 30 4455667", city: "Berlin", data: { Dach: "Sattel" } }, { firstName: "Alexander", lastName: "Weber", phone: "+49 151 1000000" }, { firstName: "Leer", lastName: "Ohne" }] });
@@ -1704,7 +1704,7 @@ describe("Agenten-Auswertung und Rohdaten je Kategorie (Chat-Build)", () => {
     const report = await call("leadops.rawCategoryReport", {});
     const pv = report.categories.find((row: any) => row.shortcode === "PV");
     expect(pv.total).toBeGreaterThanOrEqual(13); expect(pv.angerufen).toBeGreaterThanOrEqual(8); expect(pv.erreicht).toBeGreaterThanOrEqual(6);
-    expect(pv.termine).toBe(2); expect(pv.leads).toBe(5); expect(pv.leadVerkauft).toBe(2); expect(pv.leadRate).not.toBeNull(); expect(pv.saleRate).toBe(40);
+    expect({ termine: pv.termine, leads: pv.leads, verkauft: pv.leadVerkauft, saleRate: pv.saleRate }).toEqual({ termine: 2, leads: 7, verkauft: 2, saleRate: 29 }); expect(pv.leadRate).not.toBeNull(); // seit v347 mit den zwei Photovoltaik-Leads aus der Liste „Kontakte vom Dialer“: 2 von 7 verkauft
     const fen = report.categories.find((row: any) => row.shortcode === "FEN");
     expect(fen).toMatchObject({ total: 4, leads: 2, leadReklamiert: 1, keinInteresse: 1, nichtErreicht: 1 });
     expect(report.totals.total).toBe(report.categories.reduce((sum: number, row: any) => sum + row.total, 0));

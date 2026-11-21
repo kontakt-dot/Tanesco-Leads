@@ -58,6 +58,18 @@ html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-di
 /* Leiste: vier ruhige Zeilen – Zeitraum, Ergebnis, Kampagne, Agent */
 .gq-toolbar{display:grid;grid-template-columns:minmax(0,1fr);gap:11px;padding:4px 12px 18px}
 .gq-period-row,.gq-tally-row,.cq-campaign-row,.gq-agent-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0}
+/* Suche über alle Gespräche: Name, Rufnummer, Agent, Kampagne, Kurzfassung oder ein Wort aus dem Gespräch (v347) */
+.gq-search-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0}
+.gq-search{position:relative;flex:1 1 320px;display:flex;align-items:center;gap:9px;max-width:620px;height:38px;padding:0 10px 0 12px;border:1px solid var(--gl-edge);border-radius:11px;background:var(--gl-softer);transition:border-color .15s,box-shadow .15s}
+.gq-search:focus-within{border-color:var(--gl-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--gl-accent) 18%,transparent)}
+.gq-search svg{flex:none;width:15px;height:15px;color:var(--gl-dim)}
+.cq-list-panel .gq-search input,.cq-list-panel .gq-search input:focus{flex:1;min-width:0;height:100%!important;padding:0!important;border:0!important;border-radius:0!important;outline:0!important;box-shadow:none!important;background:none!important;color:var(--gl-ink);font:inherit;font-size:13px}
+.gq-search input::placeholder{color:var(--gl-faint)}
+.gq-search input::-webkit-search-cancel-button{display:none}
+.gq-search-clear{flex:none;display:grid;place-items:center;width:22px;height:22px;border:0;border-radius:50%;background:var(--gl-soft);color:var(--gl-dim);cursor:pointer}
+.gq-search-clear svg{width:12px;height:12px}
+.gq-search-clear:hover{color:var(--gl-ink)}
+.gq-search-hits{font-size:12px;color:var(--gl-dim);font-variant-numeric:tabular-nums;white-space:nowrap}
 .gq-label{flex:none;min-width:66px;font-size:12px;font-weight:600;color:var(--gl-dim)}
 
 /* Zeitraum */

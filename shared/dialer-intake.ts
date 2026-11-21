@@ -7,29 +7,36 @@
  *  - Urteil in einem Satz: wo es hängt.
  */
 import { extractDialerContact, type DialerContact } from "./dialer-contact";
+import { isPlaceholder, isSalutation, tidySalutation } from "./lead-fields";
 
-export type SpokenContact = { firstName: string | null; lastName: string | null; street: string | null; postcode: string | null; city: string | null; email: string | null };
+export type SpokenContact = { firstName: string | null; lastName: string | null; street: string | null; postcode: string | null; city: string | null; email: string | null; /** „Herr“ oder „Frau“, wenn der Kunde so angesprochen wird */ salutation?: "Herr" | "Frau" | null };
 export const EMPTY_SPOKEN: SpokenContact = { firstName: null, lastName: null, street: null, postcode: null, city: null, email: null };
-const tidy = (value: unknown, max: number): string | null => { const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""; return text && !/^(unbekannt|unklar|keine angabe|nicht genannt|n\/a|-+)$/i.test(text) ? text.slice(0, max) : null; };
+const tidy = (value: unknown, max: number): string | null => { const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""; return text && !isPlaceholder(text) ? text.slice(0, max) : null; }; // „unbekannt“, „<UNKNOWN>“, „n/a“ … sind keine Angabe
 /** Antwort der KI (oder beliebige Angaben) in saubere Felder bringen – leere und „unbekannt“ fallen weg, die PLZ muss fünf Ziffern haben. */
 export function cleanSpokenContact(value: unknown): SpokenContact {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const postcode = tidy(raw.postcode, 12)?.replace(/\D/g, "") ?? ""; const email = tidy(raw.email, 320)?.toLowerCase() ?? "";
-  return { firstName: tidy(raw.firstName, 120), lastName: tidy(raw.lastName, 120), street: tidy(raw.street, 200), postcode: /^\d{4,5}$/.test(postcode) ? postcode : null, city: tidy(raw.city, 120), email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null };
+  // „Herr“/„Frau“ ist kein Vorname: Die Anrede wandert in ihr eigenes Feld – auch aus „Herr Bade“ im Nachnamen
+  let firstName = tidy(raw.firstName, 120); let lastName = tidy(raw.lastName, 120); let salutation = tidySalutation(raw.salutation);
+  if (firstName && isSalutation(firstName)) { salutation = salutation ?? tidySalutation(firstName); firstName = null; }
+  const lead = lastName ? /^(herrn?|frau)\s+(.+)$/i.exec(lastName) : null; if (lead) { salutation = salutation ?? tidySalutation(lead[1]); lastName = lead[2].trim() || null; }
+  return { firstName, lastName, street: tidy(raw.street, 200), postcode: /^\d{4,5}$/.test(postcode) ? postcode : null, city: tidy(raw.city, 120), email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null, ...(salutation ? { salutation } : {}) };
 }
 /** Ersatz ohne KI: „Herr Müller“ / „Frau Dr. Berg“ und „35390 Gießen“ aus der Abschrift. Bewusst vorsichtig – lieber nichts als Falsches. */
 export function contactFromTranscript(transcript: string | null | undefined): SpokenContact {
   const text = String(transcript ?? ""); const out: SpokenContact = { ...EMPTY_SPOKEN };
   const names = new Map<string, number>();
-  for (const match of Array.from(text.matchAll(/\b(?:Herrn?|Frau)\s+(?:Dr\.\s+|Prof\.\s+)?([A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?)/g))) names.set(match[1], (names.get(match[1]) ?? 0) + 1);
-  const best = Array.from(names.entries()).sort((a, b) => b[1] - a[1])[0]; if (best) out.lastName = best[0];
+  const said = new Map<string, "Herr" | "Frau">();
+  for (const match of Array.from(text.matchAll(/\b(Herrn?|Frau)\s+(?:Dr\.\s+|Prof\.\s+)?([A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?)/g))) { names.set(match[2], (names.get(match[2]) ?? 0) + 1); if (!said.has(match[2])) said.set(match[2], /^frau$/i.test(match[1]) ? "Frau" : "Herr"); }
+  const best = Array.from(names.entries()).sort((a, b) => b[1] - a[1])[0]; if (best) { out.lastName = best[0]; out.salutation = said.get(best[0]) ?? null; }
   const place = /\b(\d{5})\s+([A-ZÄÖÜ][a-zäöüß]+(?:[ -][A-ZÄÖÜ][a-zäöüß]+)?)/.exec(text); if (place) { out.postcode = place[1]; out.city = place[2]; }
   return out;
 }
 /** Kontakt des Dialers mit dem aus dem Gespräch ergänzen – was der Dialer nennt, gilt. */
 export function withSpokenContact(contact: DialerContact, spoken: SpokenContact): DialerContact {
   const named = Boolean(contact.firstName || contact.lastName);
-  const merged = { ...contact, firstName: named ? contact.firstName : spoken.firstName, lastName: named ? contact.lastName : spoken.lastName, street: contact.street ?? spoken.street, postcode: contact.postcode ?? spoken.postcode, city: contact.city ?? spoken.city, email: contact.email ?? spoken.email };
+  const fields = !named && spoken.salutation && !contact.fields.anrede ? { ...contact.fields, anrede: spoken.salutation } : contact.fields; // Anrede aus dem Gespräch als Zusatzfeld
+  const merged = { ...contact, fields, firstName: named ? contact.firstName : spoken.firstName, lastName: named ? contact.lastName : spoken.lastName, street: contact.street ?? spoken.street, postcode: contact.postcode ?? spoken.postcode, city: contact.city ?? spoken.city, email: contact.email ?? spoken.email };
   return { ...merged, hasIdentity: Boolean(merged.firstName || merged.lastName || merged.company), hasData: true };
 }
 

@@ -6,37 +6,46 @@ const component = (name: string) => readFileSync(resolve(process.cwd(), "client/
 
 describe("Tanesco Leads UX-Verträge", () => {
   it("bündelt Lead-Aktionen in der Auswahlsteuerung und nutzt den rechten Tabellenbereich für Kontaktinformationen", () => {
+    // Seit v347 zeichnet LeadTable.tsx die Tabelle selbst; die Spalten stehen in lib/leadColumns.ts.
     const source = component("LiveLeads.tsx");
-    expect(source).toContain("Kontakt & Ort");
-    expect(source).toContain('href={`mailto:${lead.email}`}');
-    expect(source).toContain('href={`tel:${lead.phone}`}');
-    expect(source).toContain("Verkauft an");
+    const table = component("LeadTable.tsx");
+    const columns = readFileSync(resolve(process.cwd(), "client/src/lib/leadColumns.ts"), "utf8");
+    expect(table).toContain('href={`mailto:${lead.email}`}');
+    expect(table).toContain('href={`tel:${lead.phone}`}');
+    for (const label of ["Kategorie", "E-Mail", "Telefon", "Status", "Lieferant", "Geliefert", "Käufer", "Preis"]) expect(columns).toContain(`label: "${label}"`);
+    expect(table).toContain("onQuickView");
+    expect(table).toContain("onOpenLog");
+    expect(source).toContain('className="lt-bulk"');
+    expect(source).toContain('aria-label="Aktion für ausgewählte Leads"');
   });
 
   it("bietet vollständige E-Mail-Hinweise, Sortierung und eine speicherbare Spaltenauswahl", () => {
     const source = component("LiveLeads.tsx");
-    expect(source).toContain("value.title = text");
+    const table = component("LeadTable.tsx");
+    expect(table).toContain("title={lead.email}");
     expect(source).toContain("Preis: hoch nach niedrig");
     expect(source).toContain("Auslieferung: neueste zuerst");
-    expect(source).toContain("Spalten anpassen");
+    expect(source).toContain('aria-label="Spalten ein- und ausblenden"');
     expect(source).toContain("tanesco-lead-hidden-columns");
   });
 
   it("kennzeichnet aktive Steuerungen und speichert häufige Filterkombinationen", () => {
     const source = component("LiveLeads.tsx");
-    const styles = readFileSync(resolve(process.cwd(), "client/src/index.css"), "utf8");
+    const styles = readFileSync(resolve(process.cwd(), "client/src/bausteine.css"), "utf8");
     expect(source).toContain("Filter speichern");
     expect(source).toContain("Gespeicherte Filter");
     expect(source).toContain("tanesco-lead-saved-views");
-    expect(styles).toContain("lead-table-tools");
-    expect(styles).toContain("lead-column-menu");
+    expect(source).toContain('className="lt-subtools"');
+    expect(styles).toContain(".lt-subtools{");
+    expect(styles).toContain(".lt-columns-menu{");
   });
 
   it("gibt Buttons der schlichten Lead-Kontrollleiste bei Mausinteraktion eine dezente Rückmeldung", () => {
-    const styles = readFileSync(resolve(process.cwd(), "client/src/index.css"), "utf8");
+    const styles = readFileSync(resolve(process.cwd(), "client/src/bausteine.css"), "utf8");
     expect(styles).toContain("@media(hover:hover) and (pointer:fine)");
     expect(styles).toContain("translateY(-1px)");
-    expect(styles).toContain("lead-column-menu summary:hover");
+    expect(styles).toContain(".lt-columns>summary:hover");
+    expect(styles).toContain(".lt-tool:hover");
   });
 
   it("zeigt laufende Import- und Exportvorgänge an und reserviert Kürzel für die Leadanlage", () => {
@@ -57,7 +66,8 @@ describe("Tanesco Leads UX-Verträge", () => {
     expect(source).toContain("Zeilen");
     expect(source).toContain("Letzter Import:");
     expect(source).toContain("Import rückgängig machen");
-    expect(source).toContain('aria-label="Zeitraum und Sortierung"');
+    expect(source).toContain('aria-label="Zeitraum auswählen"');
+    expect(source).toContain('aria-label="Leadliste sortieren"');
     expect(source).not.toContain('applyDatePreset("today")}>Heute</Button>');
   });
 

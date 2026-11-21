@@ -20,6 +20,8 @@ const PURPOSES: Record<string, { label: string; area: AiArea }> = {
   gespraechsnotiz: { label: "Gesprächsnotiz schreiben", area: "gespraeche" },
   kontakt_aus_gespraech: { label: "Kontakt aus dem Gespräch lesen", area: "gespraeche" },
   kunde: { label: "Kontakt aus dem Gespräch lesen", area: "gespraeche" },
+  felder_aus_gespraech: { label: "Felder des Leads aus dem Gespräch lesen", area: "gespraeche" },
+  lead_aus_gespraech: { label: "Felder des Leads aus dem Gespräch lesen", area: "gespraeche" },
   vorschlaege: { label: "E-Mail-Entwürfe", area: "kampagnen" },
   email_entwurf: { label: "E-Mail schreiben lassen", area: "kampagnen" },
   email_serie: { label: "E-Mail-Serie schreiben lassen", area: "kampagnen" },

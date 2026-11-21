@@ -54,7 +54,7 @@ describe("Anbindung – was kommt vom Dialer an?", () => {
   afterEach(() => { cleanup(); resetStore(); });
 
   it("zeigt Zahlen und Urteil – und holt grüne Gespräche ohne Lead mit einem Klick nach", async () => {
-    const before = await intakeNow(); const leadsBefore = getStore().tables.leads.length;
+    const before = await intakeNow(); const leadsBefore = getStore().tables.leads.length; const idsBefore = new Set(getStore().tables.leads.map((row) => row.id));
     expect(before.enabled).toBe(true); expect(before.week.received).toBeGreaterThan(20); expect(before.approvedWithoutLead).toBeGreaterThan(10); expect(before.lastAt).toBeTruthy();
     window.history.replaceState(null, "", "/?page=Gespräche&view=Einstellungen"); const view = mount(); await settle(1200);
     const root = view.container; let panel = root.querySelector<HTMLElement>(".gs-intake");
@@ -69,7 +69,7 @@ describe("Anbindung – was kommt vom Dialer an?", () => {
     const store = getStore(); const made = store.tables.leads.length - leadsBefore; expect(made).toBeGreaterThan(0); expect(made).toBeLessThanOrEqual(before.approvedWithoutLead);
     const green = store.tables.callRecords.filter((row) => row.decision === "freigegeben" && row.provider === "ondialer"); expect(green.every((row) => row.leadId)).toBe(true);
     const phones = store.tables.leads.filter((row) => row.supplierName === "OnDialer").map((row) => String(row.phone)); expect(new Set(phones).size).toBe(phones.length);
-    const fresh = store.tables.leads.filter((row) => (row.metadata as { callRecordId?: number } | null)?.callRecordId && row.supplierName === "OnDialer"); expect(fresh.length).toBe(made); expect(fresh.every((row) => row.status === "genehmigt" && row.lastName && row.phone)).toBe(true);
+    const fresh = store.tables.leads.filter((row) => !idsBefore.has(row.id)); expect(fresh.length).toBe(made); expect(fresh.every((row) => (row.metadata as { callRecordId?: number } | null)?.callRecordId && row.supplierName === "OnDialer")).toBe(true); expect(fresh.every((row) => row.status === "genehmigt" && row.lastName && row.phone)).toBe(true);
     // ein zweiter Lauf findet nichts mehr
     expect(await callProcedure("leadops.leadsFromApprovedCalls", undefined)).toMatchObject({ leads: 0 });
   }, 30_000);

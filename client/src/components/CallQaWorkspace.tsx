@@ -62,12 +62,14 @@ export default function CallQaWorkspace() {
   const [range, setRange] = useState<CallRange>({ period: "alle", from: "", to: "" });
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [decision, setDecision] = useState<DecisionFilter>(""); // Zähler der Anzeigetafel filtern die Liste
-  const statsInput = { period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, campaign: campaign || null, agentName: agent || null, categoryId };
+  // Suche: Das Feld hält seinen Text selbst (siehe CallSearchBox) – hier kommt nur an, wonach gesucht wird. So baut nicht jeder Buchstabe die ganze Liste neu.
+  const [searchTerm, setSearchTerm] = useState<string>(() => (params.get("search") ?? "").trim()); const [searchKey, setSearchKey] = useState(0);
+  const statsInput = { period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, campaign: campaign || null, agentName: agent || null, categoryId, search: searchTerm || null };
   const stats = trpc.leadops.callStatistics.useQuery(statsInput, { retry: false, placeholderData: (previous) => previous, refetchInterval: 30_000 });
   const categoryOptions = trpc.leadops.callCategoryOptions.useQuery(undefined, { retry: false, staleTime: 30_000 });
   return <>
     <header className="page-intro compact"><div><span className="eyebrow">CALLCENTER</span><h1>Gespräche</h1><p>Jedes Telefonat aus dem Dialer wird mitgeschnitten, in Text umgewandelt und von der KI bewertet. Was passt, wird als Lead freigegeben und steht unter „Leads“.</p></div><div className="people-header-actions"><Button variant={view === "liste" ? "default" : "outline"} className={view === "liste" ? "flux-button" : ""} onClick={() => go("liste", null)}>Gespräche</Button><Button variant={view === "agenten" ? "default" : "outline"} className={view === "agenten" ? "flux-button" : ""} onClick={() => go("agenten", null)}><Users className="h-4 w-4" /> Agenten</Button><Button variant={view === "einstellungen" ? "default" : "outline"} className={view === "einstellungen" ? "flux-button" : ""} onClick={() => go("einstellungen", null)}>Dialer & Bewertung</Button></div></header>
-    {view === "einstellungen" ? <CallQaSettings onOpenCall={(id) => go("liste", id)} /> : view === "agenten" ? <AgentLeaderboard onShowCalls={(name, filter) => { setAgent(name); setCampaign(filter.campaign ?? ""); setRange({ period: filter.period, from: "", to: "" }); setDecision(""); setCategoryId(null); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} />}
+    {view === "einstellungen" ? <CallQaSettings onOpenCall={(id) => go("liste", id)} /> : view === "agenten" ? <AgentLeaderboard onShowCalls={(name, filter) => { setAgent(name); setCampaign(filter.campaign ?? ""); setRange({ period: filter.period, from: "", to: "" }); setDecision(""); setCategoryId(null); go("liste", null); }} /> : selected ? <CallDetail callId={selected} onBack={() => setSelected(null)} /> : <CallList onOpen={(id) => go("liste", id)} agent={agent} onAgent={setAgent} campaign={campaign} onCampaign={setCampaign} range={range} onRange={setRange} categoryId={categoryId} onCategory={setCategoryId} decision={decision} onDecision={setDecision} overview={stats.data ?? null} searchTerm={searchTerm} onSearchTerm={setSearchTerm} searchKey={searchKey} onClearSearch={() => { setSearchTerm(""); setSearchKey((key) => key + 1); }} />}
   </>;
 }
 
@@ -128,7 +130,17 @@ function AgentPicker({ agents, value, onChange, pictureOf }: { agents: AgentOpti
     </div>}
   </div>;
 }
-function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange, categoryId, onCategory, decision, onDecision, overview }: { onOpen: (id: number) => void; agent: string; onAgent: (name: string) => void; campaign: string; onCampaign: (name: string) => void; range: CallRange; onRange: (range: CallRange) => void; categoryId: number | null; onCategory: (id: number | null) => void; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void; overview: Overview | null }) {
+/**
+ * Suchfeld der Gesprächsliste. Es hält seinen Text selbst und meldet erst nach einer kurzen Pause, wonach gesucht wird –
+ * so baut nicht jeder Buchstabe die ganze Liste neu, und es geht nicht bei jedem Buchstaben eine Abfrage raus.
+ */
+function CallSearchBox({ initial, onTerm }: { initial: string; onTerm: (term: string) => void }) {
+  const [text, setText] = useState(initial); const sent = useRef(initial);
+  useEffect(() => { const term = text.trim(); if (term === sent.current) return; const timer = window.setTimeout(() => { sent.current = term; onTerm(term); }, 280); return () => window.clearTimeout(timer); }, [text, onTerm]);
+  const clear = () => { setText(""); sent.current = ""; onTerm(""); };
+  return <div className="gq-search"><Search aria-hidden="true" /><input id="gq-search" type="search" autoComplete="off" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && text) { event.stopPropagation(); clear(); } if (event.key === "Enter") { sent.current = text.trim(); onTerm(text.trim()); } }} placeholder="Name, Rufnummer, Agent, Kampagne oder ein Wort aus dem Gespräch …" aria-label="Gespräche durchsuchen" />{text && <button type="button" className="gq-search-clear" aria-label="Suche leeren" title="Suche leeren" onClick={clear}><X aria-hidden="true" /></button>}</div>;
+}
+function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange, categoryId, onCategory, decision, onDecision, overview, searchTerm, onSearchTerm, searchKey, onClearSearch }: { onOpen: (id: number) => void; agent: string; onAgent: (name: string) => void; campaign: string; onCampaign: (name: string) => void; range: CallRange; onRange: (range: CallRange) => void; categoryId: number | null; onCategory: (id: number | null) => void; decision: DecisionFilter; onDecision: (decision: DecisionFilter) => void; overview: Overview | null; searchTerm: string; onSearchTerm: (value: string) => void; searchKey: number; onClearSearch: () => void }) {
   const categoryOptions = trpc.leadops.callCategoryOptions.useQuery(undefined, { retry: false, staleTime: 30_000 });
   const utils = trpc.useUtils();
   const [linkText, setLinkText] = useState(""); const [linkAgent, setLinkAgent] = useState(""); const [linkCampaign, setLinkCampaign] = useState("");
@@ -155,8 +167,8 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
   const campaigns = trpc.leadops.listCallQaCampaigns.useQuery(undefined, { retry: false });
   // Die Liste zeigt die neuesten Gespräche – bei sehr vielen erst 200, auf Wunsch mehr. Ändert sich ein Filter, beginnt sie wieder bei 200.
   const [limit, setLimit] = useState(LIST_STEP);
-  useEffect(() => { setLimit(LIST_STEP); }, [decision, campaign, agent, range.period, range.from, range.to, categoryId]);
-  const calls = trpc.leadops.listCalls.useQuery({ decision: decision || null, campaign: campaign || null, agentName: agent || null, period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, categoryId, limit }, { retry: false, placeholderData: (previous) => previous, refetchInterval: (query) => ((query.state.data as Array<{ status: string }> | undefined)?.some((row) => row.status === "eingegangen" || row.status === "transkribiert") ? 5_000 : 30_000) });
+  useEffect(() => { setLimit(LIST_STEP); }, [decision, campaign, agent, range.period, range.from, range.to, categoryId, searchTerm]);
+  const calls = trpc.leadops.listCalls.useQuery({ decision: decision || null, campaign: campaign || null, agentName: agent || null, period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, categoryId, search: searchTerm || null, limit }, { retry: false, placeholderData: (previous) => previous, refetchInterval: (query) => ((query.state.data as Array<{ status: string }> | undefined)?.some((row) => row.status === "eingegangen" || row.status === "transkribiert") ? 5_000 : 30_000) });
   const agentNames = trpc.leadops.callAgentNames.useQuery(undefined, { retry: false, staleTime: 60_000 });
   const [showSettings, setShowSettings] = useState(false); const [showImport, setShowImport] = useState(false); const settingsDirty = useRef(false); const closeAsking = useRef(false); // ungespeicherte Änderungen im Einstellen-Fenster
   /** Einstellen-Fenster schließen – mit ungespeicherten Änderungen erst nach Rückfrage (die Esc-Taste, die die Rückfrage schließt, löst keine zweite aus). */
@@ -183,6 +195,11 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
   return <>
     <section className="surface-panel operations-panel overflow-hidden cq-list-panel">
       <div className="gq-toolbar">
+        <div className="gq-search-row">
+          <label className="gq-label" htmlFor="gq-search">Suche</label>
+          <CallSearchBox key={searchKey} initial={searchTerm} onTerm={onSearchTerm} />
+          {searchTerm && <span className="gq-search-hits" role="status">{calls.isPlaceholderData ? "sucht …" : `${rows.length === 1 ? "1 Gespräch" : `${rows.length}${rows.length >= limit ? "+" : ""} Gespräche`} gefunden`}</span>}
+        </div>
         <div className="gq-period-row">
           <span className="gq-label">Zeitraum</span>
           <CallPeriodControl range={range} onRange={onRange} />
@@ -233,7 +250,8 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
         </tbody>)}
       </table></div>}
       {cut && <div className="gq-more" role="status"><span>Die Liste zeigt die neuesten <b>{rows.length}</b> von <b>{expected}</b> Gesprächen.</span>{limit < LIST_MAX ? <button type="button" className="gq-link" disabled={calls.isFetching} onClick={() => setLimit((current) => Math.min(LIST_MAX, current + LIST_STEP))}>{calls.isFetching ? "Lädt …" : `Weitere ${Math.min(LIST_STEP, expected - rows.length, LIST_MAX - limit)} zeigen`}</button> : <span>Für ältere Gespräche bitte Zeitraum, Kampagne oder Agent eingrenzen.</span>}</div>}
-      {!rows.length && <p className="gq-empty">{calls.isLoading ? "Gespräche werden geladen …" : <>Noch keine Gespräche{decision ? ` mit dem Ergebnis „${DECISION_LABEL[decision]}“` : ""}{campaign ? ` in der Kampagne „${campaign}“` : ""}{agent ? ` von ${agent}` : ""}{range.from || range.to || range.period !== "alle" ? " im gewählten Zeitraum" : ""}{categoryId ? " in dieser Lead-Kategorie" : ""}. Sobald der Dialer Gespräche meldet, erscheinen sie hier – oder teste die Bewertung mit „Aufnahmen testen“.</>}</p>}
+      {!rows.length && searchTerm && !calls.isLoading ? <p className="gq-empty">Zur Suche „{searchTerm}“ gibt es kein Gespräch{range.from || range.to || range.period !== "alle" ? " im gewählten Zeitraum" : ""}{decision || campaign || agent || categoryId ? " mit diesen Filtern" : ""}. Gesucht wird in Name, Rufnummer, Agent, Kampagne, Kurzfassung und im Text des Gesprächs. <button type="button" className="gq-link" onClick={onClearSearch}>Suche leeren</button></p> : null}
+      {!rows.length && !(searchTerm && !calls.isLoading) && <p className="gq-empty">{calls.isLoading ? "Gespräche werden geladen …" : <>Noch keine Gespräche{decision ? ` mit dem Ergebnis „${DECISION_LABEL[decision]}“` : ""}{campaign ? ` in der Kampagne „${campaign}“` : ""}{agent ? ` von ${agent}` : ""}{range.from || range.to || range.period !== "alle" ? " im gewählten Zeitraum" : ""}{categoryId ? " in dieser Lead-Kategorie" : ""}. Sobald der Dialer Gespräche meldet, erscheinen sie hier – oder teste die Bewertung mit „Aufnahmen testen“.</>}</p>}
     </section>
     <Dialog open={showSettings} onOpenChange={closeSettings}><DialogContent className="cq-dialog" onInteractOutside={(event) => event.preventDefault()}><DialogHeader><DialogTitle>Kampagne einstellen</DialogTitle><DialogDescription>{campaign ? `„${campaign}“` : "Standard"} – Kriterien, Prüffragen und Auswertung. Einmal einstellen, danach läuft die Bewertung automatisch.</DialogDescription></DialogHeader>{showSettings && <CampaignPanel campaigns={campaigns.data ?? []} campaign={campaign} onSelect={onCampaign} onChanged={() => campaigns.refetch()} onDirty={(dirty) => { settingsDirty.current = dirty; }} />}</DialogContent></Dialog>
     <Dialog open={showImport} onOpenChange={setShowImport}><DialogContent className="cq-dialog gi-dialog" onInteractOutside={(event) => event.preventDefault()}><DialogHeader><DialogTitle>Aufnahmen testen</DialogTitle><DialogDescription>Die Software holt die Aufnahme, wandelt sie in Text um und bewertet sie wie ein echtes Gespräch. Das dauert je Aufnahme etwa eine halbe Minute.</DialogDescription></DialogHeader>

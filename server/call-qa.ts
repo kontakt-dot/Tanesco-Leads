@@ -9,6 +9,7 @@
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
 import { and, asc, desc, eq, getTableColumns, gte, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
+import { phoneFragment, searchWords } from "../shared/call-search";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -827,17 +828,20 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     // Stelle im Gespräch je Prüffrage und Kriterium („bei 1:31“) – nur, wenn es Abschnitte mit Zeit gibt; ein Fehler dabei hält die Bewertung nicht auf
     const marks = segments.length ? await locateMarks(segments, markItems(questions, qualificationAnswers, own.criteria, evaluation.unscored ? [] : evaluation.criteria)).catch(() => ({} as Record<string, number>)) : {};
     await db.update(callRecords).set({ status: "bewertet", score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.unscored ? (evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : []) : evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", error: null, ...(segments.length ? { timeline: { segments, marks } satisfies CallTimeline } : {}) }).where(eq(callRecords.id, callId));
-    let target = lead;
+    let target = lead; const fresh = { created: false }; // neu angelegter Lead: Die Regeln laufen erst, wenn die Felder aus dem Gespräch drin sind
     if (!target && call.rawContactId) {
       // Rohdaten-Kontakt: die Freigabe macht ihn zum Lead, Ablehnung verwirft ihn. Über die Regeln ausgeliefert wird nur, wenn die Auslieferung eingeschaltet ist – sonst bleibt der Lead liegen („nur empfangen“)
-      if (decision === "freigegeben") { const categoryId = await dialerContactCategory(db, call.tenantId, call.rawContactId, callId); const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}`, skipAutomations: !config.autoDeliver, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
+      if (decision === "freigegeben") { const categoryId = await dialerContactCategory(db, call.tenantId, call.rawContactId, callId); const converted = await convertRawContact(db, call.tenantId, call.rawContactId, { actorUserId: null, initialStatus: "genehmigt", note: `Gesprächsbewertung ${scoreText(evaluation)}`, skipAutomations: true, ...(categoryId ? { categoryId } : {}) }); fresh.created = !converted.alreadyConverted; await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, callId)); target = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
       else if (decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Gesprächsbewertung ${scoreText(evaluation)}: ${evaluation.verdict}` }).where(and(eq(rawContacts.id, call.rawContactId), eq(rawContacts.status, "in_liste")));
     }
     // Grün, aber der Dialer hat keinen Kontakt mitgeschickt: Der Lead entsteht trotzdem – Name und Ort kommen aus dem Gespräch
-    if (!target && !call.rawContactId && decision === "freigegeben") target = await leadFromApprovedCall(db, config, callId, { actorUserId: null, note: `Gesprächsbewertung ${scoreText(evaluation)}` });
+    if (!target && !call.rawContactId && decision === "freigegeben") target = await leadFromApprovedCall(db, config, callId, { actorUserId: null, note: `Gesprächsbewertung ${scoreText(evaluation)}`, out: fresh });
     if (target) {
       if (Object.keys(evaluation.extracted).length) { const meta = target.metadata && typeof target.metadata === "object" && !Array.isArray(target.metadata) ? (target.metadata as Record<string, unknown>) : {}; await db.update(leads).set({ metadata: { ...meta, ...evaluation.extracted, callExtractedAt: new Date().toISOString() } }).where(eq(leads.id, target.id)); }
+      // Freigegeben: erst die Felder der Kategorie und fehlende Kontaktangaben aus dem Gespräch in den Lead – dann erst darf er weitergeleitet werden
+      if (decision === "freigegeben") await fillApprovedLead(db, call.tenantId, target.id, callId, null);
       await applyDecision(db, config, callId, target, decision, evaluation, null);
+      if (fresh.created && config.autoDeliver) await runNewLeadAutomations(db, call.tenantId, target.id, null);
     }
     // Alias-Namen: Nennt der Dialer den echten Namen, wird der Name der Vorstellung gemerkt (daraus lernt die Zuordnung). Läuft das Gespräch unter einem Alias, bekommt es den echten Namen.
     try { const { aliasAfterEvaluation } = await import("./agent-alias"); await aliasAfterEvaluation(db, callId, transcript, evaluation.agentName); } catch (error) { console.error("[Gespräche] Alias-Namen:", error instanceof Error ? error.message : error); }
@@ -872,6 +876,21 @@ async function applyDecision(db: Db, config: CallQaConfig, callId: number, lead:
 
 /* ------------------------------------------------------------------ Grünes Gespräch → Lead, auch ohne Kontakt vom Dialer */
 
+/** Felder der Lead-Kategorie und fehlende Kontaktangaben aus dem Gespräch in den Lead schreiben. Ein Fehler (oder eine zu langsame KI) hält die Freigabe nie auf – das Nachholen im Hintergrund versucht es wieder. */
+async function fillApprovedLead(db: Db, tenantId: number, leadId: number, callId: number, actorUserId: number | null, limitMs = 0): Promise<void> {
+  try {
+    const { fillLeadFromCall } = await import("./lead-from-call");
+    const work = fillLeadFromCall(db, tenantId, leadId, { callId, actorUserId }).then(() => undefined);
+    if (!limitMs) return await work;
+    work.catch(() => undefined); // läuft nach der Zeitgrenze zu Ende, ohne die Freigabe aufzuhalten
+    await Promise.race([work, new Promise<void>((resolve) => setTimeout(resolve, limitMs))]);
+  } catch (error) { console.error("[Gespräche] Felder aus dem Gespräch nicht übernommen:", error instanceof Error ? error.message : error); }
+}
+/** Neuer Lead aus einem Gespräch: Die Regeln („Lead erstellt“, „Status geändert“) laufen erst jetzt – nachdem die Felder aus dem Gespräch drin sind. */
+async function runNewLeadAutomations(db: Db, tenantId: number, leadId: number, actorUserId: number | null): Promise<void> {
+  await triggerLeadAutomations(db, { tenantId, actorUserId, leadId, triggerType: "lead_erstellt" });
+  await triggerLeadAutomations(db, { tenantId, actorUserId, leadId, triggerType: "status_geändert" });
+}
 /** Gespräche aus diesen Quellen sind Proben (Text eingefügt, Datei oder Link hochgeladen) – daraus entsteht von selbst kein Lead. */
 const TRIAL_PROVIDERS = ["test", "datei", "link"];
 /** Die KI nach dem Kunden fragen: Name, Anschrift und E-Mail, so wie sie im Gespräch fallen. Ohne KI greift die einfache Erkennung über Wörter. */
@@ -881,12 +900,12 @@ export async function askCustomerContact(transcript: string): Promise<SpokenCont
   // Sparsam: Name und Anschrift fallen am Anfang (Begrüßung) und am Ende (Daten bestätigen) – bei langen Gesprächen reichen diese beiden Stücke
   const excerpt = transcript.length > 10_000 ? `${transcript.slice(0, 4_000)}\n[…]\n${transcript.slice(-6_000)}` : transcript;
   const field = (description: string) => ({ type: "string", description });
-  const schema = { name: "kunde", schema: { type: "object", additionalProperties: false, required: ["firstName", "lastName", "street", "postcode", "city", "email"], properties: { firstName: field("Vorname des Kunden – leer, wenn er nicht fällt"), lastName: field("Nachname des Kunden"), street: field("Straße mit Hausnummer des Kunden – leer, wenn nicht genannt"), postcode: field("Postleitzahl des Kunden (5 Ziffern) – leer, wenn nicht genannt"), city: field("Wohnort des Kunden – leer, wenn nicht genannt"), email: field("E-Mail-Adresse des Kunden – leer, wenn nicht genannt") } } };
+  const schema = { name: "kunde", schema: { type: "object", additionalProperties: false, required: ["salutation", "firstName", "lastName", "street", "postcode", "city", "email"], properties: { salutation: { type: "string", enum: ["Herr", "Frau", ""], description: "Anrede des Kunden, wenn er mit „Herr …“ oder „Frau …“ angesprochen wird – sonst leer" }, firstName: field("Vorname des Kunden – leer, wenn er nicht fällt (nie „Herr“ oder „Frau“)"), lastName: field("Nachname des Kunden (ohne „Herr“/„Frau“)"), street: field("Straße mit Hausnummer des Kunden – leer, wenn nicht genannt"), postcode: field("Postleitzahl des Kunden (5 Ziffern) – leer, wenn nicht genannt"), city: field("Wohnort des Kunden – leer, wenn nicht genannt"), email: field("E-Mail-Adresse des Kunden – leer, wenn nicht genannt") } } };
   try {
-    const response = await invokeLLM({ model: "fast", maxTokens: 400, messages: [{ role: "system", content: "Du liest ein Telefongespräch (automatisch transkribiert, ohne Kennzeichnung der Sprecher). Ein Callcenter-Mitarbeiter ruft einen Kunden an. Nenne die Angaben zum KUNDEN (dem Angerufenen), so wie sie im Gespräch fallen: Vorname, Nachname, Straße mit Hausnummer, Postleitzahl, Ort, E-Mail. Der Kunde wird meist mit „Herr …“ oder „Frau …“ angesprochen. Nicht den Namen des Mitarbeiters und keinen Firmennamen des Callcenters. Was nicht genannt wird, bleibt leer – nichts raten, nichts ergänzen." }, { role: "user", content: `Gespräch:\n"""\n${excerpt}\n"""` }], outputSchema: schema, purpose: "kontakt_aus_gespraech" });
+    const response = await invokeLLM({ model: "fast", maxTokens: 400, messages: [{ role: "system", content: "Du liest ein Telefongespräch (automatisch transkribiert, ohne Kennzeichnung der Sprecher). Ein Callcenter-Mitarbeiter ruft einen Kunden an. Nenne die Angaben zum KUNDEN (dem Angerufenen), so wie sie im Gespräch fallen: Vorname, Nachname, Straße mit Hausnummer, Postleitzahl, Ort, E-Mail. Der Kunde wird meist mit „Herr …“ oder „Frau …“ angesprochen. Nicht den Namen des Mitarbeiters und keinen Firmennamen des Callcenters. Was nicht genannt wird, bleibt leer (leerer Text) – nichts raten, nichts ergänzen, nie „unbekannt“ oder einen Platzhalter schreiben." }, { role: "user", content: `Gespräch:\n"""\n${excerpt}\n"""` }], outputSchema: schema, purpose: "kontakt_aus_gespraech" });
     let parsed: unknown; try { parsed = JSON.parse(response.choices[0]?.message.content ?? "{}"); } catch { parsed = {}; }
     const spoken = cleanSpokenContact(parsed);
-    return { ...spoken, lastName: spoken.lastName ?? (spoken.firstName ? null : fallback.lastName), postcode: spoken.postcode ?? fallback.postcode, city: spoken.city ?? fallback.city };
+    return { ...spoken, lastName: spoken.lastName ?? (spoken.firstName ? null : fallback.lastName), postcode: spoken.postcode ?? fallback.postcode, city: spoken.city ?? fallback.city, ...(spoken.salutation ?? fallback.salutation ? { salutation: spoken.salutation ?? fallback.salutation } : {}) };
   } catch (error) { console.error("[Gespräche] Kunde aus dem Gespräch nicht gelesen:", error instanceof Error ? error.message : error); return fallback; }
 }
 /**
@@ -894,7 +913,7 @@ export async function askCustomerContact(transcript: string): Promise<SpokenCont
  * in „Kontakte vom Dialer“ angelegt (Angaben des Dialers, ergänzt um Name und Ort aus dem Gespräch) und zum Lead gemacht.
  * Fehler halten die Bewertung nie auf – das Gespräch bleibt grün, der Lead wird später nachgeholt.
  */
-export async function leadFromApprovedCall(db: Db, config: CallQaConfig, callId: number, options: { actorUserId: number | null; note: string; quiet?: boolean }): Promise<typeof leads.$inferSelect | undefined> {
+export async function leadFromApprovedCall(db: Db, config: CallQaConfig, callId: number, options: { actorUserId: number | null; note: string; quiet?: boolean; out?: { created: boolean } }): Promise<typeof leads.$inferSelect | undefined> {
   try {
     const call = (await db.select().from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, config.tenantId))).limit(1))[0];
     if (!call || call.decision !== "freigegeben" || TRIAL_PROVIDERS.includes(call.provider)) return undefined;
@@ -914,8 +933,15 @@ export async function leadFromApprovedCall(db: Db, config: CallQaConfig, callId:
       await db.update(callRecords).set({ rawContactId }).where(eq(callRecords.id, call.id));
     }
     const categoryId = await dialerContactCategory(db, config.tenantId, rawContactId, call.id);
-    const converted = await convertRawContact(db, config.tenantId, rawContactId, { actorUserId: options.actorUserId, initialStatus: "genehmigt", note: options.note, skipAutomations: options.quiet || !config.autoDeliver, ...(categoryId ? { categoryId } : {}) });
+    // Die Regeln („Lead erstellt“) laufen hier noch nicht: Der Aufrufer füllt erst die Felder aus dem Gespräch und leitet dann weiter (siehe out.created)
+    const converted = await convertRawContact(db, config.tenantId, rawContactId, { actorUserId: options.actorUserId, initialStatus: "genehmigt", note: options.note, skipAutomations: true, ...(categoryId ? { categoryId } : {}) });
     await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id));
+    if (!converted.alreadyConverted) {
+      if (options.out) options.out.created = true;
+      // Nachgeholt (leise): Der Lead gehört zum Tag des Gesprächs – sonst zählten alle nachgeholten Leads als „heute neu“
+      const callAt = call.startedAt ?? call.createdAt;
+      if (options.quiet && callAt && callAt.getTime() < Date.now() - 30 * 60_000) await db.update(leads).set({ createdAt: callAt }).where(eq(leads.id, converted.leadId));
+    }
     return (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0];
   } catch (error) { console.error("[Gespräche] Lead aus grünem Gespräch nicht angelegt:", error instanceof Error ? error.message : error); return undefined; }
 }
@@ -951,13 +977,18 @@ export async function reviewCall(db: Db, tenantId: number, userId: number, input
   if (!call) throw new Error("Gespräch wurde nicht gefunden.");
   const config = await ensureCallQaConfig(db, tenantId);
   await db.update(callRecords).set({ decision: input.decision, decidedBy: "manuell", reviewedByUserId: userId, reviewedAt: new Date(), reviewNote: input.note?.slice(0, 500) ?? null }).where(eq(callRecords.id, call.id));
-  let lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined;
+  let lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined; const fresh = { created: false };
   if (!lead && call.rawContactId) {
-    if (input.decision === "freigegeben") { const categoryId = await dialerContactCategory(db, tenantId, call.rawContactId, call.id); const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, skipAutomations: !config.autoDeliver, ...(categoryId ? { categoryId } : {}) }); await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
+    if (input.decision === "freigegeben") { const categoryId = await dialerContactCategory(db, tenantId, call.rawContactId, call.id); const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, skipAutomations: true, ...(categoryId ? { categoryId } : {}) }); fresh.created = !converted.alreadyConverted; await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
     else if (input.decision === "zurueckgewiesen") await db.update(rawContacts).set({ status: "verworfen", note: `Manuell zurückgewiesen${input.note ? `: ${input.note}` : ""}` }).where(and(eq(rawContacts.id, call.rawContactId), inArray(rawContacts.status, ["neu", "in_liste"])));
   }
-  if (!lead && !call.rawContactId && input.decision === "freigegeben") lead = await leadFromApprovedCall(db, config, call.id, { actorUserId: userId, note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}` });
-  if (lead) await applyDecision(db, config, call.id, lead, input.decision, { score: call.score ?? 0, unscored: call.score === null, verdict: call.verdict ?? "unklar", summary: input.note ?? call.summary ?? "" }, userId);
+  if (!lead && !call.rawContactId && input.decision === "freigegeben") lead = await leadFromApprovedCall(db, config, call.id, { actorUserId: userId, note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, out: fresh });
+  if (lead) {
+    // Freigabe von Hand: Felder aus dem Gespräch übernehmen (höchstens 12 Sekunden warten – sonst holt der Hintergrund es nach), dann erst weiterleiten
+    if (input.decision === "freigegeben") await fillApprovedLead(db, tenantId, lead.id, call.id, userId, 12_000);
+    await applyDecision(db, config, call.id, lead, input.decision, { score: call.score ?? 0, unscored: call.score === null, verdict: call.verdict ?? "unklar", summary: input.note ?? call.summary ?? "" }, userId);
+    if (fresh.created && config.autoDeliver) await runNewLeadAutomations(db, tenantId, lead.id, userId);
+  }
   return { success: true as const };
 }
 
@@ -1207,8 +1238,22 @@ export async function deleteCallCampaign(db: Db, tenantId: number, input: { name
 
 /** Spalten für die Liste: ohne Text, Roh-Meldung und Zeitmarken – die sind groß und werden erst im einzelnen Gespräch gebraucht. */
 const CALL_LIST_COLUMNS = (() => { const { transcript, payload, timeline, ...rest } = getTableColumns(callRecords); void transcript; void payload; void timeline; return rest; })();
-export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; categoryId?: number | null; limit?: number } & CallPeriod = {}) {
+/** Suche über die Gespräche: jedes Wort muss vorkommen – beim Kunden (Lead oder Kontakt der Liste), in der Rufnummer, beim Agenten (auch Alias), in Kampagne, Kurzfassung oder im Text des Gesprächs. */
+function callSearchCondition(search: string | null | undefined) {
+  const words = searchWords(search); if (!words.length) return undefined;
+  return and(...words.map((word) => {
+    const q = `%${word.replace(/[\\%_]/g, "\\$&")}%`; const digits = phoneFragment(word);
+    return or(
+      like(callRecords.phone, q), like(callRecords.agentName, q), like(callRecords.agentAlias, q), like(callRecords.campaign, q), like(callRecords.summary, q), like(callRecords.transcript, q), like(callRecords.externalCallId, q),
+      ...(digits ? [sql`REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(${callRecords.phone}, ''), ' ', ''), '-', ''), '/', ''), '+', '') LIKE ${`%${digits}%`}`] : []),
+      sql`EXISTS (SELECT 1 FROM ${leads} WHERE ${leads.id} = ${callRecords.leadId} AND (CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}) LIKE ${q} OR ${leads.publicId} LIKE ${q} OR ${leads.city} LIKE ${q} OR ${leads.postcode} LIKE ${q} OR ${leads.email} LIKE ${q}))`,
+      sql`EXISTS (SELECT 1 FROM ${rawContacts} WHERE ${rawContacts.id} = ${callRecords.rawContactId} AND (CONCAT_WS(' ', ${rawContacts.firstName}, ${rawContacts.lastName}) LIKE ${q} OR ${rawContacts.company} LIKE ${q} OR ${rawContacts.city} LIKE ${q}))`,
+    )!;
+  }))!;
+}
+export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; categoryId?: number | null; search?: string | null; limit?: number } & CallPeriod = {}) {
   const conditions = [eq(callRecords.tenantId, tenantId)];
+  const found = callSearchCondition(filter.search); if (found) conditions.push(found);
   const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to));
   if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
   if (filter.decision) conditions.push(eq(callRecords.decision, filter.decision as CallRecord["decision"]));
@@ -1240,9 +1285,10 @@ export async function getCall(db: Db, tenantId: number, callId: number) {
   return { ...row.call, timeline: undefined, segments: timeline?.segments ?? [], marks: timeline?.marks ?? {}, timelineState: timelineState.state, timelineNote: timelineState.note, category: row.categoryName ? { id: row.call.leadCategoryId!, name: row.categoryName, emoji: row.categoryEmoji ?? null } : null, criteriaCustom: own.custom, callback: Boolean(row.call.transcript && isCallback(row.call.transcript)), recordingUrl: row.call.recordingUrl ? `/api/aufnahmen/${row.call.id}` : null /* immer über die eigene Adresse: nur so lässt sich spulen, und Zugangsdaten im Link des Dialers bleiben bei uns */, recordingSource: row.call.recordingUrl?.startsWith("file:") ? "datei" as const : row.call.recordingUrl ? "link" as const : null, payload: undefined, autoDeliver: config.autoDeliver, dialer: dialerInfo(row.call.payload, { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) }), questions, fulfilment: questionFulfilment(questions, row.call.qualificationAnswers as Record<string, QualificationAnswer> | null), qualificationAnswers: (row.call.qualificationAnswers ?? {}) as Record<string, QualificationAnswer>, leadPublicId: row.leadPublicId, leadName: [row.leadName, row.leadLastName].filter(Boolean).join(" ") || null, leadStatus: row.leadStatus, rawContact: row.call.rawContactId ? { id: row.call.rawContactId, name: [row.rawFirst, row.rawLast].filter(Boolean).join(" ") || row.rawCompany || "Rohdaten-Kontakt", status: row.rawStatus } : null, reviewer: row.reviewer, criteriaUnscored: unscored, criteriaNote: scores.find((item) => item.key === CRITERIA_NOTE_KEY)?.evidence ?? null, score: unscored ? null : row.call.score, criteria: criteria.map((criterion) => ({ ...criterion, score: unscored ? null : scores.find((item) => item.key === criterion.key)?.score ?? null, evidence: unscored ? "" : scores.find((item) => item.key === criterion.key)?.evidence ?? "" })), redFlags: Array.isArray(row.call.redFlags) ? (row.call.redFlags as string[]) : [] };
 }
 
-export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null } = {}) {
+export async function callStatistics(db: Db, tenantId: number, filter: CallPeriod & { campaign?: string | null; agentName?: string | null; categoryId?: number | null; search?: string | null } = {}) {
   // Der Agent-Filter wird erst beim Zusammenzählen angewandt: Zahlen und Verlauf gelten für den gewählten Agenten, die Agenten-Leiste zeigt weiter alle
   const conditions = [eq(callRecords.tenantId, tenantId)]; const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to)); if (filter.campaign) conditions.push(eq(callRecords.campaign, filter.campaign)); if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
+  const found = callSearchCondition(filter.search); if (found) conditions.push(found); // die Zahlen über der Liste gelten für dieselbe Suche
   // Die Kriterien-Punkte (großes JSON) braucht es nur bei Note 0: dort ist zu klären, ob wirklich 0 Punkte vergeben wurden oder die Punkte noch fehlen. Die Tafel lädt sich regelmäßig neu – deshalb so schlank wie möglich.
   const zeroScores = sql<unknown>`case when ${callRecords.score} = 0 then ${callRecords.criteriaScores} else null end`;
   const rows = await db.select({ id: callRecords.id, status: callRecords.status, decision: callRecords.decision, verdict: callRecords.verdict, score: callRecords.score, criteriaScores: zeroScores, agentName: callRecords.agentName, startedAt: callRecords.startedAt, durationSeconds: callRecords.durationSeconds }).from(callRecords).where(and(...conditions));

@@ -49,6 +49,11 @@ vi.mock("./_core/llm", () => ({
     const stubState = globalThis as { __agentAnswer?: string; __answers?: Record<string, string>; __criteriaPlan?: string[]; __llmLog?: string[] };
     stubState.__llmLog?.push(params.outputSchema?.name ?? "");
     if (params.outputSchema?.name === "agentenname") return reply({ agentName: stubState.__agentAnswer ?? "" }); // Nachfrage „Wie heißt der anrufende Mitarbeiter?“
+    if (params.outputSchema?.name === "lead_aus_gespraech") { // Felder der Lead-Kategorie und fehlende Kontaktangaben aus dem Gespräch: globalThis.__leadFields = { feld_<schlüssel>: "…", kontakt_email: "…" }; "kaputt" = KI nicht erreichbar
+      const plan = (globalThis as { __leadFields?: Record<string, string> | "kaputt" }).__leadFields; if (plan === "kaputt") throw new Error("Die KI-Anfrage ist fehlgeschlagen (HTTP 529): overloaded");
+      (globalThis as { __leadFieldsAsked?: string[] }).__leadFieldsAsked = Object.keys(params.outputSchema.schema?.properties ?? {});
+      return reply(Object.fromEntries(Object.keys(params.outputSchema.schema?.properties ?? {}).map((field) => [field, plan?.[field] ?? ""])));
+    }
     if (params.outputSchema?.name === "zeitmarken") { // Stelle im Gespräch je Punkt: globalThis.__marks = { "<Bezeichnung des Punkts>": "1:31" } – alles andere bleibt leer; "kaputt" = nichts Verwertbares
       const plan = (globalThis as { __marks?: Record<string, string> | "kaputt" }).__marks; if (plan === "kaputt") return reply({ hinweis: "keine Zeiten" });
       const system = String(params.messages.find((message) => message.role === "system")?.content ?? ""); const fields = Object.keys(params.outputSchema.schema?.properties ?? {});
@@ -5556,5 +5561,135 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(usage).toMatchObject({ totalCents: 273, weekCents: 273, todayCents: 269, totalCalls: 59 }); expect(usage.budgetCents).toBeGreaterThan(0);
     expect((await owner.leadops.aiUsageHistory()).days).toHaveLength(30); expect((await owner.leadops.aiUsageToday()).parts[0]).toMatchObject({ purpose: "gespraechsbewertung", label: "Gespräche bewerten" });
     await db.delete(aiUsageDays); forgetSpentCache();
+  }, 60000);
+
+  it("v347a. Lead aus dem Gespräch: Felder der Kategorie, Anrede und fehlende Kontaktangaben aus dem Text; Platzhalter fliegen raus; Nachholen im Hintergrund; Lead-Seite mit Gespräch und Antworten; nachgeholte Leads tragen das Datum des Gesprächs; Zahlen je Reiter, Übersicht, Lead-Puls und Export", async () => {
+    const schema = await import("../drizzle/schema"); const { callRecords: callsTable, leadStatusEvents: eventsTable, leads: leadsTable, rawContacts: rawTable } = schema;
+    const { alignLeadDatesWithCalls, fillLeadFromCall, fillLeadsFromCalls } = await import("./lead-from-call"); const { leadsFromApprovedCalls } = await import("./call-qa");
+    const tenantId = S.tenantId as number; const stub = globalThis as { __leadFields?: Record<string, string> | "kaputt"; __leadFieldsAsked?: string[] };
+    const settings = await owner.leadops.getCallQaSettings();
+    const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    // Die Photovoltaik-Kategorie hat hier schon Pflichtfragen (Firmenname genannt? Übergabe angekündigt?) – das Gespräch erfüllt sie, sonst wird es zurückgewiesen
+    const good = "Agent: Ich rufe von HausKompass an, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar. Agent: Dann meldet sich der Photovoltaik Angebotsvergleich bei Ihnen.";
+    const metaOf = async (leadId: number) => ((await db.select().from(leadsTable).where(eq(leadsTable.id, leadId)))[0].metadata ?? {}) as Record<string, unknown>;
+    const forget = async (leadId: number, extra: Partial<typeof leadsTable.$inferInsert> = {}) => { const { callFieldsAt: _at, callFieldsCallId: _call, callFieldsTries: _tries, ...rest } = await metaOf(leadId); void _at; void _call; void _tries; await db.update(leadsTable).set({ ...extra, metadata: rest }).where(eq(leadsTable.id, leadId)); };
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+    try {
+      // Kategorie, die ein Photovoltaik-Gespräch bekommt – dort liegen die Probe-Felder (eigene Schlüssel, damit nichts mit früheren Tests kollidiert)
+      const probe = await post({ call_id: "v347-0", phone: "+49 2591 5550710", consent: true, transcript: `Agent: Guten Tag Frau Probst. ${good}` }); expect(probe.json).toMatchObject({ ok: true, decision: "freigegeben" });
+      const categoryId = (await leadRow(probe.json.lead_id)).categoryId;
+      await owner.leadops.addCategoryField({ categoryId, label: "Hausart (Probe)", fieldKey: "v347_hausart", fieldType: "auswahl", options: ["Ein-/Zweifamilienhaus", "Mehrfamilienhaus", "Firmengebäude"], sortOrder: 900 });
+      await owner.leadops.addCategoryField({ categoryId, label: "Dachart (Probe)", fieldKey: "v347_dachart", fieldType: "auswahl", options: ["Satteldach", "Pultdach", "Flachdach"], sortOrder: 901 });
+      await owner.leadops.addCategoryField({ categoryId, label: "Erreichbar (Probe)", fieldKey: "v347_erreichbar", fieldType: "text", sortOrder: 902 });
+      await owner.leadops.addCategoryField({ categoryId, label: "Recording (Probe)", fieldKey: "recording_v347", fieldType: "text", sortOrder: 903 });
+
+      // (a) ohne KI-Zugang: Der Lead bekommt, was wörtlich und eindeutig fällt – und „Herr“ ist die Anrede, kein Vorname
+      const first = await post({ call_id: "v347-1", phone: "+49 2591 5550711", agent: "Deniz Kaya", consent: true, transcript: `Agent: Guten Tag Herr Brinkhaus, Sie wohnen in 48249 Dülmen? Kunde: Ja, wir haben ein Mehrfamilienhaus mit Satteldach. ${good}` });
+      expect(first.json).toMatchObject({ ok: true, decision: "freigegeben" }); const lead1 = await leadRow(first.json.lead_id); const meta1 = lead1.metadata as Record<string, unknown>;
+      expect(lead1).toMatchObject({ firstName: null, lastName: "Brinkhaus", postcode: "48249", city: "Dülmen", categoryId });
+      expect(meta1).toMatchObject({ v347_hausart: "Mehrfamilienhaus", v347_dachart: "Satteldach", anrede: "Herr", callFieldsCallId: first.json.call_id }); expect(typeof meta1.callFieldsAt).toBe("string"); expect(meta1).not.toHaveProperty("v347_erreichbar"); expect(meta1).not.toHaveProperty("recording_v347");
+      // Die Kategorie hat aus früheren Tests schon eigene Felder (z. B. „Dachart“) – geprüft werden deshalb nur die Probe-Felder
+      const notes1 = (await db.select().from(eventsTable).where(eq(eventsTable.leadId, lead1.id)).orderBy(eventsTable.id)).map((row) => row.note ?? "");
+      const fillAt = notes1.findIndex((note) => /^Aus dem Gespräch übernommen: \d+ Felder \(.*Hausart \(Probe\), Dachart \(Probe\)\)/.test(note)); expect(fillAt).toBeGreaterThanOrEqual(0);
+      const deliveryAt = notes1.findIndex((note) => note.startsWith("Auslieferung an")); if (deliveryAt >= 0) expect(fillAt).toBeLessThan(deliveryAt); // erst füllen, dann ausliefern – kein halb leerer Lead geht an einen Käufer
+      const mine = (keys: string[] | undefined) => (keys ?? []).filter((key) => key.includes("v347") || key.startsWith("kontakt_"));
+      const second = await post({ call_id: "v347-2", phone: "+49 2591 5550712", consent: true, transcript: `Agent: Guten Tag. ${good}` }); const lead2 = await leadRow(second.json.lead_id); expect((lead2.metadata as Record<string, unknown>).callFieldsAt).toBeTruthy();
+
+      // (b) mit KI: so sah ein Lead vor dieser Version aus – Platzhalter als Name, nichts aus dem Gespräch gelesen
+      await forget(lead2.id, { firstName: "<UNKNOWN>", lastName: "<UNKNOWN>", city: "<UNKNOWN>" });
+      await db.update(rawTable).set({ firstName: "<UNKNOWN>", lastName: "<UNKNOWN>" }).where(eq(rawTable.leadId, lead2.id));
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      stub.__leadFields = { feld_v347_hausart: "ein-/zweifamilienhaus", feld_v347_dachart: "Kuppeldach", feld_v347_erreichbar: "  nachmittags   ab 15 Uhr ", feld_recording_v347: "https://dialer.example/a.mp3", kontakt_firstName: "Karl", kontakt_lastName: "Brandes", kontakt_email: "Karl.Brandes@Example.de", kontakt_street: "Lindenweg 14", kontakt_postcode: "<UNKNOWN>", kontakt_city: "unbekannt" };
+      const filled = await fillLeadFromCall(db, tenantId, lead2.id, { callId: second.json.call_id });
+      expect(mine(filled.fields)).toEqual(["v347_hausart", "v347_erreichbar"]); expect(filled.cleaned).toEqual(["Vorname", "Nachname", "Ort"]); expect(filled.contact).toEqual(["Vorname", "Nachname", "E-Mail", "Straße"]);
+      expect(mine(stub.__leadFieldsAsked)).toEqual(["feld_v347_hausart", "feld_v347_dachart", "feld_v347_erreichbar", "kontakt_firstName", "kontakt_lastName", "kontakt_email", "kontakt_street", "kontakt_postcode", "kontakt_city"]); expect(stub.__leadFieldsAsked).not.toContain("feld_recording_v347"); // nach dem Aufnahme-Link wird nicht gefragt
+      const after2 = await leadRow(lead2.publicId); expect(after2).toMatchObject({ firstName: "Karl", lastName: "Brandes", email: "karl.brandes@example.de", city: null, postcode: null });
+      expect(after2.metadata).toMatchObject({ v347_hausart: "Ein-/Zweifamilienhaus", v347_erreichbar: "nachmittags ab 15 Uhr", street: "Lindenweg 14" }); expect(after2.metadata).not.toHaveProperty("v347_dachart"); expect(after2.metadata).not.toHaveProperty("recording_v347");
+      expect((await db.select().from(rawTable).where(eq(rawTable.leadId, lead2.id)))[0]).toMatchObject({ firstName: "Karl", lastName: "Brandes", email: "karl.brandes@example.de" });
+      // schon gefüllte Felder bleiben, wie sie sind – auch wenn die KI später etwas anderes liest
+      await forget(lead2.id); stub.__leadFields = { feld_v347_hausart: "Firmengebäude", feld_v347_dachart: "Flachdach", kontakt_email: "anders@example.de" };
+      expect(mine((await fillLeadFromCall(db, tenantId, lead2.id, { callId: second.json.call_id })).fields)).toEqual(["v347_dachart"]);
+      expect(mine(stub.__leadFieldsAsked)).toEqual(["feld_v347_dachart", "kontakt_postcode", "kontakt_city"]);
+      expect((await leadRow(lead2.publicId)).metadata).toMatchObject({ v347_hausart: "Ein-/Zweifamilienhaus", v347_dachart: "Flachdach" }); expect((await leadRow(lead2.publicId)).email).toBe("karl.brandes@example.de");
+
+      // (c) „Herr“ stand als Vorname da: Die Anrede bekommt ihr Feld, der echte Vorname kommt (wenn er fällt) aus dem Gespräch
+      await forget(lead1.id, { firstName: "Herr" }); stub.__leadFields = { kontakt_firstName: "Rolf" };
+      expect((await fillLeadFromCall(db, tenantId, lead1.id, { callId: first.json.call_id })).cleaned).toEqual(["Anrede"]);
+      expect(await leadRow(lead1.publicId)).toMatchObject({ firstName: "Rolf", lastName: "Brinkhaus" }); expect((await metaOf(lead1.id)).anrede).toBe("Herr");
+
+      // (d) Nachholen im Hintergrund: Ist die KI nicht erreichbar, wird der Lead wieder versucht (bis zu dreimal) – beim nächsten Lauf klappt es
+      await forget(lead1.id); await db.update(leadsTable).set({ metadata: { ...(await metaOf(lead1.id)), v347_erreichbar: "" } }).where(eq(leadsTable.id, lead1.id));
+      stub.__leadFields = "kaputt"; await fillLeadsFromCalls(db, { tenantId, max: 200 });
+      expect(await metaOf(lead1.id)).toMatchObject({ callFieldsTries: 1 }); expect(await metaOf(lead1.id)).not.toHaveProperty("callFieldsAt");
+      stub.__leadFields = { feld_v347_erreichbar: "abends" }; const caught = await fillLeadsFromCalls(db, { tenantId, max: 200 }); expect(caught.filled).toBeGreaterThanOrEqual(1);
+      const caughtMeta = await metaOf(lead1.id); expect(caughtMeta).toMatchObject({ v347_erreichbar: "abends" }); expect(caughtMeta.callFieldsAt).toBeTruthy(); expect(caughtMeta).not.toHaveProperty("callFieldsTries");
+      expect((await fillLeadsFromCalls(db, { tenantId, max: 200 })).checked).toBe(0); // alles nachgeholt – nichts wird doppelt gelesen
+      delete process.env.ANTHROPIC_API_KEY; stub.__leadFields = undefined;
+
+      // (e) Lead-Seite: Straße, lesbare Zusatzfelder (ohne Vermerke der Software), das Gespräch mit den Antworten auf die Prüffragen
+      const detail = await owner.leadops.getLeadDetail({ publicId: lead2.publicId });
+      expect(detail).toMatchObject({ street: "Lindenweg 14", firstName: "Karl", lastName: "Brandes" }); expect(detail.fieldsFromCallAt).toBeTruthy();
+      expect(detail.fields.filter((field) => field.key.startsWith("v347_")).map((field) => [field.label, field.value])).toEqual([["Hausart (Probe)", "Ein-/Zweifamilienhaus"], ["Dachart (Probe)", "Flachdach"], ["Erreichbar (Probe)", "nachmittags ab 15 Uhr"]]);
+      expect(detail.extra.map((field) => field.key)).not.toEqual(expect.arrayContaining(["callRecordId", "callScore", "rawContactId", "rawBatch", "source", "street", "callFieldsAt"]));
+      expect(detail.call).toMatchObject({ id: second.json.call_id, decision: "freigegeben", count: 1 }); expect(detail.call!.answers.length).toBeGreaterThan(0); expect(detail.call!.answers.every((answer) => answer.label.length > 3 && ["ja", "nein", "unklar"].includes(answer.answer))).toBe(true);
+      const detail1 = await owner.leadops.getLeadDetail({ publicId: lead1.publicId }); expect(detail1.extra).toContainEqual({ key: "anrede", label: "Anrede", value: "Herr" }); expect(detail1.call?.agentName).toContain("Kaya");
+      const log = await owner.leadops.getLeadAuditLog({ publicId: lead2.publicId }); expect(log.some((item) => item.title === "Aus dem Gespräch übernommen")).toBe(true); expect(log.find((item) => item.type === "erfasst")?.detail).toMatch(/^Kategorie .+ · Status (Freigegeben|Zugewiesen)$/); // „Zugewiesen“, wenn die Auslieferung eingeschaltet ist
+
+      // (f) Nachgeholte Leads gehören zum Tag ihres Gesprächs – beim Nachholen und für die, die früher schon nachgeholt wurden
+      const callAt = new Date(Date.now() - 3 * 86_400_000); callAt.setMilliseconds(0);
+      await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: "v347-alt", phone: "+49 2591 5550719", status: "bewertet", decision: "freigegeben", consent: true, score: 100, verdict: "verkaufbar", startedAt: callAt, transcript: "Agent: Guten Tag Frau Albers aus 50667 Köln. Kunde: Ja.", payload: { call_id: "v347-alt" } });
+      expect((await leadsFromApprovedCalls(db, { tenantId })).leads).toBeGreaterThanOrEqual(1);
+      const oldCall = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "v347-alt")))[0]; const oldLead = (await db.select().from(leadsTable).where(eq(leadsTable.id, oldCall.leadId!)))[0];
+      expect(Math.abs(oldLead.createdAt.getTime() - callAt.getTime())).toBeLessThan(2000);
+      await db.update(leadsTable).set({ createdAt: new Date() }).where(eq(leadsTable.id, oldLead.id)); // so stand es vor dieser Version: Datum des Nachholens
+      expect((await alignLeadDatesWithCalls(db, { tenantId })).moved).toBe(1);
+      expect(Math.abs((await db.select().from(leadsTable).where(eq(leadsTable.id, oldLead.id)))[0].createdAt.getTime() - callAt.getTime())).toBeLessThan(2000);
+      expect((await alignLeadDatesWithCalls(db, { tenantId })).moved).toBe(0);
+      const todayBefore = (await db.select().from(leadsTable).where(eq(leadsTable.id, lead1.id)))[0].createdAt.getTime(); expect(Date.now() - todayBefore).toBeLessThan(600_000); // ein Lead von heute bleibt von heute
+
+      // (g) Zahlen je Reiter gelten für dieselben Filter wie die Tabelle; „Vorname Nachname“ zusammen findet den Lead
+      const all = await owner.leadops.listLeadsPaged({ page: 1, pageSize: 5 }); const counts = all.counts;
+      expect(counts.alle).toBe(all.total); expect(counts.neu + counts.genehmigt + counts.zugewiesen + counts.reklamiert + counts.fehlerhaft + counts.deaktiviert + counts["hängend"]).toBe(counts.alle);
+      const approved = await owner.leadops.listLeadsPaged({ status: "genehmigt", page: 1, pageSize: 5 }); expect(approved.total).toBe(counts.genehmigt); expect(approved.counts).toEqual(counts); expect(approved.rows.every((lead) => lead.status === "genehmigt")).toBe(true);
+      expect((await owner.leadops.listLeadsPaged({ duplicatesOnly: true, page: 1, pageSize: 5 })).total).toBe(counts.dubletten);
+      const byName = await owner.leadops.listLeadsPaged({ query: "Karl Brandes", page: 1, pageSize: 5 }); expect(byName.rows.map((lead) => lead.publicId)).toEqual([lead2.publicId]); expect(byName.counts.alle).toBe(1);
+
+      // (h) Übersicht über der Tabelle und Lead-Puls: echte Zahlen, alle Leads des Zeitraums (schlank), nicht nur zehn
+      const overview = await owner.leadops.leadsOverview(); expect(overview.total).toBe(counts.alle); expect(overview.ready).toBe(counts.genehmigt); expect(overview.delivered).toBe(counts.zugewiesen); expect(overview.days).toHaveLength(14); expect(overview.today).toBeGreaterThanOrEqual(2); expect(overview.week).toBeGreaterThanOrEqual(overview.today);
+      const pulse = await owner.leadops.dashboard(); expect(pulse.leadTotal).toBe(counts.alle); expect(pulse.leads.length).toBe(Math.min(300, counts.alle)); expect(pulse.leads.length).toBeGreaterThan(10);
+      expect(pulse.leadsLast24h).toBeGreaterThanOrEqual(2); expect(pulse.leadsLast24h).toBeLessThanOrEqual(pulse.leadTotal); expect(Object.keys(pulse.leads[0]).sort()).toEqual(["categoryId", "city", "createdAt", "firstName", "id", "lastName", "metadata", "postcode", "publicId", "status"]);
+      expect(pulse.leads.find((lead) => lead.publicId === lead1.publicId)?.metadata).toEqual({ anrede: "Herr" });
+      expect((await owner.leadops.dashboard({ from: new Date(Date.now() + 86_400_000) })).leadTotal).toBe(0);
+      const inCategory = await owner.leadops.dashboard({ categoryId }); expect(inCategory.leadTotal).toBe((await owner.leadops.listLeadsPaged({ categoryId, page: 1, pageSize: 1 })).total); expect(inCategory.leads.every((lead) => lead.categoryId === categoryId)).toBe(true);
+
+      // (i) Export als Tabelle: feste Spalten, die Felder der Kategorie mit ihrem Namen – ohne Vermerke der Software
+      const table = await owner.leadops.exportLeadsTable({ publicIds: [lead1.publicId, lead2.publicId, "GIBTSNICHT"] });
+      expect(table.columns.slice(0, 16)).toEqual(["ID", "Kategorie", "Status", "Vorname", "Nachname", "E-Mail", "Telefon", "Straße", "PLZ", "Ort", "Land", "Lieferant", "Geliefert am", "Käufer", "Ausgeliefert am", "Preis"]);
+      expect(table.columns).toEqual(expect.arrayContaining(["Hausart (Probe)", "Dachart (Probe)", "Erreichbar (Probe)", "Anrede"])); for (const hidden of ["Call Record Id", "Raw Batch", "Source", "Call Score"]) expect(table.columns).not.toContain(hidden);
+      expect(table.rows).toHaveLength(2); const row2 = table.rows.find((row) => row[0] === lead2.publicId)!; const column = (name: string) => row2[table.columns.indexOf(name)];
+      expect([column("Vorname"), column("Nachname"), column("E-Mail"), column("Straße"), column("Lieferant"), column("Hausart (Probe)"), column("Erreichbar (Probe)")]).toEqual(["Karl", "Brandes", "karl.brandes@example.de", "Lindenweg 14", "OnDialer", "Ein-/Zweifamilienhaus", "nachmittags ab 15 Uhr"]);
+      expect(column("Geliefert am")).toMatch(/^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/);
+    } finally { stub.__leadFields = undefined; if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedKey; }
+  }, 120000);
+
+  it("v347b. Suche in den Gesprächen: Kunde (Lead oder Kontakt), Rufnummer mit und ohne Vorwahl, Agent und Alias, Kampagne, Kurzfassung und Wörter aus dem Text – jedes Wort muss vorkommen; die Zahlen über der Liste gelten für dieselbe Suche", async () => {
+    const { callRecords: callsTable, leads: leadsTable } = await import("../drizzle/schema"); const tenantId = S.tenantId as number;
+    const lead = (await db.select().from(leadsTable).where(and(eq(leadsTable.tenantId, tenantId), eq(leadsTable.firstName, "Karl"), eq(leadsTable.lastName, "Brandes"))))[0]; expect(lead).toBeTruthy();
+    let seq = 0; const mk = async (values: Partial<typeof callsTable.$inferInsert>) => { seq += 1; return Number((await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: `suche-${seq}`, consent: true, status: "bewertet", decision: "pruefen", decidedBy: "automatisch", startedAt: new Date(), ...values }))[0].insertId); };
+    const a = await mk({ leadId: lead.id, phone: "+4925915550731", agentName: "SU Deniz Kaya", agentAlias: "Qvenja Xander", campaign: "Suchkampagne Nord", summary: "Kunde möchte ein Angebot für den Zwiebelturm.", transcript: "Guten Tag, hier ist Qvenja Xander. Es geht um den Zwiebelturm und das Dach." });
+    const b = await mk({ phone: "+4925915550732", agentName: "SU Jonas Brandt", campaign: "Suchkampagne Süd", summary: "Kein Interesse.", transcript: "Guten Tag. Kein Bedarf am Zwiebelturm, danke." });
+    const c = await mk({ phone: "+4925915550733", agentName: "SU Deniz Kaya", campaign: "Suchkampagne Nord", summary: "Rückruf am Montag.", transcript: "Bitte am Montag wieder anrufen." });
+    const ids = async (search: string, extra: Record<string, unknown> = {}) => (await owner.leadops.listCalls({ search, limit: 1000, ...extra } as never)).map((row) => row.id).filter((id) => [a, b, c].includes(id)).sort((x, y) => x - y);
+    expect(await ids("Zwiebelturm")).toEqual([a, b]); // Wort aus dem Text
+    expect(await ids("zwiebelturm angebot")).toEqual([a]); // jedes Wort muss vorkommen (Text + Kurzfassung)
+    expect(await ids("Brandes")).toEqual([a]); expect(await ids("karl brandes")).toEqual([a]); expect(await ids(lead.publicId.toLowerCase())).toEqual(expect.arrayContaining([a])); // Kunde über den Lead: Name, Lead-Nummer
+    expect(await ids("Qvenja")).toEqual([a]); expect(await ids("SU Deniz")).toEqual([a, c]); expect(await ids("Suchkampagne Süd")).toEqual([b]);
+    expect(await ids("02591 5550732")).toEqual([b]); expect(await ids("+49 2591 555 0733")).toEqual([c]); expect(await ids("5550731")).toEqual([a]); // Rufnummer mit Leerzeichen, mit und ohne Vorwahl
+    expect(await ids("Zwiebelturm", { agentName: "SU Jonas Brandt" })).toEqual([b]); // zusammen mit den anderen Filtern
+    expect(await ids("gibtesnichtxyz")).toEqual([]); expect((await ids("")).length).toBe(3); expect((await ids("100%_")).length).toBe(0); // Sonderzeichen sind Text, keine Platzhalter
+    const stats = await owner.leadops.callStatistics({ search: "Zwiebelturm" } as never); expect(stats.total).toBe(2);
+    expect((await owner.leadops.callStatistics({ search: "Suchkampagne" } as never)).total).toBe(3); expect((await owner.leadops.callStatistics({ search: "gibtesnichtxyz" } as never)).total).toBe(0);
+    await db.delete(callsTable).where(and(eq(callsTable.tenantId, tenantId), like(callsTable.externalCallId, "suche-%")));
   }, 60000);
 });
