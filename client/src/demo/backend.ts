@@ -11,7 +11,7 @@ import { CONTACT_MAPPING, dialerInfo } from "../../../shared/dialer-contact";
 import { contactFromTranscript, contactParts, EMPTY_INTAKE, intakeVerdict, payloadFieldNames } from "../../../shared/dialer-intake";
 import { berlinDay as intakeDay } from "../../../shared/agent-ranking";
 import { isListTag, LIST_TAG_RESERVED } from "../../../shared/list-tags";
-import { emptyLeadCounts, leadsOverview, PULSE_LIMIT, type LeadStatusKey } from "../../../shared/lead-overview";
+import { deliversByItself, emptyLeadCounts, leadsOverview, overviewHints, PULSE_LIMIT, type LeadStatusKey, type OverviewHint } from "../../../shared/lead-overview";
 import { leadExportTable } from "../../../shared/lead-export";
 import { callAnswerList, cleanFieldValues, extraMetaFields, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, realText, type LeadFieldDef } from "../../../shared/lead-fields";
 import { matchesCallSearch } from "../../../shared/call-search";
@@ -1537,7 +1537,23 @@ const procedures: Record<string, Handler> = {
     const recentLeads = inRange.slice(0, PULSE_LIMIT); const dayAgo = Date.now() - 24 * 3_600_000;
     return { tenant: tenant(), kpis: computeDashboardKpis(recentLeads.map((lead) => ({ status: lead.status, cost: Number(lead.cost), createdAt: lead.createdAt, email: lead.email, phone: lead.phone }))), leads: recentLeads.map((lead) => ({ id: lead.id, publicId: lead.publicId, firstName: lead.firstName ?? null, lastName: lead.lastName ?? null, postcode: lead.postcode ?? null, city: lead.city ?? null, status: lead.status, categoryId: lead.categoryId, createdAt: lead.createdAt, metadata: realText(metadataOf(lead).anrede, 20) ? { anrede: realText(metadataOf(lead).anrede, 20) } : null })), leadTotal: inRange.length, leadsLast24h: inRange.filter((lead) => (asDate(lead.createdAt) ?? new Date(0)).getTime() >= dayAgo).length };
   },
-  "leadops.leadsOverview": () => { const rows = salesLeads(); const byStatus = new Map<string, number>(); for (const lead of rows) byStatus.set(lead.status, (byStatus.get(lead.status) ?? 0) + 1); return leadsOverview(Array.from(byStatus, ([status, count]) => ({ status, count })), rows.map((lead) => lead.createdAt), new Date()); },
+  "leadops.leadsOverview": () => {
+    const rows = salesLeads(); const now = new Date(); const byStatus = new Map<string, number>(); for (const lead of rows) byStatus.set(lead.status, (byStatus.get(lead.status) ?? 0) + 1);
+    // wie auf dem Server: ältester wartender Lead, Zustellungen der letzten Tage, offene Reklamationen – und Hinweise, warum Leads nicht rausgehen
+    const ready = rows.filter((lead) => lead.status === "genehmigt"); const oldestReadyAt = ready.reduce<Date | null>((oldest, lead) => (!oldest || new Date(lead.createdAt) < oldest ? new Date(lead.createdAt) : oldest), null);
+    const since = now.getTime() - 8 * 86_400_000;
+    const deliveries = T().leadDeliveries.filter((row) => (row.result === "angeboten" || row.result === "angenommen") && new Date(row.occurredAt as Date).getTime() >= since).map((row) => ({ leadId: row.leadId as number, unitPrice: row.unitPrice as string | null, occurredAt: row.occurredAt as Date }));
+    const claimsOpen = T().claims.filter((row) => row.status === "offen" || row.status === "in_prüfung").length;
+    let hints: OverviewHint[] = [];
+    if (ready.length) {
+      const waiting = new Map<number, number>(); for (const lead of ready) waiting.set(lead.categoryId as number, (waiting.get(lead.categoryId as number) ?? 0) + 1);
+      const withStop = new Set(T().deliveryStops.filter((stop) => stop.active !== false).map((stop) => stop.chainId));
+      const deliverable = [...T().deliveryChains.filter((chain) => chain.status === "aktiv" && withStop.has(chain.id)).map((chain) => chain.categoryId as number), ...T().orders.filter((order) => order.status === "offen" || order.status === "aktiv").map((order) => order.categoryId as number)];
+      const automatic = T().automationRules.filter((rule) => rule.status === "aktiv" && deliversByItself(rule as { triggerType?: string; actionType?: string; falseActionType?: string | null; conditions?: unknown })).map((rule) => rule.sourceCategoryId as number);
+      hints = overviewHints({ waiting: Array.from(waiting, ([categoryId, count]) => ({ categoryId, count })), categoryName: (id) => String(T().leadCategories.find((row) => row.id === id)?.name ?? "ohne Kategorie"), deliverable, automatic, problems: apiErrorOverviewNow(30).counts.open });
+    }
+    return leadsOverview(Array.from(byStatus, ([status, count]) => ({ status, count })), rows.map((lead) => lead.createdAt), now, { oldestReadyAt, deliveries, claimsOpen, hints });
+  },
   "leadops.globalSearch": (input) => {
     const limit = input.limit ?? 6; const q = input.query;
     const leads = salesLeads().filter((lead) => like(lead.publicId, q) || like(lead.firstName, q) || like(lead.lastName, q) || like(lead.email, q) || like(lead.city, q)).slice(0, limit).map((lead) => ({ publicId: lead.publicId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, city: lead.city, status: lead.status }));

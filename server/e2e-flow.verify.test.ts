@@ -5894,4 +5894,76 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await leadRow(wrong)).city).toBe("Kiel");
     } finally { S.v348 = undefined; await owner.leadops.deleteDeliveryChain({ chainId: chain.chainId }); await owner.leadops.saveDeliveryEndpoint({ membershipId: member.membershipId, id: endpoint.id, categoryId, enabled: false, method: "POST", url, sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] }); }
   }, 120000);
+
+  it("v349. Zahlen über der Leads-Tabelle: wo alle Leads stehen, fairer Vergleich mit gestern, Alter des ältesten wartenden Leads, Zustellungen mit Preis – und Hinweise, warum freigegebene Leads nicht rausgehen", async () => {
+    const { berlinDay: dayOf } = await import("../shared/agent-ranking"); const { waitingAge } = await import("../shared/lead-overview"); const tenantId = S.tenantId as number; const stamp = Date.now().toString(36);
+    const categoryId = (await owner.leadops.createCategory({ shortcode: "V349-LAGE", name: "V349 Lage", defaultLeadPrice: "10.00" })).id!;
+    let seq = 0; const lead = async () => { seq += 1; return (await owner.leadops.importLead({ categoryId, firstName: "Lena", lastName: `Lage${seq}`, email: `lage-${seq}-${stamp}@example.de`, phone: `+49 151 2349${1000 + seq}`, postcode: "50667", city: "Köln" })).publicId; };
+    const overview = () => owner.leadops.leadsOverview(); const hintOf = async (kind: string) => (await overview()).hints.find((hint) => hint.kind === kind);
+    const mine = (hint: { categoryIds: number[] } | undefined) => Boolean(hint?.categoryIds.includes(categoryId));
+    const sum = (days: Array<{ count: number }>) => days.reduce((total, day) => total + day.count, 0);
+    // der Kunde der Kette hat einen eigenen Zugang – so lässt sich am Ende prüfen, was ein Käufer sieht
+    const member = await owner.leadops.createMember({ firstName: "Karin", lastName: "Wolff", company: "V349 Kunde GmbH", email: `kunde-${stamp}@v349.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const buyerUserId = (await owner.leadops.getMemberDetail({ membershipId: member.membershipId })).user.id; const buyer = appRouter.createCaller({ user: { id: buyerUserId } } as never);
+    const before = await overview(); const counts = (await owner.leadops.listLeadsPaged({ page: 1, pageSize: 5 })).counts;
+    let chainId: number | null = null; let ruleId: number | null = null;
+    try {
+      // (a) Die Zahlen sind die der Liste; die Teile ergeben zusammen alle Leads; die Vergleichswerte kommen aus denselben 14 Tagen
+      expect(before.total).toBe(counts.alle); expect(before.status).toEqual({ neu: counts.neu, genehmigt: counts.genehmigt, zugewiesen: counts.zugewiesen, reklamiert: counts.reklamiert, fehlerhaft: counts.fehlerhaft, deaktiviert: counts.deaktiviert, hängend: counts.hängend });
+      expect(Object.values(before.status).reduce((total, value) => total + value, 0)).toBe(before.total); expect(before.ready).toBe(counts.genehmigt); expect(before.delivered).toBe(counts.zugewiesen);
+      expect(before.days).toHaveLength(14); expect(before.week).toBe(sum(before.days.slice(-7))); expect(before.previousWeek).toBe(sum(before.days.slice(0, 7))); expect(before.sameDayLastWeek).toBe(before.days[6].count); expect(before.yesterdaySoFar).toBeLessThanOrEqual(before.yesterday);
+      expect(before.claimsOpen).toBe((await db.select().from(claims).where(and(eq(claims.tenantId, tenantId), inArray(claims.status, ["offen", "in_prüfung"])))).length);
+      expect(before.hints.some(mine)).toBe(false); // in der neuen Kategorie wartet noch nichts
+      const blockedBefore = before.hints.find((hint) => hint.kind === "keine_kette")?.leads ?? 0; const manualBefore = before.hints.find((hint) => hint.kind === "nicht_von_selbst")?.leads ?? 0;
+
+      // (b) Drei neue Leads, noch nicht freigegeben: heute +3 – „bereit“ bleibt, kein Hinweis für die Kategorie
+      const ids = [await lead(), await lead(), await lead()];
+      let now = await overview();
+      expect(now).toMatchObject({ total: before.total + 3, today: before.today + 3, week: before.week + 3, ready: before.ready, yesterdaySoFar: before.yesterdaySoFar }); expect(now.status.neu).toBe(before.status.neu + 3); expect(now.hints.some(mine)).toBe(false);
+
+      // (c) Freigegeben – aber für die Kategorie ist keine Lieferkette eingeschaltet: ein Hinweis mit genau diesen Leads, er steht vorn. Der älteste Lead bestimmt das Alter.
+      for (const id of ids) await owner.leadops.updateLeadStatus({ publicId: id, status: "genehmigt" });
+      const oldAt = new Date(Date.now() - 3 * 86_400_000 - 60_000); await db.update(leads).set({ createdAt: oldAt }).where(eq(leads.publicId, ids[0])); // der erste kam vor gut drei Tagen
+      now = await overview();
+      expect(now.ready).toBe(before.ready + 3); expect(now.status).toMatchObject({ genehmigt: before.status.genehmigt + 3, neu: before.status.neu }); expect(now.today).toBe(before.today + 2);
+      expect(now.days.find((day) => day.day === dayOf(oldAt))!.count).toBe(before.days.find((day) => day.day === dayOf(oldAt))!.count + 1);
+      expect(new Date(now.oldestReadyAt!).getTime()).toBeLessThanOrEqual(oldAt.getTime() + 1500); expect(waitingAge(now.oldestReadyAt)).toMatchObject({ tone: "achtung" });
+      let hint = now.hints.find((item) => item.kind === "keine_kette")!;
+      expect(mine(hint)).toBe(true); expect(hint.categories[hint.categoryIds.indexOf(categoryId)]).toBe("V349 Lage"); expect(hint.leads).toBe(blockedBefore + 3); expect(now.hints[0].kind).toBe("keine_kette");
+
+      // (d) Kette mit Kunde eingeschaltet → für die Kategorie kein „keine Lieferkette“ mehr. Weil keine Automation ausliefert, heißt es jetzt: Die Leads warten.
+      chainId = (await owner.leadops.createChainRule({ categoryIds: [categoryId], supplierMode: "all", supplierIds: [], buyers: [{ buyerUserId, buyerName: "V349 Kunde", unitPrice: 27.5 }], active: true })).created[0].chainId;
+      now = await overview(); expect(mine(now.hints.find((item) => item.kind === "keine_kette"))).toBe(false); hint = now.hints.find((item) => item.kind === "nicht_von_selbst")!; expect(mine(hint)).toBe(true); expect(hint.leads).toBe(manualBefore + 3);
+      // eine ausgeschaltete Kette zählt nicht
+      await owner.leadops.updateDeliveryChain({ id: chainId, status: "inaktiv" }); expect(mine(await hintOf("keine_kette"))).toBe(true); expect(mine(await hintOf("nicht_von_selbst"))).toBe(false);
+      await owner.leadops.updateDeliveryChain({ id: chainId, status: "aktiv" });
+
+      // (e) Automation „Automatisch ausliefern“ für die Kategorie: pausiert zählt nicht – eingeschaltet gibt es für die Kategorie keinen Hinweis mehr
+      await owner.leadops.createAutomationRule({ name: "V349 automatisch ausliefern", triggerType: "lead_erstellt", sourceCategoryId: categoryId, targetCategoryId: categoryId, conditions: [], actionType: "lead_ausliefern", actionConfig: {}, status: "pausiert" });
+      ruleId = (await owner.leadops.listAutomationRules()).find((row) => row.name === "V349 automatisch ausliefern")!.id;
+      expect(mine(await hintOf("nicht_von_selbst"))).toBe(true);
+      await owner.leadops.updateAutomationRule({ id: ruleId, status: "aktiv" }); expect((await overview()).hints.some(mine)).toBe(false);
+      // eine Automation, die erst nach einer Reklamation weitergibt, bringt neue Leads nicht raus
+      await owner.leadops.updateAutomationRule({ id: ruleId, triggerType: "reklamation_genehmigt" }); expect(mine(await hintOf("nicht_von_selbst"))).toBe(true);
+      await owner.leadops.updateAutomationRule({ id: ruleId, triggerType: "lead_erstellt" }); expect((await overview()).hints.some(mine)).toBe(false);
+
+      // (f) Ausliefern: Der Lead zählt bei „ausgeliefert“ (heute, 7 Tage) mit seinem Preis; „bereit“ sinkt
+      const handed = await owner.leadops.deliverLead({ publicId: ids[1] }); expect(handed.buyerName).toBe("V349 Kunde"); expect(["angeboten", "angenommen"]).toContain(handed.result);
+      now = await overview();
+      expect(now).toMatchObject({ ready: before.ready + 2, delivered: before.delivered + 1, deliveredToday: before.deliveredToday + 1, deliveredWeek: before.deliveredWeek + 1 }); expect(now.valueWeek).toBeCloseTo(before.valueWeek + 27.5, 2);
+      // ein neuer Lead geht jetzt von selbst raus – die Automation liefert aus
+      const auto = await lead(); expect((await leadRow(auto)).status).toBe("zugewiesen");
+      now = await overview(); expect(now).toMatchObject({ delivered: before.delivered + 2, deliveredToday: before.deliveredToday + 2, deliveredWeek: before.deliveredWeek + 2 }); expect(now.valueWeek).toBeCloseTo(before.valueWeek + 55, 2);
+      // (g) Reklamierte (und abgelehnte) Zustellungen zählen weder als ausgeliefert noch zum Betrag
+      await db.update(leadDeliveries).set({ result: "reklamiert" }).where(eq(leadDeliveries.leadId, (await leadRow(auto)).id));
+      now = await overview(); expect(now).toMatchObject({ deliveredToday: before.deliveredToday + 1, deliveredWeek: before.deliveredWeek + 1 }); expect(now.valueWeek).toBeCloseTo(before.valueWeek + 27.5, 2);
+
+      // (h) Ein Käufer sieht nur die Zahlen seiner eigenen Leads – keine Preise, keine Hinweise, nichts über Reklamationen anderer
+      const partner = await buyer.leadops.leadsOverview();
+      expect(partner).toMatchObject({ total: 2, delivered: 2, ready: 0, valueWeek: 0, deliveredToday: 0, deliveredWeek: 0, claimsOpen: 0, oldestReadyAt: null, hints: [] }); expect(partner.status).toMatchObject({ zugewiesen: 2, genehmigt: 0 }); expect(partner.days).toHaveLength(14); expect(partner.today).toBe(2);
+    } finally {
+      if (ruleId) await owner.leadops.updateAutomationRule({ id: ruleId, status: "pausiert" });
+      if (chainId) await owner.leadops.deleteDeliveryChain({ chainId });
+    }
+  }, 120000);
 });

@@ -1,7 +1,7 @@
 import { isListTag, LIST_TAG_RESERVED } from "../shared/list-tags";
 import { extraMetaFields, fieldOptions, realText } from "../shared/lead-fields";
 import { buildApiErrorOverview } from "../shared/api-errors";
-import { emptyLeadCounts, emptyLeadsOverview, leadsOverview, PULSE_LIMIT } from "../shared/lead-overview";
+import { deliversByItself, emptyLeadCounts, emptyLeadsOverview, leadsOverview, overviewHints, PULSE_LIMIT, type OverviewHint } from "../shared/lead-overview";
 import { leadExportTable } from "../shared/lead-export";
 import { leadCallSummary } from "./lead-from-call";
 import { apiErrorCount, apiErrorOverview, correctLead, dismissApiErrors, forgetApiErrorCount, retryDeliveries } from "./api-errors";
@@ -347,14 +347,44 @@ export const appRouter = router({
         leadTotal, leadsLast24h,
       };
     }),
-    /** Zahlen über der Leads-Tabelle: alle, heute neu, 7 Tage, offen, ausgeliefert – und die letzten 14 Tage je Tag. */
+    /**
+     * Zahlen über der Leads-Tabelle: alle Leads und wo sie stehen, heute neu (mit gestern um dieselbe Zeit), bereit zum Ausliefern (mit dem Alter des ältesten),
+     * ausgeliefert (heute, 7 Tage, zu welchem Preis), reklamiert, die letzten 14 Tage je Tag – und Hinweise, warum Leads nicht rausgehen.
+     * Partner-Zugänge bekommen nur die Zahlen ihrer eigenen Leads (keine Preise, keine Hinweise).
+     */
     leadsOverview: leadopsProcedure.query(async ({ ctx }) => {
       const tenant = await requireTenant(ctx.user.id); const db = await getDb(); const now = new Date(); if (!db) return emptyLeadsOverview(now);
       const [byStatus, recent] = await Promise.all([
         db.select({ status: leads.status, n: sql<number>`count(*)` }).from(leads).where(leadScope(tenant)).groupBy(leads.status),
         db.select({ createdAt: leads.createdAt }).from(leads).where(and(leadScope(tenant), gte(leads.createdAt, new Date(now.getTime() - 16 * 86_400_000)))),
       ]);
-      return leadsOverview(byStatus.map((row) => ({ status: row.status, count: Number(row.n) })), recent.map((row) => row.createdAt), now);
+      const statusCounts = byStatus.map((row) => ({ status: row.status, count: Number(row.n) })); const createdAts = recent.map((row) => row.createdAt);
+      if (partnerScopeOf(tenant)) return leadsOverview(statusCounts, createdAts, now);
+      const ready = statusCounts.find((row) => row.status === "genehmigt")?.count ?? 0;
+      const [oldest, deliveries, claimRows, waiting] = await Promise.all([
+        ready ? db.select({ createdAt: leads.createdAt }).from(leads).where(and(leadScope(tenant), eq(leads.status, "genehmigt"))).orderBy(asc(leads.createdAt)).limit(1) : [],
+        db.select({ leadId: leadDeliveries.leadId, unitPrice: leadDeliveries.unitPrice, occurredAt: leadDeliveries.occurredAt }).from(leadDeliveries).where(and(eq(leadDeliveries.tenantId, tenant.id), gte(leadDeliveries.occurredAt, new Date(now.getTime() - 8 * 86_400_000)), inArray(leadDeliveries.result, ["angeboten", "angenommen"]))),
+        db.select({ n: sql<number>`count(*)` }).from(claims).where(and(eq(claims.tenantId, tenant.id), inArray(claims.status, ["offen", "in_prüfung"]))),
+        ready ? db.select({ categoryId: leads.categoryId, n: sql<number>`count(*)` }).from(leads).where(and(leadScope(tenant), eq(leads.status, "genehmigt"))).groupBy(leads.categoryId) : [],
+      ]);
+      // Hinweise nur, wenn etwas wartet: Kann die Kategorie überhaupt ausliefern (Kette mit Kunde oder offene Bestellung)? Liefert eine Automation von selbst aus?
+      let hints: OverviewHint[] = [];
+      if (waiting.length) {
+        const [chainRows, orderRows, ruleRows, categoryRows, problems] = await Promise.all([
+          db.selectDistinct({ categoryId: deliveryChains.categoryId }).from(deliveryChains).innerJoin(deliveryStops, eq(deliveryStops.chainId, deliveryChains.id)).where(and(eq(deliveryChains.tenantId, tenant.id), eq(deliveryChains.status, "aktiv"), eq(deliveryStops.active, true))),
+          db.selectDistinct({ categoryId: orders.categoryId }).from(orders).where(and(eq(orders.tenantId, tenant.id), or(eq(orders.status, "offen"), eq(orders.status, "aktiv")))),
+          db.select({ categoryId: automationRules.sourceCategoryId, triggerType: automationRules.triggerType, actionType: automationRules.actionType, falseActionType: automationRules.falseActionType, conditions: automationRules.conditions }).from(automationRules).where(and(eq(automationRules.tenantId, tenant.id), eq(automationRules.status, "aktiv"))),
+          db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenant.id)),
+          apiErrorCount(db, tenant.id).then((count) => count.open).catch(() => 0),
+        ]);
+        const names = new Map(categoryRows.map((row) => [row.id, row.name]));
+        hints = overviewHints({
+          waiting: waiting.map((row) => ({ categoryId: row.categoryId, count: Number(row.n) })), categoryName: (id) => names.get(id) ?? "ohne Kategorie",
+          deliverable: [...chainRows.map((row) => row.categoryId), ...orderRows.map((row) => row.categoryId)].filter((id): id is number => typeof id === "number"),
+          automatic: ruleRows.filter((row) => deliversByItself(row)).map((row) => row.categoryId), problems,
+        });
+      }
+      return leadsOverview(statusCounts, createdAts, now, { oldestReadyAt: oldest[0]?.createdAt ?? null, deliveries, claimsOpen: Number(claimRows[0]?.n ?? 0), hints });
     }),
     globalSearch: leadopsProcedure.input(z.object({ query: z.string().trim().min(2).max(120), limit: z.number().int().min(1).max(20).default(6) })).query(async ({ ctx, input }) => {
       const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) return { leads: [], orders: [], members: [], prospects: [] };
