@@ -94,6 +94,8 @@ export function startRecordingRetry(intervalSeconds = Number(process.env.RECORDI
     try { const db = await getDb(); if (!db) return; const { retryWaitingRecordings, resumeCappedCalls, cappedCallTenants } = await import("./call-qa"); const result = await retryWaitingRecordings(db); if (result.retried) console.log(`[Gespräche] Aufnahme nachgeholt: ${result.retried} Versuche, ${result.done} bewertet`);
       // Gespräche, die wegen der Tagesgrenze der KI gewartet haben: weiter, sobald wieder Budget frei ist
       const resumed = await resumeCappedCalls(db).catch(() => ({ resumed: 0, done: 0 })); if (resumed.resumed) console.log(`[Gespräche] Nach der Tagesgrenze nachgeholt: ${resumed.resumed}, ${resumed.done} bewertet`);
+      // Neue Prüffragen bei älteren Gesprächen nachholen – ein paar je Minute (nicht abwarten: ein langsamer KI-Aufruf hält den Takt nicht auf)
+      void import("./call-qa").then(({ recheckCallAnswers }) => recheckCallAnswers(db)).then((result) => { if (result.checked) console.log(`[Gespräche] Prüffragen nachgeholt: ${result.checked}, ${result.changed} Entscheidungen geändert`); }).catch((error) => console.error("[Gespräche] Prüffragen nachholen:", error instanceof Error ? error.message : error));
       const capped = await cappedCallTenants(db).catch(() => new Set<number>());
       // Nebenher (ohne den Takt aufzuhalten): Gespräche ohne Kriterien-Punkte nachbewerten und unsichere Agenten-Namen von der KI prüfen lassen
       const { rescoreUnscoredCalls, verifyAgentsWithAi } = await import("./call-qa");

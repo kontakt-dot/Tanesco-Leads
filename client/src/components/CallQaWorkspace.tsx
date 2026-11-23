@@ -1,5 +1,6 @@
 import AgentAliasSettings from "@/components/AgentAliasSettings";
 import CallAiChip from "@/components/CallAiChip";
+import CallRecheckNotice from "@/components/CallRecheckNotice";
 import DialerIntake from "@/components/DialerIntake";
 import { Badge } from "@/components/ui/badge";
 import { SCOPE_LABEL } from "../../../shared/call-qualification";
@@ -168,8 +169,9 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
   const campaigns = trpc.leadops.listCallQaCampaigns.useQuery(undefined, { retry: false });
   // Die Liste zeigt die neuesten Gespräche – bei sehr vielen erst 200, auf Wunsch mehr. Ändert sich ein Filter, beginnt sie wieder bei 200.
   const [limit, setLimit] = useState(LIST_STEP);
-  useEffect(() => { setLimit(LIST_STEP); }, [decision, campaign, agent, range.period, range.from, range.to, categoryId, searchTerm]);
-  const calls = trpc.leadops.listCalls.useQuery({ decision: decision || null, campaign: campaign || null, agentName: agent || null, period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, categoryId, search: searchTerm || null, limit }, { retry: false, placeholderData: (previous) => previous, refetchInterval: (query) => ((query.state.data as Array<{ status: string }> | undefined)?.some((row) => row.status === "eingegangen" || row.status === "transkribiert") ? 5_000 : 30_000) });
+  const [rechecked, setRechecked] = useState(false); // nur Gespräche, deren Entscheidung die Nachprüfung geändert hat
+  useEffect(() => { setLimit(LIST_STEP); }, [decision, campaign, agent, range.period, range.from, range.to, categoryId, searchTerm, rechecked]);
+  const calls = trpc.leadops.listCalls.useQuery({ rechecked: rechecked || null, decision: decision || null, campaign: campaign || null, agentName: agent || null, period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null, categoryId, search: searchTerm || null, limit }, { retry: false, placeholderData: (previous) => previous, refetchInterval: (query) => ((query.state.data as Array<{ status: string }> | undefined)?.some((row) => row.status === "eingegangen" || row.status === "transkribiert") ? 5_000 : 30_000) });
   const agentNames = trpc.leadops.callAgentNames.useQuery(undefined, { retry: false, staleTime: 60_000 });
   const [showSettings, setShowSettings] = useState(false); const [showImport, setShowImport] = useState(false); const settingsDirty = useRef(false); const closeAsking = useRef(false); // ungespeicherte Änderungen im Einstellen-Fenster
   /** Einstellen-Fenster schließen – mit ungespeicherten Änderungen erst nach Rückfrage (die Esc-Taste, die die Rückfrage schließt, löst keine zweite aus). */
@@ -186,7 +188,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
   };
   const rows: CallRow[] = calls.data ?? []; const days = groupCallsByDay(rows);
   // So viele Gespräche gibt es laut Übersicht für die gewählten Filter – stehen mehr dort, als die Liste zeigt, sagt sie es
-  const expected = !overview ? 0 : decision === "freigegeben" ? overview.approved : decision === "pruefen" ? overview.review : decision === "zurueckgewiesen" ? overview.rejected : decision === "offen" ? overview.open : overview.total;
+  const expected = !overview || rechecked ? 0 : decision === "freigegeben" ? overview.approved : decision === "pruefen" ? overview.review : decision === "zurueckgewiesen" ? overview.rejected : decision === "offen" ? overview.open : overview.total;
   const cut = rows.length >= limit && expected > rows.length;
   const avatarOf = useAvatarOf(); const userIdOf = new Map((agentNames.data ?? []).filter((item) => item.userId).map((item) => [item.name, item.userId] as const));
   const pictureOf = (name: string | null | undefined) => (name ? avatarOf(userIdOf.get(name) ?? null) : null);
@@ -223,6 +225,8 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
           <label className="gq-category"><span className="gq-label">Lead-Kategorie</span><select className="filter-select h-8" aria-label="Nach Lead-Kategorie filtern" value={categoryId ?? ""} onChange={(event) => onCategory(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kategorien</option>{(categoryOptions.data ?? []).map((item) => <option key={item.id} value={item.id}>{item.emoji ? `${item.emoji} ` : ""}{item.name} ({item.count})</option>)}</select></label>
         </div>
       </div>
+      <CallRecheckNotice active={rechecked} onShow={setRechecked} />
+      {rechecked && <div className="gq-result-line"><span>Die Liste zeigt nur Gespräche, deren Entscheidung die Nachprüfung geändert hat – {rows.length === 1 ? "1 Gespräch" : `${rows.length} Gespräche`}.</span><button type="button" className="gq-link" onClick={() => setRechecked(false)}>Alle zeigen</button></div>}
       {decision && <div className="gq-result-line"><span>Die Liste zeigt nur Gespräche mit dem Ergebnis „{DECISION_LABEL[decision]}“ – {rows.length === 1 ? "1 Gespräch" : `${rows.length} Gespräche`}.</span><button type="button" className="gq-link" onClick={() => onDecision("")}>Alle zeigen</button></div>}
       {selected.size > 0 && <div className="cq-bulk gq-bulk"><b>{selected.size} ausgewählt</b><Button size="sm" variant="outline" className="cq-bulk-reevaluate" disabled={reevaluateMany.isPending} title="Die ausgewählten Gespräche nach den aktuellen Regeln der Kampagne neu bewerten" onClick={() => reevaluateMany.mutate({ callIds: Array.from(selected) })}>{reevaluateMany.isPending ? "Starte …" : "Neu bewerten"}</Button><Button size="sm" variant="outline" className="gq-danger" disabled={removeMany.isPending} onClick={async () => { if (!(await confirmAction(`${selected.size} ${selected.size === 1 ? "Gespräch" : "Gespräche"} samt Transkript, Bewertung und hochgeladenen Aufnahmen endgültig löschen? Kontakte/Leads bleiben erhalten.`, { confirmLabel: "Löschen", danger: true }))) return; removeMany.mutate({ callIds: Array.from(selected) }); }}>{removeMany.isPending ? "Lösche …" : "Ausgewählte löschen"}</Button><button type="button" className="gq-link" onClick={() => setSelected(new Set())}>Auswahl aufheben</button></div>}
       {rows.length > 0 && <div className="gq-table-wrap"><table className="flux-table no-stack gq-table">
@@ -245,7 +249,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
                 {gist && <span className={`gq-summary ${gist.cls}`} title={gist.text}>{gist.text}</span>}
               </td>
               <td className="gq-agent"><span className="gq-agent-cell">{call.agentName ? <AgentFace name={call.agentName} avatarUrl={pictureOf(call.agentName)} /> : <span className="gq-who is-none" aria-hidden="true">–</span>}<span className="gq-agent-lines"><b className={call.agentName ? "" : "gq-none"} title={(call as { agentAlias?: string | null }).agentAlias ? `Am Telefon: ${(call as { agentAlias?: string | null }).agentAlias}` : undefined}>{call.agentName ?? "Ohne Agent"}</b><small title={`Kampagne: ${call.campaign ?? call.provider}`}>{call.campaign ?? call.provider}</small></span></span></td>
-              <td className="gq-result"><span className={`gq-pill is-${call.decision}`}>{decisionLabel[call.decision]}{call.decidedBy === "manuell" ? <i title="Von Hand entschieden"> · von Hand</i> : null}</span>{optIn && <span className="gq-optin"><OptInBadge status={optIn.status} kind={optIn.kind} buyerName={optIn.buyerName} missing={optIn.missing} compact /></span>}</td>
+              <td className="gq-result"><span className={`gq-pill is-${call.decision}`}>{decisionLabel[call.decision]}{call.decidedBy === "manuell" ? <i title="Von Hand entschieden"> · von Hand</i> : null}</span>{call.recheckFrom ? <span className="gq-rechecked" title={`Durch die Nachprüfung geändert – vorher „${decisionLabel[call.recheckFrom] ?? call.recheckFrom}“. Grund: ${call.nextStep ?? ""}`}>nachgeprüft</span> : null}{optIn && <span className="gq-optin"><OptInBadge status={optIn.status} kind={optIn.kind} buyerName={optIn.buyerName} missing={optIn.missing} compact /></span>}</td>
               <td className="gq-col-go" aria-hidden="true"><ChevronRight /></td>
             </tr>; })}
         </tbody>)}
@@ -509,7 +513,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
           <div className="gq-call-text">
             <h2 className="gq-count">{MOOD[mood].label}</h2>
             <p className="gq-talk">{contactName ? `${contactName}, ` : ""}{started ? `${LONG_DAY.format(started)} um ${timeText(started)} Uhr` : "ohne Uhrzeit"}{typeof data.durationSeconds === "number" && data.durationSeconds > 0 ? `, ${clockText(data.durationSeconds)} Minuten` : ""}</p>
-            <p className="gq-call-pills"><span className={`gq-pill is-${data.decision}`}>{decisionLabel[data.decision]}{data.decidedBy === "manuell" ? <i> · von Hand{data.reviewer ? ` (${data.reviewer})` : ""}</i> : data.decidedBy === "automatisch" ? <i> · automatisch</i> : null}</span>{data.callback && <span className="gq-pill cq-callback" title="Die Software hat erkannt, dass es ein Rückruf ist – der Firmenname muss dann nicht noch einmal genannt werden">Rückruf</span>}</p>
+            <p className="gq-call-pills"><span className={`gq-pill is-${data.decision}`}>{decisionLabel[data.decision]}{data.decidedBy === "manuell" ? <i> · von Hand{data.reviewer ? ` (${data.reviewer})` : ""}</i> : data.decidedBy === "automatisch" ? <i> · automatisch</i> : null}</span>{data.recheckFrom && data.decidedBy !== "manuell" ? <span className="gq-pill is-rechecked" title="Die Prüffragen wurden später nachgeholt – dabei wurde die Entscheidung strenger. Der Grund steht unten bei „Nächster Schritt“.">nachgeprüft · vorher „{decisionLabel[data.recheckFrom] ?? data.recheckFrom}“</span> : null}{data.callback && <span className="gq-pill cq-callback" title="Die Software hat erkannt, dass es ein Rückruf ist – der Firmenname muss dann nicht noch einmal genannt werden">Rückruf</span>}</p>
           </div>
         </div>
         <div className="gq-player">

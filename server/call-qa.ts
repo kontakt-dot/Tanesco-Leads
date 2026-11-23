@@ -8,7 +8,7 @@
  *  5. Entscheidung: ab Freigabe-Schwelle Lead freigeben (und über die Automatisierung ausliefern/verkaufen),
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
-import { and, asc, desc, eq, getTableColumns, gt, gte, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, isNull, like, lt, ne, or, sql } from "drizzle-orm";
 import { callAiCapReached, callAiSpentToday, recordTranscriptionUsage } from "./ai-budget";
 import { phoneFragment, searchWords } from "../shared/call-search";
 import { createHash } from "node:crypto";
@@ -117,7 +117,7 @@ export async function applyCallQaPreset(db: Db, tenantId: number, input: { prese
   return { success: true as const, preset: preset.key, campaigns };
 }
 /** Antworten je Frage: KI (wenn verfügbar) – sonst Stichwort-Regeln. */
-export async function answerQualification(questions: QualificationQuestion[], transcript: string): Promise<Record<string, QualificationAnswer>> {
+export async function answerQualification(questions: QualificationQuestion[], transcript: string, options: { /** KI-Fehler werfen statt auf Stichworte auszuweichen */ strict?: boolean } = {}): Promise<Record<string, QualificationAnswer>> {
   const heuristic = answerQuestionsHeuristically(questions, transcript);
   if (!process.env.ANTHROPIC_API_KEY || !questions.length) return heuristic;
   try {
@@ -137,7 +137,7 @@ export async function answerQualification(questions: QualificationQuestion[], tr
     const out: Record<string, QualificationAnswer> = { ...heuristic };
     for (const item of read) out[item.key] = { answer: item.answer, note: item.note };
     return softenGasHeatPumpNo(questions, applyQuestionScope(questions, out, transcript), transcript); // Erdgas-Wärmepumpe: „Nein“ nur bei ausdrücklicher Nennung – sonst unklar (Zur Prüfung)
-  } catch { return heuristic; }
+  } catch (error) { if (options.strict) throw error; return heuristic; }
 }
 export async function campaignSummary(db: Db, tenantId: number, campaign: string | null | undefined) {
   const questions = await questionsForCampaign(db, tenantId, campaign);
@@ -875,7 +875,7 @@ export async function processCall(db: Db, callId: number, options: { fetchImpl?:
     const nextStep = [byQuestions?.reason, rule ? `Regel: ${rule.label}` : null, evaluation.nextStep].filter(Boolean).join(" · ").slice(0, 320);
     // Stelle im Gespräch je Prüffrage und Kriterium („bei 1:31“) – nur, wenn es Abschnitte mit Zeit gibt; ein Fehler dabei hält die Bewertung nicht auf
     const marks = segments.length ? await locateMarks(segments, markItems(questions, qualificationAnswers, own.criteria, evaluation.unscored ? [] : evaluation.criteria)).catch(() => ({} as Record<string, number>)) : {};
-    await db.update(callRecords).set({ status: "bewertet", score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.unscored ? (evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : []) : evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", error: null, ...(segments.length ? { timeline: { segments, marks } satisfies CallTimeline } : {}) }).where(eq(callRecords.id, callId));
+    await db.update(callRecords).set({ status: "bewertet", score: evaluation.unscored ? null : evaluation.score, verdict: evaluation.verdict, criteriaScores: evaluation.unscored ? (evaluation.note ? [{ key: CRITERIA_NOTE_KEY, score: 0, evidence: evaluation.note }] : []) : evaluation.criteria, qualificationAnswers, summary: evaluation.summary, redFlags: evaluation.redFlags, nextStep, decision, decidedBy: "automatisch", recheckFrom: null, error: null, ...(segments.length ? { timeline: { segments, marks } satisfies CallTimeline } : {}) }).where(eq(callRecords.id, callId));
     let target = lead; const fresh = { created: false }; // neu angelegter Lead: Die Regeln laufen erst, wenn die Felder aus dem Gespräch drin sind
     if (!target && call.rawContactId) {
       // Rohdaten-Kontakt: die Freigabe macht ihn zum Lead, Ablehnung verwirft ihn. Über die Regeln ausgeliefert wird nur, wenn die Auslieferung eingeschaltet ist – sonst bleibt der Lead liegen („nur empfangen“)
@@ -1024,7 +1024,7 @@ export async function reviewCall(db: Db, tenantId: number, userId: number, input
   const call = (await db.select().from(callRecords).where(and(eq(callRecords.id, input.callId), eq(callRecords.tenantId, tenantId))).limit(1))[0];
   if (!call) throw new Error("Gespräch wurde nicht gefunden.");
   const config = await ensureCallQaConfig(db, tenantId);
-  await db.update(callRecords).set({ decision: input.decision, decidedBy: "manuell", reviewedByUserId: userId, reviewedAt: new Date(), reviewNote: input.note?.slice(0, 500) ?? null }).where(eq(callRecords.id, call.id));
+  await db.update(callRecords).set({ decision: input.decision, decidedBy: "manuell", reviewedByUserId: userId, reviewedAt: new Date(), reviewNote: input.note?.slice(0, 500) ?? null, recheckFrom: null }).where(eq(callRecords.id, call.id));
   let lead = call.leadId ? (await db.select().from(leads).where(eq(leads.id, call.leadId)).limit(1))[0] : undefined; const fresh = { created: false };
   if (!lead && call.rawContactId) {
     if (input.decision === "freigegeben") { const categoryId = await dialerContactCategory(db, tenantId, call.rawContactId, call.id); const converted = await convertRawContact(db, tenantId, call.rawContactId, { actorUserId: userId, initialStatus: "genehmigt", note: `Manuelle Freigabe${input.note ? `: ${input.note}` : ""}`, skipAutomations: true, ...(categoryId ? { categoryId } : {}) }); fresh.created = !converted.alreadyConverted; await db.update(callRecords).set({ leadId: converted.leadId }).where(eq(callRecords.id, call.id)); lead = (await db.select().from(leads).where(eq(leads.id, converted.leadId)).limit(1))[0]; }
@@ -1176,6 +1176,93 @@ export async function rescoreUnscoredCalls(db: Db, options: { max?: number; tena
   } finally { rescoreRunning = false; }
 }
 /** Mehrere Gespräche neu bewerten (z. B. nach geänderten Regeln): läuft nacheinander im Hintergrund, die Liste zeigt den Fortschritt. */
+/* ------------------------------------------------------------------ Prüffragen bei älteren Gesprächen nachholen */
+
+/**
+ * Kommt eine Prüffrage dazu (z. B. „bis zu 3 Angebote von Fachpartnern“ in der Vorlage HausKompass) oder bekommt eine Kampagne andere Fragen,
+ * fehlt älteren Gesprächen die Antwort darauf. Der Zeitplaner holt sie nach und nach nach – nur die fehlenden Fragen, ein kleiner KI-Aufruf je Gespräch.
+ * Regeln: Die Entscheidung wird dabei nur strenger, nie lockerer. Von Hand entschiedene Gespräche bekommen die Antwort, behalten aber ihre Entscheidung.
+ * Ändert sich die Entscheidung, folgt der Lead: zurückgewiesen → „Fehlerhaft“, zur Prüfung → „Hängend“. Schon ausgelieferte Leads bleiben, wie sie sind (nur ein Vermerk im Verlauf).
+ */
+export const RECHECK_PER_RUN = 12;
+let rechecking = false; const recheckFailures = new Map<number, number>();
+const DECISION_RANK: Record<string, number> = { offen: 0, freigegeben: 0, pruefen: 1, zurueckgewiesen: 2 };
+const DECISION_WORD: Record<string, string> = { freigegeben: "freigegeben", pruefen: "zur Prüfung", zurueckgewiesen: "zurückgewiesen", offen: "offen" };
+const LEAD_STATUS_WORD: Record<string, string> = { fehlerhaft: "Fehlerhaft", hängend: "Hängend" };
+type RecheckCandidate = { id: number; tenantId: number; questions: QualificationQuestion[]; missing: QualificationQuestion[] };
+const answersOf = (value: unknown) => (value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, QualificationAnswer> : {});
+/** Bewertete Gespräche (mit Text), denen die Antwort auf eine heute gültige Prüffrage ihrer Kampagne fehlt – neueste zuerst. */
+export async function callsMissingAnswers(db: Db, options: { tenantId?: number; limit?: number } = {}): Promise<RecheckCandidate[]> {
+  const conditions = [eq(callRecords.status, "bewertet"), isNotNull(callRecords.transcript)]; if (options.tenantId) conditions.push(eq(callRecords.tenantId, options.tenantId));
+  const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId, campaign: callRecords.campaign, answers: callRecords.qualificationAnswers }).from(callRecords).where(and(...conditions)).orderBy(desc(callRecords.id));
+  const sets = new Map<number, { defaults: QualificationQuestion[]; campaigns: Map<string, QualificationQuestion[]> }>();
+  const out: RecheckCandidate[] = [];
+  for (const row of rows) {
+    let set = sets.get(row.tenantId);
+    if (!set) { const campaigns = new Map<string, QualificationQuestion[]>(); for (const item of await db.select({ name: callQaCampaigns.name, questions: callQaCampaigns.questions }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, row.tenantId))) { const qs = normalizeQuestions(item.questions as QualificationQuestion[] | null); if (qs.length) campaigns.set(item.name, qs); } set = { defaults: await defaultQuestionsFor(db, row.tenantId), campaigns }; sets.set(row.tenantId, set); }
+    const questions = (row.campaign ? set.campaigns.get(row.campaign) : undefined) ?? set.defaults; const answers = answersOf(row.answers);
+    const missing = questions.filter((question) => !answers[question.key]);
+    if (missing.length) { out.push({ id: row.id, tenantId: row.tenantId, questions, missing }); if (options.limit && out.length >= options.limit) break; }
+  }
+  return out;
+}
+/** Ein Gespräch nachprüfen: fehlende Antworten holen, Entscheidung höchstens strenger machen, den Lead nachziehen. */
+async function recheckCall(db: Db, candidate: RecheckCandidate, strict: boolean): Promise<{ changed: boolean }> {
+  const call = (await db.select().from(callRecords).where(eq(callRecords.id, candidate.id)).limit(1))[0]; if (!call || call.status !== "bewertet" || !call.transcript) return { changed: false };
+  const answered = await answerQualification(candidate.missing, call.transcript, { strict });
+  // frisch lesen: Während die KI gelesen hat, kann jemand das Gespräch von Hand entschieden oder eine Antwort geändert haben – dann gilt das
+  const fresh = (await db.select().from(callRecords).where(eq(callRecords.id, candidate.id)).limit(1))[0]; if (!fresh || fresh.status !== "bewertet") return { changed: false };
+  const current = answersOf(fresh.qualificationAnswers); const next: Record<string, QualificationAnswer> = { ...current };
+  for (const question of candidate.missing) if (!next[question.key] && answered[question.key]) next[question.key] = answered[question.key];
+  // Nur die neu beantworteten Fragen entscheiden mit – die alten Antworten und die Entscheidung daraus bleiben, wie sie waren
+  const added = candidate.missing.filter((question) => !current[question.key] && next[question.key]);
+  const by = fresh.decidedBy === "manuell" || !added.length ? null : decideByQuestions(added, next);
+  const stricter = Boolean(by && (DECISION_RANK[by.decision] ?? 0) > (DECISION_RANK[fresh.decision] ?? 0));
+  const decision = stricter ? by!.decision : fresh.decision;
+  await db.update(callRecords).set({ qualificationAnswers: next, recheckedAt: new Date(), ...(stricter ? { decision, decidedBy: "automatisch" as const, recheckFrom: fresh.decision, nextStep: `Nachprüfung: ${by!.reason}`.slice(0, 320) } : {}) }).where(eq(callRecords.id, fresh.id));
+  if (!stricter) return { changed: false };
+  if (fresh.leadId) {
+    const lead = (await db.select().from(leads).where(eq(leads.id, fresh.leadId)).limit(1))[0];
+    if (lead) {
+      const delivered = ["zugewiesen", "reklamiert"].includes(lead.status);
+      let nextStatus = lead.status;
+      if (!delivered && lead.status !== "deaktiviert") { if (decision === "zurueckgewiesen") nextStatus = "fehlerhaft"; else if (decision === "pruefen" && ["neu", "genehmigt"].includes(lead.status)) nextStatus = "hängend"; }
+      const meta = lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata) ? (lead.metadata as Record<string, unknown>) : {};
+      await db.update(leads).set({ status: nextStatus, metadata: { ...meta, callDecision: decision } }).where(eq(leads.id, lead.id));
+      const tail = delivered ? " – der Lead war schon ausgeliefert und bleibt unverändert" : nextStatus !== lead.status ? ` – Lead jetzt „${LEAD_STATUS_WORD[nextStatus] ?? nextStatus}“` : "";
+      await db.insert(leadStatusEvents).values({ tenantId: fresh.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus, actorUserId: null, note: `Nachprüfung des Gesprächs: ${by!.reason} → ${DECISION_WORD[decision]}${tail}`.slice(0, 500) });
+    }
+  } else if (fresh.rawContactId && decision === "zurueckgewiesen") {
+    await db.update(rawContacts).set({ status: "verworfen", note: `Nachprüfung des Gesprächs: ${by!.reason}`.slice(0, 500) }).where(and(eq(rawContacts.id, fresh.rawContactId), eq(rawContacts.status, "in_liste")));
+  }
+  return { changed: true };
+}
+/** Läuft im Minutentakt: ein paar Gespräche je Lauf. Bei erreichter Tagesgrenze der KI ruht es. Klappt die KI nicht, wird es später noch einmal versucht – nach zwei Fehlversuchen gelten die Stichwort-Regeln. */
+export async function recheckCallAnswers(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ checked: number; changed: number }> {
+  if (rechecking) return { checked: 0, changed: 0 }; rechecking = true;
+  try {
+    const capped = await cappedCallTenants(db).catch(() => new Set<number>()); const max = options.max ?? RECHECK_PER_RUN;
+    const todo = (await callsMissingAnswers(db, { tenantId: options.tenantId, limit: max + capped.size * 200 + 50 })).filter((item) => !capped.has(item.tenantId)).slice(0, max);
+    let checked = 0; let changed = 0;
+    for (const item of todo) {
+      try { const result = await recheckCall(db, item, (recheckFailures.get(item.id) ?? 0) < 2); checked += 1; if (result.changed) changed += 1; recheckFailures.delete(item.id); }
+      catch (error) { recheckFailures.set(item.id, (recheckFailures.get(item.id) ?? 0) + 1); console.error("[Gespräche] Prüffragen nachholen:", item.id, error instanceof Error ? error.message : error); }
+    }
+    return { checked, changed };
+  } finally { rechecking = false; }
+}
+/** Stand der Nachprüfung für die Seite Gespräche: was noch wartet (und welche Fragen), was sich geändert hat. */
+export async function callRecheckStatus(db: Db, tenantId: number) {
+  const waiting = await callsMissingAnswers(db, { tenantId });
+  const counts = new Map<string, number>(); for (const item of waiting) for (const question of item.missing) counts.set(question.label, (counts.get(question.label) ?? 0) + 1);
+  const questions = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([label, calls]) => ({ label, calls }));
+  const changedRows = await db.select({ decision: callRecords.decision, leadStatus: leads.status }).from(callRecords).leftJoin(leads, eq(leads.id, callRecords.leadId)).where(and(eq(callRecords.tenantId, tenantId), isNotNull(callRecords.recheckFrom)));
+  const capped = (await cappedCallTenants(db).catch(() => new Set<number>())).has(tenantId);
+  return {
+    waiting: waiting.length, questions, questionCount: counts.size, perMinute: RECHECK_PER_RUN, paused: capped,
+    changed: { total: changedRows.length, rejected: changedRows.filter((row) => row.decision === "zurueckgewiesen").length, review: changedRows.filter((row) => row.decision === "pruefen").length, leadsHeld: changedRows.filter((row) => row.leadStatus === "fehlerhaft" || row.leadStatus === "hängend").length, delivered: changedRows.filter((row) => row.leadStatus === "zugewiesen" || row.leadStatus === "reklamiert").length },
+  };
+}
 export async function reevaluateCalls(db: Db, tenantId: number, callIds: number[], options: { fetchImpl?: typeof fetch; waitFor?: boolean } = {}) {
   const ids = Array.from(new Set(callIds)).slice(0, 300); if (!ids.length) return { queued: 0 };
   const rows = await db.select({ id: callRecords.id, transcript: callRecords.transcript, status: callRecords.status }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), inArray(callRecords.id, ids)));
@@ -1300,8 +1387,8 @@ function callSearchCondition(search: string | null | undefined) {
     )!;
   }))!;
 }
-export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; categoryId?: number | null; search?: string | null; limit?: number } & CallPeriod = {}) {
-  const conditions = [eq(callRecords.tenantId, tenantId)];
+export async function listCalls(db: Db, tenantId: number, filter: { decision?: string | null; status?: string | null; campaign?: string | null; agentName?: string | null; categoryId?: number | null; search?: string | null; limit?: number; /** nur Gespräche, deren Entscheidung die Nachprüfung geändert hat */ rechecked?: boolean | null } & CallPeriod = {}) {
+  const conditions = [eq(callRecords.tenantId, tenantId)]; if (filter.rechecked) conditions.push(isNotNull(callRecords.recheckFrom));
   const found = callSearchCondition(filter.search); if (found) conditions.push(found);
   const range = callPeriodRange(filter); if (range.from) conditions.push(gte(callRecords.startedAt, range.from)); if (range.to) conditions.push(lt(callRecords.startedAt, range.to));
   if (filter.categoryId) conditions.push(eq(callRecords.leadCategoryId, filter.categoryId));
@@ -1319,7 +1406,7 @@ export async function listCalls(db: Db, tenantId: number, filter: { decision?: s
   const defaults = await defaultQuestionsFor(db, tenantId); const questionSets = new Map<string, QualificationQuestion[]>();
   for (const row of await db.select({ name: callQaCampaigns.name, questions: callQaCampaigns.questions }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId))) { const qs = normalizeQuestions(row.questions as QualificationQuestion[] | null); if (qs.length) questionSets.set(row.name, qs); }
   const questionsOf = (campaign: string | null) => (campaign ? questionSets.get(campaign) : undefined) ?? defaults;
-  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany, categoryName, categoryEmoji }) => ({ id: call.id, fulfilment: questionFulfilment(questionsOf(call.campaign), call.qualificationAnswers as Record<string, QualificationAnswer> | null), optIn: optInOf(call.leadId, call.id), leadCategoryId: call.leadCategoryId, category: categoryName ? { id: call.leadCategoryId!, name: categoryName, emoji: categoryEmoji ?? null } : null, externalCallId: call.externalCallId, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
+  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany, categoryName, categoryEmoji }) => ({ id: call.id, recheckFrom: (call.recheckFrom ?? null) as CallRecord["decision"] | null, fulfilment: questionFulfilment(questionsOf(call.campaign), call.qualificationAnswers as Record<string, QualificationAnswer> | null), optIn: optInOf(call.leadId, call.id), leadCategoryId: call.leadCategoryId, category: categoryName ? { id: call.leadCategoryId!, name: categoryName, emoji: categoryEmoji ?? null } : null, externalCallId: call.externalCallId, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
 }
 
 export async function getCall(db: Db, tenantId: number, callId: number) {

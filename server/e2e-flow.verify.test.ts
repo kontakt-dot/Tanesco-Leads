@@ -6058,4 +6058,70 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect(((await db.select().from(leadsTable).where(eq(leadsTable.id, lead.id)))[0].metadata as Record<string, unknown>).v351_dachflaeche_probe).toBe("55");
     } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; }
   }, 120000);
+
+  it("v354. Neue Prüffrage gilt auch für ältere Gespräche: fehlende Antworten werden nachgeholt, die Entscheidung wird nur strenger, der Lead folgt (ausgelieferte bleiben), von Hand entschiedene behalten ihre Entscheidung; Stand, Filter und Tagesgrenze", async () => {
+    const schema = await import("../drizzle/schema"); const { callRecords: callsTable, leads: leadsTable, leadStatusEvents: eventsTable, rawContacts: rawTable, aiUsageDays } = schema;
+    const { recheckCallAnswers, callsMissingAnswers } = await import("./call-qa"); const { forgetSpentCache } = await import("./ai-budget");
+    const { PV_HAUSKOMPASS_PRESET, WATTFOX_PRESET } = await import("../shared/call-qa-presets"); const { answerQuestionsHeuristically } = await import("../shared/call-qualification");
+    const tenantId = S.tenantId as number; const stamp = Date.now().toString(36); const campaign = `V354 HausKompass ${stamp}`; const wattfox = `V354 Wattfox ${stamp}`;
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY; // ohne KI: die Stichwort-Regeln antworten
+    try {
+      await owner.leadops.applyPresetToCampaign({ preset: "pv-hauskompass", campaign }); await owner.leadops.applyPresetToCampaign({ preset: "wattfox-pv-wp", campaign: wattfox });
+      const categoryId = (await owner.leadops.createCategory({ shortcode: `V354${stamp.slice(-4)}`.toUpperCase(), name: "V354 Nachprüfung", defaultLeadPrice: "10.00" })).id!;
+      let seq = 0; const lead = async (status: string) => { seq += 1; const publicId = (await owner.leadops.importLead({ categoryId, firstName: "Ilse", lastName: `Brenner${seq}`, email: `nach-${seq}-${stamp}@example.de`, phone: `+49 151 2354${1000 + seq}`, postcode: "50667", city: "Köln" })).publicId; const row = await leadRow(publicId); await db.update(leadsTable).set({ status: status as never }).where(eq(leadsTable.id, row.id)); return row.id; };
+      const base = "Agent: Guten Tag, hier ist Kaya von HausKompass, es geht um Ihre Photovoltaikanlage. Kunde: Ja. Agent: Sind Sie Eigentümer? Kunde: Ja, das Haus gehört uns. Agent: Wann möchten Sie umsetzen? Kunde: Zeitnah, in den nächsten drei Monaten. Agent: Dann meldet sich Photovoltaik Angebotsvergleich bei Ihnen. Telefonisch erreichbar? Kunde: Ja, gerne anrufen.";
+      const withOffers = base.replace("bei Ihnen.", "bei Ihnen, und Sie bekommen bis zu drei Angebote von unseren Fachpartnern.");
+      // so sahen Gespräche vor der neuen Frage aus: alle Antworten – nur die neue fehlt
+      const oldQuestions = PV_HAUSKOMPASS_PRESET.questions.filter((question) => question.key !== "bis_zu_3_angebote");
+      const call = async (input: { transcript: string; leadId?: number | null; rawContactId?: number | null; decision?: "freigegeben" | "pruefen"; decidedBy?: "automatisch" | "manuell"; campaign?: string; questions?: typeof oldQuestions }) => { seq += 1; const inserted = await db.insert(callsTable).values({ tenantId, provider: "ondialer", externalCallId: `v354-${stamp}-${seq}`, phone: `+49 2591 55509${String(seq).padStart(2, "0")}`, campaign: input.campaign ?? campaign, status: "bewertet", consent: true, transcript: input.transcript, score: 90, verdict: "verkaufbar", qualificationAnswers: answerQuestionsHeuristically(input.questions ?? oldQuestions, input.transcript), decision: input.decision ?? "freigegeben", decidedBy: input.decidedBy ?? "automatisch", leadId: input.leadId ?? null, rawContactId: input.rawContactId ?? null, startedAt: new Date() }); return Number(inserted[0].insertId); };
+      const leadA = await lead("genehmigt"); const leadD = await lead("zugewiesen"); const leadC = await lead("genehmigt");
+      const a = await call({ transcript: base, leadId: leadA }); // ohne den Satz, Lead freigegeben, noch nicht raus
+      const b = await call({ transcript: withOffers }); // mit dem Satz
+      const c = await call({ transcript: base, leadId: leadC, decidedBy: "manuell" }); // von Hand freigegeben
+      const d = await call({ transcript: base, leadId: leadD }); // ohne den Satz – Lead schon ausgeliefert
+      const raw = Number((await db.insert(rawTable).values({ tenantId, batchId: 0, firstName: "Sophie", lastName: "Arndt", phone: "+49 2591 5550999", status: "in_liste" })).insertId ?? 0) || (await db.select().from(rawTable).where(and(eq(rawTable.tenantId, tenantId), eq(rawTable.phone, "+49 2591 5550999"))))[0].id;
+      const e = await call({ transcript: base, rawContactId: raw, decision: "pruefen" }); // Kontakt der Liste, zur Prüfung
+      const f = await call({ transcript: base, campaign: wattfox, questions: WATTFOX_PRESET.questions }); // Wattfox kennt die Frage nicht – alle seine Fragen sind beantwortet
+      const mine = [a, b, c, d, e];
+      const missingIds = async () => (await callsMissingAnswers(db, { tenantId })).map((item) => item.id);
+      // (a) Stand: Diese fünf warten – die Wattfox-Gespräche nicht; die neue Frage wird genannt
+      expect((await missingIds())).toEqual(expect.arrayContaining(mine)); expect(await missingIds()).not.toContain(f);
+      const before = await owner.leadops.callRecheckStatus(); expect(before.waiting).toBeGreaterThanOrEqual(5); expect(before.perMinute).toBe(12);
+      expect(before.questions.map((item) => item.label)).toContain("Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?");
+      // (b) Tagesgrenze erreicht: Die Nachprüfung ruht
+      await db.delete(aiUsageDays); forgetSpentCache(); await owner.leadops.setCallAiCap({ euros: 1 });
+      await db.insert(aiUsageDays).values({ day: new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }), purpose: "gespraechsbewertung", calls: 1, costMilliCents: 150_000 });
+      expect((await owner.leadops.callRecheckStatus()).paused).toBe(true); await recheckCallAnswers(db, { tenantId, max: 500 }); expect(await missingIds()).toEqual(expect.arrayContaining(mine));
+      await owner.leadops.setCallAiCap({ euros: 0 }); await db.delete(aiUsageDays); forgetSpentCache();
+      // (c) nachholen – so lange, bis diese fünf dran waren
+      for (let round = 0; round < 20 && (await missingIds()).some((id) => mine.includes(id)); round += 1) await recheckCallAnswers(db, { tenantId, max: 100 });
+      const rows = new Map((await db.select().from(callsTable).where(inArray(callsTable.id, [...mine, f]))).map((row) => [row.id, row]));
+      const answer = (id: number) => (rows.get(id)!.qualificationAnswers as Record<string, { answer: string }>).bis_zu_3_angebote?.answer;
+      expect(answer(a)).toBe("nein"); expect(answer(b)).toBe("ja"); expect(answer(c)).toBe("nein"); expect(answer(f)).toBeUndefined();
+      // ohne den Satz: zurückgewiesen, mit Vermerk und der Entscheidung davor
+      expect(rows.get(a)).toMatchObject({ decision: "zurueckgewiesen", decidedBy: "automatisch", recheckFrom: "freigegeben" }); expect(rows.get(a)!.nextStep).toBe("Nachprüfung: Pflichtfrage „Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?“ = Nein");
+      expect(rows.get(a)!.recheckedAt).toBeTruthy();
+      // mit dem Satz: bleibt freigegeben; von Hand entschieden: behält die Entscheidung
+      expect(rows.get(b)).toMatchObject({ decision: "freigegeben", recheckFrom: null }); expect(rows.get(b)!.recheckedAt).toBeTruthy();
+      expect(rows.get(c)).toMatchObject({ decision: "freigegeben", decidedBy: "manuell", recheckFrom: null });
+      expect(rows.get(d)).toMatchObject({ decision: "zurueckgewiesen", recheckFrom: "freigegeben" }); expect(rows.get(e)).toMatchObject({ decision: "zurueckgewiesen", recheckFrom: "pruefen" });
+      expect(rows.get(f)).toMatchObject({ decision: "freigegeben", recheckedAt: null });
+      // der Lead folgt: noch nicht ausgeliefert → „Fehlerhaft“; ausgeliefert → bleibt; der Kontakt der Liste wird verworfen
+      const statusOf = async (id: number) => (await db.select().from(leadsTable).where(eq(leadsTable.id, id)))[0].status;
+      expect(await statusOf(leadA)).toBe("fehlerhaft"); expect(await statusOf(leadD)).toBe("zugewiesen"); expect(await statusOf(leadC)).toBe("genehmigt");
+      const notesOf = async (id: number) => (await db.select().from(eventsTable).where(eq(eventsTable.leadId, id))).map((row) => row.note ?? "");
+      expect(await notesOf(leadA)).toContain("Nachprüfung des Gesprächs: Pflichtfrage „Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?“ = Nein → zurückgewiesen – Lead jetzt „Fehlerhaft“");
+      expect((await notesOf(leadD)).some((note) => note.endsWith("der Lead war schon ausgeliefert und bleibt unverändert"))).toBe(true); expect(await notesOf(leadC)).not.toEqual(expect.arrayContaining([expect.stringContaining("Nachprüfung")]));
+      expect((await db.select().from(rawTable).where(eq(rawTable.id, raw)))[0].status).toBe("verworfen");
+      // (d) Stand und Filter: Die Liste zeigt die geänderten mit der Entscheidung davor
+      const after = await owner.leadops.callRecheckStatus(); expect(after.changed.total).toBeGreaterThanOrEqual(3); expect(after.changed.rejected).toBeGreaterThanOrEqual(3); expect(after.changed.leadsHeld).toBeGreaterThanOrEqual(1); expect(after.changed.delivered).toBeGreaterThanOrEqual(1);
+      const listed = await owner.leadops.listCalls({ rechecked: true, limit: 1000 }); const listedIds = listed.map((row) => row.id);
+      expect(listedIds).toEqual(expect.arrayContaining([a, d, e])); expect(listedIds).not.toContain(b); expect(listedIds).not.toContain(c); expect(listed.find((row) => row.id === a)!.recheckFrom).toBe("freigegeben");
+      // (e) wer das Gespräch anhört und doch freigibt, entscheidet von Hand – die Markierung verschwindet; nichts wird noch einmal nachgeprüft
+      await owner.leadops.reviewCall({ callId: a, decision: "freigegeben" }); expect((await db.select().from(callsTable).where(eq(callsTable.id, a)))[0]).toMatchObject({ decision: "freigegeben", decidedBy: "manuell", recheckFrom: null });
+      expect((await owner.leadops.listCalls({ rechecked: true, limit: 1000 })).map((row) => row.id)).not.toContain(a); expect(await missingIds()).not.toEqual(expect.arrayContaining([a]));
+      // (f) nur intern
+      await expect(invitee.leadops.callRecheckStatus()).rejects.toThrow();
+    } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; await owner.leadops.setCallAiCap({ euros: 0 }).catch(() => undefined); }
+  }, 120000);
 });

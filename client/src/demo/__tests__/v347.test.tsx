@@ -117,7 +117,8 @@ describe("Version 347", () => {
     const call = card("Gespräch"); expect(call.querySelector(".lead-call-top")!.textContent).toContain("Freigegeben"); expect(call.querySelector(".lead-call-score")!.textContent).toBe("88 von 100 Punkten"); expect(call.querySelector(".lead-call-top")!.textContent).toContain("Agent Nele Winter (am Telefon: Sophie Lang)");
     expect(call.querySelector(".lead-call-summary")!.textContent).toContain("Flachdach");
     const answers = Array.from(call.querySelectorAll(".lead-call-answers li")).map((item) => [item.querySelector(".lead-call-answer")!.textContent, item.querySelector("strong")!.textContent]);
-    expect(answers).toEqual([["Ja", "Hat der Mitarbeiter nach Photovoltaik gefragt?"], ["Ja", "Hat der Kunde generell Interesse?"], ["Unklar", "Stimmt der Kunde einem Vor-Ort-Termin innerhalb eines Monats zu?"], ["Ja", "Ist eine telefonische Kontaktaufnahme erwünscht?"], ["Nein", "Wurden alle Fragen gestellt?"]]);
+    expect(answers).toEqual([["Ja", "Hat der Mitarbeiter nach Photovoltaik gefragt?"], ["Nein", "Hat der Mitarbeiter nach einer Wärmepumpe gefragt?"], ["Nein", "Hat der Mitarbeiter nach einem Wintergarten gefragt?"], ["Ja", "Hat der Kunde generell Interesse?"], // seit v354 hat jedes Beispiel-Gespräch alle Antworten seines Fragensatzes
+       ["Unklar", "Stimmt der Kunde einem Vor-Ort-Termin innerhalb eines Monats zu?"], ["Ja", "Ist eine telefonische Kontaktaufnahme erwünscht?"], ["Nein", "Wurden alle Fragen gestellt?"]]);
     expect(call.querySelector("header a")!.getAttribute("href")).toMatch(/page=Gespr%C3%A4che&callId=\d+$/);
     expect(pairs(card("Herkunft"))).toMatchObject({ Lieferant: "OnDialer", Quelle: "OnDialer", Liste: "Kontakte vom Dialer" });
     // Lead-Log: Vermerk als eigener Eintrag, Kategorie beim Namen
