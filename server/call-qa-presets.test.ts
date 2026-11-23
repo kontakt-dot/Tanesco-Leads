@@ -9,7 +9,7 @@ Agent: Sind Sie der Eigentümer des Hauses und entscheiden Sie das selbst?
 Kunde: Ja, das Haus gehört uns, ich entscheide das mit meiner Frau.
 Agent: Wann möchten Sie umsetzen?
 Kunde: Am liebsten zeitnah, in den nächsten drei Monaten, spätestens im Frühjahr.
-Agent: Sehr gut. Dann wird sich Photovoltaik Angebotsvergleich bei Ihnen melden und Ihnen passende Angebote vorstellen. Telefonisch unter dieser Nummer erreichbar?
+Agent: Sehr gut. Dann wird sich Photovoltaik Angebotsvergleich bei Ihnen melden, und Sie bekommen bis zu 3 Angebote von unseren Fachpartnern. Telefonisch unter dieser Nummer erreichbar?
 Kunde: Ja, gerne, am besten nachmittags anrufen.`;
 
 const bad = `Agent: Guten Tag, hier ist Yilmaz vom Energieservice. Sie interessieren sich für Photovoltaik?
@@ -29,7 +29,7 @@ describe("Vorlage Photovoltaik – HausKompass", () => {
     expect(answers.hauskompass_genannt.answer).toBe("ja");
     expect(answers.eigentuemer_entscheider.answer).toBe("ja");
     expect(answers.umsetzung_6_monate.answer).toBe("ja");
-    expect(answers.uebergabe_angebotsvergleich.answer).toBe("ja");
+    expect(answers.uebergabe_angebotsvergleich.answer).toBe("ja"); expect(answers.bis_zu_3_angebote.answer).toBe("ja");
     expect(decideByQuestions(PV_HAUSKOMPASS_PRESET.questions, answers).decision).toBe("freigegeben");
   });
   it("Mieter, Umsetzung nächstes Jahr, kein HausKompass, keine Übergabe → zurückgewiesen", () => {
@@ -39,6 +39,25 @@ describe("Vorlage Photovoltaik – HausKompass", () => {
     expect(answers.umsetzung_6_monate.answer).toBe("nein");
     expect(answers.uebergabe_angebotsvergleich.answer).toBe("nein");
     expect(decideByQuestions(PV_HAUSKOMPASS_PRESET.questions, answers).decision).toBe("zurueckgewiesen");
+  });
+});
+
+describe("Am Ende: bis zu 3 Angebote von Fachpartnern", () => {
+  it("ist Pflicht: fehlt der Satz, wird das Gespräch zurückgewiesen – auch wenn „Photovoltaik Angebotsvergleich“ angekündigt wurde", () => {
+    expect(PV_HAUSKOMPASS_PRESET.questions.find((q) => q.key === "bis_zu_3_angebote")?.rule).toBe("required");
+    const without = good.replace(", und Sie bekommen bis zu 3 Angebote von unseren Fachpartnern", "");
+    const answers = answerQuestionsHeuristically(PV_HAUSKOMPASS_PRESET.questions, without);
+    expect(answers.uebergabe_angebotsvergleich.answer).toBe("ja"); expect(answers.bis_zu_3_angebote).toMatchObject({ answer: "nein" });
+    expect(decideByQuestions(PV_HAUSKOMPASS_PRESET.questions, answers)).toEqual({ decision: "zurueckgewiesen", reason: "Pflichtfrage „Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?“ = Nein" });
+  });
+  it("versteht andere Worte mit demselben Sinn; „mehrere Angebote“ ohne Zahl ist unklar (zur Prüfung)", () => {
+    const ask = (sentence: string) => answerQuestionsHeuristically(PV_HAUSKOMPASS_PRESET.questions, `Agent: ${sentence}`).bis_zu_3_angebote.answer;
+    expect(ask("Sie erhalten bis zu drei Angebote von Fachbetrieben aus Ihrer Region.")).toBe("ja");
+    expect(ask("Maximal 3 Fachpartner melden sich dann bei Ihnen.")).toBe("ja");
+    expect(ask("Drei Angebote bekommen Sie per Post.")).toBe("ja");
+    expect(ask("Sie bekommen dann mehrere Angebote.")).toBe("unklar");
+    expect(ask("Dann meldet sich Photovoltaik Angebotsvergleich.")).toBe("nein");
+    expect(PV_HAUSKOMPASS_PRESET.instructions).toContain("bis zu 3 Angebote von Fachpartnern");
   });
 });
 
@@ -52,7 +71,7 @@ describe("Datei-Link aus einer Player-Seite", () => {
   });
 
   it("Wärmepumpe zählt wie Photovoltaik – Übergabe an „Photovoltaik Angebotsvergleich“ bleibt richtig", () => {
-    const wp = `Agent: Guten Tag, hier ist Yilmaz von HausKompass, es geht um eine Wärmepumpe für Ihr Haus.\nKunde: Ja, unsere Gasheizung ist alt, wir wollen zeitnah eine Wärmepumpe, am liebsten in den nächsten Monaten.\nAgent: Sind Sie der Eigentümer?\nKunde: Ja, das Haus gehört uns.\nAgent: Dann meldet sich Photovoltaik Angebotsvergleich bei Ihnen – die machen auch Wärmepumpen. Telefonisch erreichbar?\nKunde: Ja, gerne anrufen.`;
+    const wp = `Agent: Guten Tag, hier ist Yilmaz von HausKompass, es geht um eine Wärmepumpe für Ihr Haus.\nKunde: Ja, unsere Gasheizung ist alt, wir wollen zeitnah eine Wärmepumpe, am liebsten in den nächsten Monaten.\nAgent: Sind Sie der Eigentümer?\nKunde: Ja, das Haus gehört uns.\nAgent: Bis zu drei Fachbetriebe aus Ihrer Region melden sich mit Angeboten. Dann meldet sich Photovoltaik Angebotsvergleich bei Ihnen – die machen auch Wärmepumpen. Telefonisch erreichbar?\nKunde: Ja, gerne anrufen.`;
     const answers = answerQuestionsHeuristically(PV_HAUSKOMPASS_PRESET.questions, wp);
     expect(answers.interesse.answer).toBe("ja"); expect(answers.uebergabe_angebotsvergleich.answer).toBe("ja");
     expect(decideByQuestions(PV_HAUSKOMPASS_PRESET.questions, answers).decision).toBe("freigegeben");
