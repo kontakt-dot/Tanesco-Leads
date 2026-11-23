@@ -6,13 +6,14 @@
 export type AiArea = "gespraeche" | "kampagnen" | "firmen" | "assistenten" | "sonstiges";
 /** Bereiche in fester Reihenfolge – daran hängt auch die Farbe im Schaubild (nie nach Rang umsortieren). */
 export const AI_AREAS: Array<{ key: AiArea; label: string; hint: string }> = [
-  { key: "gespraeche", label: "Gespräche", hint: "Telefonate bewerten, Prüffragen, Agent und Kontakt erkennen" },
+  { key: "gespraeche", label: "Gespräche", hint: "Telefonate mitschreiben und bewerten, Prüffragen, Agent und Kontakt erkennen" },
   { key: "kampagnen", label: "E-Mail-Kampagnen", hint: "E-Mails vorschreiben, Kategorien prüfen" },
   { key: "firmen", label: "Firmen und Webseiten", hint: "Webseiten lesen, Firmenprofile für den Lead-Finder" },
   { key: "assistenten", label: "Assistenten", hint: "Kategorie, Integration oder Automatisierung per KI anlegen" },
   { key: "sonstiges", label: "Sonstiges", hint: "Hilfe und einzelne Auswertungen" },
 ];
 const PURPOSES: Record<string, { label: string; area: AiArea }> = {
+  abschrift: { label: "Gespräche mitschreiben (Abschrift)", area: "gespraeche" },
   gespraechsbewertung: { label: "Gespräche bewerten", area: "gespraeche" },
   qualifizierung: { label: "Prüffragen der Kampagne beantworten", area: "gespraeche" },
   zeitmarken: { label: "Stellen im Gespräch finden", area: "gespraeche" },

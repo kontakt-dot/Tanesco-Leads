@@ -91,14 +91,17 @@ export function startRecordingRetry(intervalSeconds = Number(process.env.RECORDI
   let running = false;
   const tick = async () => {
     if (running) return; running = true;
-    try { const db = await getDb(); if (!db) return; const { retryWaitingRecordings } = await import("./call-qa"); const result = await retryWaitingRecordings(db); if (result.retried) console.log(`[Gespräche] Aufnahme nachgeholt: ${result.retried} Versuche, ${result.done} bewertet`);
+    try { const db = await getDb(); if (!db) return; const { retryWaitingRecordings, resumeCappedCalls, cappedCallTenants } = await import("./call-qa"); const result = await retryWaitingRecordings(db); if (result.retried) console.log(`[Gespräche] Aufnahme nachgeholt: ${result.retried} Versuche, ${result.done} bewertet`);
+      // Gespräche, die wegen der Tagesgrenze der KI gewartet haben: weiter, sobald wieder Budget frei ist
+      const resumed = await resumeCappedCalls(db).catch(() => ({ resumed: 0, done: 0 })); if (resumed.resumed) console.log(`[Gespräche] Nach der Tagesgrenze nachgeholt: ${resumed.resumed}, ${resumed.done} bewertet`);
+      const capped = await cappedCallTenants(db).catch(() => new Set<number>());
       // Nebenher (ohne den Takt aufzuhalten): Gespräche ohne Kriterien-Punkte nachbewerten und unsichere Agenten-Namen von der KI prüfen lassen
       const { rescoreUnscoredCalls, verifyAgentsWithAi } = await import("./call-qa");
       void rescoreUnscoredCalls(db).then((done) => { if (done.tried) console.log(`[Gespräche] Kriterien nachbewertet: ${done.rescored} von ${done.tried}`); }).catch((error) => console.error("[Gespräche] Kriterien nachbewerten:", error instanceof Error ? error.message : error));
       void import("./agent-alias").then(({ syncAgentAliases }) => syncAgentAliases(db)).then((done) => { if (done.renamed) console.log(`[Gespräche] Alias-Namen: ${done.renamed} Gespräche dem echten Namen zugeordnet.`); }).catch((error) => console.error("[Gespräche] Alias-Namen:", error instanceof Error ? error.message : error));
       void verifyAgentsWithAi(db).then((done) => { if (done.checked) console.log(`[Gespräche] Agenten per KI geprüft: ${done.checked}, geändert ${done.changed}`); }).catch((error) => console.error("[Gespräche] Agenten prüfen:", error instanceof Error ? error.message : error));
       // Leads aus freigegebenen Gesprächen: Felder der Kategorie und fehlende Kontaktangaben aus dem Gespräch nachtragen (ein paar je Takt)
-      void import("./lead-from-call").then(({ fillLeadsFromCalls }) => fillLeadsFromCalls(db, { max: 12 })).then((done) => { if (done.filled) console.log(`[Leads] Aus Gesprächen ergänzt: ${done.filled} Leads, ${done.fields} Felder.`); }).catch((error) => console.error("[Leads] Felder aus Gesprächen:", error instanceof Error ? error.message : error)); }
+      if (!capped.size) void import("./lead-from-call").then(({ fillLeadsFromCalls }) => fillLeadsFromCalls(db, { max: 12 })).then((done) => { if (done.filled) console.log(`[Leads] Aus Gesprächen ergänzt: ${done.filled} Leads, ${done.fields} Felder.`); }).catch((error) => console.error("[Leads] Felder aus Gesprächen:", error instanceof Error ? error.message : error)); }
     catch (error) { console.error("[Gespräche] Aufnahme nachholen:", error instanceof Error ? error.message : error); } finally { running = false; }
   };
   recordingRetryTimer = setInterval(tick, intervalSeconds * 1000); recordingRetryTimer.unref?.();

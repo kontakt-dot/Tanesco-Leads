@@ -5966,4 +5966,62 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       if (chainId) await owner.leadops.deleteDeliveryChain({ chainId });
     }
   }, 120000);
+
+  it("v350. KI bei Gesprächen: Die Abschrift zählt beim Verbrauch mit; eigene Obergrenze je Tag – ist sie erreicht, warten neue Gespräche und werden später von selbst bewertet; was man selbst anklickt, läuft immer", async () => {
+    const schema = await import("../drizzle/schema"); const { aiUsageDays, callRecords: callsTable, callQaConfigs: configTable } = schema; const tenantId = S.tenantId as number;
+    const { recordTranscriptionUsage, transcriptionMilliCents, callAiSpentToday, forgetSpentCache } = await import("./ai-budget"); const { resumeCappedCalls, cappedCallTenants, reevaluateCalls, processCall, CAP_WAIT_NOTE } = await import("./call-qa");
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    const good = "Agent: Ich rufe von HausKompass an, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar. Agent: Dann meldet sich der Photovoltaik Angebotsvergleich bei Ihnen.";
+    const callOf = async (externalCallId: string) => (await db.select().from(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.externalCallId, externalCallId))))[0];
+    const stamp = Date.now().toString(36); const id = (n: number) => `v350-${stamp}-${n}`;
+    await db.delete(aiUsageDays); forgetSpentCache();
+    try {
+      // (a) Preise der Abschrift: 5 Minuten bei OpenAI = 0,03 $ ≈ 2,76 Cent; Deepgram ist billiger; ein unbekannter Dienst kostet nichts
+      expect(transcriptionMilliCents("openai", 300)).toBe(2760); expect(transcriptionMilliCents("deepgram", 300)).toBe(1978); expect(transcriptionMilliCents("payload", 300)).toBe(0); expect(transcriptionMilliCents("openai", -5)).toBe(0);
+      expect(await owner.leadops.callAiToday()).toMatchObject({ spentCents: 0, transcriptCents: 0, ratingCents: 0, calls: 0, perCallCents: null, capCents: 0, reached: false, waiting: 0 });
+      // (b) Verbuchen: Die Abschrift steht im Bereich „Gespräche“ – getrennt von der Bewertung
+      await recordTranscriptionUsage(db, { service: "openai", seconds: 300 }); await recordTranscriptionUsage(db, { service: "openai", seconds: 600 }); await recordTranscriptionUsage(db, { service: "openai", seconds: null });
+      await db.insert(aiUsageDays).values({ day: new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }), purpose: "gespraechsbewertung", calls: 2, costMilliCents: 4000 });
+      await db.insert(aiUsageDays).values({ day: new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }), purpose: "vorschlaege", calls: 9, costMilliCents: 90_000 }); // E-Mail-Kampagnen zählen bei den Gesprächen nicht mit
+      expect(await callAiSpentToday(db)).toMatchObject({ transcribed: 3, evaluated: 2 }); expect((await callAiSpentToday(db)).cents).toBeCloseTo(12.28, 2);
+      let today = await owner.leadops.callAiToday(); expect(today).toMatchObject({ spentCents: 12, transcriptCents: 8, ratingCents: 4, calls: 3, perCallCents: 4.1, capCents: 0, reached: false });
+      const history = await owner.leadops.aiUsageHistory({ days: 7 }); const day = history.days[history.days.length - 1];
+      expect(history.callCapCents).toBe(0); expect(day.areas.gespraeche).toBe(12); expect(day.parts.find((part) => part.label === "Gespräche mitschreiben (Abschrift)")).toMatchObject({ area: "gespraeche", calls: 3, cents: 8 });
+
+      // (c) ohne Obergrenze wird jedes Gespräch sofort bewertet
+      const free = await post({ call_id: id(1), phone: "+49 2591 5550801", consent: true, transcript: `Agent: Guten Tag Frau Arndt. ${good}` }); expect(free.json).toMatchObject({ ok: true, evaluated: true }); expect((await callOf(id(1))).status).toBe("bewertet");
+
+      // (d) Obergrenze 1 € – der Verbrauch liegt darunter: weiter wie gewohnt. Eingaben werden begrenzt (unter 1 € gibt es nicht, 0 heißt keine Grenze)
+      expect(await owner.leadops.setCallAiCap({ euros: 0.2 })).toEqual({ capCents: 100 }); expect((await db.select().from(configTable).where(eq(configTable.tenantId, tenantId)))[0].aiDailyCapCents).toBe(100);
+      expect((await owner.leadops.getCallQaSettings()).aiDailyCapCents).toBe(100); expect((await owner.leadops.aiUsageHistory({ days: 7 })).callCapCents).toBe(100);
+      expect((await cappedCallTenants(db)).has(tenantId)).toBe(false);
+      expect((await post({ call_id: id(2), phone: "+49 2591 5550802", consent: true, transcript: `Agent: Guten Tag Herr Kraus. ${good}` })).json).toMatchObject({ evaluated: true });
+      // (e) Grenze erreicht: Das Gespräch wird angenommen und gespeichert, aber nicht bewertet – es wartet mit einem Vermerk. Es entsteht kein Lead.
+      await recordTranscriptionUsage(db, { service: "openai", seconds: 60 * 170 }); // rund 94 Cent dazu → über 1 €
+      today = await owner.leadops.callAiToday(); expect(today).toMatchObject({ capCents: 100, reached: true, waiting: 0 }); expect(today.spentCents).toBeGreaterThanOrEqual(100); expect((await cappedCallTenants(db)).has(tenantId)).toBe(true);
+      const held = await post({ call_id: id(3), phone: "+49 2591 5550803", consent: true, transcript: `Agent: Guten Tag Herr Lorenz. ${good}` });
+      expect(held.status).toBe(200); expect(held.json).toMatchObject({ ok: true, evaluated: false, error: CAP_WAIT_NOTE }); expect(held.json.lead_id ?? null).toBeNull();
+      let waitingCall = await callOf(id(3)); expect(waitingCall).toMatchObject({ status: "transkribiert", decision: "offen", error: CAP_WAIT_NOTE, score: null }); expect(waitingCall.leadId).toBeNull(); // der Text kam vom Dialer mit – nur die Bewertung fehlt
+      const heldAudio = await post({ call_id: id(4), phone: "+49 2591 5550804", consent: true, recording_url: "https://aufnahmen.example/v350.mp3" }); expect(heldAudio.json).toMatchObject({ evaluated: false, error: CAP_WAIT_NOTE }); expect((await callOf(id(4))).status).toBe("eingegangen"); // die Aufnahme wird gar nicht erst geholt
+      expect(await owner.leadops.callAiToday()).toMatchObject({ reached: true, waiting: 2 });
+      // die Liste zeigt den Vermerk
+      const listed = (await owner.leadops.listCalls({ search: "5550803" })).rows ?? await owner.leadops.listCalls({ search: "5550803" }); expect(JSON.stringify(listed)).toContain("Tagesgrenze der KI erreicht");
+      // solange die Grenze gilt, holt der Minutentakt nichts nach – und ein schon bewertetes Gespräch bleibt, wie es ist
+      expect(await resumeCappedCalls(db)).toEqual({ resumed: 0, done: 0 }); expect((await callOf(id(3))).status).toBe("transkribiert");
+      const doneBefore = await callOf(id(1)); expect(await processCall(db, doneBefore.id, { auto: true })).toMatchObject({ status: "wartet" }); expect(await callOf(id(1))).toMatchObject({ status: "bewertet", decision: doneBefore.decision, error: null });
+      // (f) was man selbst anklickt, läuft immer: „Neu bewerten“ trotz Grenze
+      await reevaluateCalls(db, tenantId, [waitingCall.id], { waitFor: true }); waitingCall = await callOf(id(3)); expect(waitingCall).toMatchObject({ status: "bewertet", error: null }); expect(waitingCall.decision).not.toBe("offen");
+      expect(await owner.leadops.callAiToday()).toMatchObject({ waiting: 1 });
+      // (g) Grenze höher gesetzt (oder neuer Tag): Das wartende Gespräch läuft von selbst weiter – hier scheitert es dann normal an der Aufnahme, die es nicht gibt
+      expect(await owner.leadops.setCallAiCap({ euros: 50 })).toEqual({ capCents: 5000 }); expect(await owner.leadops.callAiToday()).toMatchObject({ reached: false, capCents: 5000 });
+      const resumed = await resumeCappedCalls(db, { fetchImpl: (async () => new Response("nicht da", { status: 404 })) as typeof fetch }); expect(resumed.resumed).toBe(1);
+      const after = await callOf(id(4)); expect(after.status).toBe("fehlgeschlagen"); expect(after.error ?? "").not.toContain("Tagesgrenze"); expect(await owner.leadops.callAiToday()).toMatchObject({ waiting: 0 });
+      // (h) 0 = keine Grenze; nur intern erreichbar
+      expect(await owner.leadops.setCallAiCap({ euros: 0 })).toEqual({ capCents: 0 }); expect((await cappedCallTenants(db)).size).toBe(0);
+      await expect(invitee.leadops.callAiToday()).rejects.toThrow(); await expect(invitee.leadops.setCallAiCap({ euros: 3 })).rejects.toThrow();
+    } finally {
+      await db.update(configTable).set({ aiDailyCapCents: 0 }).where(eq(configTable.tenantId, tenantId)); await db.delete(aiUsageDays); forgetSpentCache();
+    }
+  }, 120000);
 });

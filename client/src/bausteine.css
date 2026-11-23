@@ -143,6 +143,34 @@ html:not(.dark) .ai-usage{
 .au-table th:first-child,.au-table td:first-child{text-align:left}
 .au-table td button{padding:0;border:0;background:none;color:inherit;font:inherit;text-decoration:underline;text-decoration-color:var(--au-line);text-underline-offset:3px;cursor:pointer}
 .au-table tr.is-on td{background:var(--au-pick)}
+/* KI bei Gesprächen heute: eigene Zeile mit Kosten, Preis je Gespräch und Obergrenze */
+.au-calls{display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px;padding:14px 16px;border:1px solid var(--au-line);border-left:3px solid var(--au-gespraeche);border-radius:14px;background:var(--au-soft)}
+.au-calls>div{display:grid;gap:1px;min-width:0}
+.au-calls span{font-size:12.5px;font-weight:600;color:var(--au-dim)}
+.au-calls strong{font-size:22px;line-height:1.15;font-weight:800;letter-spacing:-.02em;color:var(--au-ink);font-variant-numeric:tabular-nums}
+.au-calls b{font-size:15px;font-weight:700;color:var(--au-ink);font-variant-numeric:tabular-nums}
+.au-calls small{font-size:12px;color:var(--au-faint)}
+.au-calls.is-full{border-left-color:var(--au-warn)}.au-calls.is-full .au-calls-fact:last-of-type small{color:var(--au-warn);font-weight:600}
+.au-cap-btn{margin-left:auto;height:34px;padding:0 14px;border:1px solid var(--au-line);border-radius:10px;background:transparent;color:var(--au-ink);font-size:12.5px;font-weight:700;cursor:pointer}
+.au-cap-btn:hover{background:var(--au-pick)}.au-cap-btn:focus-visible{outline:2px solid var(--au-ink);outline-offset:2px}
+@media(max-width:700px){.au-calls{gap:10px 20px}.au-cap-btn{margin-left:0;width:100%}}
+.au-amount{display:grid;gap:6px;flex:1 1 100%;padding-top:10px;border-top:1px solid var(--au-line)}
+.au-foot .au-amount{flex:1 1 100%}
+.au-amount label{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;font-size:13px;font-weight:600;color:var(--au-ink)}
+.au-amount label>span:first-child{font-size:13px;color:var(--au-ink)}
+.au-amount-field{position:relative;display:inline-flex;align-items:center}
+.au-amount-field input{width:120px;height:38px;padding:0 30px 0 12px;border:1px solid var(--au-line);border-radius:10px;background:var(--au-surface);color:var(--au-ink);font:inherit;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.au-amount-field input:focus-visible{outline:2px solid var(--au-gespraeche);outline-offset:1px}
+.au-amount-field input[aria-invalid="true"]{border-color:var(--au-warn)}
+.au-amount-field i{position:absolute;right:11px;font-style:normal;font-size:13px;color:var(--au-faint)}
+.au-amount small{font-size:12px;line-height:1.45;color:var(--au-faint)}
+.au-amount-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.au-amount-actions .au-cap-btn{margin-left:0;height:38px}
+/* Knopf „KI heute“ in der Werkzeugzeile der Gespräche */
+.cq-tool.cq-ai b{font-weight:700;color:inherit;font-variant-numeric:tabular-nums}
+.cq-tool.cq-ai em{font-style:normal}
+.cq-tool.cq-ai.is-full{color:#fca5a5;border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.1)}
+html:not(.dark) .cq-tool.cq-ai.is-full{color:#b42318!important;border-color:#fecdca!important;background:#fef3f2!important}
 .au-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px}
 .au-foot p{flex:1 1 380px;margin:0;font-size:12.5px;line-height:1.5;color:var(--au-dim)}
 .au-budget-btn{height:38px;padding:0 16px;border:0;border-radius:11px;background:var(--au-btn-bg);color:var(--au-btn-ink);font-size:13px;font-weight:700;cursor:pointer}

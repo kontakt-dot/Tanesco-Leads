@@ -2972,14 +2972,19 @@ function demoAiRows(): AiUsageRow[] {
     const day = demoAiDay(back); const weekday = new Date(`${day}T12:00:00Z`).getUTCDay(); const busy = weekday === 0 ? 0.06 : weekday === 6 ? 0.22 : 1; const seed = Number(day.replace(/-/g, "")); const roll = (n: number) => demoAiDice(seed * 31 + n * 977);
     const add = (purpose: string, calls: number, milliEach: number) => { const count = Math.round(calls); if (count > 0) rows.push({ day, purpose, calls: count, costMilliCents: Math.round(count * milliEach) }); };
     const talks = (16 + roll(1) * 20) * busy;
-    add("gespraechsbewertung", talks, 7600 + roll(2) * 2800); add("qualifizierung", talks, 640); add("zeitmarken", talks * 0.9, 480); add("kontakt_aus_gespraech", talks * 0.45, 230); add("agentenname", talks * 0.2, 120);
+    add("abschrift", talks, 2300 + roll(12) * 1400); add("gespraechsbewertung", talks, 2100 + roll(2) * 900); add("qualifizierung", talks, 640); add("zeitmarken", talks * 0.9, 480); add("kontakt_aus_gespraech", talks * 0.45, 230); add("agentenname", talks * 0.2, 120);
     add("vorschlaege", (28 + roll(3) * 55) * busy, 2500 + roll(4) * 600); add("kategoriepruefung", (8 + roll(5) * 26) * busy, 290);
     add("webseite", roll(6) * 34 * busy, 880); if (roll(7) > 0.7) add("firmenprofil", 4 + roll(8) * 10, 1900);
     if (roll(9) > 0.82) add("automation_builder_draft", 1 + roll(10) * 2, 5200); add("sonstiges", roll(11) * 5 * busy, 1400);
   }
   return rows;
 }
-procedures["leadops.aiUsageHistory"] = (input) => { const today = demoAiDay(0); const history = buildAiUsageHistory(demoAiRows(), today, Math.max(1, Math.min(92, Number(input?.days) || 30))); return { ...history, budgetCents: demoAiBudgetCents, todayCents: history.days[history.days.length - 1]?.cents ?? 0 }; };
+procedures["leadops.aiUsageHistory"] = (input) => { const today = demoAiDay(0); const history = buildAiUsageHistory(demoAiRows(), today, Math.max(1, Math.min(92, Number(input?.days) || 30))); return { ...history, budgetCents: demoAiBudgetCents, callCapCents: demoCallCapCents, todayCents: history.days[history.days.length - 1]?.cents ?? 0 }; };
+// KI bei Gesprächen heute: Abschrift und Bewertung, Obergrenze je Tag (in der Vorschau wartet nichts wirklich – erreicht heißt hier nur: so sähe es aus)
+let demoCallCapCents = 0;
+procedures["leadops.callAiToday"] = () => { const today = demoAiDay(0); const rows = demoAiRows().filter((row) => row.day === today && purposeInfo(row.purpose).area === "gespraeche"); const milli = (list: AiUsageRow[]) => list.reduce((sum, row) => sum + row.costMilliCents, 0); const transcript = milli(rows.filter((row) => row.purpose === "abschrift")); const all = milli(rows); const count = rows.find((row) => row.purpose === "gespraechsbewertung")?.calls ?? 0; const reached = demoCallCapCents > 0 && all / 1000 >= demoCallCapCents;
+  return { spentCents: Math.round(all / 1000), transcriptCents: Math.round(transcript / 1000), ratingCents: Math.round((all - transcript) / 1000), calls: count, perCallCents: count ? Math.round((all / 1000 / count) * 10) / 10 : null, capCents: demoCallCapCents, reached, waiting: reached ? 3 : 0 }; };
+procedures["leadops.setCallAiCap"] = (input) => { const euros = Number(input.euros) || 0; demoCallCapCents = euros > 0 ? Math.max(100, Math.min(100_000, Math.round(euros * 100))) : 0; return { capCents: demoCallCapCents }; };
 procedures["leadops.aiUsageToday"] = () => { const today = demoAiDay(0); const rows = demoAiRows().filter((row) => row.day === today); const spentCents = Math.round(rows.reduce((sum, row) => sum + row.costMilliCents, 0) / 1000); return { day: today, spentCents, budgetCents: demoAiBudgetCents, reached: spentCents >= demoAiBudgetCents, calls: rows.reduce((sum, row) => sum + row.calls, 0), parts: rows.map((row) => ({ purpose: row.purpose, label: purposeInfo(row.purpose).label, calls: row.calls, cents: Math.round(row.costMilliCents / 1000) })).sort((a, b) => b.cents - a.cents) }; };
 procedures["leadops.setAiDailyBudget"] = (input) => { demoAiBudgetCents = Math.max(100, Math.min(100_000, Math.round(Number(input.euros) * 100))); return { budgetCents: demoAiBudgetCents }; };
 procedures["leadops.campaignDailyStatus"] = () => ({ ...demoDailyStatus(), mail: { ready: true, simulated: false } }); // Chat-Demo: Versand gilt als eingerichtet

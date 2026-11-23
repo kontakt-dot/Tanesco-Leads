@@ -1,4 +1,5 @@
 import AgentAliasSettings from "@/components/AgentAliasSettings";
+import CallAiChip from "@/components/CallAiChip";
 import DialerIntake from "@/components/DialerIntake";
 import { Badge } from "@/components/ui/badge";
 import { SCOPE_LABEL } from "../../../shared/call-qualification";
@@ -212,7 +213,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
         <div className="cq-campaign-row">
           <span className="gq-label">Kampagne</span>
           <div className="dashboard-segments"><button type="button" className={campaign ? "" : "active"} onClick={() => onCampaign("")}>Alle</button>{(campaigns.data ?? []).map((item) => <button key={item.name} type="button" className={campaign === item.name ? "active" : ""} onClick={() => onCampaign(item.name)}>{item.name}</button>)}</div>
-          <div className="gq-tools"><button type="button" className="cq-tool" title={`Kampagne einstellen: Kriterien, Prüffragen, Auswertung${campaign ? ` für „${campaign}“` : ""}`} onClick={() => setShowSettings(true)}><Settings2 aria-hidden="true" /><span>Einstellen</span></button><button type="button" className="cq-tool" title="Aufnahmen testen – Datei hochladen oder Links einfügen" onClick={() => setShowImport(true)}><Upload aria-hidden="true" /><span>Aufnahmen testen</span></button></div>
+          <div className="gq-tools"><CallAiChip /><button type="button" className="cq-tool" title={`Kampagne einstellen: Kriterien, Prüffragen, Auswertung${campaign ? ` für „${campaign}“` : ""}`} onClick={() => setShowSettings(true)}><Settings2 aria-hidden="true" /><span>Einstellen</span></button><button type="button" className="cq-tool" title="Aufnahmen testen – Datei hochladen oder Links einfügen" onClick={() => setShowImport(true)}><Upload aria-hidden="true" /><span>Aufnahmen testen</span></button></div>
         </div>
         <div className="gq-agent-row">
           <div className="gq-agents" role="group" aria-label="Nach Agent filtern">
@@ -234,7 +235,7 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
           <tr className="gq-day"><th colSpan={7} scope="rowgroup"><span className="gq-day-line"><span className="gq-day-name">{day.label}</span>{day.sub && <span className="gq-day-date">{day.sub}</span>}<span className="gq-day-count">{day.rows.length === 1 ? "1 Gespräch" : `${day.rows.length} Gespräche`}</span>{!decision && day.rows.length > 1 && <Split approved={day.rows.filter((row) => row.decision === "freigegeben").length} review={day.rows.filter((row) => row.decision === "pruefen").length} rejected={day.rows.filter((row) => row.decision === "zurueckgewiesen").length} open={day.rows.filter((row) => !["freigegeben", "pruefen", "zurueckgewiesen"].includes(row.decision)).length} />}</span></th></tr>
           {day.rows.map((call) => { const started = call.startedAt ? new Date(call.startedAt) : null; const contact = call.leadName ?? call.rawContactName ?? null; const note = statusNote(call.status); const error = (call as { error?: string | null }).error ?? null; const optIn = (call as { optIn?: { status: OptInStatus; kind: OptInKind; buyerName: string | null; missing: string[] } | null }).optIn ?? null;
             // Zweite Zeile: worum es ging (Zusammenfassung der KI) – oder was gerade mit dem Gespräch passiert
-            const gist = call.status === "fehlgeschlagen" && error ? { cls: "is-warn", text: error } : note ? { cls: note.cls, text: note.text } : call.summary ? { cls: "", text: call.summary } : call.nextStep ? { cls: "", text: call.nextStep } : null;
+            const gist = call.status === "fehlgeschlagen" && error ? { cls: "is-warn", text: error } : call.status !== "bewertet" && error?.startsWith("Tagesgrenze der KI erreicht") ? { cls: "is-warn", text: `Wartet: ${error}` } : note ? { cls: note.cls, text: note.text } : call.summary ? { cls: "", text: call.summary } : call.nextStep ? { cls: "", text: call.nextStep } : null;
             return <tr key={call.id} className={`gq-call is-${moodOf(call)} ${selected.has(call.id) ? "is-selected" : ""}`} tabIndex={0} aria-label={`Gespräch ${started ? `${day.label}, ${timeText(started)} Uhr` : "ohne Uhrzeit"}${contact ? `, ${contact}` : ""} – öffnen`} onClick={() => onOpen(call.id)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(call.id); } }}>
               <td className="gq-col-check" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label="Gespräch auswählen" checked={selected.has(call.id)} onChange={(event) => toggle(call.id, event.target.checked)} /></td>
               <td className="gq-ampel"><MoodFace call={call} percent layout="row" /></td>

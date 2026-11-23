@@ -8,7 +8,8 @@
  *  5. Entscheidung: ab Freigabe-Schwelle Lead freigeben (und über die Automatisierung ausliefern/verkaufen),
  *     unter Ablehnungs-Schwelle sperren, dazwischen zur manuellen Prüfung.
  */
-import { and, asc, desc, eq, getTableColumns, gte, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gt, gte, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
+import { callAiCapReached, callAiSpentToday, recordTranscriptionUsage } from "./ai-budget";
 import { phoneFragment, searchWords } from "../shared/call-search";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
@@ -358,7 +359,7 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
   const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: dialerAgent ?? (isJunkAgentName(agentRaw) ? null : agentRaw || null), agentSource: dialerAgent ? "dialer" : null, leadCategoryId: namedCategory?.id ?? null, campaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
   const callId = Number(inserted[0]?.insertId) || 0;
   if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, contact: contactState, evaluated: false, reason: "no consent" } }; }
-  const result = await processCall(db, callId, options);
+  const result = await processCall(db, callId, { ...options, auto: true });
   // Lead-Nummer auch dann nennen, wenn der Kontakt erst durch die Freigabe zum Lead wurde
   const leadPublicId = lead?.publicId ?? (await db.select({ publicId: leads.publicId }).from(callRecords).innerJoin(leads, eq(leads.id, callRecords.leadId)).where(eq(callRecords.id, callId)).limit(1))[0]?.publicId ?? null;
   return { status: 200, body: { ok: true, call_id: callId, lead_id: leadPublicId, contact: contactState, evaluated: result.status === "bewertet", score: result.score, verdict: result.verdict, decision: result.decision, error: result.error } };
@@ -373,7 +374,7 @@ export async function ingestInternalCall(db: Db, tenantId: number, input: { exte
   const inserted = await db.insert(callRecords).values({ tenantId, provider: input.provider, externalCallId: input.externalCallId, leadId: input.leadId, rawContactId: input.rawContactId ?? null, phone: input.phone, agentName: input.agentName, campaign: input.campaign, direction: "ausgehend", startedAt: input.startedAt, durationSeconds: input.durationSeconds, recordingUrl: input.recordingUrl, consent, consentSource: consent ? input.consentSource ?? (config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich") : null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: { source: input.provider } });
   const callId = Number(inserted[0]?.insertId) || 0;
   if (!consent || !config.enabled) return { callId, evaluated: false, leadId: null };
-  const result = await processCall(db, callId, options);
+  const result = await processCall(db, callId, { ...options, auto: true });
   const record = (await db.select({ leadId: callRecords.leadId }).from(callRecords).where(eq(callRecords.id, callId)).limit(1))[0];
   return { callId, evaluated: result.status === "bewertet", decision: result.decision, leadId: record?.leadId ?? null };
 }
@@ -381,12 +382,14 @@ export async function ingestInternalCall(db: Db, tenantId: number, input: { exte
 /* ------------------------------------------------------------------ Transkription */
 
 /** Ergebnis der Umwandlung in Text: der Text, die Dauer (wenn der Dienst sie nennt) und die Abschnitte mit ihrer Zeit. */
-export type Transcription = { text: string; duration: number | null; segments: CallSegment[] };
+export type Transcription = { text: string; duration: number | null; segments: CallSegment[]; /** Dienst, der mitgeschrieben hat – daran hängen die Kosten */ service?: "openai" | "deepgram" };
+/** Vermerk am Gespräch, solange es wegen der Tagesgrenze der KI wartet (shared: der Anfang steht auch in der Oberfläche). */
+export const CAP_WAIT_NOTE = "Tagesgrenze der KI erreicht – das Gespräch wird von selbst bewertet, sobald wieder Budget frei ist.";
 async function transcribe(config: CallQaConfig, call: CallRecord, fetchImpl: typeof fetch): Promise<Transcription> {
   const provider = config.transcriptionProvider === "auto" ? (call.transcript ? "payload" : process.env.OPENAI_API_KEY ? "openai" : process.env.DEEPGRAM_API_KEY ? "deepgram" : "payload") : config.transcriptionProvider;
   if (provider === "payload") { if (call.transcript) return { text: call.transcript, duration: null, segments: [] }; throw new Error("Kein Transkript im Payload und kein Transkriptionsdienst konfiguriert (OPENAI_API_KEY oder DEEPGRAM_API_KEY)."); }
   const { audio, contentType } = await loadRecording(config, call, fetchImpl);
-  return transcribeAudio(config, audio, contentType, fetchImpl, provider);
+  return { ...(await transcribeAudio(config, audio, contentType, fetchImpl, provider)), service: provider };
 }
 /** Aufnahme eines Gesprächs holen: die hochgeladene Datei oder der Link des Dialers – auch, wenn dahinter erst eine Player-Seite liegt. */
 export async function loadRecording(config: Pick<CallQaConfig, "recordingAuthHeader">, call: Pick<CallRecord, "recordingUrl">, fetchImpl: typeof fetch): Promise<{ audio: Uint8Array<ArrayBuffer>; contentType: string }> {
@@ -580,7 +583,7 @@ export async function ensureCallTimeline(db: Db, tenantId: number, callId: numbe
   const provider = config.transcriptionProvider === "openai" || config.transcriptionProvider === "deepgram" ? config.transcriptionProvider : process.env.OPENAI_API_KEY ? "openai" : process.env.DEEPGRAM_API_KEY ? "deepgram" : null;
   if (!provider) return without("Für die Zeiten braucht es den Dienst, der Aufnahmen in Text umwandelt – er ist nicht eingerichtet.");
   let segments: CallSegment[] = [];
-  try { const fetchImpl = options.fetchImpl ?? fetch; const { audio, contentType } = await loadRecording(config, call, fetchImpl); segments = (await transcribeAudio(config, audio, contentType, fetchImpl, provider)).segments; }
+  try { const fetchImpl = options.fetchImpl ?? fetch; const { audio, contentType } = await loadRecording(config, call, fetchImpl); const again = await transcribeAudio(config, audio, contentType, fetchImpl, provider); segments = again.segments; void recordTranscriptionUsage(db, { service: provider, seconds: again.duration ?? call.durationSeconds }).catch(() => undefined); }
   catch (error) { return without(`Die Aufnahme ließ sich nicht auswerten: ${(error instanceof Error ? error.message : String(error)).slice(0, 160)}`); }
   if (!segments.length) return without("Der Dienst hat zu dieser Aufnahme keine Zeiten geliefert.");
   const marks = await storeCallMarks(db, call, segments, config);
@@ -663,7 +666,8 @@ export async function verifyAgentsWithAi(db: Db, options: { max?: number; tenant
   try {
     const since = new Date(Date.now() - 60 * 24 * 3_600_000);
     const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId, agentName: callRecords.agentName, transcript: callRecords.transcript }).from(callRecords).where(and(isNull(callRecords.agentSource), gte(callRecords.createdAt, since), inArray(callRecords.status, ["bewertet", "transkribiert"] as const), ...(options.tenantId ? [eq(callRecords.tenantId, options.tenantId)] : []))).orderBy(desc(callRecords.id)).limit(400);
-    const todo = rows.filter((row) => row.transcript && (agentCheckAttempts.get(row.id) ?? 0) < 2).slice(0, options.max ?? 8);
+    const capped = await cappedCallTenants(db).catch(() => new Set<number>());
+    const todo = rows.filter((row) => row.transcript && !capped.has(row.tenantId) && (agentCheckAttempts.get(row.id) ?? 0) < 2).slice(0, options.max ?? 8);
     let changed = 0; const touched = new Set<number>();
     for (const row of todo) {
       agentCheckAttempts.set(row.id, (agentCheckAttempts.get(row.id) ?? 0) + 1);
@@ -786,18 +790,54 @@ export async function retryWaitingRecordings(db: Db, options: { fetchImpl?: type
     const attempt = Number(/Versuch (\d+)\//.exec(row.error ?? "")?.[1]) || 1; const waitMs = Math.min(60, 2 ** attempt) * 60_000;
     if (Date.now() - new Date(row.updatedAt).getTime() < waitMs || retrying.has(row.id)) continue;
     retrying.add(row.id);
-    try { const result = await processCall(db, row.id, options); retried += 1; if (result.status === "bewertet") done += 1; } catch { /* bleibt fehlgeschlagen */ } finally { retrying.delete(row.id); }
+    try { const result = await processCall(db, row.id, { ...options, auto: true }); retried += 1; if (result.status === "bewertet") done += 1; } catch { /* bleibt fehlgeschlagen */ } finally { retrying.delete(row.id); }
   }
   return { retried, done };
 }
-export async function processCall(db: Db, callId: number, options: { fetchImpl?: typeof fetch } = {}) {
+/** Mandanten, bei denen die Tagesgrenze der KI für Gespräche gerade erreicht ist – dort ruht auch die KI im Hintergrund (Nachbewerten, Agenten prüfen, Felder nachtragen). */
+export async function cappedCallTenants(db: Db): Promise<Set<number>> {
+  const configs = await db.select({ tenantId: callQaConfigs.tenantId, cap: callQaConfigs.aiDailyCapCents }).from(callQaConfigs).where(gt(callQaConfigs.aiDailyCapCents, 0));
+  if (!configs.length) return new Set(); const spent = (await callAiSpentToday(db)).cents;
+  return new Set(configs.filter((row) => spent >= row.cap).map((row) => row.tenantId));
+}
+/** Gespräche, die wegen der Tagesgrenze gewartet haben, der Reihe nach bewerten – sobald wieder Budget frei ist (neuer Tag oder höhere Grenze). */
+export async function resumeCappedCalls(db: Db, options: { fetchImpl?: typeof fetch; max?: number } = {}): Promise<{ resumed: number; done: number }> {
+  const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId }).from(callRecords).where(and(inArray(callRecords.status, ["eingegangen", "transkribiert"] as const), like(callRecords.error, "Tagesgrenze der KI erreicht%"))).orderBy(asc(callRecords.createdAt)).limit(options.max ?? 5);
+  if (!rows.length) return { resumed: 0, done: 0 };
+  let resumed = 0; let done = 0;
+  for (const row of rows) {
+    if (retrying.has(row.id)) continue; retrying.add(row.id);
+    try { const result = await processCall(db, row.id, { ...options, auto: true }); if (result.status === "wartet") break; resumed += 1; if (result.status === "bewertet") done += 1; } catch { /* bleibt liegen */ } finally { retrying.delete(row.id); }
+  }
+  return { resumed, done };
+}
+/** KI bei Gesprächen heute: Kosten (Abschrift und Bewertung), Obergrenze und was gerade wartet – für den Knopf „KI heute“ auf der Seite Gespräche. */
+export async function callAiToday(db: Db, tenantId: number) {
+  const config = await ensureCallQaConfig(db, tenantId); const spent = await callAiSpentToday(db); const capCents = config.aiDailyCapCents ?? 0;
+  const waiting = (await db.select({ total: sql<number>`count(*)` }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), inArray(callRecords.status, ["eingegangen", "transkribiert"] as const), like(callRecords.error, "Tagesgrenze der KI erreicht%"))))[0]?.total ?? 0;
+  const spentCents = Math.round(spent.cents); const count = Math.max(spent.evaluated, spent.transcribed);
+  return { spentCents, transcriptCents: Math.round(spent.transcriptCents), ratingCents: Math.round(spent.ratingCents), calls: count, perCallCents: count ? Math.round((spent.cents / count) * 10) / 10 : null, capCents, reached: capCents > 0 && spent.cents >= capCents, waiting: Number(waiting) };
+}
+/** Obergrenze je Tag für die KI bei Gesprächen setzen (Euro; 0 = keine Grenze). */
+export async function setCallAiCap(db: Db, tenantId: number, euros: number) {
+  const config = await ensureCallQaConfig(db, tenantId); const cents = euros > 0 ? Math.max(100, Math.min(100_000, Math.round(euros * 100))) : 0;
+  await db.update(callQaConfigs).set({ aiDailyCapCents: cents }).where(eq(callQaConfigs.id, config.id));
+  return { capCents: cents };
+}
+export async function processCall(db: Db, callId: number, options: { fetchImpl?: typeof fetch; /** von selbst angestoßen (Dialer, Nachholen) – dann gilt die Tagesgrenze; was jemand anklickt, läuft immer */ auto?: boolean } = {}) {
   const call = (await db.select().from(callRecords).where(eq(callRecords.id, callId)).limit(1))[0];
   if (!call) throw new Error("Gespräch wurde nicht gefunden.");
   const config = await ensureCallQaConfig(db, call.tenantId);
+  // Tagesgrenze der KI für Gespräche: Ist sie erreicht, wartet das Gespräch (es geht nichts verloren) und wird später von selbst bewertet
+  if (options.auto && await callAiCapReached(db, config.aiDailyCapCents).catch(() => false)) {
+    if (call.status !== "bewertet") await db.update(callRecords).set({ status: call.transcript ? "transkribiert" : "eingegangen", error: CAP_WAIT_NOTE }).where(eq(callRecords.id, callId));
+    return { status: "wartet" as const, score: null, verdict: null, decision: "offen" as const, error: CAP_WAIT_NOTE };
+  }
   try {
     const freshTranscript = call.status === "eingegangen" || !call.transcript;
     const transcription = freshTranscript ? await transcribe(config, call, options.fetchImpl ?? fetch) : null;
     const transcript = transcription ? transcription.text : call.transcript!;
+    if (transcription?.service) void recordTranscriptionUsage(db, { service: transcription.service, seconds: transcription.duration ?? call.durationSeconds }).catch(() => undefined); // Abschrift zählt beim KI-Verbrauch mit
     // Zeitmarken: frische Abschnitte aus der Umwandlung in Text – sonst die schon gespeicherten (z. B. bei „Neu bewerten“)
     const segments = transcription?.segments.length ? transcription.segments : readTimeline(call.timeline)?.segments ?? [];
     if (!transcript.trim()) throw new Error("Transkript ist leer.");
@@ -1109,7 +1149,8 @@ export async function rescoreUnscoredCalls(db: Db, options: { max?: number; tena
   try {
     const since = new Date(Date.now() - 30 * 24 * 3_600_000);
     const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId, campaign: callRecords.campaign, transcript: callRecords.transcript, score: callRecords.score, criteriaScores: callRecords.criteriaScores }).from(callRecords).where(and(eq(callRecords.status, "bewertet"), gte(callRecords.createdAt, since), or(isNull(callRecords.score), eq(callRecords.score, 0)), ...(options.tenantId ? [eq(callRecords.tenantId, options.tenantId)] : []))).orderBy(desc(callRecords.id)).limit(500);
-    const todo = rows.filter((row) => row.transcript && criteriaUnscored(row) && (rescoreAttempts.get(row.id) ?? 0) < 3).slice(0, options.max ?? 6);
+    const capped = await cappedCallTenants(db).catch(() => new Set<number>());
+    const todo = rows.filter((row) => row.transcript && !capped.has(row.tenantId) && criteriaUnscored(row) && (rescoreAttempts.get(row.id) ?? 0) < 3).slice(0, options.max ?? 6);
     let rescored = 0;
     for (const row of todo) {
       rescoreAttempts.set(row.id, (rescoreAttempts.get(row.id) ?? 0) + 1);
@@ -1145,7 +1186,7 @@ export async function refillTruncatedCalls(db: Db, options: { fetchImpl?: typeof
   const rows = await db.select({ id: callRecords.id, tenantId: callRecords.tenantId, answers: callRecords.qualificationAnswers, scores: callRecords.criteriaScores, decidedBy: callRecords.decidedBy, leadId: callRecords.leadId, rawContactId: callRecords.rawContactId, transcript: callRecords.transcript }).from(callRecords).where(and(eq(callRecords.status, "bewertet"), gte(callRecords.createdAt, since)));
   const cut = (text: unknown, limit: number) => typeof text === "string" && text.length >= limit - 2 && text.length <= limit;
   const todo = rows.filter((row) => row.transcript && row.decidedBy !== "manuell" && !row.leadId && !row.rawContactId && (Object.values((row.answers ?? {}) as Record<string, QualificationAnswer>).some((answer) => cut(answer?.note, 240)) || (Array.isArray(row.scores) ? row.scores as Array<{ evidence?: string }> : []).some((score) => cut(score?.evidence, 500)))).slice(0, options.max ?? 80);
-  const run = async () => { for (const row of todo) { try { await processCall(db, row.id, options); } catch (error) { console.error("[Gespräche] Begründung nachziehen:", row.id, error instanceof Error ? error.message : error); } } };
+  const run = async () => { for (const row of todo) { try { await processCall(db, row.id, { ...options, auto: true }); } catch (error) { console.error("[Gespräche] Begründung nachziehen:", row.id, error instanceof Error ? error.message : error); } } };
   if (options.waitFor) await run(); else void run();
   return todo.length;
 }

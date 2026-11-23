@@ -97,7 +97,7 @@ describe("Version 346", () => {
     const labels = Array.from(dialog.querySelectorAll(".au-area li > span")).map((node) => node.textContent); expect(labels).toEqual(expect.arrayContaining(busy.parts.map((part) => part.label))); expect(labels).toHaveLength(busy.parts.length);
     // Säulen sind nach Bereich geteilt, die oberste hat die runde Kante; dieselben Zahlen stehen als Tabelle da
     const column = dialog.querySelectorAll(".au-col")[index]; const segments = column.querySelectorAll(".au-seg"); expect(segments.length).toBe(Object.values(busy.areas).filter((cents) => cents > 0).length); expect(segments[segments.length - 1].classList.contains("is-top")).toBe(true);
-    expect(dialog.querySelectorAll(".au-table tbody tr")).toHaveLength(30); expect(dialog.querySelector(".au-foot")!.textContent).toContain("Gespräche werden weiter bewertet");
+    expect(dialog.querySelectorAll(".au-table tbody tr")).toHaveLength(30); expect(dialog.querySelector(".au-foot")!.textContent).toContain("Gespräche haben ihre eigene Obergrenze");
   }, 30_000);
 
   it("Alias-Namen: Zuordnung steht in den Einstellungen, die Bestenliste findet den Agenten über den Alias, von Hand zuordnen gilt rückwirkend, entfernen macht es rückgängig", async () => {

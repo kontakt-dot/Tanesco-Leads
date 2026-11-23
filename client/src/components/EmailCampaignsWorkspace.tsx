@@ -554,11 +554,9 @@ function AiTodayChip() {
   const utils = trpc.useUtils();
   const usage = trpc.leadops.aiUsageToday.useQuery(undefined, { retry: false, refetchInterval: 60_000 }).data;
   const [open, setOpen] = useState(false);
-  const setBudget = trpc.leadops.setAiDailyBudget.useMutation({ onSuccess: (result) => { toast.success(`KI-Tagesbudget: ${euro(result.budgetCents)} – im Hintergrund schreibt die KI höchstens bis dahin.`); void utils.leadops.aiUsageToday.invalidate(); void utils.leadops.aiUsageHistory.invalidate(); void utils.leadops.campaignReviewQueue.invalidate(); }, onError: (error) => toast.error(error.message) });
   if (!usage) return null;
-  const changeBudget = async () => { const value = await promptAction("KI-Tagesbudget in Euro (für das Vorschreiben und Prüfen im Hintergrund):", String(Math.round(usage.budgetCents / 100)), "z. B. 10"); const euros = Number(String(value ?? "").replace(",", ".")); if (value !== null && Number.isFinite(euros) && euros >= 1) setBudget.mutate({ euros }); };
   const title = `KI-Kosten heute (ca.): ${euro(usage.spentCents)} von ${euro(usage.budgetCents)} Tagesbudget, ${usage.calls} Anfragen.${usage.parts.length ? "\n" + usage.parts.slice(0, 4).map((part) => `${part.label}: ${euro(part.cents)}`).join("\n") : ""}\nKlick: zeigt, an welchem Tag wie viel wofür verbraucht wurde.`;
-  return <><button type="button" className={`is-ai ${usage.reached ? "is-full" : ""}`} title={title} aria-haspopup="dialog" onClick={() => setOpen(true)}><Sparkles aria-hidden="true" /> KI heute <b>{euro(usage.spentCents)}</b> / {euro(usage.budgetCents)}</button>{open && <AiUsageDialog onClose={() => setOpen(false)} onBudget={() => void changeBudget()} />}</>;
+  return <><button type="button" className={`is-ai ${usage.reached ? "is-full" : ""}`} title={title} aria-haspopup="dialog" onClick={() => setOpen(true)}><Sparkles aria-hidden="true" /> KI heute <b>{euro(usage.spentCents)}</b> / {euro(usage.budgetCents)}</button>{open && <AiUsageDialog onClose={() => setOpen(false)} />}</>;
 }
 /** Gesendet je Lead-Kategorie (Leadsparte der Kampagne) – im gewählten Zeitraum, größte zuerst: „☀️ Photovoltaik 98 E-Mails · 64 Kontakte“. */
 function SentByCategory({ rows }: { rows: CampaignRow[] }) {

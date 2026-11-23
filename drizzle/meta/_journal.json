@@ -806,6 +806,13 @@
       "when": 1796000000000,
       "tag": "0114_agenten_alias",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "5",
+      "when": 1796100000000,
+      "tag": "0115_ki_grenze_gespraeche",
+      "breakpoints": true
     }
   ]
 }
