@@ -1,3 +1,5 @@
+import { dialerFieldValues } from "../shared/lead-fields";
+import { categoryFromFieldNames } from "../shared/dialer-contact";
 import { describe, expect, it } from "vitest";
 import { CONTACT_MAPPING, categoryProducts, dialerInfo, extractDialerContact, matchDialerCategory, mergeDialerData } from "../shared/dialer-contact";
 import { dialerGuideText } from "../shared/dialer-guide";
@@ -114,5 +116,34 @@ describe("Eingang vom Dialer: Kontakt aus dem Gespräch und Urteil", () => {
     expect(intakeVerdict({ enabled: true, today: day, week: day, lastAt: new Date() })).toMatchObject({ tone: "warn" }); expect(intakeVerdict({ enabled: true, today: day, week: day, lastAt: new Date() }).title).toContain("18 grüne Gespräche");
     expect(intakeVerdict({ enabled: false, today: day, week: day, lastAt: null }).tone).toBe("bad"); expect(intakeVerdict({ enabled: true, today: EMPTY_INTAKE, week: EMPTY_INTAKE, lastAt: null }).tone).toBe("idle");
     expect(intakeVerdict({ enabled: true, today: { ...day, leads: 18, approvedNoLead: 0, review: 0 }, week: day, lastAt: new Date() })).toMatchObject({ tone: "ok" });
+  });
+});
+
+describe("Felder des Dialers mit Vorsilbe (pv_…, wp_…)", () => {
+  const defs = [
+    { fieldKey: "dachart", label: "Dachart", fieldType: "auswahl", options: ["Satteldach", "Flachdach", "Pultdach"] },
+    { fieldKey: "dachflaeche", label: "Dachfläche (m²)", fieldType: "zahl" },
+    { fieldKey: "stromverbrauch", label: "Stromverbrauch", fieldType: "zahl" },
+    { fieldKey: "eigentuemer", label: "Eigentümer", fieldType: "ja_nein" },
+    { fieldKey: "gebaeudetyp", label: "Gebäudetyp", fieldType: "text" },
+    { fieldKey: "umsetzung", label: "Umsetzung", fieldType: "auswahl", options: ["sofort", "in 3 Monaten", "später"] },
+  ];
+  it("ordnet „pv_dachart“, „pv_dachflaeche“ usw. den Feldern der Kategorie zu und prüft die Antworten", () => {
+    const meta = { pv_dachart: "satteldach", pv_dachflaeche: "60 m²", pv_stromverbrauch: "4.500 kWh", pv_umsetzung: "irgendwann mal", wp_ist_eigentuemer: "ja", pv_info: "Dach nach Süden" };
+    expect(dialerFieldValues(defs, meta, "Photovoltaik")).toEqual({ dachart: "Satteldach", dachflaeche: "60", stromverbrauch: "4500" }); // „irgendwann mal“ passt zu keiner Auswahl → bleibt als eigene Angabe
+  });
+  it("füllt nur leere Felder; steht ein Feld mit pv_ und wp_ da, gilt das der eigenen Leadsparte", () => {
+    expect(dialerFieldValues(defs, { dachart: "Flachdach", pv_dachart: "Satteldach" }, "Photovoltaik")).toEqual({});
+    expect(dialerFieldValues(defs, { pv_gebaeudetyp: "Einfamilienhaus", wp_gebaeudetyp: "Doppelhaushälfte" }, "Photovoltaik")).toEqual({ gebaeudetyp: "Einfamilienhaus" });
+    expect(dialerFieldValues(defs, { pv_gebaeudetyp: "Einfamilienhaus", wp_gebaeudetyp: "Doppelhaushälfte" }, "Wärmepumpe")).toEqual({ gebaeudetyp: "Doppelhaushälfte" });
+  });
+  it("Leadsparte aus den Feldnamen; Aufnahme-Links werden nie als Feld gespeichert", () => {
+    expect(categoryFromFieldNames({ pv_dachart: "Satteldach", pv_hausart: "EFH", wp_info: "" })).toBe("PV");
+    expect(categoryFromFieldNames({ wp_beheizte_flaeche: "140", wp_gebaeudetyp: "EFH" })).toBe("WP");
+    expect(categoryFromFieldNames({ pv_dachart: "a", pv_hausart: "b", pv_dachalter: "c", wp_beheizte_flaeche: "d", wp_gebaeudetyp: "e", wp_ist_eigentuemer: "f" })).toBe("PV+WP");
+    expect(categoryFromFieldNames({ dachart: "Satteldach" })).toBeNull();
+    const contact = extractDialerContact({ call_id: "1", phone: "+49 30 1", contact: { first_name: "Laura", fields: { pv_dachart: "Satteldach", pv_hausart: "EFH", pv_recording_1: "https://aufnahmen.example/1.mp3", wp_record_file: "https://aufnahmen.example/2.mp3" } } });
+    expect(contact.fields).toEqual({ pv_dachart: "Satteldach", pv_hausart: "EFH" }); expect(contact.recordingUrl).toBe("https://aufnahmen.example/1.mp3"); expect(contact.category).toBe("PV"); expect(contact.found).toContain("category (aus den Feldnamen)");
+    expect(extractDialerContact({ phone: "1", category: "WP", fields: { pv_dachart: "x" } }).category).toBe("WP"); // eine genannte Leadsparte gilt
   });
 });

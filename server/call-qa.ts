@@ -28,7 +28,8 @@ import { readPath } from "./outbound-templates";
 import { describeShape, fieldNames, looseItems, looseStrings, readAnswers, readCriteriaScores } from "./llm-shape";
 
 export type Criterion = { key: string; label: string; weight: number; description: string };
-import { callQaCampaigns } from "../drizzle/schema";
+import { callQaCampaigns, categoryFields } from "../drizzle/schema";
+import { dialerFieldMatches, type LeadFieldDef } from "../shared/lead-fields";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
 import { detectTopic } from "../shared/call-topic";
@@ -288,7 +289,12 @@ async function fillLeadFromDialer(db: Db, lead: typeof leads.$inferSelect, conta
   const patch: Partial<typeof leads.$inferInsert> = {};
   if (!lead.firstName && contact.firstName) patch.firstName = contact.firstName; if (!lead.lastName && contact.lastName) patch.lastName = contact.lastName; if (!lead.company && contact.company) patch.company = contact.company;
   if (!lead.email && contact.email) patch.email = contact.email; if (!lead.postcode && contact.postcode) patch.postcode = contact.postcode; if (!lead.city && contact.city) patch.city = contact.city;
-  const merged = mergeDialerData(plainObject(lead.metadata) ? lead.metadata : {}, contact); if (merged.changed) patch.metadata = merged.data;
+  const merged = mergeDialerData(plainObject(lead.metadata) ? lead.metadata : {}, contact);
+  // Felder unter eigenen Namen des Dialers („pv_dachart“) den Feldern der Kategorie zuordnen
+  const defs = await db.select({ fieldKey: categoryFields.fieldKey, label: categoryFields.label, fieldType: categoryFields.fieldType, options: categoryFields.options }).from(categoryFields).where(and(eq(categoryFields.tenantId, lead.tenantId), eq(categoryFields.categoryId, lead.categoryId)));
+  const categoryName = (await db.select({ name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1))[0]?.name ?? null;
+  const mapped = dialerFieldMatches(defs as LeadFieldDef[], merged.data, categoryName);
+  if (merged.changed || mapped.sources.length) { const next: Record<string, unknown> = { ...merged.data, ...mapped.values }; for (const key of mapped.sources) delete next[key]; patch.metadata = next; }
   if (!Object.keys(patch).length) return false;
   await db.update(leads).set(patch).where(eq(leads.id, lead.id)); return true;
 }
@@ -316,17 +322,18 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
   const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) };
   const get = (key: keyof typeof CALL_MAPPING) => readPath(payload, mapping[key]) ?? payload[key];
   const contact = extractDialerContact(payload, mapping); // Kontakt, Ergebnis und Notiz – falls der Dialer sie mitschickt
+  const recordingOf = () => text(get("recordingUrl")) || contact.recordingUrl || ""; // Link zur Aufnahme – auch, wenn er unter den Feldern steht („pv_recording_1“)
   const phone = text(get("phone")) || contact.phone || ""; const leadRef = text(get("leadId"));
   // Testmodus: "test": true → Felder und Aufnahme-Link prüfen, nichts speichern (für den Dialer-Entwickler beim Einrichten)
   if (truthy(payload.test) || truthy(payload.dry_run)) {
     const found: string[] = []; const missing: string[] = [];
     for (const key of Object.keys(CALL_MAPPING) as Array<keyof typeof CALL_MAPPING>) { if (text(get(key)) || typeof get(key) === "boolean") found.push(mapping[key]); else missing.push(mapping[key]); }
     // Pflicht: Gesprächs-ID, Rufnummer, Aufnahme-Link – und der Agent (wir werten aus, wer die Leads bringt). Ohne Agent nehmen wir ein echtes Gespräch trotzdem an; der Testmodus meldet ihn aber als fehlend.
-    const technical = (["callId", "phone", "recordingUrl"] as const).filter((key) => !(key === "phone" ? phone : text(get(key)))).map((key) => mapping[key]);
+    const technical = (["callId", "phone", "recordingUrl"] as const).filter((key) => !(key === "phone" ? phone : key === "recordingUrl" ? recordingOf() : text(get(key)))).map((key) => mapping[key]);
     const agentGiven = Boolean(text(get("agent"))) && !isJunkAgentName(text(get("agent")));
     const required = agentGiven ? technical : [...technical, mapping.agent];
     const namedCategory = await namedDialerCategory(db, config.tenantId, contact);
-    const recordingUrl = text(get("recordingUrl")); let recording: Record<string, unknown> = { checked: false };
+    const recordingUrl = recordingOf(); let recording: Record<string, unknown> = { checked: false };
     if (recordingUrl) {
       const headers: Record<string, string> = {}; if (config.recordingAuthHeader) { const raw = decryptIntegrationSecret(config.recordingAuthHeader); const [name, ...rest] = raw.split(":"); if (rest.length) headers[name.trim().toLowerCase()] = rest.join(":").trim(); else headers.authorization = raw; }
       try { const response = await (options.fetchImpl ?? fetch)(recordingUrl, { method: "GET", headers: { ...headers, range: "bytes=0-1023" } }); recording = { checked: true, reachable: response.ok, http_status: response.status, content_type: response.headers.get("content-type") }; }
@@ -356,7 +363,7 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
   const agentNamed = agentRaw && !isJunkAgentName(agentRaw) && /[A-Za-z\u00C0-\u024F]{2,}/.test(agentRaw) ? agentRaw : null;
   const dialerAgent = agentNamed ? (agentNamed.split(" ").length === 1 ? canonicalAgentName(agentNamed, await knownAgentNames(db, config.tenantId).catch(() => [])) || agentNamed : agentNamed) : null; // nur der Vorname: den bekannten vollen Namen nehmen
   const startedAtRaw = text(get("startedAt")); const startedAt = startedAtRaw && !Number.isNaN(new Date(startedAtRaw).getTime()) ? new Date(startedAtRaw) : new Date();
-  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: dialerAgent ?? (isJunkAgentName(agentRaw) ? null : agentRaw || null), agentSource: dialerAgent ? "dialer" : null, leadCategoryId: namedCategory?.id ?? null, campaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: text(get("recordingUrl")) || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
+  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: dialerAgent ?? (isJunkAgentName(agentRaw) ? null : agentRaw || null), agentSource: dialerAgent ? "dialer" : null, leadCategoryId: namedCategory?.id ?? null, campaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: recordingOf() || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
   const callId = Number(inserted[0]?.insertId) || 0;
   if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, contact: contactState, evaluated: false, reason: "no consent" } }; }
   const result = await processCall(db, callId, { ...options, auto: true });

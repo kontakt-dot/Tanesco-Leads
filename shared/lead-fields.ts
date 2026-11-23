@@ -129,6 +129,29 @@ export function cleanFieldValue(field: LeadFieldDef, raw: unknown): string | nul
   }
   return text;
 }
+/** Name ohne Vorsilbe der Leadsparte, ohne Klammerzusatz, ä = ae: „pv_dachflaeche“ = „Dachfläche (m²)“ = „dachflaeche“. */
+const bareName = (value: string) => fold(String(value ?? "").replace(/\([^)]*\)/g, " ")).replace(/^(?:pv|wp)\s+/, "").replace(/\s+/g, "");
+/**
+ * Angaben, die der Dialer unter eigenen Namen schickt („pv_dachart“, „wp_gebaeudetyp“), den Feldern der Kategorie zuordnen.
+ * Gilt nur für leere Felder, die Antwort wird wie jede andere geprüft (Auswahl, Ja/Nein, Zahl, Datum). Passt sie nicht, bleibt sie als eigene Angabe stehen.
+ * Steht dasselbe Feld mit „pv_“ und „wp_“ da, gilt das der eigenen Leadsparte.
+ */
+/** Wie dialerFieldValues – dazu die Namen, unter denen der Dialer die Angaben geschickt hat (sie werden danach entfernt, damit nichts doppelt an den Käufer geht). */
+export function dialerFieldMatches(fields: LeadFieldDef[], metadata: unknown, categoryName?: string | null): { values: Record<string, string>; sources: string[] } {
+  const sources: string[] = []; const values = dialerFieldValues(fields, metadata, categoryName, sources); return { values, sources };
+}
+export function dialerFieldValues(fields: LeadFieldDef[], metadata: unknown, categoryName?: string | null, sources: string[] = []): Record<string, string> {
+  const data = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata as Record<string, unknown> : {};
+  const own = /w(ä|ae)rmepumpe|\bwp\b/i.test(categoryName ?? "") && !/photovolt|\bpv\b|solar/i.test(categoryName ?? "") ? "wp" : "pv";
+  const keys = Object.keys(data).sort((a, b) => Number(!a.toLowerCase().startsWith(own)) - Number(!b.toLowerCase().startsWith(own)));
+  const out: Record<string, string> = {};
+  for (const field of fields) {
+    if (!isEmpty(data[field.fieldKey])) continue;
+    const names = new Set([bareName(field.fieldKey), bareName(field.label)].filter((name) => name.length >= 3));
+    for (const key of keys) { if (key === field.fieldKey || !names.has(bareName(key))) continue; const value = cleanFieldValue(field, data[key]); if (value !== null) { out[field.fieldKey] = value; sources.push(key); break; } }
+  }
+  return out;
+}
 /** Antworten prüfen und nur die behalten, die zu einem Feld passen. */
 export function cleanFieldValues(fields: LeadFieldDef[], values: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {};

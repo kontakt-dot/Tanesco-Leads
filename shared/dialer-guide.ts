@@ -31,7 +31,7 @@ const CONTACT_ROWS: Array<{ key: string; what: string; example: unknown }> = [
   { key: "city", what: "Ort", example: "Darmstadt" },
   { key: "country", what: "Land als Kürzel: DE, AT oder CH. Ohne Angabe gilt DE.", example: "DE" },
   { key: "email", what: "E-Mail-Adresse", example: "murat@example.de" },
-  { key: "contactFields", what: "Alle weiteren Angaben als Name-Wert-Paare: die Felder der Liste und alles, was der Agent in der Maske einträgt.", example: { "Dachfläche": "60 m²", "Eigentümer": "ja", "Baujahr": "1998" } },
+  { key: "contactFields", what: "Alle weiteren Angaben als Name-Wert-Paare: die Felder der Liste und alles, was der Agent in der Maske einträgt. Eigene Namen mit Vorsilbe der Leadsparte gehen auch (z. B. `pv_dachart`, `wp_gebaeudetyp`) – wir ordnen sie unseren Feldern zu und erkennen daran die Leadsparte. Den Link zur Aufnahme bitte in `recording_url` senden.", example: { "Dachfläche": "60 m²", "Eigentümer": "ja", "Baujahr": "1998" } },
   { key: "result", what: "Ergebnis im Dialer (Abschluss), zum Beispiel Termin, Interesse, kein Interesse", example: "Termin" },
   { key: "note", what: "Notiz des Agenten", example: "Dach nach Süden, 2019 neu gedeckt" },
   { key: "callbackAt", what: "Rückruf- oder Termin-Zeitpunkt als ISO 8601 mit Zeitzone", example: "2026-11-21T10:00:00+01:00" },

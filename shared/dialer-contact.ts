@@ -14,6 +14,8 @@ export type DialerContact = {
   externalId: string | null; firstName: string | null; lastName: string | null; company: string | null; street: string | null; postcode: string | null; city: string | null;
   country: "DE" | "AT" | "CH"; email: string | null; phone: string | null; category: string | null; fields: Record<string, string>;
   result: string | null; note: string | null; callbackAt: string | null;
+  /** Link zur Aufnahme, falls er unter den Feldern steht (z. B. „pv_recording_1“) – er wird nie als Feld gespeichert */
+  recordingUrl?: string | null;
   /** erkannte Angaben in der Schreibweise der Anleitung – für den Testmodus */
   found: string[];
   /** Name oder Firma vorhanden: reicht, um einen neuen Kontakt anzulegen */
@@ -77,6 +79,14 @@ const flatFields = (value: unknown): Record<string, string> => {
 };
 
 /** Liest Kontakt, Ergebnis und Notiz aus der Meldung des Dialers. `mapping`: eingestellte Pfade (sonst die Vorgaben). */
+/** Felder, die einen Link zur Aufnahme tragen (nicht als Angabe zum Kunden speichern). */
+export const RECORDING_FIELD = /record|aufzeich|aufnahme|recording/i;
+/** Leadsparte aus Feldnamen mit Vorsilbe: „pv_dachart“, „wp_gebaeudetyp“. Zählt nur ausgefüllte Felder. */
+export function categoryFromFieldNames(fields: Record<string, string>): "PV" | "WP" | "PV+WP" | null {
+  let pv = 0; let wp = 0;
+  for (const [key, value] of Object.entries(fields)) { if (!String(value ?? "").trim()) continue; if (/^pv[_\s-]/i.test(key)) pv += 1; else if (/^wp[_\s-]/i.test(key)) wp += 1; }
+  if (!pv && !wp) return null; if (pv >= 3 && wp >= 3) return "PV+WP"; return pv >= wp ? "PV" : "WP";
+}
 export function extractDialerContact(payload: unknown, mapping: Partial<Record<string, string>> = {}): DialerContact {
   const top = isObject(payload) ? payload : {};
   const path = (key: ContactMappingKey) => mapping[key] || CONTACT_MAPPING[key];
@@ -102,19 +112,24 @@ export function extractDialerContact(payload: unknown, mapping: Partial<Record<s
   const emailRaw = pick("email", "email", "contact.email", 320); const email = emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw.toLowerCase() : null; if (emailRaw && !email) found.pop();
   const phone = clean(findIn(container, "phone", false)?.value, 48);
   const externalId = pick("contactId", "id", "contact.id", 120);
-  const category = clean(readPath(top, path("category")), 160) ?? clean(findIn(container, "category", false)?.value, 160) ?? clean(findIn(top, "category", true)?.value, 160); if (category) found.push("category");
+  let category = clean(readPath(top, path("category")), 160) ?? clean(findIn(container, "category", false)?.value, 160) ?? clean(findIn(top, "category", true)?.value, 160); if (category) found.push("category");
   // weitere Felder: das Feld `fields` – und alles im Kontakt, was kein bekanntes Feld ist
   const mappedFields = readPath(top, path("contactFields")); const fieldsSource = isObject(mappedFields) ? mappedFields : findIn(container, "fields", false)?.value ?? findIn(top, "fields", true)?.value;
   const fields = flatFields(fieldsSource);
   if (container) { const known = new Set<string>(Object.values(ALIASES).flat()); for (const [raw, value] of Object.entries(container)) { if (known.has(norm(raw)) || isObject(value) || Object.keys(fields).length >= 60) continue; const name = raw.replace(/\s+/g, " ").trim().slice(0, 80); const text = Array.isArray(value) ? null : clean(value, 500); if (name && text && !(name in fields)) fields[name] = text; } }
+  // Aufnahme-Links unter den Feldern („pv_recording_1“, „wp_record_file“, „wp_sprachaufzeichung“): nie als Feld speichern – das Feld ginge sonst mit an den Käufer
+  let recordingUrl: string | null = null;
+  for (const key of Object.keys(fields)) { if (!RECORDING_FIELD.test(key)) continue; const value = fields[key]; if (!recordingUrl && /^https?:\/\/\S+$/i.test(value)) recordingUrl = value; delete fields[key]; }
   if (Object.keys(fields).length) found.push(`contact.fields (${Object.keys(fields).length})`);
   const result = clean(readPath(top, path("result")), 160) ?? clean(findIn(top, "result", false)?.value, 160); if (result) found.push("result");
   const note = clean(readPath(top, path("note")), 2000) ?? clean(findIn(top, "note", false)?.value, 2000); if (note) found.push("note");
   const callbackRaw = clean(readPath(top, path("callbackAt")), 60) ?? clean(findIn(top, "callbackAt", false)?.value, 60);
   const callbackAt = callbackRaw ? (Number.isNaN(new Date(callbackRaw).getTime()) ? callbackRaw : new Date(callbackRaw).toISOString()) : null; if (callbackAt) found.push("callback_at");
+  // Leadsparte aus den Feldnamen: nur „pv_…“ ausgefüllt → PV, nur „wp_…“ → WP, beides deutlich → PV+WP
+  if (!category) { const sparte = categoryFromFieldNames(fields); if (sparte) { category = sparte; found.push("category (aus den Feldnamen)"); } }
   const hasIdentity = Boolean(firstName || lastName || company);
   const hasData = hasIdentity || Boolean(street || postcode || city || email || externalId || category || result || note || callbackAt || Object.keys(fields).length);
-  return { externalId, firstName, lastName, company, street, postcode, city, country, email, phone, category, fields, result, note, callbackAt, found, hasIdentity, hasData };
+  return { externalId, firstName, lastName, company, street, postcode, city, country, email, phone, category, fields, result, note, callbackAt, recordingUrl, found, hasIdentity, hasData };
 }
 
 /**

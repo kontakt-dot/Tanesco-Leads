@@ -4384,7 +4384,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(batch).toMatchObject({ name: "Kontakte vom Dialer", sourceName: "OnDialer", rowCount: 1 }); expect(batch.mapping).toEqual({ auto: "dialer" });
     const lead = await leadRow(first.json.lead_id);
     expect(lead).toMatchObject({ firstName: "Murat", lastName: "Yilmaz", phone: "+4961515550103", postcode: "64283", city: "Darmstadt", categoryId: pv.id, supplierName: "OnDialer" }); expect(["genehmigt", "zugewiesen"]).toContain(lead.status);
-    expect(lead.metadata).toMatchObject({ street: "Hauptstraße 12", "Dachfläche": "60 m²", Baujahr: "1998", dialerContactId: "C-88412", dialerResult: "Termin", dialerNote: "Dach nach Süden", dialerCallbackAt: "2026-11-21T09:00:00.000Z", callDecision: "freigegeben" });
+    // „Dachfläche“ hat die Kategorie als eigenes Feld (seit v351 landet die Angabe dort, geprüft wie das Feld – nicht noch einmal unter dem Namen des Dialers)
+    { const meta = lead.metadata as Record<string, unknown>; const own = Object.entries(meta).find(([key]) => key !== "Dachfläche" && /^dachfl/i.test(key)); if (own) { expect(String(own[1])).toMatch(/^60( m²)?$/); expect(meta).not.toHaveProperty("Dachfläche"); } else expect(meta["Dachfläche"]).toBe("60 m²"); }
+    expect(lead.metadata).toMatchObject({ street: "Hauptstraße 12", Baujahr: "1998", dialerContactId: "C-88412", dialerResult: "Termin", dialerNote: "Dach nach Süden", dialerCallbackAt: "2026-11-21T09:00:00.000Z", callDecision: "freigegeben" });
     const record = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "od-k-1")))[0]; expect(record.rawContactId).toBe(raw.id); expect(record.leadId).toBe(lead.id);
     const detail = await owner.leadops.getCall({ callId: first.json.call_id });
     expect(detail.dialer).toMatchObject({ result: "Termin", note: "Dach nach Süden", name: "Murat Yilmaz", street: "Hauptstraße 12", place: "64283 Darmstadt", contactId: "C-88412" }); expect(detail.dialer!.fields).toEqual(expect.arrayContaining([{ label: "Dachfläche", value: "60 m²" }]));
@@ -6023,5 +6025,34 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     } finally {
       await db.update(configTable).set({ aiDailyCapCents: 0 }).where(eq(configTable.tenantId, tenantId)); await db.delete(aiUsageDays); forgetSpentCache();
     }
+  }, 120000);
+
+  it("v351. Felder vom Dialer unter eigenen Namen (pv_dachart, wp_gebaeudetyp …) landen in den Feldern der Kategorie; Leadsparte aus den Feldnamen; Aufnahme-Link unter den Feldern wird genommen, aber nie als Feld gespeichert", async () => {
+    const schema = await import("../drizzle/schema"); const { leadStatusEvents: eventsTable, leads: leadsTable, callRecords: callsTable } = schema;
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    const good = "Agent: Ich rufe von HausKompass an, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar. Agent: Dann meldet sich der Photovoltaik Angebotsvergleich bei Ihnen.";
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+    try {
+      // Kategorie wie in v347: die, in die ein Photovoltaik-Gespräch fällt – dort zwei Probe-Felder mit deutschem Namen
+      const probe = await post({ call_id: "v351-0", phone: "+49 2591 5550910", consent: true, transcript: `Agent: Guten Tag Frau Seidel. ${good}` }); const categoryId = (await leadRow(probe.json.lead_id)).categoryId;
+      await owner.leadops.addCategoryField({ categoryId, label: "Dachfläche Probe (m²)", fieldKey: "v351_dachflaeche_probe", fieldType: "zahl", sortOrder: 950 });
+      await owner.leadops.addCategoryField({ categoryId, label: "Stromspeicher Probe", fieldKey: "v351_stromspeicher_probe", fieldType: "ja_nein", sortOrder: 951 });
+      // Testmodus: die Felder werden erkannt, der Aufnahme-Link unter den Feldern zählt als Aufnahme
+      const dry = await post({ test: true, call_id: "v351-t", phone: "+49 2591 5550911", consent: true, contact: { first_name: "Monika", last_name: "Seidel", fields: { pv_dachflaeche_probe: "55 m²", pv_stromspeicher_probe: "ja", pv_dachart: "Satteldach", pv_recording_1: "https://aufnahmen.example/v351.mp3" } } });
+      expect(dry.json.required_missing ?? []).not.toContain("recording_url"); expect(JSON.stringify(dry.json)).toContain("category (aus den Feldnamen)");
+      // echtes Gespräch mit Feldern wie bei OnDialer
+      const sent = await post({ call_id: "v351-1", phone: "+49 2591 5550912", consent: true, transcript: `Agent: Guten Tag Frau Seidel. ${good}`, contact: { first_name: "Monika", last_name: "Seidel", postcode: "48249", city: "Dülmen", fields: { pv_dachflaeche_probe: "55 m²", pv_stromspeicher_probe: "ja", pv_info: "Dach nach Süden", wp_info: "", pv_recording_1: "https://aufnahmen.example/v351.mp3" } } });
+      expect(sent.json).toMatchObject({ ok: true, decision: "freigegeben" }); const lead = await leadRow(sent.json.lead_id); const meta = lead.metadata as Record<string, unknown>;
+      expect(lead).toMatchObject({ firstName: "Monika", lastName: "Seidel", categoryId });
+      expect(meta).toMatchObject({ v351_dachflaeche_probe: "55", v351_stromspeicher_probe: "Ja" }); expect(meta).not.toHaveProperty("pv_dachflaeche_probe"); expect(meta).not.toHaveProperty("pv_stromspeicher_probe"); // im Feld der Kategorie – geprüft (Zahl, Ja/Nein) – und nicht noch einmal unter dem Namen des Dialers
+      expect(meta).not.toHaveProperty("pv_recording_1"); expect(JSON.stringify(meta)).not.toContain("aufnahmen.example"); // der Aufnahme-Link geht nie als Feld an einen Käufer
+      const call = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "v351-1")))[0]; expect(call.recordingUrl).toBe("https://aufnahmen.example/v351.mp3");
+      const notes = (await db.select().from(eventsTable).where(eq(eventsTable.leadId, lead.id))).map((row) => row.note ?? "");
+      expect(notes.some((note) => /^Vom Dialer übernommen: \d Felder \(.*Dachfläche Probe \(m²\), Stromspeicher Probe\)/.test(note))).toBe(true);
+      // ein späteres Gespräch beim selben Kontakt ergänzt nur leere Felder
+      await post({ call_id: "v351-2", phone: "+49 2591 5550912", consent: true, transcript: `Agent: Guten Tag Frau Seidel. ${good}`, contact: { fields: { pv_dachflaeche_probe: "80" } } });
+      expect(((await db.select().from(leadsTable).where(eq(leadsTable.id, lead.id)))[0].metadata as Record<string, unknown>).v351_dachflaeche_probe).toBe("55");
+    } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; }
   }, 120000);
 });

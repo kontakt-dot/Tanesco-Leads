@@ -16,7 +16,7 @@ import { invokeLLM } from "./_core/llm";
 import { fieldNames } from "./llm-shape";
 import type { Db } from "./lead-pipeline";
 import { cleanSpokenContact, type SpokenContact } from "../shared/dialer-intake";
-import { callAnswerList, cleanFieldValues, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, isSalutation, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
+import { callAnswerList, cleanFieldValues, dialerFieldMatches, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, isSalutation, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
 
 type ContactKey = Exclude<keyof SpokenContact, "salutation">;
 const CONTACT_HINT: Record<ContactKey, string> = {
@@ -71,7 +71,14 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
   const call = options.callId
     ? (await db.select({ id: callRecords.id, transcript: callRecords.transcript }).from(callRecords).where(and(eq(callRecords.id, options.callId), eq(callRecords.tenantId, tenantId))).limit(1))[0]
     : (await db.select({ id: callRecords.id, transcript: callRecords.transcript }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.leadId, leadId), eq(callRecords.status, "bewertet"))).orderBy(desc(callRecords.id)).limit(1))[0];
-  const meta = metaOf(lead.metadata); const now = new Date().toISOString();
+  const [defs, category] = await Promise.all([
+    db.select({ fieldKey: categoryFields.fieldKey, label: categoryFields.label, fieldType: categoryFields.fieldType, options: categoryFields.options }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenantId), eq(categoryFields.categoryId, lead.categoryId))).orderBy(asc(categoryFields.sortOrder), asc(categoryFields.id)),
+    db.select({ name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1),
+  ]);
+  // Was der Dialer unter eigenen Namen geschickt hat („pv_dachart“), geht zuerst in die Felder der Kategorie – sicherer als aus dem Gespräch gelesen
+  const matched = dialerFieldMatches(defs as LeadFieldDef[], lead.metadata, category[0]?.name ?? null); const fromDialer = matched.values;
+  const withoutSources = (data: Record<string, unknown>) => { const next = { ...data }; for (const key of matched.sources) delete next[key]; return next; }; // nichts doppelt: die Angabe steht jetzt im Feld der Kategorie
+  const meta = withoutSources({ ...metaOf(lead.metadata), ...fromDialer }); const now = new Date().toISOString();
   const patch: Partial<typeof leads.$inferInsert> = {}; const cleaned: string[] = [];
   // Platzhalter sind keine Angabe: „<UNKNOWN>“ als Name, Ort oder E-Mail fliegt raus (und wird unten, wenn möglich, richtig gefüllt)
   for (const key of ["firstName", "lastName", "city", "email", "postcode"] as const) if (lead[key] && isPlaceholder(lead[key])) { patch[key] = null; cleaned.push(CONTACT_LABEL[key]); }
@@ -82,13 +89,9 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
   const transcript = call?.transcript?.trim() ?? "";
   if (!transcript) {
     // ohne Text gibt es nichts zu lesen (z. B. nach Ablauf der Aufbewahrung) – vermerken, damit der Lead nicht immer wieder geprüft wird
-    await db.update(leads).set({ ...patch, metadata: { ...meta, ...(salutation && !realText(meta.anrede, 20) ? { anrede: salutation } : {}), callFieldsAt: now, ...(call ? { callFieldsCallId: call.id } : {}) } }).where(eq(leads.id, lead.id));
+    await db.update(leads).set({ ...patch, metadata: { ...withoutSources(metaOf((await db.select({ metadata: leads.metadata }).from(leads).where(eq(leads.id, lead.id)).limit(1))[0]?.metadata ?? lead.metadata)), ...fromDialer, ...(salutation && !realText(meta.anrede, 20) ? { anrede: salutation } : {}), callFieldsAt: now, ...(call ? { callFieldsCallId: call.id } : {}) } }).where(eq(leads.id, lead.id));
     return { leadId, fields: [], contact: [], cleaned, skipped: "kein Gesprächstext" };
   }
-  const [defs, category] = await Promise.all([
-    db.select({ fieldKey: categoryFields.fieldKey, label: categoryFields.label, fieldType: categoryFields.fieldType, options: categoryFields.options }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenantId), eq(categoryFields.categoryId, lead.categoryId))).orderBy(asc(categoryFields.sortOrder), asc(categoryFields.id)),
-    db.select({ name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1),
-  ]);
   const toRead = fieldsToRead(defs as LeadFieldDef[], meta).slice(0, 45);
   const gaps: ContactKey[] = [];
   if (!current.firstName) gaps.push("firstName"); if (!current.lastName) gaps.push("lastName"); if (!current.email) gaps.push("email"); if (!current.street) gaps.push("street"); if (!current.postcode) gaps.push("postcode"); if (!current.city) gaps.push("city");
@@ -96,8 +99,8 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
   // Frisch lesen: Während die KI gelesen hat, kann sich der Lead geändert haben (Freigabe, Auslieferung, Eingabe von Hand) – es wird nur ergänzt, nie zurückgedreht
   const latest = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0] ?? lead; const latestMeta = metaOf(latest.metadata);
   const has = (value: unknown, max: number) => Boolean(realText(typeof value === "string" || typeof value === "number" ? value : null, max));
-  const values = Object.fromEntries(Object.entries(read.values).filter(([key]) => !has(latestMeta[key], 600)));
-  const nextMeta: Record<string, unknown> = { ...latestMeta, ...values, ...(salutation && !realText(latestMeta.anrede, 20) ? { anrede: salutation } : {}), callFieldsAt: now, callFieldsCallId: call!.id };
+  const values = Object.fromEntries(Object.entries({ ...read.values, ...fromDialer }).filter(([key]) => !has(latestMeta[key], 600)));
+  const nextMeta: Record<string, unknown> = { ...withoutSources(latestMeta), ...values, ...(salutation && !realText(latestMeta.anrede, 20) ? { anrede: salutation } : {}), callFieldsAt: now, callFieldsCallId: call!.id };
   delete nextMeta.callFieldsTries;
   const contact: string[] = [];
   // Ein Name aus dem Gespräch gilt nur, wenn noch gar keiner da ist – ein einzelner Vorname zu einem vorhandenen Nachnamen stammt zu oft vom Mitarbeiter
@@ -119,9 +122,12 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
       if (Object.keys(rawPatch).length) await db.update(rawContacts).set(rawPatch).where(eq(rawContacts.id, raw.id));
     }
   }
-  const fields = Object.keys(values); const labels = fields.map((key) => (defs.find((field) => field.fieldKey === key)?.label ?? key));
-  if (fields.length || contact.length) {
-    const parts = [fields.length ? `${fields.length} ${fields.length === 1 ? "Feld" : "Felder"} (${labels.slice(0, 8).join(", ")}${labels.length > 8 ? " …" : ""})` : null, contact.length ? contact.join(", ") : null].filter(Boolean).join(" · ");
+  const fields = Object.keys(values); const label = (key: string) => defs.find((field) => field.fieldKey === key)?.label ?? key;
+  const fromCall = fields.filter((key) => !(key in fromDialer)); const viaDialer = fields.filter((key) => key in fromDialer);
+  const list = (keys: string[]) => `${keys.length} ${keys.length === 1 ? "Feld" : "Felder"} (${keys.slice(0, 8).map(label).join(", ")}${keys.length > 8 ? " …" : ""})`;
+  if (viaDialer.length) await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: options.actorUserId ?? null, note: `Vom Dialer übernommen: ${list(viaDialer)}`.slice(0, 500) });
+  if (fromCall.length || contact.length) {
+    const parts = [fromCall.length ? list(fromCall) : null, contact.length ? contact.join(", ") : null].filter(Boolean).join(" · ");
     await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: options.actorUserId ?? null, note: `Aus dem Gespräch übernommen: ${parts}`.slice(0, 500) });
   }
   return { leadId, fields, contact, cleaned };
