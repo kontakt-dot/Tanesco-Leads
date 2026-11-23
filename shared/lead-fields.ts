@@ -129,28 +129,63 @@ export function cleanFieldValue(field: LeadFieldDef, raw: unknown): string | nul
   }
   return text;
 }
+/** Felder, die einen Link zur Aufnahme tragen („pv_recording_1“, „wp_record_file“, „wp_sprachaufzeichung“). */
+export const RECORDING_FIELD = /record|aufzeich|aufnahme|recording/i;
 /** Name ohne Vorsilbe der Leadsparte, ohne Klammerzusatz, ä = ae: „pv_dachflaeche“ = „Dachfläche (m²)“ = „dachflaeche“. */
 const bareName = (value: string) => fold(String(value ?? "").replace(/\([^)]*\)/g, " ")).replace(/^(?:pv|wp)\s+/, "").replace(/\s+/g, "");
+/** Abstand zweier Namen (Buchstabe falsch, fehlt, zu viel oder zwei vertauscht) – für Tippfehler wie „sprachaufzeichung“, „photovolatikanalge“. */
+function typoDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= a.length; i += 1) for (let j = 1; j <= b.length; j += 1) {
+    const cost = a[i - 1] === b[j - 1] ? 0 : 1; d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+}
+/** Wie viele Tippfehler bei einem Namen dieser Länge noch als derselbe Name gelten. */
+const typoAllowance = (length: number) => (length >= 16 ? 2 : length >= 8 ? 1 : 0);
+export type DialerFieldMapping = { sourceField: string; targetFieldKey: string; mode?: string | null; searchValue?: string | null; replaceValue?: string | null };
 /**
  * Angaben, die der Dialer unter eigenen Namen schickt („pv_dachart“, „wp_gebaeudetyp“), den Feldern der Kategorie zuordnen.
- * Gilt nur für leere Felder, die Antwort wird wie jede andere geprüft (Auswahl, Ja/Nein, Zahl, Datum). Passt sie nicht, bleibt sie als eigene Angabe stehen.
- * Steht dasselbe Feld mit „pv_“ und „wp_“ da, gilt das der eigenen Leadsparte.
+ * Reihenfolge: 1. die Zuordnungen der Kategorie (z. B. „record_file → Recording“, Adresse umschreiben), 2. gleicher Name (Vorsilbe pv_/wp_ zählt nicht, ä = ae),
+ * 3. kleine Tippfehler im Namen. Gilt nur für leere Felder; die Antwort wird wie jede andere geprüft (Auswahl, Ja/Nein, Zahl, Datum) – passt sie nicht, bleibt sie als eigene Angabe stehen.
+ * Steht dasselbe Feld mit „pv_“ und „wp_“ da, gilt das der eigenen Leadsparte. Aufnahme-Links, die kein Feld der Kategorie bekommen, werden entfernt (sie gingen sonst mit an den Käufer).
  */
-/** Wie dialerFieldValues – dazu die Namen, unter denen der Dialer die Angaben geschickt hat (sie werden danach entfernt, damit nichts doppelt an den Käufer geht). */
-export function dialerFieldMatches(fields: LeadFieldDef[], metadata: unknown, categoryName?: string | null): { values: Record<string, string>; sources: string[] } {
-  const sources: string[] = []; const values = dialerFieldValues(fields, metadata, categoryName, sources); return { values, sources };
-}
-export function dialerFieldValues(fields: LeadFieldDef[], metadata: unknown, categoryName?: string | null, sources: string[] = []): Record<string, string> {
+export function dialerFieldMatches(fields: LeadFieldDef[], metadata: unknown, categoryName?: string | null, mappings: DialerFieldMapping[] = []): { values: Record<string, string>; sources: string[] } {
   const data = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata as Record<string, unknown> : {};
   const own = /w(ä|ae)rmepumpe|\bwp\b/i.test(categoryName ?? "") && !/photovolt|\bpv\b|solar/i.test(categoryName ?? "") ? "wp" : "pv";
-  const keys = Object.keys(data).sort((a, b) => Number(!a.toLowerCase().startsWith(own)) - Number(!b.toLowerCase().startsWith(own)));
-  const out: Record<string, string> = {};
-  for (const field of fields) {
-    if (!isEmpty(data[field.fieldKey])) continue;
-    const names = new Set([bareName(field.fieldKey), bareName(field.label)].filter((name) => name.length >= 3));
-    for (const key of keys) { if (key === field.fieldKey || !names.has(bareName(key))) continue; const value = cleanFieldValue(field, data[key]); if (value !== null) { out[field.fieldKey] = value; sources.push(key); break; } }
+  const fieldKeys = new Set(fields.map((field) => field.fieldKey));
+  const keys = Object.keys(data).filter((key) => !fieldKeys.has(key) && !isEmpty(data[key])).sort((a, b) => Number(!a.toLowerCase().startsWith(own)) - Number(!b.toLowerCase().startsWith(own)));
+  const values: Record<string, string> = {}; const sources: string[] = []; const used = new Set<string>();
+  // Eine Zuordnung „umschreiben“ gilt für alles, was in ihr Feld kommt (z. B. Adresse der Aufnahme leadshome.ondialer.com → download.voicefile.de)
+  const rewrite = (fieldKey: string, raw: unknown) => { let text = String(raw ?? ""); for (const mapping of mappings) if (mapping.targetFieldKey === fieldKey && mapping.mode === "umschreiben" && mapping.searchValue) text = text.split(mapping.searchValue).join(mapping.replaceValue ?? ""); return text; };
+  const take = (field: LeadFieldDef, key: string, raw: unknown) => { const value = cleanFieldValue(field, rewrite(field.fieldKey, raw)); if (value === null) return false; values[field.fieldKey] = value; sources.push(key); used.add(key); return true; };
+  const open = fields.filter((field) => isEmpty(data[field.fieldKey]));
+  // 1. Zuordnungen der Kategorie
+  for (const mapping of mappings) {
+    const field = open.find((item) => item.fieldKey === mapping.targetFieldKey); if (!field || values[field.fieldKey] !== undefined) continue;
+    const key = keys.find((item) => !used.has(item) && bareName(item) === bareName(mapping.sourceField)); if (!key) continue;
+    take(field, key, data[key]);
   }
-  return out;
+  // 2. gleicher Name, 3. kleiner Tippfehler – nur, wenn genau ein Feld so nah liegt
+  for (const pass of ["gleich", "tippfehler"] as const) {
+    for (const field of open) {
+      if (values[field.fieldKey] !== undefined) continue;
+      const names = [bareName(field.fieldKey), bareName(field.label)].filter((name) => name.length >= 3);
+      const fits = (key: string) => { const name = bareName(key); return pass === "gleich" ? names.includes(name) : names.some((own) => { const allowed = typoAllowance(Math.min(own.length, name.length)); return allowed > 0 && typoDistance(own, name) <= allowed; }); };
+      const candidates = keys.filter((key) => !used.has(key) && fits(key));
+      if (pass === "tippfehler" && new Set(candidates.map(bareName)).size !== 1) continue;
+      for (const key of candidates) if (take(field, key, data[key])) break;
+    }
+  }
+  // Aufnahme-Links ohne eigenes Feld der Kategorie: entfernen
+  for (const key of keys) if (!used.has(key) && RECORDING_FIELD.test(key) && /^https?:\/\//i.test(String(data[key]).trim())) sources.push(key);
+  return { values, sources };
+}
+/** Nur die zugeordneten Werte (siehe dialerFieldMatches). */
+export function dialerFieldValues(fields: LeadFieldDef[], metadata: unknown, categoryName?: string | null, mappings: DialerFieldMapping[] = []): Record<string, string> {
+  return dialerFieldMatches(fields, metadata, categoryName, mappings).values;
 }
 /** Antworten prüfen und nur die behalten, die zu einem Feld passen. */
 export function cleanFieldValues(fields: LeadFieldDef[], values: Record<string, unknown>): Record<string, string> {

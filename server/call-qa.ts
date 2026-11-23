@@ -28,7 +28,7 @@ import { readPath } from "./outbound-templates";
 import { describeShape, fieldNames, looseItems, looseStrings, readAnswers, readCriteriaScores } from "./llm-shape";
 
 export type Criterion = { key: string; label: string; weight: number; description: string };
-import { callQaCampaigns, categoryFields } from "../drizzle/schema";
+import { callQaCampaigns, categoryFieldMappings, categoryFields } from "../drizzle/schema";
 import { dialerFieldMatches, type LeadFieldDef } from "../shared/lead-fields";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
@@ -293,7 +293,8 @@ async function fillLeadFromDialer(db: Db, lead: typeof leads.$inferSelect, conta
   // Felder unter eigenen Namen des Dialers („pv_dachart“) den Feldern der Kategorie zuordnen
   const defs = await db.select({ fieldKey: categoryFields.fieldKey, label: categoryFields.label, fieldType: categoryFields.fieldType, options: categoryFields.options }).from(categoryFields).where(and(eq(categoryFields.tenantId, lead.tenantId), eq(categoryFields.categoryId, lead.categoryId)));
   const categoryName = (await db.select({ name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1))[0]?.name ?? null;
-  const mapped = dialerFieldMatches(defs as LeadFieldDef[], merged.data, categoryName);
+  const mappings = await db.select().from(categoryFieldMappings).where(and(eq(categoryFieldMappings.tenantId, lead.tenantId), eq(categoryFieldMappings.categoryId, lead.categoryId))).orderBy(asc(categoryFieldMappings.sortOrder), asc(categoryFieldMappings.id));
+  const mapped = dialerFieldMatches(defs as LeadFieldDef[], merged.data, categoryName, mappings);
   if (merged.changed || mapped.sources.length) { const next: Record<string, unknown> = { ...merged.data, ...mapped.values }; for (const key of mapped.sources) delete next[key]; patch.metadata = next; }
   if (!Object.keys(patch).length) return false;
   await db.update(leads).set(patch).where(eq(leads.id, lead.id)); return true;

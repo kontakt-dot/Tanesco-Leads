@@ -80,7 +80,8 @@ const flatFields = (value: unknown): Record<string, string> => {
 
 /** Liest Kontakt, Ergebnis und Notiz aus der Meldung des Dialers. `mapping`: eingestellte Pfade (sonst die Vorgaben). */
 /** Felder, die einen Link zur Aufnahme tragen (nicht als Angabe zum Kunden speichern). */
-export const RECORDING_FIELD = /record|aufzeich|aufnahme|recording/i;
+export { RECORDING_FIELD } from "./lead-fields";
+import { RECORDING_FIELD } from "./lead-fields";
 /** Leadsparte aus Feldnamen mit Vorsilbe: „pv_dachart“, „wp_gebaeudetyp“. Zählt nur ausgefüllte Felder. */
 export function categoryFromFieldNames(fields: Record<string, string>): "PV" | "WP" | "PV+WP" | null {
   let pv = 0; let wp = 0;
@@ -117,9 +118,9 @@ export function extractDialerContact(payload: unknown, mapping: Partial<Record<s
   const mappedFields = readPath(top, path("contactFields")); const fieldsSource = isObject(mappedFields) ? mappedFields : findIn(container, "fields", false)?.value ?? findIn(top, "fields", true)?.value;
   const fields = flatFields(fieldsSource);
   if (container) { const known = new Set<string>(Object.values(ALIASES).flat()); for (const [raw, value] of Object.entries(container)) { if (known.has(norm(raw)) || isObject(value) || Object.keys(fields).length >= 60) continue; const name = raw.replace(/\s+/g, " ").trim().slice(0, 80); const text = Array.isArray(value) ? null : clean(value, 500); if (name && text && !(name in fields)) fields[name] = text; } }
-  // Aufnahme-Links unter den Feldern („pv_recording_1“, „wp_record_file“, „wp_sprachaufzeichung“): nie als Feld speichern – das Feld ginge sonst mit an den Käufer
+  // Aufnahme-Links unter den Feldern („pv_recording_1“, „wp_record_file“, „wp_sprachaufzeichung“): gelten als Aufnahme, wenn recording_url fehlt. Als Angabe bleiben sie nur, wenn die Kategorie ein Feld dafür hat (z. B. „Recording“) – das regelt die Zuordnung (shared/lead-fields.ts)
   let recordingUrl: string | null = null;
-  for (const key of Object.keys(fields)) { if (!RECORDING_FIELD.test(key)) continue; const value = fields[key]; if (!recordingUrl && /^https?:\/\/\S+$/i.test(value)) recordingUrl = value; delete fields[key]; }
+  for (const key of Object.keys(fields)) { if (!RECORDING_FIELD.test(key)) continue; const value = fields[key]; if (!recordingUrl && /^https?:\/\/\S+$/i.test(value)) recordingUrl = value; }
   if (Object.keys(fields).length) found.push(`contact.fields (${Object.keys(fields).length})`);
   const result = clean(readPath(top, path("result")), 160) ?? clean(findIn(top, "result", false)?.value, 160); if (result) found.push("result");
   const note = clean(readPath(top, path("note")), 2000) ?? clean(findIn(top, "note", false)?.value, 2000); if (note) found.push("note");

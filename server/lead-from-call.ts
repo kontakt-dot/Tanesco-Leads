@@ -11,7 +11,7 @@
  * Hintergrund nach (ein paar je Minute). Der Anruf selbst bleibt die Quelle: Im Lead steht, aus welchem Gespräch die Angaben stammen.
  */
 import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { callRecords, categoryFields, leadCategories, leadStatusEvents, leads, rawContacts } from "../drizzle/schema";
+import { callRecords, categoryFieldMappings, categoryFields, leadCategories, leadStatusEvents, leads, rawContacts } from "../drizzle/schema";
 import { invokeLLM } from "./_core/llm";
 import { fieldNames } from "./llm-shape";
 import type { Db } from "./lead-pipeline";
@@ -71,12 +71,13 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
   const call = options.callId
     ? (await db.select({ id: callRecords.id, transcript: callRecords.transcript }).from(callRecords).where(and(eq(callRecords.id, options.callId), eq(callRecords.tenantId, tenantId))).limit(1))[0]
     : (await db.select({ id: callRecords.id, transcript: callRecords.transcript }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.leadId, leadId), eq(callRecords.status, "bewertet"))).orderBy(desc(callRecords.id)).limit(1))[0];
-  const [defs, category] = await Promise.all([
+  const [defs, category, mappings] = await Promise.all([
     db.select({ fieldKey: categoryFields.fieldKey, label: categoryFields.label, fieldType: categoryFields.fieldType, options: categoryFields.options }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenantId), eq(categoryFields.categoryId, lead.categoryId))).orderBy(asc(categoryFields.sortOrder), asc(categoryFields.id)),
     db.select({ name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1),
+    db.select().from(categoryFieldMappings).where(and(eq(categoryFieldMappings.tenantId, tenantId), eq(categoryFieldMappings.categoryId, lead.categoryId))).orderBy(asc(categoryFieldMappings.sortOrder), asc(categoryFieldMappings.id)),
   ]);
   // Was der Dialer unter eigenen Namen geschickt hat („pv_dachart“), geht zuerst in die Felder der Kategorie – sicherer als aus dem Gespräch gelesen
-  const matched = dialerFieldMatches(defs as LeadFieldDef[], lead.metadata, category[0]?.name ?? null); const fromDialer = matched.values;
+  const matched = dialerFieldMatches(defs as LeadFieldDef[], lead.metadata, category[0]?.name ?? null, mappings); const fromDialer = matched.values;
   const withoutSources = (data: Record<string, unknown>) => { const next = { ...data }; for (const key of matched.sources) delete next[key]; return next; }; // nichts doppelt: die Angabe steht jetzt im Feld der Kategorie
   const meta = withoutSources({ ...metaOf(lead.metadata), ...fromDialer }); const now = new Date().toISOString();
   const patch: Partial<typeof leads.$inferInsert> = {}; const cleaned: string[] = [];

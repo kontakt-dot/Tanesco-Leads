@@ -6046,7 +6046,10 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect(sent.json).toMatchObject({ ok: true, decision: "freigegeben" }); const lead = await leadRow(sent.json.lead_id); const meta = lead.metadata as Record<string, unknown>;
       expect(lead).toMatchObject({ firstName: "Monika", lastName: "Seidel", categoryId });
       expect(meta).toMatchObject({ v351_dachflaeche_probe: "55", v351_stromspeicher_probe: "Ja" }); expect(meta).not.toHaveProperty("pv_dachflaeche_probe"); expect(meta).not.toHaveProperty("pv_stromspeicher_probe"); // im Feld der Kategorie – geprüft (Zahl, Ja/Nein) – und nicht noch einmal unter dem Namen des Dialers
-      expect(meta).not.toHaveProperty("pv_recording_1"); expect(JSON.stringify(meta)).not.toContain("aufnahmen.example"); // der Aufnahme-Link geht nie als Feld an einen Käufer
+      expect(meta).not.toHaveProperty("pv_recording_1"); // nicht unter dem Namen des Dialers
+      // hat die Kategorie ein Feld für die Aufnahme (Vorlage: „Recording“), steht der Link dort – sonst gar nicht (er ginge sonst mit an den Käufer)
+      const recordingField = ((await owner.leadops.listCategoryFields({ categoryId })) as Array<{ fieldKey: string }>).find((field) => field.fieldKey === "recording_1");
+      if (recordingField) expect(meta.recording_1).toBe("https://aufnahmen.example/v351.mp3"); else expect(JSON.stringify(meta)).not.toContain("aufnahmen.example");
       const call = (await db.select().from(callsTable).where(eq(callsTable.externalCallId, "v351-1")))[0]; expect(call.recordingUrl).toBe("https://aufnahmen.example/v351.mp3");
       const notes = (await db.select().from(eventsTable).where(eq(eventsTable.leadId, lead.id))).map((row) => row.note ?? "");
       expect(notes.some((note) => /^Vom Dialer übernommen: \d Felder \(.*Dachfläche Probe \(m²\), Stromspeicher Probe\)/.test(note))).toBe(true);

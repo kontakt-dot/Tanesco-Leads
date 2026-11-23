@@ -1,5 +1,7 @@
 import { dialerFieldValues } from "../shared/lead-fields";
 import { categoryFromFieldNames } from "../shared/dialer-contact";
+import { dialerFieldMatches } from "../shared/lead-fields";
+import { heatPumpCategoryFields, pvCategoryFieldMappings, pvCategoryFields } from "./category-fields";
 import { describe, expect, it } from "vitest";
 import { CONTACT_MAPPING, categoryProducts, dialerInfo, extractDialerContact, matchDialerCategory, mergeDialerData } from "../shared/dialer-contact";
 import { dialerGuideText } from "../shared/dialer-guide";
@@ -137,13 +139,40 @@ describe("Felder des Dialers mit Vorsilbe (pv_…, wp_…)", () => {
     expect(dialerFieldValues(defs, { pv_gebaeudetyp: "Einfamilienhaus", wp_gebaeudetyp: "Doppelhaushälfte" }, "Photovoltaik")).toEqual({ gebaeudetyp: "Einfamilienhaus" });
     expect(dialerFieldValues(defs, { pv_gebaeudetyp: "Einfamilienhaus", wp_gebaeudetyp: "Doppelhaushälfte" }, "Wärmepumpe")).toEqual({ gebaeudetyp: "Doppelhaushälfte" });
   });
-  it("Leadsparte aus den Feldnamen; Aufnahme-Links werden nie als Feld gespeichert", () => {
+  it("Leadsparte aus den Feldnamen; ein Aufnahme-Link unter den Feldern gilt als Aufnahme", () => {
     expect(categoryFromFieldNames({ pv_dachart: "Satteldach", pv_hausart: "EFH", wp_info: "" })).toBe("PV");
     expect(categoryFromFieldNames({ wp_beheizte_flaeche: "140", wp_gebaeudetyp: "EFH" })).toBe("WP");
     expect(categoryFromFieldNames({ pv_dachart: "a", pv_hausart: "b", pv_dachalter: "c", wp_beheizte_flaeche: "d", wp_gebaeudetyp: "e", wp_ist_eigentuemer: "f" })).toBe("PV+WP");
     expect(categoryFromFieldNames({ dachart: "Satteldach" })).toBeNull();
     const contact = extractDialerContact({ call_id: "1", phone: "+49 30 1", contact: { first_name: "Laura", fields: { pv_dachart: "Satteldach", pv_hausart: "EFH", pv_recording_1: "https://aufnahmen.example/1.mp3", wp_record_file: "https://aufnahmen.example/2.mp3" } } });
-    expect(contact.fields).toEqual({ pv_dachart: "Satteldach", pv_hausart: "EFH" }); expect(contact.recordingUrl).toBe("https://aufnahmen.example/1.mp3"); expect(contact.category).toBe("PV"); expect(contact.found).toContain("category (aus den Feldnamen)");
+    expect(Object.keys(contact.fields)).toEqual(["pv_dachart", "pv_hausart", "pv_recording_1", "wp_record_file"]); expect(contact.recordingUrl).toBe("https://aufnahmen.example/1.mp3"); // bleibt erst stehen – ob es ein Feld der Kategorie wird, entscheidet die Zuordnung expect(contact.category).toBe("PV"); expect(contact.found).toContain("category (aus den Feldnamen)");
     expect(extractDialerContact({ phone: "1", category: "WP", fields: { pv_dachart: "x" } }).category).toBe("WP"); // eine genannte Leadsparte gilt
+  });
+});
+
+describe("Liste von OnDialer gegen die Felder der PV- und WP-Vorlage", () => {
+  const PV = ["pv_stromverbrauch", "pv_monatliche_stromkosten", "pv_waermepumpe", "pv_wallbox", "pv_dachart", "pv_hausart", "pv_dachflaeche", "pv_dachalter", "pv_finanzierung", "pv_umsetzung", "pv_erreichbarkeit", "pv_recording_1", "pv_lieferant", "pv_kundenalter", "pv_personen_im_haushalt", "pv_wie_viele_angebote", "pv_hauptmotivation", "pv_dach_aelter_als_30_jahre", "pv_dachausrichtung", "pv_info", "pv_stromspeicher", "pv_dachmaterial", "pv_entscheider", "pv_bestandsanlage", "pv_gebaeudetyp"];
+  const WP = ["wp_geplantes_heizsystem", "wp_aktuelles_heizsystem", "wp_beheizte_flaeche", "wp_aktuelle_waermeverteilung", "wp_warmwasser_system", "wp_installationszeitraum", "wp_bevorzugte_waermepumpe", "wp_gebaeudetyp", "wp_kommentare", "wp_erreichbarkeit", "wp_ist_eigentuemer", "wp_termin_erwuenscht", "wp_ist_neubau", "wp_info", "wp_record_file", "wp_sprachaufzeichung", "wp_hauptmotivation", "wp_interesse_photovolatikanalge"];
+  // Antworten so, wie sie zu den Feldern passen: bei Auswahl die erste Antwort, sonst ein Text
+  const sample = (defs: typeof pvCategoryFields, names: string[]) => Object.fromEntries(names.map((name) => { const plain = name.replace(/^(pv|wp)_/, ""); const def = defs.find((field) => field.fieldKey === plain); return [name, /record|aufzeich/.test(name) ? "https://leadshome.ondialer.com/r/1.mp3" : def?.options?.[0] ?? (name.includes("interesse") ? "Ja" : "Probe")]; })); // „interesse_photovolatikanalge“ hat wegen des Tippfehlers keine Vorlage zum Nachschlagen
+  it("PV: alle Felder der Vorlage, die OnDialer schickt, werden gefüllt – „pv_gebaeudetyp“ hat in der Vorlage kein Feld; Recording mit umgeschriebener Adresse", () => {
+    const result = dialerFieldMatches(pvCategoryFields as never, sample(pvCategoryFields, PV), "Photovoltaik", pvCategoryFieldMappings as never);
+    const filled = Object.keys(result.values); const missing = pvCategoryFields.map((field) => field.fieldKey).filter((key) => !filled.includes(key));
+    expect(missing).toEqual(["ghl_id"]); // schickt OnDialer nicht
+    expect(PV.filter((name) => !result.sources.includes(name))).toEqual(["pv_gebaeudetyp"]); // bleibt als eigene Angabe
+    expect(result.values.recording_1).toBe("https://download.voicefile.de/r/1.mp3");
+  });
+  it("WP: auch die zwei Tippfehler („sprachaufzeichung“, „photovolatikanalge“) finden ihr Feld", () => {
+    const result = dialerFieldMatches(heatPumpCategoryFields as never, sample(heatPumpCategoryFields, WP), "Wärmepumpe");
+    const missing = heatPumpCategoryFields.map((field) => field.fieldKey).filter((key) => !(key in result.values));
+    expect(missing).toEqual(["installationsort", "kombi_lead"]); // schickt OnDialer nicht
+    expect(WP.filter((name) => !result.sources.includes(name))).toEqual([]);
+    expect(result.values).toMatchObject({ sprachaufzeichnung: "https://leadshome.ondialer.com/r/1.mp3", interesse_photovoltaikanlage: "Ja" });
+  });
+  it("Aufnahme-Link ohne Feld in der Kategorie wird entfernt; ähnliche, aber andere Namen werden nicht verwechselt", () => {
+    const defs = [{ fieldKey: "dachart", label: "Dachart", fieldType: "text" }, { fieldKey: "dachalter", label: "Dachalter", fieldType: "text" }];
+    const result = dialerFieldMatches(defs, { pv_recording_1: "https://aufnahmen.example/1.mp3", pv_dachart: "Satteldach", pv_dachalter: "20" }, "Photovoltaik");
+    expect(result.values).toEqual({ dachart: "Satteldach", dachalter: "20" }); expect(result.sources).toContain("pv_recording_1");
+    expect(dialerFieldMatches([{ fieldKey: "dachart", label: "Dachart", fieldType: "text" }], { pv_dachalter: "20" }).values).toEqual({}); // „dachalter“ ist nicht „dachart“ – zu kurz für Tippfehler
   });
 });
