@@ -88,3 +88,21 @@ describe("Name des Mitarbeiters aus der Vorstellung", () => {
     expect(detectAgentName("Kunde: Ja hallo? Agent: Ja, guten Tag.")).toBeNull();
   });
 });
+
+describe("Vorlage Wattfox – Übergabe am Ende nur zur Auswertung (v355)", () => {
+  it("fragt nach „Photovoltaik Angebotsvergleich“ und bis zu 3 Angeboten – entscheidet aber nicht", async () => {
+    const { WATTFOX_PRESET } = await import("../shared/call-qa-presets");
+    const handover = WATTFOX_PRESET.questions.filter((question) => ["uebergabe_angebotsvergleich", "bis_zu_3_angebote"].includes(question.key));
+    expect(handover.map((question) => question.rule)).toEqual(["info", "info"]);
+    expect(WATTFOX_PRESET.instructions).not.toContain("die Übergabe an „Photovoltaik Angebotsvergleich“, eine ausdrückliche Zustimmung");
+    // Ein gutes Wattfox-Gespräch ohne den Satz am Ende bleibt freigegeben – die beiden Fragen stehen nur auf „Nein“
+    const withoutSentence = good.replace(/Dann wird sich Photovoltaik Angebotsvergleich[^?]*\?/, "Telefonisch unter dieser Nummer erreichbar?");
+    const answers = answerQuestionsHeuristically(WATTFOX_PRESET.questions, withoutSentence);
+    expect(answers.bis_zu_3_angebote?.answer).not.toBe("ja");
+    for (const key of ["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]) answers[key] = { answer: "ja" };
+    expect(decideByQuestions(WATTFOX_PRESET.questions, answers).decision).toBe("freigegeben");
+    // Mit dem Satz: beide Fragen „Ja“
+    const withSentence = answerQuestionsHeuristically(WATTFOX_PRESET.questions, good);
+    expect(withSentence.bis_zu_3_angebote?.answer).toBe("ja");
+  });
+});

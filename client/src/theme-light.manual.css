@@ -2013,3 +2013,6 @@ html:not(.dark) .cq-campaign textarea.cq-textarea { background: #ffffff !importa
 html:not(.dark) .cq-campaign select { background: #ffffff !important; color: #101828 !important; border-color: #d0d5dd !important; }
 html:not(.dark) .cq-savebar { background: #ffffff !important; border-top-color: #e4e7ec !important; }
 html:not(.dark) .cq-unscored { color: #344054 !important; background: #f2f4f7 !important; border-color: #98a2b3 !important; }
+
+/* Endpoint-Editor (Benutzer → Integration): deckend weiß – sonst scheint die Seite dahinter durch */
+html:not(.dark) .surface-panel.ig-dialog { background: #ffffff !important; backdrop-filter: none; -webkit-backdrop-filter: none; }

@@ -3,6 +3,7 @@
  * damit Server und Browser-Demo dieselben Regeln nutzen.
  */
 import { outboundMeta } from "../shared/lead-fields";
+import { wattfoxLeadId, wattfoxPayload, wattfoxTemplateOptions } from "../shared/wattfox";
 
 export type TemplateLead = { id: number; publicId: string; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; postcode: string | null; city: string | null; country: string | null; metadata: unknown; createdAt: Date | string };
 export type EndpointLike = { id: number; enabled: boolean; url: string; sourceFilterMode: "alle" | "nur" | "ausser"; sourceSupplierIds: unknown; fieldFilters: unknown; rotate: boolean; sentCount: number; position: number; bodyTemplate: string | null; omitAutoFields: boolean; valueMappings: unknown };
@@ -29,15 +30,24 @@ export function leadTemplateValues(lead: TemplateLead, category?: { name: string
 const jsonEscape = (value: unknown) => JSON.stringify(value === undefined || value === null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value)).slice(1, -1);
 
 /** Ersetzt {{platzhalter}} in einem JSON-Template; Werte werden JSON-sicher eingesetzt, unbekannte Platzhalter bleiben stehen. */
-export function renderTemplate(template: string, values: Record<string, unknown>, valueMappings: ValueMapping[] = []) {
+/** Werte-Mapping anwenden: „unser Wert“ eines Feldes → Code des Käufers. */
+export function applyValueMappings(values: Record<string, unknown>, valueMappings: ValueMapping[] = []) {
   const mapped: Record<string, unknown> = { ...values };
-  for (const mapping of valueMappings) { const key = mapping.field.startsWith("custom_data.") ? mapping.field : `custom_data.${mapping.field}`; if (String(mapped[key] ?? "") === mapping.ourValue) mapped[key] = mapping.customerCode; }
+  for (const mapping of valueMappings) { if (!mapping.field) continue; const key = mapping.field.startsWith("custom_data.") ? mapping.field : `custom_data.${mapping.field}`; if (String(mapped[key] ?? "") === mapping.ourValue) mapped[key] = mapping.customerCode; }
+  return mapped;
+}
+
+export function renderTemplate(template: string, values: Record<string, unknown>, valueMappings: ValueMapping[] = []) {
+  const mapped = applyValueMappings(values, valueMappings);
   return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (whole, key: string) => (key in mapped ? jsonEscape(mapped[key]) : whole));
 }
 
 /** Baut den Request-Body: gerendertes Template (JSON) + automatische Felder lead_id/lead_number, sofern nicht abgeschaltet. */
-export function buildEndpointBody(endpoint: Pick<EndpointLike, "bodyTemplate" | "omitAutoFields" | "valueMappings">, values: Record<string, unknown>) {
+export function buildEndpointBody(endpoint: Pick<EndpointLike, "bodyTemplate" | "omitAutoFields" | "valueMappings">, values: Record<string, unknown>): { body: string; json: true; payload: unknown; missing?: string[] } | { body: string; json: false; payload?: undefined; missing?: string[] } {
   const mappings = Array.isArray(endpoint.valueMappings) ? (endpoint.valueMappings as ValueMapping[]) : [];
+  // Wattfox-Vorlage: Die Felder baut die Software selbst (Produkt, Zusatzinteresse, Werte von Wattfox) – aus dem Body kommen Herkunft (utm_…) und eigene Zusätze
+  const wattfox = wattfoxTemplateOptions(endpoint.bodyTemplate);
+  if (wattfox) { const built = wattfoxPayload(applyValueMappings(values, mappings)); const payload = { ...built.payload, ...wattfox }; return { body: JSON.stringify(payload), json: true as const, payload, missing: built.missing }; }
   const rendered = endpoint.bodyTemplate?.trim() ? renderTemplate(endpoint.bodyTemplate, values, mappings) : JSON.stringify({ first_name: values.first_name, last_name: values.last_name, email: values.email, phone: values.phone, postal_code: values.postal_code, city: values.city, country_code: values.country_code, custom_data: Object.fromEntries(Object.entries(values).filter(([key]) => key.startsWith("custom_data.")).map(([key, value]) => [key.slice(12), value])) });
   let payload: unknown;
   try { payload = JSON.parse(rendered); } catch { return { body: rendered, json: false as const }; }
@@ -71,6 +81,7 @@ export const readPath = (value: unknown, path: string): unknown => path.split(".
 
 /** Referenz des Partners aus der Antwort (uuid, id, lead_id, reference, inquiry_id, data.id …). */
 export function extractPartnerReference(text: string): string | null {
+  const wattfox = wattfoxLeadId(text); if (wattfox) return wattfox; // Wattfox: „wf_leadid“ ersetzt deren frühere „leadid“
   try {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== "object") return null;

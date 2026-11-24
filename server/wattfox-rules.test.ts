@@ -7,8 +7,9 @@ const questions = normalizeQuestions(preset.questions);
 
 describe("Wattfox PV und WP – Regeln der Kampagne", () => {
   it("hat genau die vier gewünschten K.-o.-Fragen – die Dachfläche ist raus", () => {
-    expect(questions.map((question) => question.key)).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]);
-    expect(questions.every((question) => question.rule === "ko")).toBe(true);
+    expect(questions.filter((question) => question.rule === "ko").map((question) => question.key)).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]);
+    // seit v355 dazu die Übergabe am Ende – nur zur Auswertung, sie entscheidet nicht
+    expect(questions.filter((question) => question.rule !== "ko").map((question) => [question.key, question.rule])).toEqual([["uebergabe_angebotsvergleich", "info"], ["bis_zu_3_angebote", "info"]]);
     expect(questions.find((question) => question.key === "wp_kein_erdgas")?.onlyFor).toBe("waermepumpe");
     expect(questions.every((question) => (question.hint ?? "").length > 20)).toBe(true); // Hinweise werden nicht mehr abgeschnitten
     expect(preset.criteria.map((criterion) => criterion.key)).toEqual(["interesse", "entscheider", "zeitrahmen", "wp_kein_erdgas", "hauskompass"]);

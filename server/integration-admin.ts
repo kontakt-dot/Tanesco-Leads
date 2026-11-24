@@ -7,6 +7,7 @@ import { categoryFields, deliveryEndpoints, integrationPresets, leadCategories, 
 import { decryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
 import { ensureMemberSettings, requireMembership } from "./member-admin";
+import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../shared/wattfox";
 import { PLACEHOLDERS, buildEndpointBody, decryptAuth, decryptHeaders, encryptJson, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
 
 export const SECRET_MASK = "••••••••";
@@ -97,6 +98,26 @@ export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipI
   const preview = buildEndpointBody(endpoint, values);
   const result = await sendToEndpoint(endpoint, values, { fetchImpl });
   return { ok: result.ok, status: result.status ?? 0, responseBody: result.error ?? result.body.slice(0, 1500), requestBody: preview.body };
+}
+
+/**
+ * „Testleads an Wattfox senden“: die Testleads, die Wattfox vor dem Live-Zugang verlangt – je 3 vollständige für PV und Wärmepumpe,
+ * dazu 3 mit Zusatzinteresse. Nur für eine Wattfox-Vorlage; zählt nicht als Zustellung. An eine Adresse, die nicht nach Testumgebung
+ * aussieht, nur ausdrücklich (allowLive) – damit nie aus Versehen erfundene Leads im Live-System landen.
+ */
+export async function sendWattfoxTestLeads(db: Db, tenantId: number, membershipId: number, id: number, options: { allowLive?: boolean; fetchImpl?: typeof fetch } = {}) {
+  await requireMembership(db, tenantId, membershipId);
+  const endpoint = (await db.select().from(deliveryEndpoints).where(and(eq(deliveryEndpoints.id, id), eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))).limit(1))[0];
+  if (!endpoint) throw new Error("Endpoint wurde nicht gefunden.");
+  if (!isWattfoxTemplate(endpoint.bodyTemplate)) throw new Error("Das ist keine Wattfox-Vorlage – erst „Vorlage Wattfox“ einsetzen und speichern.");
+  if (!isTestAddress(endpoint.url) && !options.allowLive) throw new Error("Die Adresse sieht nach dem Live-System aus. Testleads gehen nur an die Testumgebung von Wattfox.");
+  const results: Array<{ label: string; ok: boolean; status: number; reference: string | null; response: string; requestBody: string }> = [];
+  for (const test of wattfoxTestLeads()) {
+    const result = await sendToEndpoint(endpoint, test.values, { fetchImpl: options.fetchImpl });
+    results.push({ label: test.label, ok: result.ok, status: result.status ?? 0, reference: result.partnerReference, response: (result.error ?? result.body).slice(0, 600), requestBody: result.requestBody ?? "" });
+    if (result.error && /Anmeldung|Token/.test(result.error)) break; // Anmeldung klappt nicht – die übrigen würden genauso scheitern
+  }
+  return { sent: results.length, ok: results.filter((item) => item.ok).length, total: wattfoxTestLeads().length, results };
 }
 
 export async function saveResponseMapping(db: Db, tenantId: number, membershipId: number, input: { enabled: boolean; rules: Array<{ source: "body" | "status"; field?: string | null; op: "gleich" | "beginnt" | "enthaelt"; value: string; label?: string | null; reasonId: number; active: boolean }> }) {

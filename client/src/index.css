@@ -4149,3 +4149,6 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cq-savebar{position:sticky;bottom:-24px;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px;padding:10px 0 12px;background:var(--background);border-top:1px solid rgba(255,255,255,.08)}
 .cq-th-ampel{cursor:help}.cq-th-info{opacity:.55;font-size:11px;font-weight:400}
 .cq-unscored{padding:8px 12px;border-radius:10px;border:1px dashed rgba(148,163,184,.4);color:#cbd5e1;background:rgba(148,163,184,.08)}
+
+/* Endpoint-Editor (Benutzer → Integration): deckend – sonst scheint die Seite dahinter durch */
+.ig-dialog{background:#1c192d}

@@ -46,6 +46,8 @@ export async function sendToEndpoint(endpoint: DeliveryEndpoint, values: Record<
   const fetchImpl = options.fetchImpl ?? fetch;
   const built = buildEndpointBody(endpoint, values);
   const body = options.skipEmptyFields && built.json ? JSON.stringify(stripEmpty(built.payload)) : built.body;
+  // Wattfox-Vorlage: Fehlt eine Pflichtangabe, geht der Lead gar nicht erst raus – sonst lehnt Wattfox ihn ab. 422 = „Angaben falsch“ unter API-Fehler (Lead korrigieren, noch einmal ausliefern)
+  if (built.missing?.length) { const message = `Für Wattfox fehlt: ${built.missing.join(", ")} – nicht gesendet`; return { endpointId: endpoint.id, url: endpoint.url, status: 422, ok: false, body: JSON.stringify({ error: message }), partnerReference: null, error: message, requestBody: body }; }
   const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
   for (const pair of decryptHeaders(endpoint.headersEncrypted)) if (pair.name) headers[pair.name.toLowerCase()] = pair.value;
   const auth = endpoint.authEnabled ? decryptAuth(endpoint.authConfigEncrypted) : null;

@@ -157,6 +157,7 @@ beforeAll(async () => {
       const email = String((parsedBody as { email?: unknown } | null)?.email ?? "");
       return !/^[^@\s]+@[^@\s.][^@\s]*\.[a-z]{2,}$/i.test(email) ? new Response(JSON.stringify({ errors: { email: ["is invalid"] } }), { status: 422, headers: { "content-type": "application/json" } }) : new Response(JSON.stringify({ uuid: `v348-${outbound.length}` }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    if (url.includes("prelive.wattfox.net/v1/leads")) return headers["x-auth-token"] !== "tok-12345" ? new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }) : new Response(JSON.stringify({ wf_leadid: 7000 + outbound.length, firstname: (parsedBody as { firstname?: string } | null)?.firstname ?? null }), { status: 200, headers: { "content-type": "application/json" } }); // Testumgebung von Wattfox
     if (url.includes("secured") && headers["x-auth-token"] !== "tok-12345") return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
     if (url.includes("duplicate")) return new Response(JSON.stringify({ code: 5, message: "Kunde existiert bereits" }), { status: 400, headers: { "content-type": "application/json" } });
     return new Response(JSON.stringify(url.includes("crm") ? { uuid: `ah-${outbound.length}`, ok: true } : { ok: true }), { status: url.includes("reject") ? 422 : 200, headers: { "content-type": "application/json", "x-request-id": `req-${outbound.length}` } });
@@ -4533,20 +4534,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe(WATTFOX_CAMPAIGN);
       const wattfoxRow = async () => (await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN))))[0];
       const wattfoxKeys = async () => ((await wattfoxRow()).questions as Array<{ key: string }>).map((q) => q.key);
-      expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]); // neue Wattfox-Regeln, die alten Fragen sind weg
+      expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas", "uebergabe_angebotsvergleich", "bis_zu_3_angebote"]); // neue Wattfox-Regeln, die alten Fragen sind weg (seit v355 mit der Übergabe am Ende – nur zur Auswertung)
       expect(((await wattfoxRow()).criteria as Array<{ key: string }>).map((c) => c.key)).toEqual(["interesse", "entscheider", "zeitrahmen", "wp_kein_erdgas", "hauskompass"]);
       // Stand von gestern (noch mit Dachfläche als Frage und Kriterium, eigene Gewichte) → beim Start fällt die Dachfläche weg, die Vorlagen-Gewichte gelten
       { const { WATTFOX_PRESET } = await import("../shared/call-qa-presets"); const { refreshCampaignPresets } = await import("./call-qa");
         await db.update(cqTable).set({ questions: [...WATTFOX_PRESET.questions, { key: "pv_dachflaeche_20qm", label: "Photovoltaik: Ist die Dachfläche größer als 20 m²?", rule: "ko", onlyFor: "photovoltaik" }], criteria: [...WATTFOX_PRESET.criteria.map((c) => ({ ...c, weight: 20 })), { key: "pv_dachflaeche", label: "Photovoltaik: Dachfläche größer als 20 m²", weight: 15, description: "alt" }] }).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
         expect(await refreshCampaignPresets(db)).toBe(1);
-        expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]);
+        expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas", "uebergabe_angebotsvergleich", "bis_zu_3_angebote"]);
         expect(((await wattfoxRow()).criteria as Array<{ key: string; weight: number }>).map((c) => [c.key, c.weight])).toEqual(WATTFOX_PRESET.criteria.map((c) => [c.key, c.weight]));
         expect(await refreshCampaignPresets(db)).toBe(0); }
       // Mehrere Gespräche auf einmal neu bewerten (nach geänderten Regeln)
       { const { reevaluateCalls } = await import("./call-qa");
         expect(await reevaluateCalls(db, S.tenantId, [result.callIds[0]], { waitFor: true })).toEqual({ queued: 1 });
         const again = (await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0]; expect(again.status).toBe("bewertet");
-        expect(Object.keys(again.qualificationAnswers as Record<string, unknown>).sort()).toEqual(["eigentuemer_entscheider", "interesse_produkt", "umsetzung_6_monate", "wp_kein_erdgas"]);
+        expect(Object.keys(again.qualificationAnswers as Record<string, unknown>).sort()).toEqual(["bis_zu_3_angebote", "eigentuemer_entscheider", "interesse_produkt", "uebergabe_angebotsvergleich", "umsetzung_6_monate", "wp_kein_erdgas"]); // seit v355 mit der Übergabe am Ende (nur Auswertung)
         const listed = (await owner.leadops.listCalls({ campaign: WATTFOX_CAMPAIGN })).find((row) => row.id === result.callIds[0])!; expect(listed.fulfilment).toMatchObject({ total: 4 }); }
       expect((await wattfoxRow()).instructions).toContain("Kampagne Wattfox");
       // Alles vom Dialer landet künftig in dieser Kampagne
@@ -6081,7 +6082,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       const d = await call({ transcript: base, leadId: leadD }); // ohne den Satz – Lead schon ausgeliefert
       const raw = Number((await db.insert(rawTable).values({ tenantId, batchId: 0, firstName: "Sophie", lastName: "Arndt", phone: "+49 2591 5550999", status: "in_liste" })).insertId ?? 0) || (await db.select().from(rawTable).where(and(eq(rawTable.tenantId, tenantId), eq(rawTable.phone, "+49 2591 5550999"))))[0].id;
       const e = await call({ transcript: base, rawContactId: raw, decision: "pruefen" }); // Kontakt der Liste, zur Prüfung
-      const f = await call({ transcript: base, campaign: wattfox, questions: WATTFOX_PRESET.questions }); // Wattfox kennt die Frage nicht – alle seine Fragen sind beantwortet
+      const f = await call({ transcript: base, campaign: wattfox, questions: WATTFOX_PRESET.questions }); // Wattfox fragt (seit v355) nur zur Auswertung danach – alle seine Fragen sind beantwortet
       const mine = [a, b, c, d, e];
       const missingIds = async () => (await callsMissingAnswers(db, { tenantId })).map((item) => item.id);
       // (a) Stand: Diese fünf warten – die Wattfox-Gespräche nicht; die neue Frage wird genannt
@@ -6097,7 +6098,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       for (let round = 0; round < 20 && (await missingIds()).some((id) => mine.includes(id)); round += 1) await recheckCallAnswers(db, { tenantId, max: 100 });
       const rows = new Map((await db.select().from(callsTable).where(inArray(callsTable.id, [...mine, f]))).map((row) => [row.id, row]));
       const answer = (id: number) => (rows.get(id)!.qualificationAnswers as Record<string, { answer: string }>).bis_zu_3_angebote?.answer;
-      expect(answer(a)).toBe("nein"); expect(answer(b)).toBe("ja"); expect(answer(c)).toBe("nein"); expect(answer(f)).toBeUndefined();
+      expect(answer(a)).toBe("nein"); expect(answer(b)).toBe("ja"); expect(answer(c)).toBe("nein"); expect(answer(f)).toBe("nein"); // Wattfox fragt seit v355 nur zur Auswertung danach – f bleibt freigegeben (unten)
       // ohne den Satz: zurückgewiesen, mit Vermerk und der Entscheidung davor
       expect(rows.get(a)).toMatchObject({ decision: "zurueckgewiesen", decidedBy: "automatisch", recheckFrom: "freigegeben" }); expect(rows.get(a)!.nextStep).toBe("Nachprüfung: Pflichtfrage „Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?“ = Nein");
       expect(rows.get(a)!.recheckedAt).toBeTruthy();
@@ -6124,4 +6125,63 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await expect(invitee.leadops.callRecheckStatus()).rejects.toThrow();
     } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; await owner.leadops.setCallAiCap({ euros: 0 }).catch(() => undefined); }
   }, 120000);
+  it("v355. Wattfox: Vorlage baut den Lead selbst (Produkt, Zusatzinteresse, Herkunft), 9 Testleads an die Testumgebung, Wattfox-Nummer am Lead, fehlende Pflichtangaben halten den Lead zurück", async () => {
+    const { WATTFOX, WATTFOX_TEMPLATE } = await import("../shared/wattfox");
+    const { handOverToBuyerEndpoints } = await import("./outbound-endpoints");
+    const { membership } = (await db.select({ membership: memberships }).from(memberships).where(and(eq(memberships.tenantId, S.tenantId), eq(memberships.userId, inviteeUserId))))[0];
+    const membershipId = membership.id;
+    const config = { membershipId, categoryId: S.pv.id, enabled: true, method: "POST" as const, url: WATTFOX.leadsUrl, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: true, auth: { loginUrl: WATTFOX.loginUrl, credentials: [{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }], tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes }, bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, rotate: false, valueMappings: [] };
+    const endpoint = await owner.leadops.saveDeliveryEndpoint(config);
+
+    // (a) Die 9 Testleads: angemeldet (X-AUTH-TOKEN), je 3 PV und Wärmepumpe, 3 mit Zusatzinteresse, Herkunft fest, ohne unsere lead_id
+    const start = outbound.length;
+    const tests = await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id });
+    expect(tests).toMatchObject({ sent: 9, ok: 9, total: 9 });
+    expect(tests.results.every((item) => item.ok && /^\d+$/.test(item.reference ?? ""))).toBe(true);
+    const calls = outbound.slice(start).filter((call) => call.url === WATTFOX.leadsUrl);
+    expect(calls).toHaveLength(9);
+    expect(calls.every((call) => call.headers["x-auth-token"] === "tok-12345")).toBe(true);
+    expect(calls.map((call) => call.body.productId)).toEqual([2, 2, 2, 20, 20, 20, 2, 2, 20]);
+    expect(calls.map((call) => call.body.otherinterests ?? null)).toEqual([null, null, null, null, null, null, [20], [20], [2]]);
+    expect(calls.map((call) => call.body.childinterests ?? null)).toEqual([null, null, null, [6], [6], [6], [6], [6], [6]]);
+    expect(calls.every((call) => call.body.utm_source === "Tanesco Digital GbR" && call.body.utm_medium === "affiliate" && call.body.utm_campaign === "Hyper Energy Solutions, Meta Leadformular")).toBe(true);
+    expect(calls.every((call) => call.body.lead_id === undefined && call.body.vorlage === undefined && String(call.body.notes).startsWith("TESTLEAD"))).toBe(true);
+    // Testleads zählen nicht als Zustellung
+    expect((await db.select().from(integrationEvents).where(eq(integrationEvents.endpointId, endpoint.id))).length).toBe(0);
+
+    // (b) Nie aus Versehen ins Live-System, nur mit einer Wattfox-Vorlage
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, url: "https://api-v1.photovoltaik-angebotsvergleich.de/v1/leads", auth: { ...config.auth, credentials: [{ name: "user", value: "••••••••" }, { name: "pass", value: "••••••••" }] } });
+    await expect(owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).rejects.toThrow(/Live-System/);
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: { ...config.auth, credentials: [{ name: "user", value: "••••••••" }, { name: "pass", value: "••••••••" }] } });
+    const other = (await owner.leadops.getMemberIntegration({ membershipId })).endpoints.find((item) => !String(item.bodyTemplate ?? "").includes("wattfox"));
+    if (other) await expect(owner.leadops.sendWattfoxTestLeads({ membershipId, id: other.id })).rejects.toThrow(/keine Wattfox-Vorlage/);
+    await expect(invitee.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).rejects.toThrow();
+
+    // (c) Echte Übergabe: PV-Lead mit Interesse an Wärmepumpe → ein Lead mit Zusatzinteresse; die Nummer von Wattfox steht danach am Lead
+    await db.insert(leads).values({ tenantId: S.tenantId, publicId: "WF-E2E-001", categoryId: S.pv.id, kind: "verkauf", firstName: "Laura", lastName: "Stein", email: "laura.stein@wf-e2e.example", phone: "+49 761 0000010", postcode: "79115", city: "Freiburg", country: "DE", status: "neu", cost: "0.00", metadata: { anrede: "Frau", street: "Probeweg 9", umsetzung: "So schnell wie möglich", hausart: "Ein-/Zweifamilienhaus", dachausrichtung: "Süd", dachalter: "30-70 Jahre", stromspeicher: "Ja", waermepumpe: "Ja", aktuelles_heizsystem: "Erdgas", beheizte_flaeche: "141-180 qm", utm_source: "facebook" } });
+    const row = (await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-001")))[0];
+    const before = outbound.length;
+    const handed = await handOverToBuyerEndpoints(db, { tenantId: S.tenantId, buyerUserId: inviteeUserId, lead: row });
+    const wf = handed.results.find((item) => item.url === WATTFOX.leadsUrl)!;
+    expect(wf).toMatchObject({ ok: true, status: 200 });
+    const sent = outbound.slice(before).find((call) => call.url === WATTFOX.leadsUrl)!;
+    expect(sent.body).toMatchObject({ productId: 2, otherinterests: [20], childinterests: [6], salutation: "Frau", firstname: "Laura", lastname: "Stein", street: "Probeweg 9", zip: "79115", implementation: "bis in 1 Monat", ph_artdesgebaeude: "Ein-/Zweifamilienhaus", ph_ausrichtungderflaeche: "Süd", ph_alterderflaeche: "25 bis 75 Jahre alt", ph_stromspeicher: "Ja", hz_bisherigeheizung: ["Gasheizung"], hz_groessederflaeche: 161, utm_source: "Tanesco Digital GbR" });
+    const after = (await db.select().from(leads).where(eq(leads.id, row.id)))[0];
+    expect((after.metadata as Record<string, unknown>).partnerReference).toBe(wf.partnerReference);
+    expect(String(wf.partnerReference)).toMatch(/^\d+$/);
+    const events = await db.select().from(integrationEvents).where(and(eq(integrationEvents.endpointId, endpoint.id), eq(integrationEvents.leadId, row.id)));
+    expect(events.map((event) => event.eventType)).toEqual(["geliefert"]); expect(events[0].externalReference).toBe(wf.partnerReference);
+
+    // (d) Ohne Anrede und E-Mail geht der Lead gar nicht erst raus – der Grund steht beim Lead (API-Fehler: Angaben falsch)
+    await db.insert(leads).values({ tenantId: S.tenantId, publicId: "WF-E2E-002", categoryId: S.pv.id, kind: "verkauf", firstName: "Dieter", lastName: "Kraus", email: null, phone: "+49 761 0000011", postcode: "79100", city: "Freiburg", country: "DE", status: "neu", cost: "0.00", metadata: { street: "Musterweg 3", umsetzung: "1-3 Monate" } });
+    const incomplete = (await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-002")))[0];
+    const quiet = outbound.length;
+    const held = await handOverToBuyerEndpoints(db, { tenantId: S.tenantId, buyerUserId: inviteeUserId, lead: incomplete });
+    expect(held.results.find((item) => item.endpointId === endpoint.id)).toMatchObject({ ok: false, status: 422, error: "Für Wattfox fehlt: Anrede (Herr/Frau), E-Mail – nicht gesendet" });
+    expect(outbound.slice(quiet).some((call) => call.url === WATTFOX.leadsUrl)).toBe(false);
+    const heldEvents = await db.select().from(integrationEvents).where(and(eq(integrationEvents.endpointId, endpoint.id), eq(integrationEvents.leadId, incomplete.id)));
+    expect(heldEvents).toMatchObject([{ eventType: "abgelehnt", responseStatus: 422, responseBody: "Für Wattfox fehlt: Anrede (Herr/Frau), E-Mail – nicht gesendet" }]);
+    // aufräumen: der Käufer soll in späteren Tests keinen Wattfox-Endpoint mehr haben
+    await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id });
+  }, 60000);
 });

@@ -65,7 +65,7 @@ export const WATTFOX_PRESET: CallQaPreset = {
     "Firmenname: Der Mitarbeiter ruft im Namen von HausKompass an. Das Transkript kommt aus automatischer Spracherkennung – steht dort etwas, das sich wie HausKompass anhört (z. B. „Haus Campus“, „Hauskompas“), gilt der Name als genannt. Handelt es sich erkennbar um einen RÜCKRUF (Kunde und Mitarbeiter hatten schon Kontakt, z. B. „wie besprochen“, „ich rufe zurück“, „wir hatten ja schon telefoniert“), muss der Firmenname nicht noch einmal fallen – KEIN Mangel.",
     "Der Mitarbeiter darf sagen, der Kunde habe sich informiert oder eingetragen – KEIN Mangel. Die Telefonnummer muss nicht bestätigt werden.",
     "Der Service ist für den Kunden immer kostenlos und unverbindlich – sagt der Mitarbeiter das, ist es richtig und KEIN Mangel und kein Warnhinweis.",
-    "Die Dachfläche, die Übergabe an „Photovoltaik Angebotsvergleich“, eine ausdrückliche Zustimmung zum Anruf oder „alle Fragen gestellt“ werden in dieser Kampagne NICHT geprüft – nicht als Mangel werten.",
+    "Die Dachfläche, eine ausdrückliche Zustimmung zum Anruf oder „alle Fragen gestellt“ werden in dieser Kampagne NICHT geprüft – nicht als Mangel werten. Die Übergabe am Ende („Photovoltaik Angebotsvergleich“ meldet sich, bis zu 3 Angebote von Fachpartnern) wird nur in den Prüffragen festgehalten – sie entscheidet nicht und ist bei den Kriterien kein Mangel.",
     "Schreibe die Belege vollständig aus (ganze Sätze, nicht abgeschnitten).",
   ].join("\n"),
   questions: [
@@ -73,6 +73,9 @@ export const WATTFOX_PRESET: CallQaPreset = {
     { key: "interesse_produkt", label: "Hat der Kunde Interesse am Produkt (Photovoltaik bzw. Wärmepumpe)?", rule: "ko", hint: "Interesse an Photovoltaik ODER Wärmepumpe – eines von beiden reicht für Ja (auch „nur Wärmepumpe“ oder „nur Photovoltaik“). Nein nur, wenn der Kunde beides ablehnt." },
     { key: "eigentuemer_entscheider", label: "Ist der Kunde Eigentümer bzw. Entscheider?", rule: "ko", hint: "Eigentümer der Immobilie oder Entscheider. Mieter oder „muss ich erst fragen“ = Nein." },
     { key: "wp_kein_erdgas", label: "Wärmepumpe: Geht es um eine normale Wärmepumpe (keine Erdgas-Wärmepumpe als Hauptinteresse)?", rule: "ko", onlyFor: "waermepumpe", hint: "Nur bei Wärmepumpe. Nein nur, wenn der Kunde ausdrücklich eine Erdgas-/Gas-Wärmepumpe (Gas-Hybrid) als Hauptinteresse nennt. Dass der Kunde heute mit Gas, Flüssiggas oder Öl heizt, ist KEIN Hinweis darauf – das ist der Normalfall. Nicht eindeutig: unklar, nicht Nein. Sonst Ja. Geht es nicht um eine Wärmepumpe: Ja mit Hinweis „entfällt“." },
+    // Übergabe am Ende – „Photovoltaik Angebotsvergleich“ ist die Marke von Wattfox. Erst nur zur Auswertung: Wird sie Pflicht, bevor die Agenten den Satz sagen, ginge kein Lead mehr raus.
+    { key: "uebergabe_angebotsvergleich", label: "Weiß der Kunde am Ende, dass sich „Photovoltaik Angebotsvergleich“ bei ihm meldet?", rule: "info", hint: "Nur zur Auswertung – entscheidet nicht. Auch bei Wärmepumpe (gleiche Firma). Ähnlich klingende Schreibweisen aus der Abschrift zählen." },
+    { key: "bis_zu_3_angebote", label: "Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?", rule: "info", hint: "Nur zur Auswertung – entscheidet nicht. Andere Worte mit demselben Sinn zählen: „bis zu drei Angebote“, „bis zu drei Fachbetriebe melden sich“, „drei Fachpartner aus Ihrer Region“. Nein, wenn nichts über die Zahl der Angebote bzw. Fachpartner gesagt wurde." },
   ],
   retiredQuestionKeys: ["pv_dachflaeche_20qm"], retiredCriteriaKeys: ["pv_dachflaeche"],
 };
