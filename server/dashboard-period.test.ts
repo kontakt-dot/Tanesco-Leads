@@ -14,6 +14,13 @@ describe("dashboard Zeitraumlogik", () => {
     expect(dashboardRange("all", "", "", now).label).toBe("Gesamte Zeitspanne");
   });
 
+  it("Gestern: der ganze Vortag (v359)", () => {
+    const range = dashboardRange("yesterday", "", "", now);
+    expect(range.from.toISOString()).toBe("2026-08-17T00:00:00.000Z"); expect(range.until.toISOString()).toBe("2026-08-17T23:59:59.999Z"); expect(range.label).toBe("Gestern"); expect(range.valid).toBe(true);
+    const monday = dashboardRange("yesterday", "", "", new Date("2026-09-01T08:00:00.000Z")); // über den Monatswechsel
+    expect(monday.from.toISOString()).toBe("2026-08-31T00:00:00.000Z");
+  });
+
   it("validiert eigene Zeitspannen und bildet den unmittelbar vorherigen Zeitraum", () => {
     const range = dashboardRange("custom", "2026-08-10", "2026-08-12", now);
     expect(range.valid).toBe(true);

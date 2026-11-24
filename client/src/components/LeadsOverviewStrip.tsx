@@ -28,10 +28,11 @@ function openPage(event: React.MouseEvent<HTMLAnchorElement>, page: string) {
 }
 
 /**
- * Über der Leads-Tabelle: der Weg der Leads auf einen Blick – von links nach rechts.
- *  Alle Leads (und wo sie stehen) → heute neu (gegen gestern um dieselbe Zeit) → bereit zum Ausliefern (wie alt der älteste ist)
- *  → ausgeliefert (7 Tage, heute, zu welchem Preis) → reklamiert (Anteil). Daneben die letzten 14 Tage: die letzten 7 gegen die 7 davor.
- * Jede Kachel und jede Säule ist ein Filter. Darunter steht nur dann ein Hinweis, wenn etwas zu tun ist.
+ * Über der Leads-Tabelle: der Weg der Leads auf einen Blick – eine ruhige Leiste, von links nach rechts.
+ *  Alle Leads → heute neu (gegen gestern um dieselbe Zeit) → bereit zum Ausliefern (wie alt der älteste ist)
+ *  → ausgeliefert (7 Tage, heute) → reklamiert (Anteil). Daneben die letzten 14 Tage: die letzten 7 gegen die 7 davor.
+ * Je Zahl eine Zeile; der Rest (wo alle Leads stehen, gestern, was noch wartet, Wert, offene Reklamationen) steht im Hinweis beim Überfahren.
+ * Jede Zahl und jede Säule ist ein Filter. Darunter steht nur dann ein Hinweis, wenn etwas zu tun ist.
  */
 export default function LeadsOverviewStrip({ active, activeDay, onAll, onToday, onWeek, onReady, onDelivered, onClaimed, onDay, onWaiting }: {
   active: OverviewFilter; activeDay: string | null;
@@ -55,24 +56,24 @@ export default function LeadsOverviewStrip({ active, activeDay, onAll, onToday, 
   const hide = (hint: OverviewHint) => { const next = { ...readHidden(), [hintKey(hint)]: Date.now() + HIDE_MS }; setHidden(next); try { window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(next)); } catch { /* ohne Speicher bleibt der Hinweis bis zum Neuladen weg */ } };
 
   /** Aussage unter der Zahl. Das Zeichen hängt am ersten Wort – bricht der Satz um, bleibt es nicht allein am Rand stehen. */
-  const insight = (tone: OverviewTone, icon: React.ReactNode, text: string) => {
+  const insight = (tone: OverviewTone | "leise", icon: React.ReactNode, text: string) => {
     const at = text.indexOf(" "); const head = icon && at > 0 ? text.slice(0, at) : ""; const tail = head ? text.slice(at) : text;
     return <span className={`lo-insight is-${tone}`}>{head ? <span className="lo-part">{icon}{head}</span> : icon}{parts(tail)}</span>;
   };
+  /** Eine Zahl der Leiste: Name, Zahl, eine Zeile darunter. Was sonst noch dazugehört, steht im Hinweis beim Überfahren. */
   const tile = (key: Exclude<OverviewFilter, "day" | "week" | null>, label: string, dot: string | null, value: number | undefined, onClick: () => void, body: React.ReactNode, foot: string, title?: string) =>
-    <button type="button" className={`lo-tile is-${key} ${active === key ? "is-active" : ""}`} aria-pressed={active === key} onClick={onClick} title={title}>
+    <button type="button" className={`lo-tile is-${key} ${active === key ? "is-active" : ""}`} aria-pressed={active === key} onClick={onClick} title={[foot, title].filter(Boolean).join(" – ") || undefined}>
       <span className="lo-label">{dot && <i className={`lo-dot is-${dot}`} aria-hidden="true" />}{label}</span>
       <strong>{number(value)}</strong>
       {body}
-      <small>{foot ? parts(foot) : " "}</small>
     </button>;
 
   return <div className="lo-wrap">
     <section className="lo-strip" aria-label="Leads im Überblick">
       <div className="lo-tiles">
         {tile("all", "Leads gesamt", null, data?.total, onAll,
-          <span className={`lo-split ${splitTotal ? "" : "is-empty"}`} aria-hidden="true">{split.map((part) => part.count > 0 && <i key={part.key} className={`is-${part.key}`} style={{ flexGrow: part.count }} title={`${number(part.count)} ${part.label} (${part.share} %)`} />)}</span>,
-          "alle anzeigen", splitTotal ? split.filter((part) => part.count > 0).map((part) => `${number(part.count)} ${part.label} (${part.share} %)`).join(" · ") : undefined)}
+          insight("leise", null, "alle anzeigen"),
+          "", splitTotal ? split.filter((part) => part.count > 0).map((part) => `${number(part.count)} ${part.label} (${part.share} %)`).join(" · ") : undefined)}
         {tile("today", "Heute neu", null, data?.today, onToday,
           todayCompare ? insight(todayCompare.tone, toneIcon(todayCompare.arrow), todayCompare.text) : insight("ruhig", null, " "),
           data ? `gestern bis jetzt ${number(data.yesterdaySoFar ?? 0)} · ganzer Tag ${number(data.yesterday)}` : "",

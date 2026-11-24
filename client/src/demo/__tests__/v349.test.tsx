@@ -60,22 +60,22 @@ describe("Version 349", () => {
     expect(texts(root, ".lo-tile .lo-label")).toEqual(["Leads gesamt", "Heute neu", "Bereit zum Ausliefern", "Ausgeliefert", "Reklamiert"]);
     expect(texts(root, ".lo-tile strong")).toEqual([de(now.total), de(now.today), de(now.ready), de(now.delivered), de(now.status.reklamiert)]);
     expect(tile(root, "all").classList.contains("is-active")).toBe(true); expect(root.querySelectorAll(".lo-tile.is-active")).toHaveLength(1); expect(tile(root, "all").getAttribute("aria-pressed")).toBe("true");
-    // wo alle Leads stehen: vier Teile, so breit wie ihre Zahl – und als Text am Knopf
+    // wo alle Leads stehen: seit Version 359 nur noch im Hinweis beim Überfahren (ruhigere Leiste: je Zahl eine Zeile)
     const split = statusSplit(now.status).filter((part) => part.count > 0); expect(split.reduce((sum, part) => sum + part.count, 0)).toBe(now.total);
-    expect(Array.from(tile(root, "all").querySelectorAll<HTMLElement>(".lo-split i")).map((part) => [part.className, part.style.flexGrow])).toEqual(split.map((part) => [`is-${part.key}`, String(part.count)]));
-    expect(tile(root, "all").getAttribute("title")).toBe(split.map((part) => `${de(part.count)} ${part.label} (${part.share} %)`).join(" · ")); expect(tile(root, "all").querySelector("small")!.textContent).toBe("alle anzeigen");
+    expect(root.querySelector(".lo-split")).toBeNull(); expect(root.querySelectorAll(".lo-tile small")).toHaveLength(0);
+    expect(tile(root, "all").getAttribute("title")).toBe(split.map((part) => `${de(part.count)} ${part.label} (${part.share} %)`).join(" · ")); expect(tile(root, "all").querySelector(".lo-insight")!.textContent).toBe("alle anzeigen");
     // heute neu: verglichen mit gestern bis zur selben Uhrzeit – nicht mit dem ganzen gestrigen Tag
     const compare = todayComparison(now.today, now.yesterdaySoFar); const insight = (key: string) => tile(root, key).querySelector<HTMLElement>(".lo-insight")!;
-    expect(insight("today").textContent).toBe(compare.text); expect(insight("today").classList.contains(`is-${compare.tone}`)).toBe(true); expect(tile(root, "today").querySelector("small")!.textContent).toBe(`gestern bis jetzt ${de(now.yesterdaySoFar)} · ganzer Tag ${de(now.yesterday)}`);
-    expect(tile(root, "today").getAttribute("title")).toContain("Verglichen wird mit gestern bis zur selben Uhrzeit"); expect(texts(tile(root, "today"), "small .lo-part")).toEqual([`gestern bis jetzt ${de(now.yesterdaySoFar)} ·`, `ganzer Tag ${de(now.yesterday)}`]); // bricht nur am Punkt um
+    expect(insight("today").textContent).toBe(compare.text); expect(insight("today").classList.contains(`is-${compare.tone}`)).toBe(true);
+    expect(tile(root, "today").getAttribute("title")).toContain(`gestern bis jetzt ${de(now.yesterdaySoFar)} · ganzer Tag ${de(now.yesterday)}`); expect(tile(root, "today").getAttribute("title")).toContain("Verglichen wird mit gestern bis zur selben Uhrzeit");
     // bereit: wie alt der älteste ist (ab zwei Tagen als Hinweis); darunter, was sonst noch nicht raus ist
     const age = waitingAge(now.oldestReadyAt)!; expect(insight("ready").textContent).toBe(age.text); expect(age.text).toMatch(/^ältester ist \d+ Tage alt$/); expect(insight("ready").classList.contains("is-achtung")).toBe(true);
-    expect(tile(root, "ready").querySelector("small")!.textContent).toBe(`dazu ${[now.status.neu ? `${de(now.status.neu)} neu` : "", now.status.hängend ? `${de(now.status.hängend)} hängend` : ""].filter(Boolean).join(" · ")}`);
+    expect(tile(root, "ready").getAttribute("title")).toContain(`dazu ${[now.status.neu ? `${de(now.status.neu)} neu` : "", now.status.hängend ? `${de(now.status.hängend)} hängend` : ""].filter(Boolean).join(" · ")}`);
     // ausgeliefert: 7 Tage, heute – und was das wert ist
-    expect(insight("delivered").textContent).toBe(`${de(now.deliveredWeek)} in 7 Tagen · heute ${de(now.deliveredToday)}`); expect(tile(root, "delivered").querySelector("small")!.textContent).toBe(`${now.valueWeek.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })} in 7 Tagen`);
+    expect(insight("delivered").textContent).toBe(`${de(now.deliveredWeek)} in 7 Tagen · heute ${de(now.deliveredToday)}`); expect(tile(root, "delivered").getAttribute("title")).toContain(`${now.valueWeek.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })} in 7 Tagen`);
     // reklamiert: Anteil an allem, was je ausgeliefert wurde; darunter die offenen Entscheidungen
     const rate = claimRate(now.status.zugewiesen, now.status.reklamiert)!; expect(rate).toBe(Math.round((now.status.reklamiert / (now.status.zugewiesen + now.status.reklamiert)) * 100)); expect(insight("claimed").textContent).toBe(`${rate} % der ausgelieferten`);
-    expect(tile(root, "claimed").querySelector("small")!.textContent).toBe(`${now.claimsOpen} ${now.claimsOpen === 1 ? "wartet" : "warten"} auf Entscheidung`);
+    expect(tile(root, "claimed").getAttribute("title")).toContain(`${now.claimsOpen} ${now.claimsOpen === 1 ? "wartet" : "warten"} auf Entscheidung`);
     // Farbpunkte nur an den drei Kacheln, die auch in der Verteilung vorkommen
     expect(Array.from(root.querySelectorAll(".lo-tile .lo-dot")).map((dot) => dot.className)).toEqual(["lo-dot is-bereit", "lo-dot is-ausgeliefert", "lo-dot is-reklamiert"]);
   }, 60_000);

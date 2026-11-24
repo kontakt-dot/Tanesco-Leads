@@ -54,12 +54,11 @@
 .lead-date-custom label { display: grid; gap: 5px; color: #f8fafc; font-size: 10px; }
 .lead-date-custom input { min-width: 155px; }
 .lead-panel label.text-slate-400 { color: #ffffff !important; }
+/* Kalender-Zeichen im dunklen Schema weiß (erst schwarz, dann umgekehrt – egal, wie der Browser es zeichnet); im hellen Schema gilt theme-light */
 .lead-panel input[type="date"]::-webkit-calendar-picker-indicator,
 .order-main input[type="date"]::-webkit-calendar-picker-indicator,
-.order-chain-workspace input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) brightness(3) !important; opacity: 1 !important; cursor: pointer; }
+.order-chain-workspace input[type="date"]::-webkit-calendar-picker-indicator { filter: brightness(0) invert(1) !important; opacity: 1 !important; cursor: pointer; }
 .lead-panel input[type="date"], .order-main input[type="date"], .order-chain-workspace input[type="date"] { color-scheme: dark; }
-.lead-panel input[aria-label="E-Mail filtern"] { display: none; }
-.lead-panel input[aria-label="Ort filtern"], .lead-panel input[aria-label="PLZ filtern"], .lead-panel input[aria-label="Telefon filtern"] { display: none; }
 /* (alte Flex-Spaltenbreiten entfernt – die Lead-Tabelle wird per Grid-Spuren aus LiveLeads.tsx gesetzt) */
 .lead-assignment-cell { color: #b7b4d6; font-size: 11px; }
 

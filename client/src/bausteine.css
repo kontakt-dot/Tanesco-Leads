@@ -243,6 +243,7 @@ html:not(.dark) .cl-state button:focus-visible{outline-color:#bc001d}
 .live-leads-workspace,.fx-scope{
   --lt-line:rgba(255,255,255,.09);--lt-line-2:rgba(255,255,255,.17);--lt-head:rgba(255,255,255,.035);--lt-hover:rgba(130,120,255,.1);--lt-on:rgba(130,120,255,.2);
   --lt-ink:#f1effe;--lt-ink-2:#cfcbf3;--lt-muted:#9a9cba;--lt-faint:#74789c;--lt-accent:#a39bff;--lt-accent-strong:#7a70f5;--lt-accent-ink:#ffffff;
+  --lt-caret:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cfcbf3' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --lt-field:#24203b;--lt-chip:rgba(255,255,255,.07);--lt-pop:#211e3a;--lt-pop-shadow:0 22px 44px -14px rgba(0,0,0,.75),0 0 0 1px rgba(255,255,255,.04);
   --lt-good:#8ff0c6;--lt-good-line:rgba(52,211,153,.5);--lt-good-bg:rgba(52,211,153,.07);--lt-bar:#8278ff;--lt-tile:rgba(255,255,255,.03);--lt-tile-on:rgba(130,120,255,.12);
   /* Übersicht über den Leads: Zustände (bereit · ausgeliefert · reklamiert – nebeneinander geprüft, auch bei Farbsehschwäche), Hinweis, Säulen der 7 Tage davor */
@@ -251,45 +252,40 @@ html:not(.dark) .cl-state button:focus-visible{outline-color:#bc001d}
 html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
   --lt-line:#e7e9ee;--lt-line-2:#d0d5dd;--lt-head:#f7f8fa;--lt-hover:#fff5f6;--lt-on:#ffe8eb;
   --lt-ink:#17130f;--lt-ink-2:#344054;--lt-muted:#667085;--lt-faint:#98a2b3;--lt-accent:#bc001d;--lt-accent-strong:#bc001d;--lt-accent-ink:#ffffff;
+  --lt-caret:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23344054' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --lt-field:#ffffff;--lt-chip:#f2f4f7;--lt-pop:#ffffff;--lt-pop-shadow:0 22px 44px -16px rgba(16,24,40,.3),0 0 0 1px rgba(16,24,40,.04);
   --lt-good:#067647;--lt-good-line:#75e0a7;--lt-good-bg:#ecfdf3;--lt-bar:#bc001d;--lt-tile:#ffffff;--lt-tile-on:#fff1f2;
   --lo-bereit:#2a78d6;--lo-raus:#1baf7a;--lo-zurueck:#eb6834;--lo-rest:#d5d9e0;--lo-warn:#b54708;--lo-warn-line:#fedf89;--lo-warn-bg:#fffaeb;--lo-bar-before:#e39aa6;
 }
 
-/* Übersicht (v349): der Weg der Leads von links nach rechts – alle · heute neu · bereit · ausgeliefert · reklamiert – daneben die letzten 14 Tage.
-   Jede Zahl hat einen Vergleich oder eine Folge. Farbe zeigt nur den Zustand (Punkt, Leiste, Säule); Schrift bleibt in den Schriftfarben. */
+/* Übersicht (v359, ruhiger): eine Leiste – fünf Zahlen nebeneinander, darunter je eine Zeile; daneben die letzten 14 Tage.
+   Jede Zahl ist ein Filter, mehr steht im Hinweis beim Überfahren. Farbe zeigt nur den Zustand (Punkt, Säule); Schrift bleibt in den Schriftfarben. */
 .lo-wrap{container-type:inline-size;margin:0 0 16px}
-.lo-strip{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,32%);gap:12px}
-/* Die Kacheln teilen sich vier Zeilen (Name · Zahl · Aussage · Fußzeile): Zahl, Aussage und Fußzeile stehen in allen Kacheln auf einer Höhe – auch wenn ein Name zwei Zeilen braucht. */
-.lo-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-auto-rows:auto;column-gap:12px;row-gap:0;min-width:0;min-height:126px}
-.lo-tile{grid-row:span 4;display:grid;grid-template-rows:subgrid;align-content:center;justify-items:center;min-width:0;padding:13px 10px 12px;border:1px solid var(--lt-line);border-radius:16px;background:var(--lt-tile);color:var(--lt-ink);font-family:inherit;text-align:center;cursor:pointer;transition:border-color .15s,background-color .15s,transform .15s}
-.lo-tile>.lo-label{grid-row:1;align-self:end}
-.lo-tile>strong{grid-row:2;align-self:center}
-.lo-tile>.lo-insight,.lo-tile>.lo-split{grid-row:3;align-self:start}
-.lo-tile>small{grid-row:4;align-self:start}
-.lo-label{display:block;font-size:12.5px;font-weight:600;line-height:1.3;color:var(--lt-ink-2);text-wrap:balance}
+.lo-strip{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,30%);border:1px solid var(--lt-line);border-radius:18px;background:var(--lt-tile);overflow:hidden}
+.lo-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));min-width:0}
+.lo-tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;min-width:0;padding:14px 18px 15px;border:0;border-radius:0;background:none;color:var(--lt-ink);font-family:inherit;text-align:left;cursor:pointer;transition:background-color .15s}
+.lo-tile+.lo-tile{box-shadow:inset 1px 0 0 var(--lt-line)}
+.lo-label{display:block;max-width:100%;font-size:12px;font-weight:600;line-height:1.3;color:var(--lt-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lo-dot{display:inline-block;width:8px;height:8px;margin-right:6px;border-radius:50%;vertical-align:.5px}
-.lo-dot.is-bereit,.lo-split i.is-bereit{background:var(--lo-bereit)}
-.lo-dot.is-ausgeliefert,.lo-split i.is-ausgeliefert{background:var(--lo-raus)}
-.lo-dot.is-reklamiert,.lo-split i.is-reklamiert{background:var(--lo-zurueck)}
-.lo-split i.is-uebrige{background:var(--lo-rest)}
-.lo-tile strong{margin-top:3px;font-size:30px;line-height:1.12;font-weight:800;letter-spacing:-.02em;color:var(--lt-ink)}
-.lo-insight{display:block;min-height:16px;margin-top:2px;font-size:11.5px;font-weight:600;line-height:1.35;color:var(--lt-ink-2);text-wrap:balance}
+.lo-dot.is-bereit{background:var(--lo-bereit)}
+.lo-dot.is-ausgeliefert{background:var(--lo-raus)}
+.lo-dot.is-reklamiert{background:var(--lo-zurueck)}
+.lo-tile strong{font-size:26px;line-height:1.1;font-weight:800;letter-spacing:-.02em;color:var(--lt-ink);font-variant-numeric:tabular-nums}
+.lo-insight{display:block;max-width:100%;min-height:16px;font-size:11.5px;font-weight:600;line-height:1.35;color:var(--lt-ink-2)}
+.lo-tile .lo-insight{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lo-insight svg{display:inline-block;width:12px;height:12px;margin-right:4px;vertical-align:-1.5px}
 .lo-insight.is-gut{color:var(--lt-good)}
 .lo-insight.is-achtung{color:var(--lo-warn)}
+.lo-insight.is-leise{color:var(--lt-muted);font-weight:500}
 .lo-part{display:inline-block} /* eine Angabe bleibt beisammen, solange sie in die Zeile passt – umgebrochen wird zwischen den Angaben */
-.lo-tile small{min-height:15px;margin-top:2px;font-size:11px;line-height:1.35;color:var(--lt-muted);text-wrap:balance}
-/* Wo alle Leads stehen: dünne Leiste, runde Enden, 2 px Luft zwischen den Teilen; ein Teil mit 0 zeichnet nichts */
-.lo-split{display:flex;gap:2px;width:min(100%,148px);height:8px;margin:7px 0 5px;border-radius:999px;overflow:hidden}
-.lo-split.is-empty{background:var(--lt-chip)}
-.lo-split i{display:block;flex:1 1 0;min-width:3px;height:100%}
-.lo-tile:hover{border-color:var(--lt-line-2);transform:translateY(-1px)}
+.lo-tile:hover{background:var(--lt-hover)}
 .lo-tile:focus-visible,.lo-bar:focus-visible,.lo-week:focus-visible,.lo-hint-go:focus-visible,.lo-hint-more:focus-visible,.lo-hint-close:focus-visible,.lt-name:focus-visible,.lt-act:focus-visible,.lt-tabs button:focus-visible,.lt-chip:focus-visible,.lt-bulk-close:focus-visible,.lt-search-clear:focus-visible{outline:2px solid var(--lt-accent);outline-offset:2px}
-.lo-tile.is-active{border-color:var(--lt-accent-strong);background:var(--lt-tile-on);box-shadow:inset 0 0 0 1px var(--lt-accent-strong)}
+.lo-tile:focus-visible{outline-offset:-3px}
+.lo-tile.is-active{background:var(--lt-tile-on)}
+.lo-tile.is-active::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:3px;border-radius:3px 3px 0 0;background:var(--lt-accent-strong)}
 .lo-tile.is-active strong{color:var(--lt-accent)}
 /* 14 Tage: die letzten 7 kräftig, die 7 davor heller – so sieht man die Woche gegen die Woche davor */
-.lo-chart{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:126px;padding:11px 14px 8px;border:1px solid var(--lt-line);border-radius:16px;background:var(--lt-tile)}
+.lo-chart{display:flex;flex-direction:column;gap:2px;min-width:0;padding:12px 16px 8px;border-left:1px solid var(--lt-line)}
 .lo-chart header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:3px 12px;min-height:24px}
 .lo-chart-title{font-size:12.5px;font-weight:700;color:var(--lt-ink)}
 .lo-weeks{display:inline-flex;align-items:center;flex-wrap:wrap;gap:3px 10px;font-size:11px;color:var(--lt-muted)}
@@ -302,7 +298,7 @@ html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
 .lo-key.is-recent{background:var(--lt-bar)}
 .lo-key.is-before{background:var(--lo-bar-before)}
 .lo-readout{font-size:11px;color:var(--lt-muted)}
-.lo-bars{position:relative;flex:1;display:flex;align-items:stretch;min-height:76px;padding-top:15px}
+.lo-bars{position:relative;flex:1;display:flex;align-items:stretch;min-height:58px;padding-top:13px}
 .lo-bar{flex:1;display:flex;flex-direction:column;min-width:0;padding:0;border:0;background:none;font-family:inherit;color:inherit;cursor:pointer}
 .lo-bar.is-week-start{margin-left:8px}
 .lo-col{position:relative;flex:1;display:flex;align-items:flex-end;justify-content:center;border-bottom:1px solid var(--lt-line-2)}
@@ -332,17 +328,18 @@ html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
 .lo-hint-close:hover{background:var(--lt-chip);color:var(--lt-ink)}
 .lo-hint-close svg{width:15px;height:15px}
 /* Wird es eng, rückt das Diagramm unter die Kacheln; auf dem Handy stehen die Kacheln zu zweit, „Leads gesamt“ über die ganze Breite */
-@container (max-width:1500px){.lo-strip{grid-template-columns:minmax(0,1fr) minmax(280px,26%)}} /* schmaler: die Kacheln brauchen den Platz für ihre Namen */
-@container (max-width:1040px){.lo-strip{grid-template-columns:minmax(0,1fr)}.lo-chart{min-height:136px}}
+@container (max-width:1500px){.lo-strip{grid-template-columns:minmax(0,1fr) minmax(270px,27%)}.lo-tile{padding-inline:14px}} /* schmaler: die Zahlen brauchen den Platz für ihre Namen */
+@container (max-width:1040px){.lo-strip{grid-template-columns:minmax(0,1fr)}.lo-chart{border-left:0;border-top:1px solid var(--lt-line)}}
 @container (max-width:620px){
-  .lo-tiles{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:8px;min-height:0;margin-bottom:-8px}
-  .lo-tile{margin-bottom:8px;padding:10px 8px 9px}
+  .lo-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lo-tile{padding:11px 14px 12px}
+  .lo-tile,.lo-tile+.lo-tile{box-shadow:inset 0 -1px 0 var(--lt-line)}
+  .lo-tile:nth-child(even){box-shadow:inset 0 -1px 0 var(--lt-line),inset -1px 0 0 var(--lt-line)}
   .lo-tile.is-all{grid-column:1/-1}
-  .lo-tile strong{font-size:26px}
-  .lo-tile small{display:none} /* auf dem Handy bleibt es bei Zahl und Vergleich – die Tabelle soll schnell erreichbar sein */
-  .lo-tile.is-all small{display:block}
-  .lo-chart{min-height:118px;padding-inline:10px}
-  .lo-bars{min-height:64px}
+  .lo-tile strong{font-size:24px}
+  .lo-label,.lo-tile .lo-insight{white-space:normal;text-wrap:balance} /* schmal: lieber zwei Zeilen als abgeschnitten */
+  .lo-chart{border-top:0;padding-inline:12px}
+  .lo-bars{min-height:52px}
   .lo-bar.is-week-start{margin-left:5px}
   .lo-bar.is-before em{visibility:hidden}
   .lo-hint{position:relative;padding:9px 10px 10px 12px}
@@ -392,9 +389,30 @@ html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
 .lt-columns-menu label{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:9px;font-size:12.5px;font-weight:500;color:var(--lt-ink-2);cursor:pointer}
 .lt-columns-menu label:hover{background:var(--lt-hover)}
 .lt-columns-menu input,.lt-select input{width:15px;height:15px;accent-color:var(--lt-accent-strong);cursor:pointer}
-.lt-custom{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--lt-line)}
+/* Zeitraum und Erweiterte Filter (v359): wie die Leiste für ausgewählte Leads – runde Karte, Felder 38 px mit Namen darüber */
+.lt-custom{display:flex;flex-direction:column;align-items:center;gap:8px;width:fit-content;max-width:calc(100% - 32px);margin:12px auto;padding:12px 18px;border:1px solid var(--lt-line-2);border-radius:18px;background:var(--lt-pop);box-shadow:var(--lt-pop-shadow);color:var(--lt-ink)}
+.lt-custom-fields{display:flex;flex-wrap:wrap;justify-content:center;gap:12px 14px}
+.lt-custom .lt-field{width:180px}
+.lt-custom-note{margin:0;font-size:12px;color:var(--lt-muted);text-align:center}
+.lt-field{display:grid;gap:5px;min-width:0;margin:0}
+.lt-field>span{font-size:11.5px;font-weight:600;line-height:1.2;color:var(--lt-muted)}
+.live-leads-workspace .lt-field .lt-field-control{display:block;width:100%;min-width:0;height:38px;margin:0;padding:0 12px;border:1px solid var(--lt-line-2);border-radius:11px;background-color:var(--lt-field);color:var(--lt-ink);font-family:inherit;font-size:12.5px;font-weight:600;line-height:36px;outline:none;box-shadow:none;transition:border-color .15s,box-shadow .15s}
+.live-leads-workspace .lt-field select.lt-field-control{appearance:none;-webkit-appearance:none;padding-right:32px;background-image:var(--lt-caret);background-repeat:no-repeat;background-position:right 11px center;background-size:12px 12px;cursor:pointer}
+.live-leads-workspace .lt-field .lt-field-control::placeholder{color:var(--lt-faint);font-weight:500}
+.live-leads-workspace .lt-field .lt-field-control:hover{border-color:var(--lt-accent-strong)}
+.live-leads-workspace .lt-field .lt-field-control:focus-visible{border-color:var(--lt-accent-strong);box-shadow:0 0 0 3px var(--lt-on)}
 .lt-error{margin:0;padding:8px 16px;text-align:center;font-size:12px}
-.lt-filters{padding:14px 16px;border-bottom:1px solid var(--lt-line);background:var(--lt-head)}
+.lt-filters{margin:12px 16px;padding:14px 16px 16px 18px;border:1px solid var(--lt-line-2);border-radius:18px;background:var(--lt-pop);box-shadow:var(--lt-pop-shadow);color:var(--lt-ink)}
+.lt-filters-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.lt-filters-head b{display:block;font-size:13px;font-weight:700;color:var(--lt-ink)}
+.lt-filters-head span{display:block;margin-top:1px;font-size:12px;color:var(--lt-muted)}
+.lt-filters-actions{display:flex;align-items:center;gap:8px}
+.lt-filters-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px 14px}
+@media(max-width:1180px){.lt-filters-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+/* helles Schema: die allgemeinen Regeln für Auswahlfelder (weiß, ohne Pfeil, eigener Rand) gelten hier nicht */
+html:not(.dark) .live-leads-workspace .lt-field .lt-field-control{border-color:var(--lt-line-2)!important;border-radius:11px!important}
+html:not(.dark) .live-leads-workspace .lt-field select.lt-field-control{background:var(--lt-field) var(--lt-caret) no-repeat right 11px center / 12px 12px!important}
+html:not(.dark) .live-leads-workspace .lt-field .lt-field-control:hover,html:not(.dark) .live-leads-workspace .lt-field .lt-field-control:focus-visible{border-color:var(--lt-accent-strong)!important}
 .lt-tabs{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:12px 16px 10px}
 .lt-tabs button{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border:1px solid transparent;border-radius:999px;background:none;color:var(--lt-muted);font-family:inherit;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:background-color .15s,color .15s}
 .lt-tabs button span{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--lt-chip);color:var(--lt-ink-2);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
@@ -486,6 +504,11 @@ html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
   .lt-foot{gap:10px 16px}
   .lt-bulk{bottom:calc(72px + env(safe-area-inset-bottom,0px));border-radius:16px;padding:10px 12px}
   .live-leads-workspace .lt-bulk .lt-bulk-select{min-width:0;flex:1 1 160px}
+  .lt-filters{margin:10px 10px;padding:12px}
+  .lt-filters-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .lt-custom{width:auto;max-width:none;margin:10px;align-items:stretch}
+  .lt-custom-fields{justify-content:stretch}
+  .lt-custom .lt-field{width:auto;flex:1 1 140px}
   .lt-export-menu{right:auto;left:0}
 }
 

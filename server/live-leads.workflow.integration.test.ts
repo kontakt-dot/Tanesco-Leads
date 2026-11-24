@@ -40,8 +40,10 @@ describe("Lead-Verwaltung – UI-Gesamtfluss", () => {
     expect(screen.getByRole("columnheader", { name: "Käufer" })).toBeVisible();
     expect(screen.getAllByText("Tanesco Digital").length).toBeGreaterThan(1);
     fireEvent.click(screen.getByRole("button", { name: "Filter" }));
-    fireEvent.change(screen.getByLabelText("Ort filtern"), { target: { value: "Köln" } });
-    await waitFor(() => expect(listInput).toHaveBeenLastCalledWith(expect.objectContaining({ city: "Köln" })));
+    // seit v359: Erweiterte Filter mit Namen über jedem Feld (Ort, PLZ, E-Mail und Telefon sind nicht mehr darin)
+    expect(screen.queryByLabelText("Ort filtern")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Zuordnung filtern"), { target: { value: "ohne_kaeufer" } });
+    await waitFor(() => expect(listInput).toHaveBeenLastCalledWith(expect.objectContaining({ assignment: "ohne_kaeufer" })));
     // Leads pro Seite: „Eigene Anzahl …“ nur im Dropdown, Zahlenfeld erscheint erst nach Auswahl
     fireEvent.change(screen.getByLabelText("Leads pro Seite"), { target: { value: "eigene_neu" } });
     const customPageSize = screen.getByLabelText("Eigene Anzahl pro Seite");
