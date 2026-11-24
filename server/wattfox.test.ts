@@ -146,3 +146,25 @@ describe("Anrede vom Dialer", () => {
     expect(built.missing).toEqual([]);
   });
 });
+
+describe("Interesse an beidem aus dem anderen Fragebogen (v356)", () => {
+  // Wie bei OnDialer: PV-Lead, beide Fragebögen ausgefüllt, nur „Interesse Photovoltaikanlage: Ja“ (WP-Fragen) – kein „Wärmepumpe: Ja“
+  const lead = { lead_type: "Photovoltaik", lead_type_shortcode: "PV", salutation: "Herr", first_name: "Peter", last_name: "Hansen", street: "Probeweg 7", postal_code: "79100", city: "Freiburg", phone: "+49 761 0000020", email: "peter.hansen@example.com",
+    ...Object.fromEntries(Object.entries({ pv_dachart: "Satteldach", pv_hausart: "Ein-/Zweifamilienhaus", pv_gebaeudetyp: "Freistehendes", pv_stromspeicher: "Ja", pv_stromverbrauch: "4000", pv_dachausrichtung: "Süd", pv_dach_aelter_als_30_jahre: "ja", pv_personen_im_haushalt: "3", wp_ist_neubau: "Nein", wp_gebaeudetyp: "Ein-/Zweifamilienhaus", wp_beheizte_flaeche: "101-140 qm", wp_aktuelles_heizsystem: "Erdgas", wp_installationszeitraum: "sofort", wp_bevorzugte_waermepumpe: "Luftwärmepumpe", wp_aktuelle_waermeverteilung: "heizkörper & Fußbodenheizung", wp_interesse_photovolatikanalge: "Ja" }).map(([key, value]) => [`custom_data.${key}`, value])) };
+
+  it("PV-Lead mit Wärmepumpen-Fragen → ein Lead: PV mit Zusatzinteresse Wärmepumpe und den Feldern beider Produkte", () => {
+    const { payload, products, missing } = wattfoxPayload(lead);
+    expect(products).toEqual({ main: "pv", extra: "wp" }); expect(missing).toEqual([]);
+    expect(payload).toMatchObject({ productId: 2, otherinterests: [20], childinterests: [6], implementation: "bis in 1 Monat", ph_artdesgebaeude: "Ein-/Zweifamilienhaus", ph_ausrichtungderflaeche: "Süd", ph_alterderflaeche: "25 bis 75 Jahre alt", ph_stromspeicher: "Ja", stromverbrauch: "4000 kWh im Jahr", hz_gebaeudetyp: "Ein- / Zweifamilienhaus", hz_bisherigeheizung: ["Gasheizung"], hz_taetigkeit: "Austausch / Modernisierung", hz_groessederflaeche: 121, hz_personen: "3-4 Personen", wp_artderpumpe: "Luft-Wärmepumpe", wp_waermeabgabesystem: ["Heizkörper", "Fußbodenheizung"] });
+    // derselbe Kunde als Wärmepumpen-Lead → Wärmepumpe mit Zusatzinteresse PV
+    expect(wattfoxPayload({ ...lead, lead_type: "Wärmepumpe", lead_type_shortcode: "WP" }).products).toEqual({ main: "wp", extra: "pv" });
+    // ohne jedes Zeichen für beides bleibt es ein Produkt
+    expect(wattfoxPayload({ ...lead, "custom_data.wp_interesse_photovolatikanalge": "Nein" }).products).toEqual({ main: "pv", extra: null });
+  });
+
+  it("„Freistehendes“ zählt als Ein-/Zweifamilienhaus, eine nackte Zahl bekommt ihre Einheit", () => {
+    const { payload } = wattfoxPayload({ ...lead, "custom_data.pv_hausart": "", "custom_data.pv_stromverbrauch": "", "custom_data.pv_monatliche_stromkosten": "120" });
+    expect(payload.ph_artdesgebaeude).toBe("Ein-/Zweifamilienhaus"); expect(String(payload.notes)).toContain("Gebäude laut Gespräch: Freistehendes");
+    expect(payload.stromverbrauch).toBe("120 € im Monat"); expect(String(payload.notes)).not.toContain("Monatliche Stromkosten");
+  });
+});

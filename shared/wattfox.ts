@@ -74,10 +74,12 @@ export function wattfoxProducts(values: Values): { main: Product; extra: Product
   const category = categoryProducts(`${text(values.lead_type)} ${text(values.lead_type_shortcode)}`);
   const main: Product = category.wp && !category.pv ? "wp" : "pv";
   if (category.pv && category.wp) return { main: "pv", extra: "wp" };
-  const combo = yes(fields.get("kombi_lead", "wp_kombi_lead", "pv_kombi_lead"));
-  if (main === "pv" && (combo || yes(fields.get("waermepumpe", "pv_waermepumpe", "interesse_waermepumpe")))) return { main, extra: "wp" };
-  if (main === "wp" && (combo || yes(fields.get("interesse_photovoltaikanlage", "wp_interesse_photovoltaikanlage", "wp_interesse_photovolatikanalge", "interesse_photovolatikanalge", "interesse_photovoltaik")))) return { main, extra: "pv" };
-  return { main, extra: null };
+  // Interesse an beidem – egal, in welchem Fragebogen es steht: „Kombi Lead“, „Wärmepumpe: Ja“ (PV-Fragen) oder „Interesse Photovoltaikanlage: Ja“ (WP-Fragen).
+  // Ein PV-Lead mit ausgefüllten WP-Fragen und „Interesse Photovoltaikanlage: Ja“ will also auch die Wärmepumpe → ein Lead mit Zusatzinteresse.
+  const both = yes(fields.get("kombi_lead", "wp_kombi_lead", "pv_kombi_lead"))
+    || yes(fields.get("waermepumpe", "pv_waermepumpe", "interesse_waermepumpe"))
+    || yes(fields.get("interesse_photovoltaikanlage", "wp_interesse_photovoltaikanlage", "wp_interesse_photovolatikanalge", "interesse_photovolatikanalge", "interesse_photovoltaik"));
+  return { main, extra: both ? (main === "pv" ? "wp" : "pv") : null };
 }
 
 type Mapped = { value: string; exact: boolean };
@@ -99,7 +101,7 @@ export function wattfoxImplementation(raw: string | null): Mapped {
 export function wattfoxBuilding(raw: string | null, product: Product): Mapped | null {
   if (!raw) return null;
   const value = plain(raw); const family = product === "pv" ? "Ein-/Zweifamilienhaus" : "Ein- / Zweifamilienhaus";
-  if (/ein.?\/?.?zweifamilien|einfamilien|zweifamilien|doppelhaus|doppel.?reihen|reihenhaus|bungalow|efh/.test(value)) return { value: family, exact: !/doppel|reihen|bungalow/.test(value) };
+  if (/ein.?\/?.?zweifamilien|einfamilien|zweifamilien|doppelhaus|doppel.?reihen|reihenhaus|bungalow|freistehend|efh/.test(value)) return { value: family, exact: !/doppel|reihen|bungalow|freistehend/.test(value) };
   if (/mehrfamilien|mfh/.test(value)) return { value: "Mehrfamilienhaus", exact: true };
   if (/eigentumswohnung|wohnung/.test(value)) return { value: "Mehrfamilienhaus", exact: false };
   if (/firm|gewerb|halle|betrieb|buero|landwirt/.test(value)) return { value: "Firmengebäude", exact: /firm/.test(value) };
@@ -214,6 +216,12 @@ function salutationOf(raw: unknown): "Herr" | "Frau" | null {
   return null;
 }
 
+/** Nur eine Zahl („4000“)? Dann mit Einheit – Wattfox nimmt Verbrauch, Abschlag oder Kosten als Text. */
+function withUnit(raw: string | null, unit: string): string | null {
+  if (!raw) return null;
+  return /^\s*\d+(?:[.,]\d+)?\s*$/.test(raw) ? `${raw.trim()} ${unit}` : raw;
+}
+
 /** Leere Angaben fallen weg (Wattfox prüft vorgegebene Werte – ein leerer Text wäre ein falscher Wert). */
 function compact(payload: WattfoxPayload): WattfoxPayload {
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => !(value === undefined || value === null || value === "" || (Array.isArray(value) && !value.length))));
@@ -261,10 +269,10 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
       ph_alterderflaeche: age?.value,
       ph_dachflaeche: fields.get("dachflaeche", "pv_dachflaeche", "dachflaeche_m2", "sonnige_flaeche") ?? undefined,
       ph_stromspeicher: storage?.value,
-      stromverbrauch: fields.get("stromverbrauch", "pv_stromverbrauch") ?? fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten") ?? undefined,
+      stromverbrauch: withUnit(fields.get("stromverbrauch", "pv_stromverbrauch"), "kWh im Jahr") ?? withUnit(fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten"), "€ im Monat") ?? undefined,
     });
     exactOr("Gebäude", buildingRaw, building); exactOr("Dachausrichtung", orientationRaw, orientation); exactOr("Dachalter", ageRaw ?? (older ? `älter als 30 Jahre: ${older}` : null), age); exactOr("Stromspeicher", storageRaw, storage);
-    const costs = fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten"); if (costs && payload.stromverbrauch !== costs) note("Monatliche Stromkosten", costs);
+    const costs = fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten"); if (costs && fields.get("stromverbrauch", "pv_stromverbrauch")) note("Monatliche Stromkosten", costs); // sonst steht sie schon unter „stromverbrauch“
     note("Dachart", fields.get("dachart", "pv_dachart")); note("Dachmaterial", fields.get("dachmaterial", "pv_dachmaterial")); note("Bestandsanlage", fields.get("bestandsanlage", "pv_bestandsanlage"));
     note("Wallbox", fields.get("wallbox", "pv_wallbox")); note("Finanzierung gewünscht", fields.get("finanzierung", "pv_finanzierung"));
   }
