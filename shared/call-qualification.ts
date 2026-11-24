@@ -102,6 +102,16 @@ export function questionFulfilment(questions: QualificationQuestion[], answers: 
   for (const question of counted) { const answer = answers[question.key]?.answer ?? "unklar"; if (answer === "ja") yes += 1; else if (answer === "nein") { no += 1; failed.push(question.label); } else { unclear += 1; open.push(question.label); } }
   return { yes, no, unclear, total: counted.length, percent: Math.round((yes / counted.length) * 100), failed, open };
 }
+/**
+ * Die Prüffrage, wegen der die Nachprüfung ein Gespräch strenger entschieden hat – gelesen aus „Nachprüfung: …“ (Gründe von decideByQuestions).
+ * Damit lässt sich erkennen, ob die Frage noch zur Kampagne des Gesprächs gehört (z. B. nach dem Verschieben in eine andere Kampagne).
+ */
+export function recheckReasonLabel(nextStep: string | null | undefined): string | null {
+  const text = String(nextStep ?? "").trim(); const prefix = "Nachprüfung: "; if (!text.startsWith(prefix)) return null;
+  const reason = text.slice(prefix.length);
+  const match = /^K\.-o\.: „(.+)“ = Nein$/.exec(reason) ?? /^Pflichtfrage „(.+)“ = Nein$/.exec(reason) ?? /^„(.+)“ ist unklar – bitte reinhören$/.exec(reason);
+  return match ? match[1] : null;
+}
 export function decideByQuestions(questions: QualificationQuestion[], answers: Record<string, QualificationAnswer> | null | undefined): QuestionDecision {
   const decisive = questions.filter((question) => question.rule === "ko" || question.rule === "required");
   if (!decisive.length) return null;

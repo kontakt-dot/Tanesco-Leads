@@ -4083,7 +4083,7 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 .cq-mood.has-percent{display:inline-flex;flex-direction:column;align-items:center;gap:2px}
 .cq-mood.has-percent .cq-percent{font-size:11px;font-weight:700;line-height:1;letter-spacing:.01em}
 .cq-mood.is-lg.has-percent .cq-percent{font-size:14px}
-.cq-percent-sm{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.cq-percent-sm{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .cq-filterbar{flex-shrink:0}
 .cq-filterbar input[type="date"]{color-scheme:dark;padding:0 .5rem;min-width:140px}
 :root[data-theme="light"] .cq-filterbar input[type="date"]{color-scheme:light}

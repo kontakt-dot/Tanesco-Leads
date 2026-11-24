@@ -18,7 +18,7 @@ export default function DialerIntake() {
   const { today, week, verdict, contact } = data;
   const Icon = verdict.tone === "ok" ? Check : verdict.tone === "idle" ? Clock : CircleAlert;
   const steps: Array<[string, number, number, string]> = [["Angekommen", today.received, week.received, "Gespräche, die der Dialer gemeldet hat"], ["Grün", today.approved, week.approved, "von der Bewertung freigegeben"], ["Zur Prüfung", today.review, week.review, "warten auf deine Entscheidung"], ["Leads", today.leads, week.leads, "stehen unter „Leads“"]];
-  const sent: Array<[string, boolean]> = contact ? [["Name oder Firma", contact.name], ["Anschrift", contact.address], ["E-Mail", contact.email], ["Leadsparte", contact.category], ["Ergebnis im Dialer", contact.result]] : [];
+  const sent: Array<[string, boolean]> = contact ? [["Name oder Firma", contact.name], ["Anschrift", contact.address], ["E-Mail", contact.email], ["Leadsparte", contact.category], ["Kampagne", Boolean((contact as { campaign?: boolean }).campaign)], ["Ergebnis im Dialer", contact.result]] : [];
   return <section className={`gs-intake is-${verdict.tone}`} aria-label="Was kommt vom Dialer an?">
     <header className="gs-intake-head"><span className="gs-intake-icon"><Icon aria-hidden="true" /></span><div><h3>{verdict.title}</h3><p>{verdict.text}</p></div><small>Letzte Meldung: {when(data.lastAt)}</small></header>
     <ol className="gs-intake-steps">{steps.map(([label, day, seven, hint]) => <li key={label} title={hint}><b>{num(day)}</b><span>{label}</span><small>7 Tage: {num(seven)}</small></li>)}</ol>

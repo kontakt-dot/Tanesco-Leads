@@ -10,6 +10,7 @@ import { startLogin } from "./const";
 import "./index.css";
 import "./theme-light.css";
 import "./gespraeche.css"; // Gespräche: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
+import "./benutzer.css"; // Benutzer: Karten und Team-Zeilen für beide Farbschemata – nach dem hellen Schema
 import "./bestenliste.css"; // Bestenliste der Agenten: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
 import "./bausteine.css"; // Ordner-Leiste u. a.: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen
 import "./vertraege.css"; // Verträge: von Hand für beide Farbschemata – muss nach dem hellen Schema kommen

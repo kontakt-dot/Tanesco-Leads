@@ -80,7 +80,8 @@ export async function authenticateRequest(req: Request): Promise<User> {
   if (!session) throw ForbiddenError("Invalid session cookie");
   const user = await db.getUserByOpenId(session.openId);
   if (!user) throw ForbiddenError("User not found");
-  await db.upsertUser({ openId: user.openId, lastSignedIn: new Date() });
+  // „Als Benutzer eingeloggt“ ist keine Anmeldung des Benutzers (sonst entfielen seine Erinnerungen und die Benutzer-Seite zeigte „heute angemeldet“)
+  if (!session.actorOpenId) await db.upsertUser({ openId: user.openId, lastSignedIn: new Date() });
   return user;
 }
 

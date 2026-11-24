@@ -306,25 +306,29 @@ function CampaignBuyer({ campaign, buyerUserId, dialerNames, ready, onChanged }:
         {buyerUserId && !current ? <option value={buyerUserId}>Käufer {buyerUserId}</option> : null}
       </select>
     </label>
-    <p className="mt-1 text-xs text-slate-500">{buyerUserId ? `Nur ${current?.company ?? "dieser Käufer"} bekommt Leads aus „${campaign}“ – andere Käufer nicht, auch wenn ihre Bestellung oder Lieferkette passt.` : "Leads aus dieser Kampagne gehen an jeden Käufer, dessen Bestellung oder Lieferkette passt."}{dialerNames.length ? ` Im Dialer: ${dialerNames.map((name) => `„${name}“`).join(", ")}.` : ""}</p>
+    <p className="mt-1 text-xs text-slate-500">{buyerUserId ? `Nur ${current?.company ?? "dieser Käufer"} bekommt Leads aus „${campaign}“ – andere Käufer nicht, auch wenn ihre Bestellung oder Lieferkette passt. Leads aus anderen Kampagnen bekommt ${current?.company ?? "er"} nicht.` : "Leads aus dieser Kampagne gehen an jeden Käufer, dessen Bestellung oder Lieferkette passt – außer an Käufer, die fest zu einer anderen Kampagne gehören."}{dialerNames.length ? ` Im Dialer: ${dialerNames.map((name) => `„${name}“`).join(", ")}.` : ""}</p>
   </div>;
 }
 
-const VIA_TEXT: Record<DialerCampaignVia, string> = { zuordnung: "zugeordnet", name: "gleicher Name", standard: "Standard für neue Gespräche", dialer: "eigene Kampagne mit dem Namen aus dem Dialer", keine: "" };
+const VIA_TEXT: Record<DialerCampaignVia, string> = { zuordnung: "zugeordnet", name: "gleicher Name", standard: "Standard", dialer: "eigene Kampagne", keine: "" };
 /**
  * „Kampagnen vom Dialer“: So heißen die Kampagnen im Dialer – je Name, wie viele Gespräche kamen und wo sie bei uns landen.
  * Zuordnen = die Gespräche dieser Dialer-Kampagne landen in der gewählten Kampagne (deren Regeln und Käufer); die bisherigen kommen mit.
  */
 function DialerCampaignMap({ campaigns, defaultCampaign, onChanged }: { campaigns: string[]; defaultCampaign: string | null; onChanged: () => void }) {
   const list = trpc.leadops.listDialerCampaignNames.useQuery(undefined, { retry: false });
-  const assign = trpc.leadops.assignDialerCampaign.useMutation({ onSuccess: (result) => { toast.success(`Gespräche aus „${result.dialerName}“ landen ab jetzt in „${result.campaign}“${result.moved ? ` – ${result.moved} ${result.moved === 1 ? "bisheriges Gespräch" : "bisherige Gespräche"} verschoben` : ""}.`); list.refetch(); onChanged(); }, onError: (error) => toast.error(error.message) });
+  const assign = trpc.leadops.assignDialerCampaign.useMutation({ onSuccess: (result) => { toast.success(`Gespräche aus „${result.dialerName}“ landen ab jetzt in „${result.campaign}“${result.moved ? ` – ${result.moved} ${result.moved === 1 ? "bisheriges Gespräch" : "bisherige Gespräche"} verschoben` : ""}.${result.inheritedFrom ? ` Die neue Kampagne hat die Prüffragen und Kriterien von „${result.inheritedFrom}“ übernommen.` : ""}${result.reverted ? ` ${result.reverted} ${result.reverted === 1 ? "Nachprüfung" : "Nachprüfungen"} mit Fragen, die es dort nicht gibt, zurückgenommen.` : ""}`); list.refetch(); onChanged(); }, onError: (error) => toast.error(error.message) });
   const rows = list.data ?? [];
-  if (!rows.length) return null;
+  if (!list.data) return null; // lädt noch oder kein Zugriff
+  if (!rows.length) return <div className="cq-dialer-map is-empty mt-3"><span className="cq-field-label">Kampagnen vom Dialer</span><p className="mt-1 text-xs text-slate-500">Noch kein Gespräch mit Kampagnenname vom Dialer. Schickt der Dialer den Namen seiner Kampagne mit (Feld „campaign“), stehen die Namen hier – dann ordnest du jede einer Kampagne zu.{defaultCampaign ? ` Bis dahin landen alle Gespräche in „${defaultCampaign}“.` : ""}</p></div>;
   const names = Array.from(new Set(campaigns.filter(Boolean))).sort((a, b) => a.localeCompare(b, "de"));
   const choose = async (row: (typeof rows)[number], value: string) => {
     const target = value === "__neu__" ? row.name : value || null;
+    const fresh = value === "__neu__";
     const question = target
-      ? `Gespräche aus „${row.name}“ (Dialer) ab jetzt in „${target}“ einsortieren? Die ${row.calls} bisherigen kommen mit – fehlende Prüffragen von „${target}“ werden nachgeholt, Entscheidungen werden dabei nur strenger.`
+      ? fresh
+        ? `Neue Kampagne „${target}“ für die Gespräche aus „${row.name}“ (Dialer) anlegen? ${row.rulesFrom ? `Sie übernimmt die Prüffragen und Kriterien von „${row.rulesFrom}“` : "Sie startet mit den Standard-Prüffragen und -Kriterien"} – die Bewertung bleibt gleich. Die ${row.calls} bisherigen kommen mit.`
+        : `Gespräche aus „${row.name}“ (Dialer) ab jetzt in „${target}“ einsortieren? Die ${row.calls} bisherigen kommen mit – dann gelten die Regeln von „${target}“: fehlende Prüffragen werden nachgeholt (nur strenger), Nachprüfungen mit Fragen, die es dort nicht gibt, werden zurückgenommen.`
       : `Zuordnung von „${row.name}“ lösen? Neue und bisherige Gespräche daraus landen dann wieder dort, wo sie ohne Zuordnung hinkommen${defaultCampaign ? ` (meist „${defaultCampaign}“)` : ""}.`;
     if (!(await confirmAction(question, { confirmLabel: target ? "Zuordnen" : "Lösen" }))) return;
     assign.mutate({ dialerName: row.name, campaign: target, moveExisting: true });
@@ -481,7 +485,7 @@ function CampaignPanel({ campaigns, campaign, onSelect, onChanged, onDirty }: { 
           {!criteriaDraft.length && <p className="text-xs text-slate-500">Noch keine Kriterien – füge das erste hinzu.</p>}
         </div>
         <Button size="sm" variant="outline" className="mt-2" onClick={() => setCriteriaDraft([...criteriaDraft, { label: "", description: "", weight: 10 }])}>Kriterium hinzufügen</Button>
-        <div className="mt-4"><span className="cq-field-label">Vorgaben für die KI – nur für diese Kampagne (optional, ersetzen die Standard-Vorgaben)</span><textarea className={`${fieldClass} mt-1`} rows={7} aria-label="Vorgaben für die KI" maxLength={4000} placeholder="Zum Beispiel: „HausKompass muss als Firma genannt werden.“" value={instructionsDraft} onChange={(event) => setInstructionsDraft(event.target.value)} /></div>
+        <div className="mt-4"><span className="cq-field-label">Vorgaben für die KI – nur für diese Kampagne (optional, ersetzen die Standard-Vorgaben)</span><textarea className={`${fieldClass} mt-1`} rows={7} aria-label="Vorgaben für die KI" maxLength={4000} placeholder="Zum Beispiel: „Am Ende muss der Agent sagen, wer sich beim Kunden meldet.“" value={instructionsDraft} onChange={(event) => setInstructionsDraft(event.target.value)} /></div>
         <div className="cq-savebar">
           <Button size="sm" className="cq-save-criteria flux-button" disabled={!criteriaDirty || saveCriteria.isPending} onClick={saveCriteriaNow}>{saveCriteria.isPending ? "Speichere …" : "Änderungen speichern"}</Button>
           <Button size="sm" variant="ghost" disabled={!criteriaDirty || saveCriteria.isPending} onClick={resetCriteria}>Zurücksetzen</Button>

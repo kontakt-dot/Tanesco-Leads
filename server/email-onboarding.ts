@@ -6,6 +6,7 @@
 import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 import { emailEvents, emailTemplates, memberships, tenants, users } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
+import { signedInAfter } from "../shared/signed-in";
 import { noteSenderResult, senderTransportFor, transportFor } from "./mail-settings";
 
 export type OnboardingKind = "willkommen" | "erinnerung_1" | "erinnerung_2" | "erinnerung_3";
@@ -65,7 +66,7 @@ export async function processDueEmails(db: Db, now = new Date()) {
     if (event.kind?.startsWith("erinnerung") && event.membershipId) {
       const info = await mailContextFor(db, event.tenantId, event.membershipId);
       if (!info) { await db.update(emailEvents).set({ deliveryStatus: "abgebrochen", note: "Benutzer existiert nicht mehr" }).where(eq(emailEvents.id, event.id)); continue; }
-      if (info.user.lastSignedIn && info.user.lastSignedIn.getTime() > info.membership.createdAt.getTime()) { await db.update(emailEvents).set({ deliveryStatus: "übersprungen", note: `Benutzer hat sich am ${info.user.lastSignedIn.toLocaleDateString("de-DE")} angemeldet` }).where(eq(emailEvents.id, event.id)); skipped += 1; continue; }
+      if (info.user.lastSignedIn && signedInAfter(info.user.lastSignedIn, info.membership.createdAt)) { await db.update(emailEvents).set({ deliveryStatus: "übersprungen", note: `Benutzer hat sich am ${info.user.lastSignedIn.toLocaleDateString("de-DE")} angemeldet` }).where(eq(emailEvents.id, event.id)); skipped += 1; continue; }
       const result = await sendEvent(db, event.tenantId, event.id, info.context); if (result.ok) sent += 1; else failed += 1; continue;
     }
     const info = event.membershipId ? await mailContextFor(db, event.tenantId, event.membershipId) : null;

@@ -16,7 +16,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, memberships, optIns, rawBatches, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
-import { campaignKey, campaignName, dialerCampaignOf, dialerNamesOf, resolveDialerCampaign } from "../shared/dialer-campaign";
+import { campaignKey, campaignName, dialerCampaignOf, dialerNamesOf, pickRulesSource, resolveDialerCampaign, rulesSourceFor } from "../shared/dialer-campaign";
 import { batchCategoryIds, convertRawContact, normalizeRawPhone } from "./raw-data";
 import { CONTACT_MAPPING, dialerInfo, extractDialerContact, matchDialerCategory, mergeDialerData, type DialerContact } from "../shared/dialer-contact";
 import { invokeLLM } from "./_core/llm";
@@ -40,7 +40,7 @@ export { markItems, timelineStateOf, type MarkItem, type TimelineState };
 import { agentNameMerges, canonicalAgentName, cleanAgentName, detectAgent, detectAgentName, isJunkAgentName, sameAgentName } from "../shared/agent-names";
 export { cleanAgentName, detectAgentName };
 export { callPeriodRange, detectTopic, type CallPeriod };
-import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion, applyQuestionScope, softenGasHeatPumpNo, isCallback, questionFulfilment, SCOPE_LABEL } from "../shared/call-qualification";
+import { answerQuestionsHeuristically, decideByQuestions, DEFAULT_QUALIFICATION_QUESTIONS, normalizeQuestions, summarizeAnswers, type QualificationAnswer, type QualificationQuestion, applyQuestionScope, softenGasHeatPumpNo, isCallback, questionFulfilment, recheckReasonLabel, SCOPE_LABEL } from "../shared/call-qualification";
 
 /** Kampagnen mit eigenen Qualifizierungsfragen. Fehlt eine Kampagne, gilt der Standardfragensatz. */
 export async function listCampaigns(db: Db, tenantId: number) {
@@ -328,7 +328,8 @@ export async function campaignTargetFor(db: Db, config: Pick<CallQaConfig, "tena
 export async function listDialerCampaignNames(db: Db, tenantId: number) {
   const config = await ensureCallQaConfig(db, tenantId);
   const rows = await db.select({ name: callRecords.dialerCampaign, campaign: callRecords.campaign, calls: sql<number>`COUNT(*)`, lastAt: sql<Date | string | null>`MAX(COALESCE(${callRecords.startedAt}, ${callRecords.createdAt}))` }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), isNotNull(callRecords.dialerCampaign))).groupBy(callRecords.dialerCampaign, callRecords.campaign);
-  const campaigns = await db.select({ name: callQaCampaigns.name, dialerNames: callQaCampaigns.dialerNames }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId));
+  const campaigns = await db.select({ name: callQaCampaigns.name, dialerNames: callQaCampaigns.dialerNames, questions: callQaCampaigns.questions }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId));
+  const ruled = new Set(campaigns.filter((row) => normalizeQuestions(row.questions as QualificationQuestion[] | null).length > 0).map((row) => row.name));
   const groups = new Map<string, { name: string; calls: number; lastAt: Date | null; byCampaign: Map<string, number> }>();
   for (const row of rows) {
     const name = campaignName(row.name); if (!name) continue; const key = campaignKey(name);
@@ -339,37 +340,52 @@ export async function listDialerCampaignNames(db: Db, tenantId: number) {
   return Array.from(groups.values()).map((group) => {
     const target = resolveDialerCampaign(group.name, campaigns, config.defaultCampaign);
     const elsewhere = Array.from(group.byCampaign.entries()).filter(([campaign]) => campaign !== (target.campaign ?? "")).reduce((sum, [, count]) => sum + count, 0);
-    return { name: group.name, calls: group.calls, lastAt: group.lastAt, target: target.campaign, via: target.via, elsewhere };
+    /** Regeln für „Neue Kampagne …“: von hier (null = Standard-Regeln) */
+    const rulesFrom = rulesSourceFor(group.byCampaign, group.name, target.campaign, ruled);
+    return { name: group.name, calls: group.calls, lastAt: group.lastAt, target: target.campaign, via: target.via, elsewhere, rulesFrom };
   }).sort((a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0) || a.name.localeCompare(b.name, "de"));
 }
 
 /**
  * Kampagne aus dem Dialer einer Kampagne bei uns zuordnen (campaign = null: Zuordnung lösen). Fehlt die Kampagne, wird sie angelegt
- * (mit den Standard-Prüffragen). Mit moveExisting kommen die bisherigen Gespräche dieser Dialer-Kampagne mit; die Prüffragen der
+ * (mit den Regeln der Kampagne, in der ihre Gespräche bisher lagen – den Käufer übernimmt sie nicht). Mit moveExisting kommen die bisherigen Gespräche dieser Dialer-Kampagne mit; die Prüffragen der
  * neuen Kampagne holt die Nachprüfung im Hintergrund nach (Entscheidungen werden dabei nur strenger).
  */
 export async function assignDialerCampaign(db: Db, tenantId: number, input: { dialerName: string; campaign: string | null; moveExisting?: boolean }) {
   const dialerName = campaignName(input.dialerName); if (!dialerName) throw new Error("Bitte die Kampagne aus dem Dialer angeben.");
   const key = campaignKey(dialerName); const target = campaignName(input.campaign);
-  const rows = await db.select({ id: callQaCampaigns.id, name: callQaCampaigns.name, dialerNames: callQaCampaigns.dialerNames }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId));
+  const rows = await db.select({ id: callQaCampaigns.id, name: callQaCampaigns.name, dialerNames: callQaCampaigns.dialerNames, questions: callQaCampaigns.questions, criteria: callQaCampaigns.criteria, instructions: callQaCampaigns.instructions, presetKey: callQaCampaigns.presetKey }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId));
+  const config = await ensureCallQaConfig(db, tenantId);
+  // Woher kommen die Gespräche? Wo die meisten davon jetzt liegen – sonst, wo neue ohne Änderung landen würden. Eine neue Kampagne übernimmt deren Regeln.
+  const calls = await db.select({ id: callRecords.id, dialerCampaign: callRecords.dialerCampaign, campaign: callRecords.campaign }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), isNotNull(callRecords.dialerCampaign)));
+  const mine = calls.filter((call) => campaignKey(call.dialerCampaign) === key);
+  const tally = new Map<string, number>(); for (const call of mine) if (call.campaign) tally.set(call.campaign, (tally.get(call.campaign) ?? 0) + 1);
+  const ruled = new Set(rows.filter((row) => normalizeQuestions(row.questions as QualificationQuestion[] | null).length > 0).map((row) => row.name));
+  const source = target ? rulesSourceFor(tally, target, (await campaignTargetFor(db, config, dialerName)).campaign, ruled) : null;
   // erst überall lösen – ein Dialer-Name gehört immer zu genau einer Kampagne
   for (const row of rows) { const names = dialerNamesOf(row.dialerNames); const kept = names.filter((name) => campaignKey(name) !== key); if (kept.length !== names.length && row.name !== target) await db.update(callQaCampaigns).set({ dialerNames: kept.length ? kept : null }).where(eq(callQaCampaigns.id, row.id)); }
-  let created = false;
+  let created = false; let inheritedFrom: string | null = null;
   if (target) {
     const own = rows.find((row) => row.name === target);
     if (own) await db.update(callQaCampaigns).set({ dialerNames: [...dialerNamesOf(own.dialerNames).filter((name) => campaignKey(name) !== key), dialerName] }).where(eq(callQaCampaigns.id, own.id));
-    else { await db.insert(callQaCampaigns).values({ tenantId, name: target, questions: await defaultQuestionsFor(db, tenantId), dialerNames: [dialerName] }); created = true; }
+    else {
+      const from = source ? rows.find((row) => row.name === source) : undefined;
+      const rules = from ? { questions: from.questions, criteria: from.criteria, instructions: from.instructions, presetKey: from.presetKey } : { questions: await defaultQuestionsFor(db, tenantId) };
+      await db.insert(callQaCampaigns).values({ tenantId, name: target, ...rules, dialerNames: [dialerName] }); created = true; inheritedFrom = from?.name ?? null;
+    }
   }
-  let moved = 0; const config = await ensureCallQaConfig(db, tenantId);
+  let moved = 0; let reverted = 0;
   const destination = (await campaignTargetFor(db, config, dialerName)).campaign;
   if (input.moveExisting && destination) {
-    const calls = await db.select({ id: callRecords.id, dialerCampaign: callRecords.dialerCampaign, campaign: callRecords.campaign }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), isNotNull(callRecords.dialerCampaign)));
-    const ids = calls.filter((call) => campaignKey(call.dialerCampaign) === key && call.campaign !== destination).map((call) => call.id);
+    const ids = mine.filter((call) => call.campaign !== destination).map((call) => call.id);
     for (let index = 0; index < ids.length; index += 500) await db.update(callRecords).set({ campaign: destination }).where(and(eq(callRecords.tenantId, tenantId), inArray(callRecords.id, ids.slice(index, index + 500))));
     moved = ids.length;
-    if (moved) void recheckCallAnswers(db, { tenantId }).catch(() => undefined); // fehlende Prüffragen der neuen Kampagne nachholen
+    if (moved) {
+      reverted = await revertForeignRechecks(db, tenantId, { callIds: ids }); // Nachprüfungen mit Fragen, die es hier nicht gibt, gelten nicht mehr
+      void recheckCallAnswers(db, { tenantId }).catch(() => undefined); // fehlende Prüffragen der neuen Kampagne nachholen
+    }
   }
-  return { success: true as const, dialerName, campaign: destination, assigned: target, created, moved };
+  return { success: true as const, dialerName, campaign: destination, assigned: target, created, moved, inheritedFrom, reverted };
 }
 
 /** Käufer einer Kampagne setzen (null = Leads gehen wieder an alle passenden Käufer). */
@@ -1256,6 +1272,73 @@ export async function rescoreUnscoredCalls(db: Db, options: { max?: number; tena
   } finally { rescoreRunning = false; }
 }
 /** Mehrere Gespräche neu bewerten (z. B. nach geänderten Regeln): läuft nacheinander im Hintergrund, die Liste zeigt den Fortschritt. */
+/* ------------------------------------------------------------------ Nachprüfung zurücknehmen, wenn ihre Frage nicht zur Kampagne gehört */
+/**
+ * Hat die Nachprüfung ein Gespräch wegen einer Frage strenger entschieden, die es in seiner Kampagne nicht gibt (z. B. nach dem Verschieben
+ * in eine andere Kampagne), gilt das nicht mehr: Die Entscheidung geht auf den Stand davor zurück, der Lead ebenso – ausgelieferte bleiben,
+ * wie sie sind. Fehlende Fragen der Kampagne holt die Nachprüfung danach nach (wieder nur strenger). Von Hand entschiedene bleiben unberührt.
+ */
+export async function revertForeignRechecks(db: Db, tenantId: number, options: { callIds?: number[]; campaign?: string | null; since?: Date; fromDialer?: boolean } = {}): Promise<number> {
+  if (options.callIds && !options.callIds.length) return 0;
+  const base = [eq(callRecords.tenantId, tenantId), isNotNull(callRecords.recheckFrom), eq(callRecords.decidedBy, "automatisch")];
+  if (options.campaign) base.push(eq(callRecords.campaign, options.campaign));
+  if (options.since) base.push(gte(callRecords.recheckedAt, options.since));
+  if (options.fromDialer) base.push(isNotNull(callRecords.dialerCampaign));
+  const columns = { id: callRecords.id, campaign: callRecords.campaign, recheckFrom: callRecords.recheckFrom, nextStep: callRecords.nextStep, leadId: callRecords.leadId, rawContactId: callRecords.rawContactId };
+  const rows: Array<{ id: number; campaign: string | null; recheckFrom: string | null; nextStep: string | null; leadId: number | null; rawContactId: number | null }> = [];
+  if (options.callIds) { for (let index = 0; index < options.callIds.length; index += 500) rows.push(...await db.select(columns).from(callRecords).where(and(...base, inArray(callRecords.id, options.callIds.slice(index, index + 500))))); }
+  else rows.push(...await db.select(columns).from(callRecords).where(and(...base)));
+  const sets = new Map<string, QualificationQuestion[]>(); let reverted = 0;
+  for (const row of rows) {
+    const label = recheckReasonLabel(row.nextStep); if (!label || !row.recheckFrom) continue;
+    let questions = sets.get(row.campaign ?? ""); if (!questions) { questions = await questionsForCampaign(db, tenantId, row.campaign); sets.set(row.campaign ?? "", questions); }
+    if (questions.some((question) => (question.rule === "ko" || question.rule === "required") && question.label === label)) continue; // die Frage gilt hier – die Nachprüfung bleibt
+    const previous = row.recheckFrom as CallRecord["decision"]; const note = `Nachprüfung zurückgenommen: „${label}“ gehört nicht zur Kampagne${row.campaign ? ` „${row.campaign}“` : ""}`;
+    await db.update(callRecords).set({ decision: previous, recheckFrom: null, nextStep: note.slice(0, 320) }).where(eq(callRecords.id, row.id));
+    reverted += 1;
+    if (row.leadId) {
+      const lead = (await db.select({ id: leads.id, status: leads.status, metadata: leads.metadata }).from(leads).where(eq(leads.id, row.leadId)).limit(1))[0]; if (!lead) continue;
+      const meta = lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata) ? (lead.metadata as Record<string, unknown>) : {};
+      // Status nur zurück, wenn ihn die Nachprüfung gesetzt hat und der Lead seitdem nicht weitergegangen ist
+      const event = (await db.select({ previousStatus: leadStatusEvents.previousStatus, nextStatus: leadStatusEvents.nextStatus }).from(leadStatusEvents).where(and(eq(leadStatusEvents.leadId, lead.id), like(leadStatusEvents.note, "Nachprüfung des Gesprächs:%"))).orderBy(desc(leadStatusEvents.id)).limit(1))[0];
+      const back = event && event.nextStatus === lead.status && event.previousStatus && event.previousStatus !== lead.status && ["fehlerhaft", "hängend"].includes(lead.status) ? event.previousStatus as typeof lead.status : null;
+      await db.update(leads).set({ ...(back ? { status: back } : {}), metadata: { ...meta, callDecision: previous } }).where(eq(leads.id, lead.id));
+      if (back) await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: back, actorUserId: null, note: note.slice(0, 500) });
+    } else if (row.rawContactId) {
+      await db.update(rawContacts).set({ status: "in_liste", note: "Nachprüfung zurückgenommen" }).where(and(eq(rawContacts.id, row.rawContactId), eq(rawContacts.status, "verworfen"), like(rawContacts.note, "Nachprüfung des Gesprächs:%")));
+    }
+  }
+  return reverted;
+}
+/** Ab hier konnte „Kampagnen vom Dialer“ neue Kampagnen anlegen (Version 357) – bis Version 358 mit den Standard-Regeln statt der Regeln der bisherigen Kampagne. */
+export const DIALER_CAMPAIGNS_SINCE = new Date("2026-11-24T20:00:00Z");
+/**
+ * Einmalige Reparatur je Mandant (Version 358): Kampagnen, die über „Kampagnen vom Dialer“ neu angelegt wurden und noch die unveränderten
+ * Standard-Regeln haben, bekommen die Regeln der Kampagne, in der Dialer-Gespräche landen – dort lagen ihre Gespräche vorher.
+ * Danach gilt keine Nachprüfung mehr, deren Frage nicht zur Kampagne des Gesprächs gehört (nur Gespräche mit Kampagne vom Dialer, seit Version 357).
+ */
+export async function inheritDialerCampaignRules(db: Db): Promise<{ campaigns: number; reverted: number }> {
+  let campaigns = 0; let reverted = 0;
+  for (const config of await db.select({ id: callQaConfigs.id, tenantId: callQaConfigs.tenantId, provider: callQaConfigs.provider, defaultCampaign: callQaConfigs.defaultCampaign, setupMarks: callQaConfigs.setupMarks }).from(callQaConfigs)) {
+    const marks = (config.setupMarks && typeof config.setupMarks === "object" && !Array.isArray(config.setupMarks) ? config.setupMarks : {}) as Record<string, string>;
+    if (marks.dialerRules) continue;
+    const rows = await db.select().from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, config.tenantId));
+    const defaults = await defaultQuestionsFor(db, config.tenantId);
+    // angelegt über „Kampagnen vom Dialer“ seit Version 357, Regeln noch unverändert die Standard-Regeln
+    const broken = rows.filter((row) => dialerNamesOf(row.dialerNames).length > 0 && row.createdAt >= DIALER_CAMPAIGNS_SINCE && !(Array.isArray(row.criteria) && row.criteria.length) && !row.instructions && questionsEqual(row.questions, defaults));
+    // Woher die Regeln kommen: die Kampagne für neue Dialer-Gespräche – sonst die, in der die meisten Dialer-Gespräche ohne Kampagnennamen der letzten 14 Tage liegen
+    const recent = broken.length ? (await db.select({ campaign: callRecords.campaign, n: sql<number>`count(*)` }).from(callRecords).where(and(eq(callRecords.tenantId, config.tenantId), eq(callRecords.provider, config.provider), isNull(callRecords.dialerCampaign), isNotNull(callRecords.campaign), gte(callRecords.createdAt, new Date(Date.now() - 14 * 86_400_000)))).groupBy(callRecords.campaign)).map((row) => ({ campaign: row.campaign, n: Number(row.n) || 0 })) : [];
+    const picked = pickRulesSource(rows.map((row) => ({ id: row.id, name: row.name, ruled: normalizeQuestions(row.questions as QualificationQuestion[] | null).length > 0 })), new Set(broken.map((row) => row.id)), config.defaultCampaign, recent);
+    const source = picked ? rows.find((row) => row.id === picked.id) : undefined;
+    if (source) for (const row of broken) {
+      await db.update(callQaCampaigns).set({ questions: source.questions, criteria: source.criteria, instructions: source.instructions, presetKey: source.presetKey }).where(eq(callQaCampaigns.id, row.id));
+      campaigns += 1;
+    }
+    reverted += await revertForeignRechecks(db, config.tenantId, { since: DIALER_CAMPAIGNS_SINCE, fromDialer: true });
+    await db.update(callQaConfigs).set({ setupMarks: { ...marks, dialerRules: new Date().toISOString() } }).where(eq(callQaConfigs.id, config.id));
+  }
+  return { campaigns, reverted };
+}
 /* ------------------------------------------------------------------ Prüffragen bei älteren Gesprächen nachholen */
 
 /**

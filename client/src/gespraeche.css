@@ -442,7 +442,7 @@ html.dark .gq-stage .cq-agent button{color:var(--gq-ink)!important}
 .gq-c-head{display:flex;align-items:center;gap:8px;min-width:0}
 .gq-c-head strong{font-size:13.5px;font-weight:600;color:var(--gl-ink)}
 .gq-c-head small{font-size:11.5px;color:var(--gl-faint);white-space:nowrap}
-.gq-c-head .cq-percent-sm{margin-left:auto;font-size:13px;color:var(--gl-ink);font-variant-numeric:tabular-nums}
+.gq-c-head .cq-percent-sm{margin-left:auto;font-size:13px;color:var(--gl-ink);font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0}
 .gq-c-head .cq-mood{margin-left:auto}
 .gq-c-head .cq-percent-sm+.cq-mood{margin-left:0}
 .gq-c-bar{display:block;height:4px;border-radius:999px;background:var(--gl-soft);overflow:hidden}

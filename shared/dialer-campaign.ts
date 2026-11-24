@@ -62,6 +62,8 @@ export function resolveDialerCampaign(dialerName: string | null | undefined, cam
 
 /** Käufer einer Kampagne: Leads aus ihr gehen nur an ihn. */
 export type CampaignBuyerRule = { campaign: string; buyerUserId: number; buyerName: string };
+/** Was für die Auslieferung eines Leads aus einem Gespräch gilt: die Kampagne seines Gesprächs und alle Kampagnen mit eigenem Käufer. */
+export type LeadCampaignRules = { campaign: string; bindings: CampaignBuyerRule[] };
 
 /** Grund, warum dieser Käufer den Lead nicht bekommt – oder null, wenn er ihn bekommen darf. */
 export function campaignBuyerSkip(rule: CampaignBuyerRule | null | undefined, buyerUserId: number | null | undefined): string | null {
@@ -73,4 +75,42 @@ export function campaignBuyerSkip(rule: CampaignBuyerRule | null | undefined, bu
 export function leadCampaignCall<T extends { id: number; campaign: string | null; decision?: string | null }>(calls: T[]): T | null {
   const withCampaign = calls.filter((call) => Boolean(call.campaign)).sort((a, b) => b.id - a.id);
   return withCampaign.find((call) => call.decision === "freigegeben") ?? withCampaign[0] ?? null;
+}
+
+/**
+ * Warum ein Käufer diesen Lead nicht bekommt – sonst null. Gilt nur für Leads aus Gesprächen (mit Kampagne):
+ *  1. Hat die Kampagne des Leads einen eigenen Käufer, bekommt nur er ihn.
+ *  2. Ist der Käufer an andere Kampagnen gebunden, bekommt er keine Leads aus dieser Kampagne.
+ * Leads ohne Gespräch betrifft das nicht – sie gehen wie bisher an alle passenden Käufer.
+ */
+export function campaignDeliverySkip(rules: LeadCampaignRules | null | undefined, buyerUserId: number | null | undefined): string | null {
+  if (!rules) return null;
+  const key = campaignKey(rules.campaign);
+  const own = rules.bindings.find((binding) => campaignKey(binding.campaign) === key);
+  if (own) return campaignBuyerSkip(own, buyerUserId);
+  if (!buyerUserId) return null;
+  const elsewhere = rules.bindings.filter((binding) => binding.buyerUserId === buyerUserId);
+  if (!elsewhere.length) return null;
+  return `${elsewhere[0].buyerName} bekommt nur Leads aus ${elsewhere.map((binding) => `„${binding.campaign}“`).join(", ")}`.slice(0, 160);
+}
+
+/**
+ * Woher eine Kampagne aus dem Dialer ihre Regeln bekommt (Reparatur Version 358): die Kampagne für neue Dialer-Gespräche – sonst die,
+ * in der die meisten Dialer-Gespräche ohne Kampagnennamen liegen (dort lagen sie, bevor der Dialer Namen schickte).
+ * Nur Kampagnen mit eigenen Prüffragen, nie eine der zu reparierenden.
+ */
+export function pickRulesSource<T extends { id: number; name: string; ruled: boolean }>(rows: T[], skipIds: Set<number>, defaultCampaign: string | null | undefined, recent: Array<{ campaign: string | null; n: number }>): T | undefined {
+  const usable = (row: T | undefined) => (row && row.ruled && !skipIds.has(row.id) ? row : undefined);
+  const byDefault = defaultCampaign ? usable(rows.find((row) => row.name === defaultCampaign)) : undefined; if (byDefault) return byDefault;
+  for (const item of [...recent].sort((a, b) => b.n - a.n)) { const row = usable(rows.find((candidate) => candidate.name === item.campaign)); if (row) return row; }
+  return undefined;
+}
+
+/**
+ * Von welcher Kampagne eine neue Kampagne für diesen Dialer-Namen ihre Regeln übernimmt: wo die meisten seiner Gespräche jetzt liegen
+ * (ohne die Ziel-Kampagne selbst), sonst wo neue landen würden. null = keine Kampagne mit eigenen Regeln → Standard-Regeln.
+ */
+export function rulesSourceFor(byCampaign: Map<string, number>, target: string, landsIn: string | null, ruled: Set<string>): string | null {
+  const current = Array.from(byCampaign.entries()).filter(([campaign, count]) => campaign && campaign !== target && count > 0).sort((a, b) => b[1] - a[1])[0]?.[0] ?? (landsIn && landsIn !== target ? landsIn : null);
+  return current && ruled.has(current) ? current : null;
 }

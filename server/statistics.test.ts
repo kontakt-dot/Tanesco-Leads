@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDeliveryDistribution, computeHourlyDeliverySeries, computeIntegrationStatistics, computeOperationsStatistics, computeStatistics, filterStatisticsLeads, type StatisticsLead } from "./statistics";
+import { computeDeliveryDistribution, computeDeliveryFigures, computeHourlyDeliverySeries, computeIntegrationStatistics, computeOperationsStatistics, computeStatistics, filterStatisticsLeads, type StatisticsLead } from "./statistics";
 
 const fixture: StatisticsLead[] = [
   { status: "zugewiesen", cost: 42, createdAt: new Date("2026-08-10T10:00:00Z"), categoryId: 1, supplierId: 3 },
@@ -9,7 +9,27 @@ const fixture: StatisticsLead[] = [
 
 describe("statistics", () => {
   it("berechnet Annahme-, Reklamations- und Umsatzkennzahlen aus entschiedenen Zustellungen", () => {
-    expect(computeStatistics(fixture)).toMatchObject({ delivered: 3, assigned: 2, accepted: 1, claimed: 1, pending: 1, rejected: 1, revenue: 42, acceptanceRate: 0.5, claimRate: 0.5 });
+    expect(computeStatistics(fixture)).toMatchObject({ leads: 3, assigned: 2, accepted: 1, claimed: 1, pending: 1, rejected: 1, acceptedValue: 42, acceptanceRate: 0.5, claimRate: 0.5 });
+    expect(computeStatistics(fixture)).not.toHaveProperty("delivered"); // „ausgeliefert“ zählt nur computeDeliveryFigures (nach dem Zeitpunkt der Auslieferung)
+  });
+
+  it("ausgeliefert, Umsatz und Reklamationen nach dem Zeitpunkt der Auslieferung – neue Leads ohne Auslieferung zählen nicht (v358)", () => {
+    const at = (day: number, hour = 10) => new Date(`2026-11-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00Z`);
+    const deliveries = [
+      { leadId: 1, result: "angenommen", unitPrice: "40.00", occurredAt: at(24), categoryId: 1, supplierId: null },
+      { leadId: 1, result: "übersprungen", unitPrice: "30.00", occurredAt: at(24), categoryId: 1, supplierId: null }, // derselbe Lead: zählt einmal, übersprungen ohne Umsatz
+      { leadId: 2, result: "angeboten", unitPrice: 25, occurredAt: at(24, 12), categoryId: 2, supplierId: 7 },
+      { leadId: 3, result: "reklamiert", unitPrice: "40.00", occurredAt: at(24, 13), categoryId: 1, supplierId: null }, // ausgeliefert, später reklamiert: zählt, ohne Umsatz
+      { leadId: 4, result: "abgelehnt", unitPrice: "40.00", occurredAt: at(24, 14), categoryId: 1, supplierId: null }, // Käufer hat abgelehnt: nicht ausgeliefert
+      { leadId: 5, result: "angenommen", unitPrice: "40.00", occurredAt: at(23), categoryId: 1, supplierId: null }, // gestern
+    ];
+    const claims = [{ leadId: 3, createdAt: at(24, 15), categoryId: 1, supplierId: null }, { leadId: 9, createdAt: at(22), categoryId: 1, supplierId: null }];
+    const today = { from: at(24, 0), until: at(24, 23) };
+    expect(computeDeliveryFigures(deliveries, claims, today)).toEqual({ delivered: 3, revenue: 65, claims: 1 });
+    expect(computeDeliveryFigures(deliveries, claims, { ...today, categoryId: 1 })).toEqual({ delivered: 2, revenue: 40, claims: 1 });
+    expect(computeDeliveryFigures(deliveries, claims, { ...today, supplierId: 7 })).toEqual({ delivered: 1, revenue: 25, claims: 0 });
+    expect(computeDeliveryFigures([], [], today)).toEqual({ delivered: 0, revenue: 0, claims: 0 }); // 29 neue Leads, aber nichts ausgeliefert → 0
+    expect(computeDeliveryFigures(deliveries, claims)).toEqual({ delivered: 4, revenue: 105, claims: 2 });
   });
 
   it("zählt wiederkehrende E-Mail-Adressen als Dubletten", () => {

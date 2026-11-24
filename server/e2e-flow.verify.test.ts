@@ -1163,7 +1163,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
 
   it("20. Kundenpfad ohne Handarbeit: Kunden-Benutzer anlegen → API-Integration am Benutzer → Bestellung → Leads verteilen (automatisch)", async () => {
     // 1) Kunde als Benutzer (Käufer)
-    const created = await owner.leadops.createMember({ firstName: "Klara", lastName: "Kundin", company: "Kundin Solar GmbH", email: `klara-${Date.now().toString(36)}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const created = await owner.leadops.createMember({ firstName: "Klara", lastName: "Kundin", company: "Kundin Solar GmbH", email: `klara-${Date.now().toString(36)}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv", welcomeMail: true }); // mit Häkchen „Willkommensmail schicken“ (seit v358 nur dann)
     const membershipId = created.membershipId;
     const detail = await owner.leadops.getMemberDetail({ membershipId });
     expect(detail.membership.partnerType).toBe("käufer"); expect(detail.membership.status).toBe("aktiv");
@@ -6259,6 +6259,150 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await owner.leadops.callQaCampaignSummary({ campaign: "V357 Aroundhome neu" })).dialerNames).toEqual(["V357 Wattfox WP"]);
     } finally {
       if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey;
+      await owner.leadops.setCallQaDefaultCampaign({ campaign: savedDefault });
+    }
+  }, 120000);
+
+  it("v358. Dashboard: „Ausgelieferte Leads“, Umsatz und Reklamationen nach dem Zeitpunkt der Auslieferung – neue Leads ohne Auslieferung zählen nicht; Willkommensmail nur mit Häkchen", async () => {
+    const { leadDeliveries: deliveriesTable, claims: claimsTable, emailEvents: mailsTable } = await import("../drizzle/schema");
+    const day = new Date(); day.setHours(0, 0, 0, 0); const until = new Date(day.getTime() + 86_400_000 - 1);
+    // (a) Was die Datenbank für heute hergibt – genau das muss das Dashboard zeigen
+    const expected = async () => {
+      const shipped = (await db.select({ leadId: deliveriesTable.leadId, result: deliveriesTable.result, unitPrice: deliveriesTable.unitPrice, occurredAt: deliveriesTable.occurredAt, kind: leads.kind }).from(deliveriesTable).innerJoin(leads, eq(leads.id, deliveriesTable.leadId)).where(eq(deliveriesTable.tenantId, S.tenantId))).filter((row) => row.kind === "verkauf" && row.occurredAt >= day && row.occurredAt <= until && ["angeboten", "angenommen", "reklamiert"].includes(row.result));
+      const claimed = (await db.select({ createdAt: claimsTable.createdAt, kind: leads.kind }).from(claimsTable).innerJoin(leads, eq(leads.id, claimsTable.leadId)).where(eq(claimsTable.tenantId, S.tenantId))).filter((row) => row.kind === "verkauf" && row.createdAt >= day && row.createdAt <= until);
+      return { delivered: new Set(shipped.map((row) => row.leadId)).size, revenue: Math.round(shipped.filter((row) => row.result !== "reklamiert").reduce((sum, row) => sum + Number(row.unitPrice ?? 0), 0) * 100) / 100, claims: claimed.length };
+    };
+    const before = await owner.leadops.statistics({ from: day, until });
+    expect({ delivered: before.delivered, revenue: before.revenue, claims: before.claims }).toEqual(await expected());
+    // (b) Neue Leads ohne Auslieferung: „Leads“ steigt, „ausgeliefert“ nicht
+    const stamp = Date.now().toString(36);
+    const categoryId = (await owner.leadops.createCategory({ shortcode: `V358${stamp}`.slice(0, 16).toUpperCase(), name: `V358 Zahlen ${stamp}`, defaultLeadPrice: "10.00" })).id!;
+    for (let i = 1; i <= 3; i += 1) await owner.leadops.importLead({ categoryId, firstName: "Nora", lastName: `Neu${i}`, email: `neu${i}-${stamp}@example.de`, phone: `+49 6151 555${8100 + i}`, postcode: "64283", city: "Darmstadt" });
+    const after = await owner.leadops.statistics({ from: day, until });
+    expect(after.leads).toBe(before.leads + 3); expect(after.delivered).toBe(before.delivered); expect(after.revenue).toBe(before.revenue);
+    const onlyNew = await owner.leadops.statistics({ from: day, until, categoryId });
+    expect(onlyNew).toMatchObject({ leads: 3, delivered: 0, revenue: 0, claims: 0 });
+    // (c) Wird einer ausgeliefert, zählt er – mit seinem Preis
+    const member = await owner.leadops.createMember({ firstName: "Ida", lastName: "Zahl", company: "V358 Käufer GmbH", email: `zahl-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const buyerUserId = (await owner.leadops.getMemberDetail({ membershipId: member.membershipId })).user.id;
+    await owner.leadops.createChainRule({ categoryIds: [categoryId], supplierMode: "all", supplierIds: [], buyers: [{ buyerUserId, unitPrice: 33, reclamationWindowHours: 0 }], active: true });
+    const first = (await db.select().from(leads).where(and(eq(leads.tenantId, S.tenantId), eq(leads.categoryId, categoryId))))[0];
+    await owner.leadops.deliverLead({ publicId: first.publicId });
+    expect(await owner.leadops.statistics({ from: day, until, categoryId })).toMatchObject({ leads: 3, delivered: 1, revenue: 33, claims: 0 });
+    const whole = await owner.leadops.statistics({ from: day, until }); expect({ delivered: whole.delivered, revenue: whole.revenue, claims: whole.claims }).toEqual(await expected());
+    // (d) Willkommensmail: ohne Häkchen keine Mail und keine Erinnerung; mit Häkchen wie bisher
+    const mailsOf = async (membershipId: number) => (await db.select().from(mailsTable).where(eq(mailsTable.membershipId, membershipId))).map((row) => row.kind).sort();
+    expect(member.emails).toEqual({ scheduled: 0, sent: 0 }); expect(await mailsOf(member.membershipId)).toEqual([]);
+    const welcomed = await owner.leadops.createMember({ firstName: "Wim", lastName: "Willkommen", company: "V358 Team", email: `willkommen-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "vertriebler", status: "aktiv", welcomeMail: true });
+    expect(welcomed.emails.scheduled).toBeGreaterThanOrEqual(1); expect(await mailsOf(welcomed.membershipId)).toEqual(expect.arrayContaining(["willkommen"]));
+    // (e) Benutzer-Seite: echte Anmeldung und eingeschaltete Lieferadressen je Konto
+    const { users: usersTable } = await import("../drizzle/schema");
+    const rowOf = async (membershipId: number) => (await owner.leadops.listMembers()).find((row) => row.membershipId === membershipId)!;
+    expect(await rowOf(member.membershipId)).toMatchObject({ endpoints: 0, lastSignedIn: null }); // angelegt, nie angemeldet
+    const endpoint = { membershipId: member.membershipId, categoryId, method: "POST" as const, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] };
+    await owner.leadops.saveDeliveryEndpoint({ ...endpoint, enabled: true, url: "https://v358-kunde.example/leads" });
+    await owner.leadops.saveDeliveryEndpoint({ ...endpoint, enabled: false, url: "https://v358-kunde.example/aus" });
+    expect((await rowOf(member.membershipId)).endpoints).toBe(1); // nur eingeschaltete
+    // „Als Benutzer einloggen“ ist keine Anmeldung des Kunden – die Zeit zählt beim Admin
+    const { authenticateRequest, signSession } = await import("./_core/auth");
+    const userRow = async (id: number) => (await db.select().from(usersTable).where(eq(usersTable.id, id)))[0];
+    const buyerBefore = await userRow(buyerUserId); const ownerBefore = await userRow(ownerUserId);
+    const asBuyer = await signSession(buyerBefore.openId, buyerBefore.name ?? "", 60_000, ownerBefore.openId);
+    expect((await authenticateRequest({ headers: { cookie: `app_session_id=${asBuyer}` } } as never)).id).toBe(buyerUserId);
+    expect((await userRow(buyerUserId)).lastSignedIn.getTime()).toBe(buyerBefore.lastSignedIn.getTime());
+    expect((await userRow(ownerUserId)).lastSignedIn.getTime()).toBe(ownerBefore.lastSignedIn.getTime()); // während der Sitzung als Kunde ändert sich keine Anmeldezeit
+    expect((await rowOf(member.membershipId)).lastSignedIn).toBeNull();
+    await db.update(usersTable).set({ lastSignedIn: new Date(Date.now() + 120_000) }).where(eq(usersTable.id, buyerUserId)); // meldet sich später selbst an
+    expect((await rowOf(member.membershipId)).lastSignedIn).toBeTruthy();
+    // (f) „Das schickt der Dialer mit“: die Kampagne als eigener Punkt
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => (await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status;
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+    try {
+      expect(await post({ call_id: `v358-k-${stamp}`, phone: "+49 6151 5558201", consent: true, transcript: "Agent: Guten Tag, hier ist der Kundendienst. Kunde: Kein Interesse, danke.", campaign: "V358 Kampagne" })).toBeLessThan(300);
+      expect((await owner.leadops.dialerIntake()).contact).toMatchObject({ campaign: true });
+      expect(await post({ call_id: `v358-o-${stamp}`, phone: "+49 6151 5558202", consent: true, transcript: "Agent: Guten Tag, hier ist der Kundendienst. Kunde: Kein Interesse, danke." })).toBeLessThan(300);
+      expect((await owner.leadops.dialerIntake()).contact).toMatchObject({ campaign: false });
+    } finally { if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey; }
+  }, 120000);
+
+  it("v358. Kampagnen vom Dialer: neue Kampagne übernimmt die Regeln ihrer bisherigen, Nachprüfungen mit fremden Fragen werden zurückgenommen (beim Verschieben und per Reparatur), Käufer einer Kampagne bekommt keine Leads aus anderen", async () => {
+    const schema = await import("../drizzle/schema"); const { callRecords: callsTable, callQaConfigs: cfgTable, callQaCampaigns: campaignsTable, leadStatusEvents: eventsTable } = schema;
+    const { inheritDialerCampaignRules, defaultQuestionsFor } = await import("./call-qa");
+    const stamp = Date.now().toString(36);
+    const cfg = async () => (await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0];
+    const savedDefault = (await cfg()).defaultCampaign ?? null;
+    const campaignRow = async (name: string) => (await db.select().from(campaignsTable).where(and(eq(campaignsTable.tenantId, S.tenantId), eq(campaignsTable.name, name))))[0];
+    const callRow = async (id: number) => (await db.select().from(callsTable).where(eq(callsTable.id, id)))[0];
+    const leadStatus = async (id: number) => (await db.select().from(leads).where(eq(leads.id, id)))[0].status;
+    const wattfox = `V358 Wattfox ${stamp}`;
+    await owner.leadops.applyPresetToCampaign({ preset: "wattfox-pv-wp", campaign: wattfox });
+    const wattfoxRow = await campaignRow(wattfox); const wattfoxQuestions = wattfoxRow.questions as Array<{ key: string; label: string; rule: string }>;
+    const allYes = Object.fromEntries(wattfoxQuestions.map((question) => [question.key, { answer: "ja" }])); // nichts fehlt – die Nachprüfung hat bei diesen Gesprächen nichts zu tun
+    const categoryId = (await owner.leadops.createCategory({ shortcode: `V358R${stamp}`.slice(0, 16).toUpperCase(), name: `V358 Regeln ${stamp}`, defaultLeadPrice: "10.00" })).id!;
+    let seq = 0;
+    const callWithLead = async (campaign: string, dialer: string | null) => {
+      seq += 1; const publicId = (await owner.leadops.importLead({ categoryId, firstName: "Rita", lastName: `Regel${seq}`, email: `regel${seq}-${stamp}@example.de`, phone: `+49 6151 556${7100 + seq}`, postcode: "64283", city: "Darmstadt" })).publicId;
+      const lead = (await db.select().from(leads).where(eq(leads.publicId, publicId)))[0]; const externalCallId = `v358r-${stamp}-${seq}`;
+      await db.insert(callsTable).values({ tenantId: S.tenantId, provider: "ondialer", externalCallId, leadId: lead.id, phone: lead.phone, campaign, dialerCampaign: dialer, status: "bewertet", decision: "freigegeben", decidedBy: "automatisch", consent: true, transcript: "Agent: Guten Tag. Kunde: Ja, gerne.", qualificationAnswers: allYes });
+      return { publicId, leadId: lead.id, callId: (await db.select().from(callsTable).where(eq(callsTable.externalCallId, externalCallId)))[0].id };
+    };
+    // so sieht eine Nachprüfung aus, die strenger entschieden hat (Gespräch zurückgewiesen, Lead „Fehlerhaft“)
+    const recheck = async (call: { callId: number; leadId: number }, label: string, rule: "ko" | "required") => {
+      const reason = rule === "ko" ? `K.-o.: „${label}“ = Nein` : `Pflichtfrage „${label}“ = Nein`; const before = await leadStatus(call.leadId);
+      await db.update(callsTable).set({ decision: "zurueckgewiesen", recheckFrom: "freigegeben", recheckedAt: new Date(), nextStep: `Nachprüfung: ${reason}` }).where(eq(callsTable.id, call.callId));
+      await db.update(leads).set({ status: "fehlerhaft" }).where(eq(leads.id, call.leadId));
+      await db.insert(eventsTable).values({ tenantId: S.tenantId, leadId: call.leadId, previousStatus: before, nextStatus: "fehlerhaft", actorUserId: null, note: `Nachprüfung des Gesprächs: ${reason} → zurückgewiesen – Lead jetzt „Fehlerhaft“` });
+      return before;
+    };
+    const foreignLabel = "Hat der Mitarbeiter HausKompass genannt?"; const ownLabel = wattfoxQuestions.find((question) => question.key === "eigentuemer_entscheider")!.label;
+    const dialerNew = `V358 Google PV - FOX ${stamp}`; const fresh = `V358 Google ${stamp}`;
+    try {
+      await owner.leadops.setCallQaDefaultCampaign({ campaign: wattfox });
+      // (a) Reparatur: Kampagne, die Version 357 aus dem Dialer mit den Standard-Regeln angelegt hat → Regeln der bisherigen Kampagne; fremde Nachprüfungen zurück
+      const old = `V358 FB ${stamp}`; const dialerOld = `V358 FB PV & WP - FOX ${stamp}`;
+      await db.insert(campaignsTable).values({ tenantId: S.tenantId, name: old, questions: await defaultQuestionsFor(db, S.tenantId), dialerNames: [dialerOld] });
+      const foreign = await callWithLead(old, dialerOld); const foreignBefore = await recheck(foreign, foreignLabel, "required");
+      const kept = await callWithLead(old, dialerOld); await recheck(kept, ownLabel, "ko"); // diese Frage gibt es bei Wattfox – bleibt
+      const marks = { ...(((await cfg()).setupMarks ?? {}) as Record<string, string>) }; delete marks.dialerRules; await db.update(cfgTable).set({ setupMarks: marks }).where(eq(cfgTable.tenantId, S.tenantId));
+      const repaired = await inheritDialerCampaignRules(db);
+      expect(repaired.campaigns).toBeGreaterThanOrEqual(1); expect(repaired.reverted).toBeGreaterThanOrEqual(1);
+      const oldRow = await campaignRow(old);
+      expect(oldRow.presetKey).toBe("wattfox-pv-wp"); expect(oldRow.questions).toEqual(wattfoxRow.questions); expect(oldRow.criteria).toEqual(wattfoxRow.criteria); expect(oldRow.buyerUserId).toBeNull();
+      expect(await callRow(foreign.callId)).toMatchObject({ decision: "freigegeben", recheckFrom: null }); expect(String((await callRow(foreign.callId)).nextStep)).toBe(`Nachprüfung zurückgenommen: „${foreignLabel}“ gehört nicht zur Kampagne „${old}“`);
+      expect(await leadStatus(foreign.leadId)).toBe(foreignBefore);
+      expect(((await db.select().from(leads).where(eq(leads.id, foreign.leadId)))[0].metadata as Record<string, unknown>).callDecision).toBe("freigegeben");
+      expect(await callRow(kept.callId)).toMatchObject({ decision: "zurueckgewiesen", recheckFrom: "freigegeben" }); expect(await leadStatus(kept.leadId)).toBe("fehlerhaft");
+      expect(await inheritDialerCampaignRules(db)).toEqual({ campaigns: 0, reverted: 0 }); // nur einmal je Mandant
+      // (b) Zuordnen zu „Neue Kampagne …“: übernimmt Prüffragen, Kriterien und Vorlage der Kampagne, in der die Gespräche lagen – den Käufer nicht
+      await owner.leadops.setCallQaCampaignBuyer({ campaign: wattfox, buyerUserId: null });
+      const a1 = await callWithLead(wattfox, dialerNew); const a2 = await callWithLead(wattfox, dialerNew);
+      expect(await owner.leadops.assignDialerCampaign({ dialerName: dialerNew, campaign: fresh, moveExisting: true })).toMatchObject({ campaign: fresh, created: true, moved: 2, inheritedFrom: wattfox, reverted: 0 });
+      const freshRow = await campaignRow(fresh);
+      expect(freshRow.presetKey).toBe("wattfox-pv-wp"); expect(freshRow.questions).toEqual(wattfoxRow.questions); expect(freshRow.criteria).toEqual(wattfoxRow.criteria); expect(freshRow.buyerUserId).toBeNull();
+      // (c) Verschieben: Nachprüfung mit einer Frage, die es in der Ziel-Kampagne nicht gibt, wird zurückgenommen – eine mit eigener Frage bleibt
+      const a1Before = await recheck(a1, foreignLabel, "required"); await recheck(a2, ownLabel, "ko");
+      expect(await owner.leadops.assignDialerCampaign({ dialerName: dialerNew, campaign: wattfox, moveExisting: true })).toMatchObject({ campaign: wattfox, created: false, moved: 2, reverted: 1 });
+      expect(await callRow(a1.callId)).toMatchObject({ campaign: wattfox, decision: "freigegeben", recheckFrom: null }); expect(await leadStatus(a1.leadId)).toBe(a1Before);
+      expect(await callRow(a2.callId)).toMatchObject({ campaign: wattfox, decision: "zurueckgewiesen", recheckFrom: "freigegeben" }); expect(await leadStatus(a2.leadId)).toBe("fehlerhaft");
+      const events = (await db.select().from(eventsTable).where(eq(eventsTable.leadId, a1.leadId))).map((row) => row.note ?? "");
+      expect(events.some((note) => note.startsWith("Nachprüfung zurückgenommen"))).toBe(true);
+      // (d) Käufer je Kampagne in beide Richtungen: Wattfox bekommt Leads nur aus seiner Kampagne – Leads aus anderen Kampagnen nicht, Leads ohne Gespräch wie bisher
+      const member = async (company: string, mail: string) => { const created = await owner.leadops.createMember({ firstName: "Kai", lastName: "Kauf", company, email: `${mail}-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" }); return (await owner.leadops.getMemberDetail({ membershipId: created.membershipId })).user.id; };
+      const boundUser = await member("V358 Wattfox GmbH", "wattfox"); const otherUser = await member("V358 Anderer Käufer GmbH", "anderer");
+      await owner.leadops.createChainRule({ categoryIds: [categoryId], supplierMode: "all", supplierIds: [], buyers: [{ buyerUserId: boundUser, unitPrice: 30, reclamationWindowHours: 0 }, { buyerUserId: otherUser, unitPrice: 20, reclamationWindowHours: 0 }], active: true });
+      await owner.leadops.setCallQaCampaignBuyer({ campaign: wattfox, buyerUserId: boundUser });
+      expect(await owner.leadops.deliverLead({ publicId: (await callWithLead(wattfox, null)).publicId })).toMatchObject({ buyerName: "V358 Wattfox GmbH" });
+      const other = await owner.leadops.deliverLead({ publicId: (await callWithLead(fresh, null)).publicId });
+      expect(other.buyerName).toBe("V358 Anderer Käufer GmbH");
+      expect(other.attempts[0]).toMatchObject({ buyerName: "V358 Wattfox GmbH", outcome: "übersprungen", reason: `V358 Wattfox GmbH bekommt nur Leads aus „${wattfox}“` });
+      const plain = (await owner.leadops.importLead({ categoryId, firstName: "Ole", lastName: "Ohne", email: `ohne-${stamp}@example.de`, phone: "+49 6151 5569981", postcode: "64283", city: "Darmstadt" })).publicId;
+      expect(await owner.leadops.deliverLead({ publicId: plain })).toMatchObject({ buyerName: "V358 Wattfox GmbH" }); // ohne Gespräch: keine Einschränkung
+      // stehen nur gebundene Käufer in der Kette, bleibt der Lead aus der anderen Kampagne liegen – mit Grund
+      await owner.leadops.setCallQaCampaignBuyer({ campaign: fresh, buyerUserId: otherUser });
+      await expect(owner.leadops.deliverLead({ publicId: (await callWithLead(`V358 Dritte ${stamp}`, null)).publicId })).rejects.toThrow(/bekommt nur Leads aus/);
+    } finally {
+      for (const campaign of [wattfox, fresh]) await owner.leadops.setCallQaCampaignBuyer({ campaign, buyerUserId: null }).catch(() => undefined);
       await owner.leadops.setCallQaDefaultCampaign({ campaign: savedDefault });
     }
   }, 120000);

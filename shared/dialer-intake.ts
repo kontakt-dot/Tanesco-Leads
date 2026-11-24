@@ -8,6 +8,7 @@
  */
 import { extractDialerContact, type DialerContact } from "./dialer-contact";
 import { isPlaceholder, isSalutation, tidySalutation } from "./lead-fields";
+import { dialerCampaignOf } from "./dialer-campaign";
 
 export type SpokenContact = { firstName: string | null; lastName: string | null; street: string | null; postcode: string | null; city: string | null; email: string | null; /** „Herr“ oder „Frau“, wenn der Kunde so angesprochen wird */ salutation?: "Herr" | "Frau" | null };
 export const EMPTY_SPOKEN: SpokenContact = { firstName: null, lastName: null, street: null, postcode: null, city: null, email: null };
@@ -49,9 +50,9 @@ export function payloadFieldNames(payload: unknown): string[] {
   walk(payload, "", 0); return out;
 }
 /** Was die letzte Meldung zum Kontakt enthält – in einfachen Wörtern. */
-export function contactParts(payload: unknown, mapping: Partial<Record<string, string>> = {}): { name: boolean; address: boolean; email: boolean; category: boolean; result: boolean; fields: number } {
+export function contactParts(payload: unknown, mapping: Partial<Record<string, string>> = {}): { name: boolean; address: boolean; email: boolean; category: boolean; result: boolean; /** Name der Kampagne im Dialer („campaign“) */ campaign: boolean; fields: number } {
   const contact = extractDialerContact(payload, mapping);
-  return { name: contact.hasIdentity, address: Boolean(contact.postcode || contact.city || contact.street), email: Boolean(contact.email), category: Boolean(contact.category), result: Boolean(contact.result), fields: Object.keys(contact.fields).length };
+  return { name: contact.hasIdentity, address: Boolean(contact.postcode || contact.city || contact.street), email: Boolean(contact.email), category: Boolean(contact.category), result: Boolean(contact.result), campaign: Boolean(dialerCampaignOf(payload, mapping.campaign || undefined)), fields: Object.keys(contact.fields).length };
 }
 
 export type IntakeCounts = { received: number; withContact: number; noConsent: number; failed: number; approved: number; review: number; rejected: number; leads: number; approvedNoLead: number };

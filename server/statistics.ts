@@ -46,17 +46,37 @@ export function computeStatistics(leads: StatisticsLead[]) {
     return Boolean(fingerprint && (fingerprints.get(fingerprint) ?? 0) > 1);
   }).length;
   return {
-    delivered: leads.length,
+    /** Leads, die im Zeitraum eingegangen sind (nicht: ausgeliefert – das zählt computeDeliveryFigures nach dem Zeitpunkt der Auslieferung) */
+    leads: leads.length,
     assigned: assigned.length,
     accepted: accepted.length,
     claimed: claimed.length,
     pending: pending.length,
     rejected: rejected.length,
-    revenue,
+    /** Summe der Lead-Preise der angenommenen Leads, die im Zeitraum eingegangen sind */
+    acceptedValue: revenue,
     duplicates,
     acceptanceRate: assigned.length ? accepted.length / assigned.length : 0,
     claimRate: assigned.length ? claimed.length / assigned.length : 0,
   };
+}
+
+export type StatisticsDeliveryEvent = { leadId: number; result: string; unitPrice: string | number | null; occurredAt: Date; categoryId: number | null; supplierId: number | null };
+export type StatisticsClaimEvent = { leadId: number; createdAt: Date; categoryId: number | null; supplierId: number | null };
+/** Ergebnisse, bei denen ein Lead tatsächlich bei einem Käufer gelandet ist (auch wenn er später reklamiert wurde). */
+const SHIPPED_RESULTS = new Set(["angeboten", "angenommen", "reklamiert"]);
+/**
+ * Was im Zeitraum wirklich passiert ist – nach dem Zeitpunkt der Auslieferung bzw. Reklamation, nicht nach dem Eingang des Leads:
+ *  - delivered: ausgelieferte Leads (je Lead einmal; abgelehnte und übersprungene Versuche zählen nicht)
+ *  - revenue: Preise dieser Auslieferungen – ohne Abgelehnte, Übersprungene und Reklamierte
+ *  - claims: Reklamationen, die im Zeitraum eingegangen sind
+ */
+export function computeDeliveryFigures(deliveries: StatisticsDeliveryEvent[], claims: StatisticsClaimEvent[], filter: StatisticsFilter = {}) {
+  const inRange = (at: Date) => (!filter.from || at >= filter.from) && (!filter.until || at <= filter.until);
+  const matches = (row: { categoryId: number | null; supplierId: number | null }) => (!filter.categoryId || row.categoryId === filter.categoryId) && (!filter.supplierId || row.supplierId === filter.supplierId);
+  const shipped = deliveries.filter((row) => SHIPPED_RESULTS.has(row.result) && inRange(row.occurredAt) && matches(row));
+  const revenue = shipped.filter((row) => row.result === "angeboten" || row.result === "angenommen").reduce((sum, row) => sum + (Number(row.unitPrice ?? 0) || 0), 0);
+  return { delivered: new Set(shipped.map((row) => row.leadId)).size, revenue: Math.round(revenue * 100) / 100, claims: claims.filter((row) => inRange(row.createdAt) && matches(row)).length };
 }
 
 export type StatisticsDelivery = { leadId: number; buyerName: string; supplierName: string | null; chainName: string | null; stopName: string | null; result: "angeboten" | "angenommen" | "abgelehnt" | "übersprungen" | "reklamiert"; unitPrice: number };

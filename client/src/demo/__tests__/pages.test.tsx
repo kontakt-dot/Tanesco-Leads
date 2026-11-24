@@ -361,7 +361,7 @@ describe("Profilbild – hochladen, überall sehen, entfernen", () => {
     window.history.replaceState(null, "", "/?page=Benutzer");
     const list = mount();
     await settle(600);
-    expect(list.view.container.querySelectorAll(".member-pic .avatar-img").length).toBe(2); expect(list.view.container.querySelectorAll(".member-pic").length).toBeGreaterThan(2);
+    expect(list.view.container.querySelectorAll(".member-pic .avatar-img, .bn-mono .avatar-img").length).toBe(2); expect(list.view.container.querySelectorAll(".member-pic, .bn-mono").length).toBeGreaterThan(2);
     cleanup();
     window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email");
     const board = mount();
