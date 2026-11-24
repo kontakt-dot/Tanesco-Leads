@@ -43,29 +43,30 @@ export const PV_HAUSKOMPASS_PRESET: CallQaPreset = {
  * „Wattfox – Photovoltaik & Wärmepumpe“: Regeln der Kampagne „Wattfox PV und WP“.
  * Entscheidend: Umsetzung in höchstens 6 Monaten, Interesse am Produkt, Entscheider/Eigentümer;
  * bei Wärmepumpe keine Erdgas-Wärmepumpe als Hauptinteresse. Interesse an Photovoltaik ODER Wärmepumpe reicht.
+ * Kriterien (rechts, mit Punkten) und Prüffragen (links) sind dieselben Punkte in derselben Reihenfolge (WATTFOX_MIRROR).
  */
 export const WATTFOX_PRESET: CallQaPreset = {
   key: "wattfox-pv-wp",
   label: "Wattfox – Photovoltaik & Wärmepumpe",
-  description: "Umsetzung in höchstens 6 Monaten, Interesse an Photovoltaik oder Wärmepumpe (eines reicht), Entscheider/Eigentümer; bei Wärmepumpe keine Erdgas-Wärmepumpe. Die Software erkennt selbst, ob es ein PV- oder WP-Gespräch ist.",
+  description: "Umsetzung in höchstens 6 Monaten, Interesse an Photovoltaik oder Wärmepumpe (eines reicht), Eigentümer/Entscheider; bei Wärmepumpe keine Erdgas-Wärmepumpe; am Ende die Übergabe an „Photovoltaik Angebotsvergleich“ mit bis zu 3 Angeboten. Die Software erkennt selbst, ob es ein PV- oder WP-Gespräch ist.",
   criteria: [
-    { key: "interesse", label: "Interesse am Produkt", weight: 25, description: "Der Kunde hat echtes Interesse an Photovoltaik ODER an einer Wärmepumpe – eines von beiden reicht völlig und ist ein klares Interessenssignal (volle Punktzahl). Nicht erfüllt nur bei Ablehnung von beidem." },
-    { key: "entscheider", label: "Entscheider bzw. Eigentümer", weight: 25, description: "Der Gesprächspartner ist Eigentümer der Immobilie bzw. der Entscheider. Mieter oder „muss ich erst fragen“ = nicht erfüllt." },
     { key: "zeitrahmen", label: "Umsetzung in höchstens 6 Monaten", weight: 25, description: "Der Kunde will zeitnah umsetzen (innerhalb von etwa 6 Monaten). Ein genauer Termin muss NICHT genannt werden: „so schnell wie möglich“, „zeitnah“, „bald“ oder „kommt auf das Angebot an“ sind voll erfüllt. Nicht erfüllt nur, wenn der Kunde ausdrücklich später will." },
+    { key: "interesse", label: "Interesse am Produkt (Photovoltaik bzw. Wärmepumpe)", weight: 25, description: "Der Kunde hat echtes Interesse an Photovoltaik ODER an einer Wärmepumpe – eines von beiden reicht völlig und ist ein klares Interessenssignal (volle Punktzahl). Nicht erfüllt nur bei Ablehnung von beidem." },
+    { key: "entscheider", label: "Eigentümer bzw. Entscheider", weight: 25, description: "Der Gesprächspartner ist Eigentümer der Immobilie bzw. der Entscheider. Mieter oder „muss ich erst fragen“ = nicht erfüllt." },
     { key: "wp_kein_erdgas", label: "Wärmepumpe: keine Erdgas-Wärmepumpe", weight: 15, description: "Nur bei Wärmepumpe: Der Kunde interessiert sich NICHT in erster Linie für eine Erdgas-/Gas-Wärmepumpe (Gas-Hybrid). Abzug nur, wenn der Kunde sie ausdrücklich nennt – heizt er heute mit Gas, Flüssiggas oder Öl, ist das der Normalfall und kein Abzug. Geht es im Gespräch gar nicht um eine Wärmepumpe, gilt das Kriterium als voll erfüllt (10 Punkte)." },
-    { key: "hauskompass", label: "HausKompass genannt", weight: 10, description: "Der Mitarbeiter nennt HausKompass als Firma – auch ein ähnlich klingender Name zählt voll (z. B. „Haus Campus“, „Hauskompas“). Bei einem Rückruf (Kunde und Mitarbeiter hatten schon Kontakt) muss der Name nicht noch einmal fallen: dann volle Punktzahl." },
+    { key: "uebergabe", label: "Übergabe am Ende: „Photovoltaik Angebotsvergleich“ meldet sich, bis zu 3 Angebote", weight: 10, description: "Am Ende weiß der Kunde zweierlei: 1) dass sich „Photovoltaik Angebotsvergleich“ bei ihm meldet und 2) dass er bis zu 3 Angebote von Fachpartnern bekommt – andere Worte mit demselben Sinn zählen (z. B. „bis zu drei Fachbetriebe melden sich mit Angeboten“), ähnlich klingende Schreibweisen aus der Abschrift ebenso. Gilt auch bei Wärmepumpe (dieselbe Firma) – kein Widerspruch. Volle Punktzahl, wenn beides gesagt wurde; fehlt eines von beiden, die Hälfte; fehlt beides, 0." },
   ],
   instructions: [
     "Kampagne Wattfox – Photovoltaik und Wärmepumpe. Erkenne zuerst selbst, worum es im Gespräch geht: Photovoltaik, Wärmepumpe oder beides.",
-    "Geprüft wird:",
+    "Geprüft wird – dieselben Punkte als Kriterien und als Prüffragen:",
     "1) Umsetzung: Der Kunde will zeitnah umsetzen (innerhalb von etwa 6 Monaten). Ein konkretes Zeitfenster muss NICHT genannt werden – „so schnell wie möglich“, „zeitnah“, „bald“ oder „kommt auf das Angebot an, dann gehe ich davon aus“ reicht. Nicht verkaufbar nur, wenn der Kunde ausdrücklich später als in 6 Monaten oder „irgendwann“ sagt.",
     "2) Interesse am Produkt: Der Kunde hat Interesse an Photovoltaik ODER an einer Wärmepumpe. Eines von beiden reicht – auch „nur Wärmepumpe“ oder „nur Photovoltaik“ ist ein klares Interessenssignal und voll erfüllt.",
-    "3) Entscheider bzw. Eigentümer: Der Kunde ist Eigentümer der Immobilie oder der Entscheider.",
+    "3) Eigentümer bzw. Entscheider: Der Kunde ist Eigentümer der Immobilie oder der Entscheider.",
     "4) Nur bei Wärmepumpe: Eine Erdgas-/Gas-Wärmepumpe darf NICHT das Hauptinteresse des Kunden sein. Das gilt nur als verletzt, wenn der Kunde sie ausdrücklich nennt – dass er heute mit Gas, Flüssiggas oder Öl heizt, ist der Normalfall und KEIN Hinweis darauf. Bei einem reinen Photovoltaik-Gespräch entfällt dieser Punkt (voll erfüllt).",
-    "Firmenname: Der Mitarbeiter ruft im Namen von HausKompass an. Das Transkript kommt aus automatischer Spracherkennung – steht dort etwas, das sich wie HausKompass anhört (z. B. „Haus Campus“, „Hauskompas“), gilt der Name als genannt. Handelt es sich erkennbar um einen RÜCKRUF (Kunde und Mitarbeiter hatten schon Kontakt, z. B. „wie besprochen“, „ich rufe zurück“, „wir hatten ja schon telefoniert“), muss der Firmenname nicht noch einmal fallen – KEIN Mangel.",
+    "5) Übergabe am Ende: Der Kunde erfährt, dass sich „Photovoltaik Angebotsvergleich“ bei ihm meldet UND dass er bis zu 3 Angebote von Fachpartnern bekommt (andere Worte mit demselben Sinn zählen). Diese Firma ist für Photovoltaik UND Wärmepumpen zuständig – bei einer Wärmepumpen-Anfrage ist der Name richtig, KEIN Widerspruch. Dieser Punkt gibt Punkte für die Qualitätsnote, entscheidet aber nicht über die Freigabe.",
     "Der Mitarbeiter darf sagen, der Kunde habe sich informiert oder eingetragen – KEIN Mangel. Die Telefonnummer muss nicht bestätigt werden.",
     "Der Service ist für den Kunden immer kostenlos und unverbindlich – sagt der Mitarbeiter das, ist es richtig und KEIN Mangel und kein Warnhinweis.",
-    "Die Dachfläche, eine ausdrückliche Zustimmung zum Anruf oder „alle Fragen gestellt“ werden in dieser Kampagne NICHT geprüft – nicht als Mangel werten. Die Übergabe am Ende („Photovoltaik Angebotsvergleich“ meldet sich, bis zu 3 Angebote von Fachpartnern) wird nur in den Prüffragen festgehalten – sie entscheidet nicht und ist bei den Kriterien kein Mangel.",
+    "Die Dachfläche, eine ausdrückliche Zustimmung zum Anruf, der Firmenname, mit dem sich der Mitarbeiter meldet, oder „alle Fragen gestellt“ werden in dieser Kampagne NICHT geprüft – nicht als Mangel werten.",
     "Schreibe die Belege vollständig aus (ganze Sätze, nicht abgeschnitten).",
   ].join("\n"),
   questions: [
@@ -74,11 +75,12 @@ export const WATTFOX_PRESET: CallQaPreset = {
     { key: "eigentuemer_entscheider", label: "Ist der Kunde Eigentümer bzw. Entscheider?", rule: "ko", hint: "Eigentümer der Immobilie oder Entscheider. Mieter oder „muss ich erst fragen“ = Nein." },
     { key: "wp_kein_erdgas", label: "Wärmepumpe: Geht es um eine normale Wärmepumpe (keine Erdgas-Wärmepumpe als Hauptinteresse)?", rule: "ko", onlyFor: "waermepumpe", hint: "Nur bei Wärmepumpe. Nein nur, wenn der Kunde ausdrücklich eine Erdgas-/Gas-Wärmepumpe (Gas-Hybrid) als Hauptinteresse nennt. Dass der Kunde heute mit Gas, Flüssiggas oder Öl heizt, ist KEIN Hinweis darauf – das ist der Normalfall. Nicht eindeutig: unklar, nicht Nein. Sonst Ja. Geht es nicht um eine Wärmepumpe: Ja mit Hinweis „entfällt“." },
     // Übergabe am Ende – „Photovoltaik Angebotsvergleich“ ist die Marke von Wattfox. Erst nur zur Auswertung: Wird sie Pflicht, bevor die Agenten den Satz sagen, ginge kein Lead mehr raus.
-    { key: "uebergabe_angebotsvergleich", label: "Weiß der Kunde am Ende, dass sich „Photovoltaik Angebotsvergleich“ bei ihm meldet?", rule: "info", hint: "Nur zur Auswertung – entscheidet nicht. Auch bei Wärmepumpe (gleiche Firma). Ähnlich klingende Schreibweisen aus der Abschrift zählen." },
-    { key: "bis_zu_3_angebote", label: "Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?", rule: "info", hint: "Nur zur Auswertung – entscheidet nicht. Andere Worte mit demselben Sinn zählen: „bis zu drei Angebote“, „bis zu drei Fachbetriebe melden sich“, „drei Fachpartner aus Ihrer Region“. Nein, wenn nichts über die Zahl der Angebote bzw. Fachpartner gesagt wurde." },
+    { key: "uebergabe", label: "Wurde am Ende gesagt, dass sich „Photovoltaik Angebotsvergleich“ meldet und der Kunde bis zu 3 Angebote von Fachpartnern bekommt?", rule: "info", hint: "Nur zur Auswertung – entscheidet nicht. Ja nur, wenn beides gesagt wurde; andere Worte mit demselben Sinn zählen („bis zu drei Fachbetriebe melden sich“), ähnlich klingende Schreibweisen aus der Abschrift ebenso. Auch bei Wärmepumpe (gleiche Firma). Fehlt eines von beiden: Nein, im Beleg steht, was fehlt." },
   ],
-  retiredQuestionKeys: ["pv_dachflaeche_20qm"], retiredCriteriaKeys: ["pv_dachflaeche"],
+  retiredQuestionKeys: ["pv_dachflaeche_20qm", "uebergabe_angebotsvergleich", "bis_zu_3_angebote"], retiredCriteriaKeys: ["pv_dachflaeche", "hauskompass"],
 };
+/** Welche Prüffrage gehört zu welchem Kriterium (Wattfox): links und rechts dieselben Punkte in derselben Reihenfolge. */
+export const WATTFOX_MIRROR: Array<[question: string, criterion: string]> = [["umsetzung_6_monate", "zeitrahmen"], ["interesse_produkt", "interesse"], ["eigentuemer_entscheider", "entscheider"], ["wp_kein_erdgas", "wp_kein_erdgas"], ["uebergabe", "uebergabe"]];
 
 export const CALL_QA_PRESETS: CallQaPreset[] = [PV_HAUSKOMPASS_PRESET, WATTFOX_PRESET];
 export const presetByKey = (key: string) => CALL_QA_PRESETS.find((preset) => preset.key === key) ?? null;

@@ -9,6 +9,7 @@ import type { OptInKind, OptInStatus } from "../../../shared/opt-in";
 import { dialerGuideText } from "../../../shared/dialer-guide";
 import { CONTACT_MAPPING, CONTACT_MAPPING_LABELS } from "../../../shared/dialer-contact";
 import { CALL_QA_PRESETS } from "../../../shared/call-qa-presets";
+import { campaignKey, type DialerCampaignVia } from "../../../shared/dialer-campaign";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
@@ -291,6 +292,61 @@ const presetFor = (campaign: string) => /wattfox/i.test(campaign) ? { key: "watt
 const RULE_SHORT: Record<Rule, string> = { ko: "K.-o.", required: "Pflicht", info: "Info" };
 type CriterionDraft = { key?: string; label: string; description: string; weight: number };
 type QuestionDraft = { key?: string; label: string; rule: Rule; hint: string; onlyFor: Scope | null };
+/** „Leads aus dieser Kampagne gehen an“: ein Käufer für die Kampagne – dann bekommen nur er ihre Leads. */
+function CampaignBuyer({ campaign, buyerUserId, dialerNames, ready, onChanged }: { campaign: string; buyerUserId: number | null; dialerNames: string[]; ready: boolean; onChanged: () => void }) {
+  const pickers = trpc.leadops.chainPickers.useQuery(undefined, { retry: false });
+  const buyers = pickers.data?.buyers ?? [];
+  const setBuyer = trpc.leadops.setCallQaCampaignBuyer.useMutation({ onSuccess: (result) => { toast.success(result.buyerName ? `Leads aus „${result.campaign}“ gehen ab jetzt nur an ${result.buyerName}.` : `Leads aus „${result.campaign}“ gehen wieder an alle passenden Käufer.`); onChanged(); }, onError: (error) => toast.error(error.message) });
+  const current = buyerUserId ? buyers.find((buyer) => buyer.userId === buyerUserId) : undefined;
+  return <div className="cq-buyer mt-3">
+    <label className="flex flex-wrap items-center gap-2 text-xs text-slate-400">Leads aus dieser Kampagne gehen an
+      <select className="filter-select h-9 cq-campaign-buyer" aria-label="Käufer dieser Kampagne" value={buyerUserId ?? ""} disabled={!ready || setBuyer.isPending} onChange={(event) => setBuyer.mutate({ campaign, buyerUserId: event.target.value ? Number(event.target.value) : null })}>
+        <option value="">alle passenden Käufer</option>
+        {buyers.map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.company}</option>)}
+        {buyerUserId && !current ? <option value={buyerUserId}>Käufer {buyerUserId}</option> : null}
+      </select>
+    </label>
+    <p className="mt-1 text-xs text-slate-500">{buyerUserId ? `Nur ${current?.company ?? "dieser Käufer"} bekommt Leads aus „${campaign}“ – andere Käufer nicht, auch wenn ihre Bestellung oder Lieferkette passt.` : "Leads aus dieser Kampagne gehen an jeden Käufer, dessen Bestellung oder Lieferkette passt."}{dialerNames.length ? ` Im Dialer: ${dialerNames.map((name) => `„${name}“`).join(", ")}.` : ""}</p>
+  </div>;
+}
+
+const VIA_TEXT: Record<DialerCampaignVia, string> = { zuordnung: "zugeordnet", name: "gleicher Name", standard: "Standard für neue Gespräche", dialer: "eigene Kampagne mit dem Namen aus dem Dialer", keine: "" };
+/**
+ * „Kampagnen vom Dialer“: So heißen die Kampagnen im Dialer – je Name, wie viele Gespräche kamen und wo sie bei uns landen.
+ * Zuordnen = die Gespräche dieser Dialer-Kampagne landen in der gewählten Kampagne (deren Regeln und Käufer); die bisherigen kommen mit.
+ */
+function DialerCampaignMap({ campaigns, defaultCampaign, onChanged }: { campaigns: string[]; defaultCampaign: string | null; onChanged: () => void }) {
+  const list = trpc.leadops.listDialerCampaignNames.useQuery(undefined, { retry: false });
+  const assign = trpc.leadops.assignDialerCampaign.useMutation({ onSuccess: (result) => { toast.success(`Gespräche aus „${result.dialerName}“ landen ab jetzt in „${result.campaign}“${result.moved ? ` – ${result.moved} ${result.moved === 1 ? "bisheriges Gespräch" : "bisherige Gespräche"} verschoben` : ""}.`); list.refetch(); onChanged(); }, onError: (error) => toast.error(error.message) });
+  const rows = list.data ?? [];
+  if (!rows.length) return null;
+  const names = Array.from(new Set(campaigns.filter(Boolean))).sort((a, b) => a.localeCompare(b, "de"));
+  const choose = async (row: (typeof rows)[number], value: string) => {
+    const target = value === "__neu__" ? row.name : value || null;
+    const question = target
+      ? `Gespräche aus „${row.name}“ (Dialer) ab jetzt in „${target}“ einsortieren? Die ${row.calls} bisherigen kommen mit – fehlende Prüffragen von „${target}“ werden nachgeholt, Entscheidungen werden dabei nur strenger.`
+      : `Zuordnung von „${row.name}“ lösen? Neue und bisherige Gespräche daraus landen dann wieder dort, wo sie ohne Zuordnung hinkommen${defaultCampaign ? ` (meist „${defaultCampaign}“)` : ""}.`;
+    if (!(await confirmAction(question, { confirmLabel: target ? "Zuordnen" : "Lösen" }))) return;
+    assign.mutate({ dialerName: row.name, campaign: target, moveExisting: true });
+  };
+  return <div className="cq-dialer-map mt-3">
+    <span className="cq-field-label">Kampagnen vom Dialer</span>
+    <p className="mt-1 text-xs text-slate-500">So heißen die Kampagnen im Dialer. Ordne jede einer Kampagne hier zu – dann gelten deren Prüffragen und deren Käufer.{defaultCampaign ? ` Ohne Zuordnung landen sie in „${defaultCampaign}“.` : ""}</p>
+    <div className="cq-dialer-rows mt-2">
+      {rows.map((row) => <div key={row.name} className="cq-dialer-row">
+        <div className="cq-dialer-name"><b>{row.name}</b><small>{row.calls} {row.calls === 1 ? "Gespräch" : "Gespräche"}{row.lastAt ? ` · zuletzt ${new Date(row.lastAt).toLocaleDateString("de-DE")}` : ""}</small></div>
+        <span className="cq-dialer-arrow" aria-hidden="true">→</span>
+        <select className="filter-select h-9 cq-dialer-target" aria-label={`Kampagne für „${row.name}“`} value={row.via === "zuordnung" ? row.target ?? "" : ""} disabled={assign.isPending} onChange={(event) => { void choose(row, event.target.value); }}>
+          <option value="">{row.via === "zuordnung" ? "keine Zuordnung" : `„${row.target ?? row.name}“ (${VIA_TEXT[row.via]})`}</option>
+          {names.map((name) => <option key={name} value={name}>{name}</option>)}
+          {!names.some((name) => campaignKey(name) === campaignKey(row.name)) ? <option value="__neu__">Neue Kampagne „{row.name}“</option> : null}
+        </select>
+        <span className="cq-dialer-state">{row.via === "zuordnung" ? "zugeordnet" : VIA_TEXT[row.via]}{row.elsewhere ? ` · ${row.elsewhere} ${row.elsewhere === 1 ? "liegt" : "liegen"} noch woanders` : ""}</span>
+      </div>)}
+    </div>
+  </div>;
+}
+
 /**
  * Einstellungen einer Kampagne – alles direkt als Felder änderbar: Name, Kriterien (mit Vorgaben für die KI) und Prüffragen.
  * Gespeichert wird je Bereich mit „Änderungen speichern“; solange nichts geändert ist, bleibt der Knopf grau.
@@ -385,10 +441,11 @@ function CampaignPanel({ campaigns, campaign, onSelect, onChanged, onDirty }: { 
         <Button size="sm" variant="ghost" className="cq-delete-campaign ml-auto text-red-300 hover:text-red-200" title="Diese Kampagne samt allen Gesprächen löschen" disabled={removeCampaign.isPending} onClick={async () => { const count = summary.data?.calls ?? null; if (!(await confirmAction(`Kampagne „${campaign}“ löschen? ${count !== null ? `${count} ${count === 1 ? "Gespräch" : "Gespräche"}` : "Alle Gespräche"} samt Transkripten, Bewertungen und hochgeladenen Aufnahmen werden endgültig gelöscht – Kontakte/Leads bleiben.`, { confirmLabel: "Löschen", danger: true }))) return; removeCampaign.mutate({ name: campaign }); }}>Kampagne löschen</Button>
       </div>
       <p className="mt-1 text-xs text-slate-500">Beim Umbenennen bekommen alle Gespräche dieser Kampagne den neuen Namen{summary.data?.defaultCampaign === campaign ? " – neue Gespräche vom Dialer landen dann auch unter dem neuen Namen" : ""}.</p>
+      <CampaignBuyer campaign={campaign} buyerUserId={summary.data?.buyerUserId ?? null} dialerNames={summary.data?.dialerNames ?? []} ready={Boolean(summary.data)} onChanged={() => { summary.refetch(); onChanged(); }} />
     </div>}
 
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-      <label className="flex items-center gap-2 text-xs text-slate-400" title="Alle neuen Gespräche, die der Dialer schickt, werden in diese Kampagne einsortiert – egal, welchen Kampagnennamen der Dialer mitschickt">Neue Gespräche vom Dialer landen in
+      <label className="flex items-center gap-2 text-xs text-slate-400" title="Neue Gespräche vom Dialer landen in dieser Kampagne – außer ihre Kampagne im Dialer ist unten bei „Kampagnen vom Dialer“ zugeordnet oder heißt genauso wie eine Kampagne hier">Neue Gespräche vom Dialer landen in
         <select className="filter-select h-9 cq-default-campaign" aria-label="Kampagne für neue Gespräche vom Dialer" value={summary.data?.defaultCampaign ?? ""} disabled={setDefault.isPending} onChange={(event) => setDefault.mutate({ campaign: event.target.value || null })}>
           <option value="">Kampagne laut Dialer</option>
           {campaigns.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
@@ -397,6 +454,7 @@ function CampaignPanel({ campaigns, campaign, onSelect, onChanged, onDirty }: { 
       </label>
       <button type="button" className="cq-help-toggle text-xs" onClick={() => setShowHelp(!showHelp)}>{showHelp ? "Erklärung ausblenden" : "Wie entscheidet die Software?"}</button>
     </div>
+    <DialerCampaignMap campaigns={campaigns.map((item) => item.name)} defaultCampaign={summary.data?.defaultCampaign ?? null} onChanged={() => { refreshLists(); }} />
     {showHelp && <p className="cq-help mt-2 text-xs text-slate-400">Die KI beantwortet je Gespräch jede Prüffrage mit Ja / Nein / Unklar – und <strong className="text-slate-200">diese Fragen entscheiden</strong>: K.-o.-Frage = Nein → zurückgewiesen · Pflichtfrage = Nein → zurückgewiesen, Unklar → zur Prüfung · alle erfüllt → freigegeben. Die Kriterien (0–10 Punkte, gewichtet) ergeben die Qualitätsnote im Gespräch.</p>}
 
     {campaign && <div className="cq-facts mt-4 grid gap-2 sm:grid-cols-3">
@@ -527,7 +585,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
       </div>
       <dl className="gq-call-facts">
         <div><dt>Agent</dt><dd><AgentEdit bare callId={data.id} agentName={data.agentName ?? null} manual={data.agentSource === "manuell"} fromDialer={data.agentSource === "dialer"} alias={(data as { agentAlias?: string | null }).agentAlias || null} viaAlias={data.agentSource === "alias"} onChanged={() => { call.refetch(); utils.leadops.listCalls.invalidate(); utils.leadops.callStatistics.invalidate(); utils.leadops.dialerAgentReport.invalidate(); utils.leadops.callAgentNames.invalidate(); }} /></dd></div>
-        <div><dt>Kampagne</dt><dd>{data.campaign ?? data.provider}</dd></div>
+        <div><dt>Kampagne</dt><dd>{data.campaign ?? data.provider}{data.dialerCampaign && campaignKey(data.dialerCampaign) !== campaignKey(data.campaign) ? <small className="gq-dialer-campaign" title="So heißt die Kampagne im Dialer">im Dialer: {data.dialerCampaign}</small> : null}</dd></div>
         {data.category ? <div><dt>Lead-Kategorie</dt><dd title={dialer?.category ? `Leadsparte laut Dialer: ${dialer.category}` : "Von der KI aus dem Gespräch erkannt"}>{data.category.emoji ? `${data.category.emoji} ` : ""}{data.category.name}</dd></div> : null}
         <div><dt>Einwilligung zur Aufnahme</dt><dd>{data.consent ? `Ja (${data.consentSource ?? "Dialer"})` : "Nein"}</dd></div>
         {dialer?.result ? <div><dt>Ergebnis im Dialer</dt><dd>{dialer.result}</dd></div> : null}
@@ -572,6 +630,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
           <i className="gq-c-bar" aria-hidden="true"><i style={{ width: `${((criterion.score ?? 0) / 10) * 100}%` }} /></i>
           {criterion.evidence && <Expandable text={criterion.evidence} quote className="gq-c-evidence" />}
         </li>; })}</ul>
+        {!data.criteriaUnscored && data.status === "bewertet" && data.criteria.some((criterion) => criterion.score === null) ? <p className="cq-unscored gq-c-later">Für {data.criteria.filter((criterion) => criterion.score === null).map((criterion) => `„${criterion.label}“`).join(", ")} gibt es bei diesem Gespräch noch keine Punkte – der Punkt kam später dazu. „Neu bewerten“ holt sie nach.</p> : null}
       </section>
       <section className="surface-panel operations-panel gq-panel is-wide" aria-label="Transkript">
         <div className="gq-panel-head"><div><h2>Transkript</h2>{segments.length > 0 && <p>{canPlay ? "Ein Klick auf eine Zeile spielt die Aufnahme ab dieser Stelle. Die Zeile, die gerade läuft, ist hervorgehoben." : "Links steht, wann im Gespräch der Satz fällt."}</p>}</div></div>

@@ -8,9 +8,11 @@
  *    API-Integration des Käufers übergibt (Bestellung → Käufer-Nutzer → Mitgliedschaft → Integration).
  *  - exportLeadToIntegration: HTTPS-Export mit entschlüsselten Zugangsdaten und Provider-Mapping, protokolliert.
  */
-import { and, desc, eq, gte, inArray, ne, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, ne, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { automationExecutionLogs, automationRules, claimEvents, claims, deliveryChains, deliveryStopReasons, deliveryStops, emailEvents, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leadTagAssignments, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, partnerIntegrations, reclamationReasons, tags, tenantSettings, users } from "../drizzle/schema";
+import { callQaCampaigns, callRecords } from "../drizzle/schema";
+import { campaignBuyerSkip, leadCampaignCall, type CampaignBuyerRule } from "../shared/dialer-campaign";
 import type { getDb } from "./db";
 import { decryptIntegrationSecret } from "./integration-secrets";
 import { dispatchLeadExport, type ExportableLead, type IntegrationExportConfig } from "./lead-integration-export";
@@ -196,6 +198,16 @@ export type DeliverLeadInput = { tenantId: number; actorUserId: number | null; l
  * Lead ausliefern. Geht es gar nicht los (keine aktive Lieferkette, die zugeordnete Kette nimmt ihn nicht an …), steht der Grund
  * im Lead-Log – so taucht der Lead unter „API-Fehler“ auf, egal wer die Auslieferung angestoßen hat (Knopf, Regel, Zeitplan, Schnittstelle).
  */
+/** Kommt der Lead aus einem Gespräch, dessen Kampagne einen eigenen Käufer hat (Gespräche → Kampagne → „Leads gehen an“)? Dann geht er nur an diesen Käufer. */
+export async function leadCampaignBuyer(db: Db, tenantId: number, leadId: number): Promise<CampaignBuyerRule | null> {
+  const calls = await db.select({ id: callRecords.id, campaign: callRecords.campaign, decision: callRecords.decision }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.leadId, leadId), isNotNull(callRecords.campaign))).orderBy(desc(callRecords.id)).limit(20);
+  const call = leadCampaignCall(calls); if (!call?.campaign) return null;
+  const row = (await db.select({ buyerUserId: callQaCampaigns.buyerUserId }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, call.campaign))).limit(1))[0];
+  if (!row?.buyerUserId) return null;
+  const buyer = (await db.select({ name: users.name, company: users.company, email: users.email }).from(users).where(eq(users.id, row.buyerUserId)).limit(1))[0];
+  return { campaign: call.campaign, buyerUserId: row.buyerUserId, buyerName: buyer?.company || buyer?.name || buyer?.email || `Käufer ${row.buyerUserId}` };
+}
+
 export async function deliverLeadNow(db: Db, input: DeliverLeadInput): Promise<DeliveryResult> {
   try { return await deliverLeadCore(db, input); }
   catch (error) {
@@ -239,6 +251,7 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
   const deliveredRows = orderIds.length ? await db.select({ orderId: leadDeliveries.orderId }).from(leadDeliveries).where(and(eq(leadDeliveries.tenantId, tenantId), inArray(leadDeliveries.orderId, orderIds), inArray(leadDeliveries.result, ["angeboten", "angenommen"]))) : [];
   const deliveredCount = new Map<number, number>(); for (const row of deliveredRows) if (row.orderId) deliveredCount.set(row.orderId, (deliveredCount.get(row.orderId) ?? 0) + 1);
   const duplicates = await duplicateTargets(db, tenantId, lead, settings, now);
+  const campaignRule = await leadCampaignBuyer(db, tenantId, lead.id); // Kampagne mit eigenem Käufer: nur an ihn
   // Kappen je Kette (Tag / gesamt) und je Stop (max. Leads)
   const chainIds = chains.map((chain) => chain.id);
   const chainDeliveries = chainIds.length ? await db.select({ chainId: leadDeliveries.chainId, stopId: leadDeliveries.stopId, occurredAt: leadDeliveries.occurredAt }).from(leadDeliveries).where(and(eq(leadDeliveries.tenantId, tenantId), inArray(leadDeliveries.chainId, chainIds), inArray(leadDeliveries.result, ["angeboten", "angenommen", "reklamiert"]))) : [];
@@ -265,6 +278,7 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
     else if (chain.dailyCap && (chainToday.get(chain.id) ?? 0) >= chain.dailyCap) eligibility = { eligible: false, reason: "Tageshöchstgrenze erreicht" };
     else if ((chain.orderId && duplicates.orderIds.has(chain.orderId)) || stops.every((stop) => duplicates.buyerNames.has(stop.buyerName.toLowerCase()))) eligibility = { eligible: false, reason: "Dublettenschutz: Kontakt wurde bereits an diesen Käufer geliefert" };
     else eligibility = evaluateOrderEligibility(config, lead, chain.orderId ? deliveredCount.get(chain.orderId) ?? 0 : 0, now);
+    if (eligibility.eligible && campaignRule && !stops.some((stop) => !campaignBuyerSkip(campaignRule, stop.buyerUserId ?? config?.buyerUserId ?? null))) eligibility = { eligible: false, reason: campaignBuyerSkip(campaignRule, null)! };
     return { chain, stops, config, order, eligibility };
   }));
   const memberBlocks = await buyerMemberBlocks(db, tenantId, [...configs, ...Array.from(stopBuyerIds).map((buyerUserId) => ({ buyerUserId } as OrderConfigRow))], lead.categoryId);
@@ -301,6 +315,7 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
       let skip: string | null = null;
       if (duplicates.buyerNames.has(stop.buyerName.toLowerCase())) skip = "Dublette: Kontakt liegt bereits bei diesem Käufer";
       else if (buyerUserId && memberBlocks.has(buyerUserId)) skip = memberBlocks.get(buyerUserId) ?? "Käufer nicht verfügbar";
+      else if (campaignBuyerSkip(campaignRule, buyerUserId)) skip = campaignBuyerSkip(campaignRule, buyerUserId);
       else skip = stopSkipReason(stop, currentLead, { now, suppliersDelivered, conflictBuyerIds, stopDeliveries: stopTotal.get(stop.id) ?? 0 });
       if (skip) {
         await db.insert(leadDeliveries).values({ tenantId, leadId: lead.id, chainId: target.chain.id, stopId: stop.id, orderId: target.chain.orderId ?? null, buyerName: stop.buyerName, unitPrice: stop.unitPrice, result: "übersprungen", skipReason: skip.slice(0, 160), occurredAt: now });

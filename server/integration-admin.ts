@@ -101,23 +101,24 @@ export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipI
 }
 
 /**
- * „Testleads an Wattfox senden“: die Testleads, die Wattfox vor dem Live-Zugang verlangt – je 3 vollständige für PV und Wärmepumpe,
- * dazu 3 mit Zusatzinteresse. Nur für eine Wattfox-Vorlage; zählt nicht als Zustellung. An eine Adresse, die nicht nach Testumgebung
+ * „Testleads an Wattfox senden“: einer je Sparte (PV, Wärmepumpe, beides) – mit `all` die 9 aus der früheren Mail von Wattfox
+ * (je 3 für PV und Wärmepumpe, dazu 3 mit Zusatzinteresse). Nur für eine Wattfox-Vorlage; zählt nicht als Zustellung. An eine Adresse, die nicht nach Testumgebung
  * aussieht, nur ausdrücklich (allowLive) – damit nie aus Versehen erfundene Leads im Live-System landen.
  */
-export async function sendWattfoxTestLeads(db: Db, tenantId: number, membershipId: number, id: number, options: { allowLive?: boolean; fetchImpl?: typeof fetch } = {}) {
+export async function sendWattfoxTestLeads(db: Db, tenantId: number, membershipId: number, id: number, options: { allowLive?: boolean; /** alle 9 statt einem je Sparte */ all?: boolean; fetchImpl?: typeof fetch } = {}) {
   await requireMembership(db, tenantId, membershipId);
+  const tests = wattfoxTestLeads({ all: options.all });
   const endpoint = (await db.select().from(deliveryEndpoints).where(and(eq(deliveryEndpoints.id, id), eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))).limit(1))[0];
   if (!endpoint) throw new Error("Endpoint wurde nicht gefunden.");
   if (!isWattfoxTemplate(endpoint.bodyTemplate)) throw new Error("Das ist keine Wattfox-Vorlage – erst „Vorlage Wattfox“ einsetzen und speichern.");
   if (!isTestAddress(endpoint.url) && !options.allowLive) throw new Error("Die Adresse sieht nach dem Live-System aus. Testleads gehen nur an die Testumgebung von Wattfox.");
   const results: Array<{ label: string; ok: boolean; status: number; reference: string | null; response: string; requestBody: string }> = [];
-  for (const test of wattfoxTestLeads()) {
+  for (const test of tests) {
     const result = await sendToEndpoint(endpoint, test.values, { fetchImpl: options.fetchImpl });
     results.push({ label: test.label, ok: result.ok, status: result.status ?? 0, reference: result.partnerReference, response: (result.error ?? result.body).slice(0, 600), requestBody: result.requestBody ?? "" });
     if (result.error && /Anmeldung|Token/.test(result.error)) break; // Anmeldung klappt nicht – die übrigen würden genauso scheitern
   }
-  return { sent: results.length, ok: results.filter((item) => item.ok).length, total: wattfoxTestLeads().length, results };
+  return { sent: results.length, ok: results.filter((item) => item.ok).length, total: tests.length, results };
 }
 
 export async function saveResponseMapping(db: Db, tenantId: number, membershipId: number, input: { enabled: boolean; rules: Array<{ source: "body" | "status"; field?: string | null; op: "gleich" | "beginnt" | "enthaelt"; value: string; label?: string | null; reasonId: number; active: boolean }> }) {

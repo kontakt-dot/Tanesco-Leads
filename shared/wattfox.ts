@@ -5,7 +5,8 @@
  *  - Ein Lead je Person: Will jemand PV und Wärmepumpe, geht EIN Lead raus – das zweite Produkt als Zusatzinteresse
  *    (otherinterests mit dessen productId; ist die Wärmepumpe dabei, immer auch childinterests [6]).
  *  - Pflicht laut Wattfox: Anrede (bei PV), Vor- und Nachname, Straße, PLZ, Ort, Telefon, E-Mail – dazu immer der Umsetzungszeitraum.
- *  - Herkunft (utm_…) steht fest in der Vorlage des Endpoints; utm_source und utm_medium dürfen nicht geändert werden.
+ *  - Herkunft (utm_…) steht in der Vorlage des Endpoints; utm_source und utm_medium dürfen nicht geändert werden.
+ *    utm_campaign nennt Wattfox (der Wert der früheren Anbindung gilt nicht mehr) – leer wird es gar nicht mitgeschickt.
  *  - Unsere Angaben werden in die Werte von Wattfox übersetzt. Was nicht genau passt (Dachalter, beheizte Fläche …),
  *    geht mit dem nächstliegenden Wert raus – der genaue Wert steht zusätzlich im Hinweisfeld (notes).
  *
@@ -23,20 +24,22 @@ export const WATTFOX = {
   tokenMinutes: 1380,
   products: { pv: 2, heating: 20 },
   heatPumpChild: 6,
-  utm: { utm_source: "Tanesco Digital GbR", utm_medium: "affiliate", utm_campaign: "Hyper Energy Solutions, Meta Leadformular" },
+  /** utm_campaign: den Wert einträgt der Mandant, sobald Wattfox ihn nennt */
+  utm: { utm_source: "Tanesco Digital GbR", utm_medium: "affiliate", utm_campaign: "" },
 } as const;
 
 /** Inhalt des Feldes „Body“ für die Wattfox-Vorlage: Die Felder baut die Software selbst, hier stehen nur Herkunft und eigene Zusätze. */
 export const WATTFOX_TEMPLATE = JSON.stringify({ vorlage: "wattfox", ...WATTFOX.utm }, null, 2);
 
-/** Ist der Body eine Wattfox-Vorlage? Dann die zusätzlichen Angaben daraus (utm_… und alles, was der Mandant ergänzt hat). */
+/** Ist der Body eine Wattfox-Vorlage? Dann die zusätzlichen Angaben daraus (utm_… und alles, was der Mandant ergänzt hat) – leere Angaben gehen nicht mit. */
 export function wattfoxTemplateOptions(template: string | null | undefined): Record<string, unknown> | null {
   if (!template || !template.includes("wattfox")) return null;
   try {
     const parsed: unknown = JSON.parse(template);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const { vorlage, ...rest } = parsed as Record<string, unknown>;
-    return String(vorlage ?? "").trim().toLowerCase() === "wattfox" ? rest : null;
+    if (String(vorlage ?? "").trim().toLowerCase() !== "wattfox") return null;
+    return Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== null && value !== undefined && !(typeof value === "string" && !value.trim())));
   } catch { return null; }
 }
 export const isWattfoxTemplate = (template: string | null | undefined) => wattfoxTemplateOptions(template) !== null;
@@ -331,10 +334,16 @@ export function wattfoxLeadId(body: string): string | null {
 }
 
 /**
- * Die Testleads, die Wattfox verlangt: je 3 vollständige für PV und Wärmepumpe, dazu 3 mit Zusatzinteresse.
+ * Testleads für Wattfox: einer je Sparte – Photovoltaik, Wärmepumpe und einer mit beidem (das Zusatzinteresse geht bei Wattfox
+ * anders hinüber). Mit `all` die 9 aus der früheren Mail von Wattfox: je 3 für PV und Wärmepumpe, dazu 3 mit Zusatzinteresse.
  * Erfundene Personen; Rufnummern, die es nicht gibt (Teilnehmernummer mit 0), E-Mails unter example.com.
  */
-export function wattfoxTestLeads(): Array<{ label: string; values: Values }> {
+export function wattfoxTestLeads(options: { all?: boolean } = {}): Array<{ label: string; values: Values }> {
+  const all = wattfoxTestLeadSet();
+  if (options.all) return all;
+  return [{ ...all[0], label: "Photovoltaik" }, { ...all[3], label: "Wärmepumpe" }, { ...all[6], label: "PV mit Wärmepumpe" }];
+}
+function wattfoxTestLeadSet(): Array<{ label: string; values: Values }> {
   const base = (index: number, person: [string, string, string], place: [string, string, string]) => ({ lead_id: `TEST-WF-${index}`, lead_number: 0, salutation: person[0], first_name: person[1], last_name: person[2], email: `${plain(person[1])}.${plain(person[2]).replace(/[^a-z]/g, "")}@example.com`, phone: `+49 761 000000${index}`, street: place[0], postal_code: place[1], city: place[2], country_code: "DE", test: true });
   const pv = (extra: Values = {}) => ({ lead_type: "Photovoltaik", lead_type_shortcode: "PV", ...extra });
   const wp = (extra: Values = {}) => ({ lead_type: "Wärmepumpe", lead_type_shortcode: "WP", ...extra });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { answerQuestionsHeuristically, decideByQuestions, isCallback, normalizeQuestions, questionFulfilment } from "../shared/call-qualification";
-import { presetByKey } from "../shared/call-qa-presets";
+import { presetByKey, WATTFOX_MIRROR } from "../shared/call-qa-presets";
 
 const preset = presetByKey("wattfox-pv-wp")!;
 const questions = normalizeQuestions(preset.questions);
@@ -8,14 +8,18 @@ const questions = normalizeQuestions(preset.questions);
 describe("Wattfox PV und WP – Regeln der Kampagne", () => {
   it("hat genau die vier gewünschten K.-o.-Fragen – die Dachfläche ist raus", () => {
     expect(questions.filter((question) => question.rule === "ko").map((question) => question.key)).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]);
-    // seit v355 dazu die Übergabe am Ende – nur zur Auswertung, sie entscheidet nicht
-    expect(questions.filter((question) => question.rule !== "ko").map((question) => [question.key, question.rule])).toEqual([["uebergabe_angebotsvergleich", "info"], ["bis_zu_3_angebote", "info"]]);
+    // dazu die Übergabe am Ende (seit v357 in einer Frage) – nur zur Auswertung, sie entscheidet nicht
+    expect(questions.filter((question) => question.rule !== "ko").map((question) => [question.key, question.rule])).toEqual([["uebergabe", "info"]]);
     expect(questions.find((question) => question.key === "wp_kein_erdgas")?.onlyFor).toBe("waermepumpe");
     expect(questions.every((question) => (question.hint ?? "").length > 20)).toBe(true); // Hinweise werden nicht mehr abgeschnitten
-    expect(preset.criteria.map((criterion) => criterion.key)).toEqual(["interesse", "entscheider", "zeitrahmen", "wp_kein_erdgas", "hauskompass"]);
+    // rechts (Kriterien) dieselben Punkte in derselben Reihenfolge wie links (Prüffragen) – „HausKompass genannt“ gab es nur rechts, es ist raus
+    expect(preset.criteria.map((criterion) => criterion.key)).toEqual(["zeitrahmen", "interesse", "entscheider", "wp_kein_erdgas", "uebergabe"]);
+    expect(WATTFOX_MIRROR.map(([question]) => question)).toEqual(questions.map((question) => question.key));
+    expect(WATTFOX_MIRROR.map(([, criterion]) => criterion)).toEqual(preset.criteria.map((criterion) => criterion.key));
+    expect(preset.instructions).not.toMatch(/HausKompass/);
     expect(preset.criteria.reduce((sum, criterion) => sum + criterion.weight, 0)).toBe(100);
     expect(preset.instructions).not.toMatch(/Dachfläche ist größer/); expect(preset.instructions).toContain("kostenlos und unverbindlich");
-    expect(preset.retiredQuestionKeys).toEqual(["pv_dachflaeche_20qm"]);
+    expect(preset.retiredQuestionKeys).toEqual(["pv_dachflaeche_20qm", "uebergabe_angebotsvergleich", "bis_zu_3_angebote"]); expect(preset.retiredCriteriaKeys).toEqual(["pv_dachflaeche", "hauskompass"]);
   });
 
   it("nur Photovoltaik reicht als Interesse: alles erfüllt, Wärmepumpen-Frage entfällt → freigegeben (auch mit kleinem Dach)", () => {

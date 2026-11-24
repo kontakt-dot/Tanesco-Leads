@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { WATTFOX, WATTFOX_TEMPLATE, isTestAddress, isWattfoxTemplate, wattfoxArea, wattfoxHeating, wattfoxImplementation, wattfoxOrientation, wattfoxPayload, wattfoxRoofAge, wattfoxTestLeads } from "../shared/wattfox";
 import { buildEndpointBody, extractPartnerReference, leadTemplateValues } from "./outbound-templates";
 
-const tests = wattfoxTestLeads();
+const tests = wattfoxTestLeads({ all: true }); // die 9 aus der früheren Mail von Wattfox
 const byLabel = (label: string) => tests.find((item) => item.label === label)!.values;
 
 describe("Wattfox: Leads im Format von Wattfox", () => {
@@ -35,6 +35,15 @@ describe("Wattfox: Leads im Format von Wattfox", () => {
     // Felder mit der Vorsilbe von OnDialer (nicht zugeordnet) zählen genauso
     expect(wattfoxPayload({ ...byLabel("WP 2"), "custom_data.wp_interesse_photovolatikanalge": "Ja" }).products).toEqual({ main: "wp", extra: "pv" });
     expect(wattfoxPayload({ ...byLabel("PV 3"), "custom_data.pv_waermepumpe": "Nein" }).products).toEqual({ main: "pv", extra: null });
+  });
+
+  it("Testleads: einer je Sparte (Photovoltaik, Wärmepumpe, beides) – auf Wunsch alle 9", () => {
+    const one = wattfoxTestLeads();
+    expect(one.map((item) => item.label)).toEqual(["Photovoltaik", "Wärmepumpe", "PV mit Wärmepumpe"]);
+    expect(one.map((item) => wattfoxPayload(item.values).products)).toEqual([{ main: "pv", extra: null }, { main: "wp", extra: null }, { main: "pv", extra: "wp" }]);
+    expect(one.every((item) => wattfoxPayload(item.values).missing.length === 0)).toBe(true);
+    expect(one.map((item) => item.values)).toEqual([byLabel("PV 1"), byLabel("WP 1"), byLabel("PV mit Wärmepumpe 1")]); // dieselben erfundenen Personen wie in den 9
+    expect(wattfoxTestLeads({ all: true })).toHaveLength(9);
   });
 
   it("Alle 9 Testleads sind vollständig: je 3 PV und Wärmepumpe, 3 mit Zusatzinteresse", () => {
@@ -80,15 +89,17 @@ describe("Wattfox-Vorlage im Body der Lieferadresse", () => {
     const built = buildEndpointBody(endpoint, leadTemplateValues(lead, { name: "Photovoltaik", shortcode: "PV" }));
     expect(built.json).toBe(true); expect(built.missing).toEqual([]);
     const payload = JSON.parse(built.body);
-    expect(payload).toMatchObject({ productId: 2, salutation: "Frau", firstname: "Laura", street: "Probeweg 9", zip: "79115", implementation: "1 bis 3 Monate", ...WATTFOX.utm });
+    expect(payload).toMatchObject({ productId: 2, salutation: "Frau", firstname: "Laura", street: "Probeweg 9", zip: "79115", implementation: "1 bis 3 Monate", utm_source: "Tanesco Digital GbR", utm_medium: "affiliate" });
     expect(payload.utm_source).toBe("Tanesco Digital GbR"); // nicht die Herkunft des Leads (facebook)
+    expect(payload.utm_campaign).toBeUndefined(); // den Wert nennt Wattfox – leer geht er gar nicht mit (der Wert der früheren Anbindung gilt nicht mehr), und nie der des Leads („Herbst“)
+    expect(WATTFOX_TEMPLATE).not.toContain("Hyper");
     expect(payload.lead_id).toBeUndefined(); expect(payload.lead_number).toBeUndefined(); expect(payload.vorlage).toBeUndefined();
   });
 
   it("eigene Zusätze im Body gelten, das Werte-Mapping auch", () => {
-    const own = { ...endpoint, bodyTemplate: JSON.stringify({ vorlage: "wattfox", ...WATTFOX.utm, utm_campaign: "haus-kompass", external_lead_price: "29,90" }), valueMappings: [{ field: "hausart", ourValue: "Ein-/Zweifamilienhaus", customerCode: "Mehrfamilienhaus" }] };
+    const own = { ...endpoint, bodyTemplate: JSON.stringify({ vorlage: "wattfox", ...WATTFOX.utm, utm_campaign: "Wert von Wattfox", external_lead_price: "29,90" }), valueMappings: [{ field: "hausart", ourValue: "Ein-/Zweifamilienhaus", customerCode: "Mehrfamilienhaus" }] };
     const payload = JSON.parse(buildEndpointBody(own, leadTemplateValues(lead, { name: "Photovoltaik", shortcode: "PV" })).body);
-    expect(payload).toMatchObject({ utm_campaign: "haus-kompass", external_lead_price: "29,90", ph_artdesgebaeude: "Mehrfamilienhaus" });
+    expect(payload).toMatchObject({ utm_campaign: "Wert von Wattfox", external_lead_price: "29,90", ph_artdesgebaeude: "Mehrfamilienhaus" });
   });
 
   it("die Nummer von Wattfox („wf_leadid“) wird die Partner-Referenz", () => {

@@ -89,20 +89,23 @@ describe("Name des Mitarbeiters aus der Vorstellung", () => {
   });
 });
 
-describe("Vorlage Wattfox – Übergabe am Ende nur zur Auswertung (v355)", () => {
-  it("fragt nach „Photovoltaik Angebotsvergleich“ und bis zu 3 Angeboten – entscheidet aber nicht", async () => {
+describe("Vorlage Wattfox – Übergabe am Ende in EINER Frage, nur zur Auswertung (v357)", () => {
+  it("fragt nach „Photovoltaik Angebotsvergleich“ und bis zu 3 Angeboten zusammen – Ja nur mit beidem; entscheidet aber nicht", async () => {
     const { WATTFOX_PRESET } = await import("../shared/call-qa-presets");
-    const handover = WATTFOX_PRESET.questions.filter((question) => ["uebergabe_angebotsvergleich", "bis_zu_3_angebote"].includes(question.key));
-    expect(handover.map((question) => question.rule)).toEqual(["info", "info"]);
+    expect(WATTFOX_PRESET.questions.filter((question) => question.rule !== "ko").map((question) => [question.key, question.rule])).toEqual([["uebergabe", "info"]]);
     expect(WATTFOX_PRESET.instructions).not.toContain("die Übergabe an „Photovoltaik Angebotsvergleich“, eine ausdrückliche Zustimmung");
-    // Ein gutes Wattfox-Gespräch ohne den Satz am Ende bleibt freigegeben – die beiden Fragen stehen nur auf „Nein“
+    // Ein gutes Wattfox-Gespräch ohne den Satz am Ende bleibt freigegeben – die Frage steht nur auf „Nein“
     const withoutSentence = good.replace(/Dann wird sich Photovoltaik Angebotsvergleich[^?]*\?/, "Telefonisch unter dieser Nummer erreichbar?");
     const answers = answerQuestionsHeuristically(WATTFOX_PRESET.questions, withoutSentence);
-    expect(answers.bis_zu_3_angebote?.answer).not.toBe("ja");
+    expect(answers.uebergabe?.answer).toBe("nein");
     for (const key of ["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas"]) answers[key] = { answer: "ja" };
     expect(decideByQuestions(WATTFOX_PRESET.questions, answers).decision).toBe("freigegeben");
-    // Mit dem Satz: beide Fragen „Ja“
-    const withSentence = answerQuestionsHeuristically(WATTFOX_PRESET.questions, good);
-    expect(withSentence.bis_zu_3_angebote?.answer).toBe("ja");
+    // Mit dem Satz: Ja
+    expect(answerQuestionsHeuristically(WATTFOX_PRESET.questions, good).uebergabe?.answer).toBe("ja");
+    // Nur eines von beiden: Nein – der Beleg nennt, was fehlt
+    const onlyHandover = answerQuestionsHeuristically(WATTFOX_PRESET.questions, "Agent: Dann meldet sich Photovoltaik Angebotsvergleich bei Ihnen.").uebergabe;
+    expect(onlyHandover.answer).toBe("nein"); expect(onlyHandover.note).toContain("bis zu 3 Angebote");
+    const onlyOffers = answerQuestionsHeuristically(WATTFOX_PRESET.questions, "Agent: Sie bekommen bis zu drei Angebote von Fachbetrieben.").uebergabe;
+    expect(onlyOffers.answer).toBe("nein"); expect(onlyOffers.note).toContain("Angebotsvergleich");
   });
 });

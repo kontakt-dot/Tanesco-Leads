@@ -331,6 +331,19 @@ html:not(.dark) .gq-stage{--gp-err-bg:#fef3f2;--gp-err-line:#fecdca;--gp-err:#b4
 .gq-pill.cq-callback{--pill-bg:var(--gp-call-bg);--pill-ink:var(--gp-call)}
 .gq-pill.is-rechecked{--pill-bg:transparent;--pill-ink:var(--gl-dim);border:1px dashed var(--gl-edge)}
 .gq-pill.is-rechecked::before{display:none}
+/* Kampagne laut Dialer (v357): am Gespräch, Käufer je Kampagne, Zuordnung der Dialer-Kampagnen */
+.gq-dialer-campaign{display:block;margin-top:2px;font-size:11px;font-weight:500;color:var(--gl-dim)}
+.cq-buyer select{min-width:220px}
+.cq-dialer-map{padding:12px 14px;border-radius:12px;border:1px solid var(--gl-line,rgba(255,255,255,.08));background:var(--gl-card,rgba(255,255,255,.02))}
+.cq-dialer-rows{display:grid;gap:6px}
+.cq-dialer-row{display:grid;grid-template-columns:minmax(150px,1.2fr) auto minmax(180px,1fr) minmax(120px,1fr);align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--gl-line,rgba(255,255,255,.06))}
+.cq-dialer-row:first-child{border-top:0}
+.cq-dialer-name{display:flex;flex-direction:column;min-width:0}
+.cq-dialer-name b{font-size:13px;font-weight:600;color:var(--gl-ink,#e2e8f0);overflow-wrap:anywhere}
+.cq-dialer-name small,.cq-dialer-state{font-size:11px;color:var(--gl-dim,#94a3b8)}
+.cq-dialer-arrow{color:var(--gl-faint,#64748b)}
+.cq-dialer-target{width:100%}
+@media (max-width:640px){.cq-dialer-row{grid-template-columns:1fr}.cq-dialer-arrow{display:none}}
 .gq-stage .cq-mood.is-lg{gap:6px}
 .gq-stage .cq-mood.is-lg.has-percent .cq-percent{font-size:15px}
 .gq-stage .cq-mood.is-gruen .cq-percent{color:var(--gq-green)!important}.gq-stage .cq-mood.is-gelb .cq-percent{color:var(--gq-orange)!important}.gq-stage .cq-mood.is-rot .cq-percent{color:var(--gq-red)!important}

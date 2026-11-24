@@ -4325,15 +4325,15 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
     // Prüf-Adresse
     const info = await fetch(dialerUrl); expect(info.status).toBe(200); const described = await info.json();
-    expect(described).toMatchObject({ ok: true, method: "POST", enabled: true, consent_required: true, expected_fields: { callId: "call_id", phone: "phone", recordingUrl: "recording_url", consent: "consent", agent: "agent", category: "category" }, required: ["call_id", "phone", "recording_url", "agent"], recommended: ["category"], category_values: ["PV", "WP", "PV+WP"], recording_auth_header: true, transcription: "openai" });
+    expect(described).toMatchObject({ ok: true, method: "POST", enabled: true, consent_required: true, expected_fields: { callId: "call_id", phone: "phone", recordingUrl: "recording_url", consent: "consent", agent: "agent", category: "category" }, required: ["call_id", "phone", "recording_url", "agent"], recommended: ["category", "campaign"], category_values: ["PV", "WP", "PV+WP"], recording_auth_header: true, transcription: "openai" });
     expect((await fetch(`${apiBase}/api/partner/ondialer/falscher-token`)).status).toBe(404);
     // Testmodus: nichts wird gespeichert, Felder und Aufnahme-Link werden geprüft – mit Agent und Leadsparte ist alles in Ordnung
-    const probe = await post({ test: true, call_id: "od-test-1", phone: "+49 40 777009", agent: "Deniz Kaya", category: S.pv.name, recording_url: "https://dialer.example/recordings/test.mp3", consent: true });
-    expect(probe.status).toBe(200); expect(probe.json).toMatchObject({ ok: true, test: true, stored: false, would_evaluate: true, recording: { checked: true, reachable: true }, reason: "alles in Ordnung", agent: "Deniz Kaya", category: { value: S.pv.name, recognised: true, as: S.pv.name }, required_missing: [], recommended_missing: [] });
+    const probe = await post({ test: true, call_id: "od-test-1", phone: "+49 40 777009", agent: "Deniz Kaya", category: S.pv.name, campaign: "Probe Herbst", recording_url: "https://dialer.example/recordings/test.mp3", consent: true });
+    expect(probe.status).toBe(200); expect(probe.json).toMatchObject({ ok: true, test: true, stored: false, would_evaluate: true, recording: { checked: true, reachable: true }, reason: "alles in Ordnung", agent: "Deniz Kaya", category: { value: S.pv.name, recognised: true, as: S.pv.name }, campaign: { value: "Probe Herbst" }, required_missing: [], recommended_missing: [] });
     expect((await owner.leadops.listCalls({})).some((item) => item.externalCallId === "od-test-1")).toBe(false);
     // ohne Agent: das Gespräch würde ausgewertet – die Prüfung meldet aber, dass der Agent fehlt; ohne Leadsparte steht sie unter „empfohlen“
     const noAgent = await post({ test: true, call_id: "od-test-1b", phone: "+49 40 777009", recording_url: "https://dialer.example/recordings/test.mp3", consent: true });
-    expect(noAgent.json).toMatchObject({ ok: false, would_evaluate: true, required_missing: ["agent"], recommended_missing: ["category"], agent: null, category: null, reason: "Pflichtfelder fehlen: agent" }); expect(noAgent.json.fields_missing).toContain("agent");
+    expect(noAgent.json).toMatchObject({ ok: false, would_evaluate: true, required_missing: ["agent"], recommended_missing: ["category", "campaign"], agent: null, category: null, campaign: null, reason: "Pflichtfelder fehlen: agent" }); expect(noAgent.json.fields_missing).toContain("agent");
     for (const junk of ["12", "Mein Name"]) expect((await post({ test: true, call_id: "od-test-1c", phone: "+49 40 777009", agent: junk, recording_url: "https://dialer.example/recordings/test.mp3", consent: true })).json.required_missing, junk).toEqual(junk === "12" ? [] : ["agent"]); // Füllwörter sind kein Agent; eine Nummer ist zumindest eine Angabe
     expect((await post({ test: true, call_id: "od-test-1d", phone: "+49 40 777009", agent: "Deniz Kaya", category: "Fenster", recording_url: "https://dialer.example/recordings/test.mp3", consent: true })).json.category).toEqual({ value: "Fenster", recognised: false, as: null }); // unbekannte Leadsparte: dann erkennt die Software die Kategorie aus dem Gespräch
     expect((await owner.leadops.listCalls({})).some((item) => String(item.externalCallId).startsWith("od-test-1"))).toBe(false);
@@ -4534,20 +4534,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       expect((await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0].campaign).toBe(WATTFOX_CAMPAIGN);
       const wattfoxRow = async () => (await db.select().from(cqTable).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN))))[0];
       const wattfoxKeys = async () => ((await wattfoxRow()).questions as Array<{ key: string }>).map((q) => q.key);
-      expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas", "uebergabe_angebotsvergleich", "bis_zu_3_angebote"]); // neue Wattfox-Regeln, die alten Fragen sind weg (seit v355 mit der Übergabe am Ende – nur zur Auswertung)
-      expect(((await wattfoxRow()).criteria as Array<{ key: string }>).map((c) => c.key)).toEqual(["interesse", "entscheider", "zeitrahmen", "wp_kein_erdgas", "hauskompass"]);
+      expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas", "uebergabe"]); // neue Wattfox-Regeln, die alten Fragen sind weg (mit der Übergabe am Ende – seit v357 in einer Frage, nur zur Auswertung)
+      expect(((await wattfoxRow()).criteria as Array<{ key: string }>).map((c) => c.key)).toEqual(["zeitrahmen", "interesse", "entscheider", "wp_kein_erdgas", "uebergabe"]); // dieselben Punkte wie die Prüffragen (v357)
       // Stand von gestern (noch mit Dachfläche als Frage und Kriterium, eigene Gewichte) → beim Start fällt die Dachfläche weg, die Vorlagen-Gewichte gelten
       { const { WATTFOX_PRESET } = await import("../shared/call-qa-presets"); const { refreshCampaignPresets } = await import("./call-qa");
         await db.update(cqTable).set({ questions: [...WATTFOX_PRESET.questions, { key: "pv_dachflaeche_20qm", label: "Photovoltaik: Ist die Dachfläche größer als 20 m²?", rule: "ko", onlyFor: "photovoltaik" }], criteria: [...WATTFOX_PRESET.criteria.map((c) => ({ ...c, weight: 20 })), { key: "pv_dachflaeche", label: "Photovoltaik: Dachfläche größer als 20 m²", weight: 15, description: "alt" }] }).where(and(eq(cqTable.tenantId, S.tenantId), eq(cqTable.name, WATTFOX_CAMPAIGN)));
         expect(await refreshCampaignPresets(db)).toBe(1);
-        expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas", "uebergabe_angebotsvergleich", "bis_zu_3_angebote"]);
+        expect(await wattfoxKeys()).toEqual(["umsetzung_6_monate", "interesse_produkt", "eigentuemer_entscheider", "wp_kein_erdgas", "uebergabe"]);
         expect(((await wattfoxRow()).criteria as Array<{ key: string; weight: number }>).map((c) => [c.key, c.weight])).toEqual(WATTFOX_PRESET.criteria.map((c) => [c.key, c.weight]));
         expect(await refreshCampaignPresets(db)).toBe(0); }
       // Mehrere Gespräche auf einmal neu bewerten (nach geänderten Regeln)
       { const { reevaluateCalls } = await import("./call-qa");
         expect(await reevaluateCalls(db, S.tenantId, [result.callIds[0]], { waitFor: true })).toEqual({ queued: 1 });
         const again = (await db.select().from(callsTable).where(eq(callsTable.id, result.callIds[0])))[0]; expect(again.status).toBe("bewertet");
-        expect(Object.keys(again.qualificationAnswers as Record<string, unknown>).sort()).toEqual(["bis_zu_3_angebote", "eigentuemer_entscheider", "interesse_produkt", "uebergabe_angebotsvergleich", "umsetzung_6_monate", "wp_kein_erdgas"]); // seit v355 mit der Übergabe am Ende (nur Auswertung)
+        expect(Object.keys(again.qualificationAnswers as Record<string, unknown>).sort()).toEqual(["eigentuemer_entscheider", "interesse_produkt", "uebergabe", "umsetzung_6_monate", "wp_kein_erdgas"]); // mit der Übergabe am Ende (seit v357 eine Frage, nur Auswertung)
         const listed = (await owner.leadops.listCalls({ campaign: WATTFOX_CAMPAIGN })).find((row) => row.id === result.callIds[0])!; expect(listed.fulfilment).toMatchObject({ total: 4 }); }
       expect((await wattfoxRow()).instructions).toContain("Kampagne Wattfox");
       // Alles vom Dialer landet künftig in dieser Kampagne
@@ -6098,7 +6098,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       for (let round = 0; round < 20 && (await missingIds()).some((id) => mine.includes(id)); round += 1) await recheckCallAnswers(db, { tenantId, max: 100 });
       const rows = new Map((await db.select().from(callsTable).where(inArray(callsTable.id, [...mine, f]))).map((row) => [row.id, row]));
       const answer = (id: number) => (rows.get(id)!.qualificationAnswers as Record<string, { answer: string }>).bis_zu_3_angebote?.answer;
-      expect(answer(a)).toBe("nein"); expect(answer(b)).toBe("ja"); expect(answer(c)).toBe("nein"); expect(answer(f)).toBe("nein"); // Wattfox fragt seit v355 nur zur Auswertung danach – f bleibt freigegeben (unten)
+      expect(answer(a)).toBe("nein"); expect(answer(b)).toBe("ja"); expect(answer(c)).toBe("nein"); expect((rows.get(f)!.qualificationAnswers as Record<string, { answer: string }>).uebergabe?.answer).toBe("nein"); // Wattfox fragt (seit v357 in einer Frage) nur zur Auswertung danach – f bleibt freigegeben (unten)
       // ohne den Satz: zurückgewiesen, mit Vermerk und der Entscheidung davor
       expect(rows.get(a)).toMatchObject({ decision: "zurueckgewiesen", decidedBy: "automatisch", recheckFrom: "freigegeben" }); expect(rows.get(a)!.nextStep).toBe("Nachprüfung: Pflichtfrage „Wurde am Ende gesagt, dass der Kunde bis zu 3 Angebote von Fachpartnern bekommt?“ = Nein");
       expect(rows.get(a)!.recheckedAt).toBeTruthy();
@@ -6125,7 +6125,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await expect(invitee.leadops.callRecheckStatus()).rejects.toThrow();
     } finally { if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey; await owner.leadops.setCallAiCap({ euros: 0 }).catch(() => undefined); }
   }, 120000);
-  it("v355. Wattfox: Vorlage baut den Lead selbst (Produkt, Zusatzinteresse, Herkunft), 9 Testleads an die Testumgebung, Wattfox-Nummer am Lead, fehlende Pflichtangaben halten den Lead zurück", async () => {
+  it("v355. Wattfox: Vorlage baut den Lead selbst (Produkt, Zusatzinteresse, Herkunft), Testleads (einer je Sparte, auf Wunsch 9) an die Testumgebung, Wattfox-Nummer am Lead, fehlende Pflichtangaben halten den Lead zurück", async () => {
     const { WATTFOX, WATTFOX_TEMPLATE } = await import("../shared/wattfox");
     const { handOverToBuyerEndpoints } = await import("./outbound-endpoints");
     const { membership } = (await db.select({ membership: memberships }).from(memberships).where(and(eq(memberships.tenantId, S.tenantId), eq(memberships.userId, inviteeUserId))))[0];
@@ -6133,19 +6133,25 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const config = { membershipId, categoryId: S.pv.id, enabled: true, method: "POST" as const, url: WATTFOX.leadsUrl, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: true, auth: { loginUrl: WATTFOX.loginUrl, credentials: [{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }], tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes }, bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, rotate: false, valueMappings: [] };
     const endpoint = await owner.leadops.saveDeliveryEndpoint(config);
 
-    // (a) Die 9 Testleads: angemeldet (X-AUTH-TOKEN), je 3 PV und Wärmepumpe, 3 mit Zusatzinteresse, Herkunft fest, ohne unsere lead_id
+    // (a) Testleads: einer je Sparte (seit v357) – auf Wunsch alle 9 (je 3 PV und Wärmepumpe, 3 mit Zusatzinteresse); angemeldet (X-AUTH-TOKEN), Herkunft fest, ohne unsere lead_id
     const start = outbound.length;
     const tests = await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id });
-    expect(tests).toMatchObject({ sent: 9, ok: 9, total: 9 });
-    expect(tests.results.every((item) => item.ok && /^\d+$/.test(item.reference ?? ""))).toBe(true);
-    const calls = outbound.slice(start).filter((call) => call.url === WATTFOX.leadsUrl);
+    expect(tests).toMatchObject({ sent: 3, ok: 3, total: 3 }); expect(tests.results.map((item) => item.label)).toEqual(["Photovoltaik", "Wärmepumpe", "PV mit Wärmepumpe"]);
+    const few = outbound.slice(start).filter((call) => call.url === WATTFOX.leadsUrl);
+    expect(few.map((call) => [call.body.productId, call.body.otherinterests ?? null, call.body.childinterests ?? null])).toEqual([[2, null, null], [20, null, [6]], [2, [20], [6]]]);
+    const middle = outbound.length;
+    const nine = await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id, all: true });
+    expect(nine).toMatchObject({ sent: 9, ok: 9, total: 9 });
+    expect(nine.results.every((item) => item.ok && /^\d+$/.test(item.reference ?? ""))).toBe(true);
+    const calls = outbound.slice(middle).filter((call) => call.url === WATTFOX.leadsUrl);
     expect(calls).toHaveLength(9);
-    expect(calls.every((call) => call.headers["x-auth-token"] === "tok-12345")).toBe(true);
+    expect([...few, ...calls].every((call) => call.headers["x-auth-token"] === "tok-12345")).toBe(true);
     expect(calls.map((call) => call.body.productId)).toEqual([2, 2, 2, 20, 20, 20, 2, 2, 20]);
     expect(calls.map((call) => call.body.otherinterests ?? null)).toEqual([null, null, null, null, null, null, [20], [20], [2]]);
     expect(calls.map((call) => call.body.childinterests ?? null)).toEqual([null, null, null, [6], [6], [6], [6], [6], [6]]);
-    expect(calls.every((call) => call.body.utm_source === "Tanesco Digital GbR" && call.body.utm_medium === "affiliate" && call.body.utm_campaign === "Hyper Energy Solutions, Meta Leadformular")).toBe(true);
-    expect(calls.every((call) => call.body.lead_id === undefined && call.body.vorlage === undefined && String(call.body.notes).startsWith("TESTLEAD"))).toBe(true);
+    // Herkunft: utm_source und utm_medium fest; utm_campaign nennt Wattfox – solange es leer ist, geht es gar nicht mit (der Wert der früheren Anbindung gilt nicht mehr)
+    expect([...few, ...calls].every((call) => call.body.utm_source === "Tanesco Digital GbR" && call.body.utm_medium === "affiliate" && call.body.utm_campaign === undefined)).toBe(true);
+    expect([...few, ...calls].every((call) => call.body.lead_id === undefined && call.body.vorlage === undefined && String(call.body.notes).startsWith("TESTLEAD"))).toBe(true);
     // Testleads zählen nicht als Zustellung
     expect((await db.select().from(integrationEvents).where(eq(integrationEvents.endpointId, endpoint.id))).length).toBe(0);
 
@@ -6184,4 +6190,76 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // aufräumen: der Käufer soll in späteren Tests keinen Wattfox-Endpoint mehr haben
     await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id });
   }, 60000);
+
+  it("v357. Kampagnen vom Dialer: Name laut Dialer am Gespräch, zuordnen (die bisherigen kommen mit), gleicher Name, Standard; Leads einer Kampagne mit eigenem Käufer gehen nur an ihn", async () => {
+    const schema = await import("../drizzle/schema"); const { callRecords: callsTable, callQaConfigs: cfgTable } = schema;
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const post = async (body: Record<string, unknown>) => { const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: response.status, json: await response.json() as Record<string, any> }; };
+    const good = "Agent: Ich rufe von HausKompass an, es geht um Ihre Photovoltaik-Anfrage. Kunde: Ja gerne, ich bin Eigentümer und einverstanden, dass sich ein Fachbetrieb meldet. Agent: Passt ein Termin vor Ort in den nächsten Wochen? Kunde: Ja gerne, passt. Agent: Dürfen wir Sie vorher anrufen? Kunde: Ja, telefonisch bin ich gut erreichbar. Agent: Dann meldet sich der Photovoltaik Angebotsvergleich bei Ihnen, und Sie bekommen bis zu drei Angebote von unseren Fachpartnern.";
+    const callOf = async (id: string) => (await db.select().from(callsTable).where(eq(callsTable.externalCallId, id)))[0];
+    const savedKey = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+    const savedDefault = (await db.select().from(cfgTable).where(eq(cfgTable.tenantId, S.tenantId)))[0].defaultCampaign ?? null;
+    try {
+      await owner.leadops.setCallQaDefaultCampaign({ campaign: "V357 Standard" });
+      // (a) Testmodus: die Kampagne vom Dialer und wohin sie bei uns gehört
+      const dry = await post({ test: true, call_id: "v357-t", phone: "+49 6151 5557001", consent: true, campaign: "V357 Aroundhome Solar" });
+      expect(dry.json.campaign).toEqual({ value: "V357 Aroundhome Solar", lands_in: "V357 Standard" }); expect(dry.json.recommended_missing).not.toContain("campaign");
+      // (b) Ohne Zuordnung landet alles in der Standard-Kampagne – der Name laut Dialer wird mitgespeichert (Groß/klein und Leerzeichen egal)
+      await post({ call_id: "v357-1", phone: "+49 6151 5557001", consent: true, transcript: `Agent: Guten Tag Herr Brandt. ${good}`, campaign: "V357 Aroundhome Solar" });
+      await post({ call_id: "v357-2", phone: "+49 6151 5557002", consent: true, transcript: `Agent: Guten Tag Frau Kühn. ${good}`, campaign: "v357 aroundhome  solar" });
+      await post({ call_id: "v357-3", phone: "+49 6151 5557003", consent: true, transcript: `Agent: Guten Tag Herr Vogt. ${good}`, campaign: "V357 Wattfox WP" });
+      expect([await callOf("v357-1"), await callOf("v357-2"), await callOf("v357-3")].map((call) => [call.campaign, call.dialerCampaign])).toEqual([["V357 Standard", "V357 Aroundhome Solar"], ["V357 Standard", "v357 aroundhome solar"], ["V357 Standard", "V357 Wattfox WP"]]);
+      const names = async () => (await owner.leadops.listDialerCampaignNames()).filter((row) => row.name.toLowerCase().startsWith("v357"));
+      expect((await names()).map((row) => [row.name.toLowerCase(), row.calls, row.target, row.via, row.elsewhere]).sort()).toEqual([["v357 aroundhome solar", 2, "V357 Standard", "standard", 0], ["v357 wattfox wp", 1, "V357 Standard", "standard", 0]]);
+      expect((await owner.leadops.listCalls({ search: "Aroundhome Solar" })).filter((call) => String(call.externalCallId).startsWith("v357")).map((call) => [call.externalCallId, call.dialerCampaign]).sort()).toEqual([["v357-1", "V357 Aroundhome Solar"], ["v357-2", "v357 aroundhome solar"]]);
+      expect((await owner.leadops.getCall({ callId: (await callOf("v357-3")).id })).dialerCampaign).toBe("V357 Wattfox WP");
+      // (c) Zuordnen: neue Kampagne, die bisherigen Gespräche kommen mit, neue landen direkt dort
+      expect(await owner.leadops.assignDialerCampaign({ dialerName: "V357 Aroundhome Solar", campaign: "V357 Aroundhome", moveExisting: true })).toMatchObject({ campaign: "V357 Aroundhome", assigned: "V357 Aroundhome", created: true, moved: 2 });
+      expect([(await callOf("v357-1")).campaign, (await callOf("v357-2")).campaign, (await callOf("v357-3")).campaign]).toEqual(["V357 Aroundhome", "V357 Aroundhome", "V357 Standard"]);
+      await post({ call_id: "v357-4", phone: "+49 6151 5557004", consent: true, transcript: `Agent: Guten Tag Frau Roth. ${good}`, campaign: "V357 AROUNDHOME SOLAR" });
+      expect((await callOf("v357-4")).campaign).toBe("V357 Aroundhome");
+      expect((await owner.leadops.callQaCampaignSummary({ campaign: "V357 Aroundhome" })).dialerNames).toEqual(["V357 Aroundhome Solar"]);
+      expect((await names()).find((row) => row.name.toLowerCase() === "v357 aroundhome solar")).toMatchObject({ calls: 3, target: "V357 Aroundhome", via: "zuordnung", elsewhere: 0 });
+      // gleicher Name wie eine Kampagne hier → dorthin, auch ohne Zuordnung
+      await post({ call_id: "v357-5", phone: "+49 6151 5557005", consent: true, transcript: `Agent: Guten Tag Herr Lenz. ${good}`, campaign: "v357 aroundhome" });
+      expect((await callOf("v357-5")).campaign).toBe("V357 Aroundhome");
+      // nur Admins dürfen zuordnen und Käufer setzen
+      await expect(invitee.leadops.assignDialerCampaign({ dialerName: "V357 Wattfox WP", campaign: "V357 Aroundhome" })).rejects.toThrow();
+      await expect(invitee.leadops.setCallQaCampaignBuyer({ campaign: "V357 Aroundhome", buyerUserId: null })).rejects.toThrow();
+
+      // (d) Käufer der Kampagne: Leads daraus gehen nur an ihn – andere Stops werden übersprungen, mit Grund
+      const stamp = Date.now().toString(36);
+      const categoryId = (await owner.leadops.createCategory({ shortcode: `V357${stamp}`.slice(0, 16).toUpperCase(), name: `V357 Kampagnen-Käufer ${stamp}`, defaultLeadPrice: "10.00" })).id!;
+      const member = async (company: string, mail: string) => { const created = await owner.leadops.createMember({ firstName: "Kim", lastName: "Kauf", company, email: `${mail}-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" }); return (await owner.leadops.getMemberDetail({ membershipId: created.membershipId })).user.id; };
+      const firstUserId = await member("V357 Erster Käufer GmbH", "erster"); const secondUserId = await member("V357 Aroundhome GmbH", "zweiter");
+      await owner.leadops.createChainRule({ categoryIds: [categoryId], supplierMode: "all", supplierIds: [], buyers: [{ buyerUserId: firstUserId, unitPrice: 20, reclamationWindowHours: 0 }, { buyerUserId: secondUserId, unitPrice: 25, reclamationWindowHours: 0 }], active: true });
+      let seq = 0; const leadFrom = async (campaign: string) => { seq += 1; const publicId = (await owner.leadops.importLead({ categoryId, firstName: "Paula", lastName: `Kampagne${seq}`, email: `kampagne${seq}-${stamp}@example.de`, phone: `+49 6151 555${7100 + seq}`, postcode: "64283", city: "Darmstadt" })).publicId; const row = await leadRow(publicId); await db.insert(callsTable).values({ tenantId: S.tenantId, provider: "ondialer", externalCallId: `v357-l${seq}`, leadId: row.id, phone: row.phone, campaign, dialerCampaign: campaign, status: "bewertet", decision: "freigegeben", decidedBy: "automatisch", consent: true }); return publicId; };
+      expect(await owner.leadops.deliverLead({ publicId: await leadFrom("V357 Aroundhome") })).toMatchObject({ buyerName: "V357 Erster Käufer GmbH" }); // noch ohne Käufer der Kampagne: der erste Stop
+      await expect(owner.leadops.setCallQaCampaignBuyer({ campaign: "V357 Aroundhome", buyerUserId: 99999999 })).rejects.toThrow(/gibt es hier nicht/);
+      expect(await owner.leadops.setCallQaCampaignBuyer({ campaign: "V357 Aroundhome", buyerUserId: secondUserId })).toMatchObject({ buyerUserId: secondUserId, buyerName: "V357 Aroundhome GmbH" });
+      expect((await owner.leadops.callQaCampaignSummary({ campaign: "V357 Aroundhome" })).buyerUserId).toBe(secondUserId);
+      const bound = await owner.leadops.deliverLead({ publicId: await leadFrom("V357 Aroundhome") });
+      expect(bound.buyerName).toBe("V357 Aroundhome GmbH");
+      expect(bound.attempts[0]).toMatchObject({ buyerName: "V357 Erster Käufer GmbH", outcome: "übersprungen", reason: "Kampagne „V357 Aroundhome“ liefert nur an V357 Aroundhome GmbH" });
+      expect(await owner.leadops.deliverLead({ publicId: await leadFrom("V357 Standard") })).toMatchObject({ buyerName: "V357 Erster Käufer GmbH" }); // andere Kampagne: wie bisher
+      // Käufer der Kampagne steht in keiner passenden Kette → der Lead geht nirgends hin, der Grund steht dabei
+      await owner.leadops.setCallQaCampaignBuyer({ campaign: "V357 Aroundhome", buyerUserId: inviteeUserId });
+      await expect(owner.leadops.deliverLead({ publicId: await leadFrom("V357 Aroundhome") })).rejects.toThrow(/liefert nur an/);
+      await owner.leadops.setCallQaCampaignBuyer({ campaign: "V357 Aroundhome", buyerUserId: null });
+      expect(await owner.leadops.deliverLead({ publicId: await leadFrom("V357 Aroundhome") })).toMatchObject({ buyerName: "V357 Erster Käufer GmbH" });
+
+      // (e) Umbenennen nimmt Zuordnung und Käufer mit; Zuordnung lösen: die Gespräche gehen zurück in die Standard-Kampagne
+      await owner.leadops.assignDialerCampaign({ dialerName: "V357 Wattfox WP", campaign: "V357 Aroundhome", moveExisting: true });
+      await owner.leadops.setCallQaCampaignBuyer({ campaign: "V357 Aroundhome", buyerUserId: secondUserId });
+      await owner.leadops.renameCallCampaign({ from: "V357 Aroundhome", to: "V357 Aroundhome neu" });
+      const renamed = await owner.leadops.callQaCampaignSummary({ campaign: "V357 Aroundhome neu" });
+      expect(renamed).toMatchObject({ buyerUserId: secondUserId }); expect([...renamed.dialerNames].sort()).toEqual(["V357 Aroundhome Solar", "V357 Wattfox WP"]);
+      expect(await owner.leadops.assignDialerCampaign({ dialerName: "v357 aroundhome solar", campaign: null, moveExisting: true })).toMatchObject({ campaign: "V357 Standard", assigned: null, moved: 3 });
+      expect([(await callOf("v357-1")).campaign, (await callOf("v357-4")).campaign, (await callOf("v357-3")).campaign]).toEqual(["V357 Standard", "V357 Standard", "V357 Aroundhome neu"]);
+      expect((await owner.leadops.callQaCampaignSummary({ campaign: "V357 Aroundhome neu" })).dialerNames).toEqual(["V357 Wattfox WP"]);
+    } finally {
+      if (savedKey) process.env.ANTHROPIC_API_KEY = savedKey;
+      await owner.leadops.setCallQaDefaultCampaign({ campaign: savedDefault });
+    }
+  }, 120000);
 });

@@ -9,7 +9,7 @@ import { WATTFOX, WATTFOX_TEMPLATE } from "../../../../shared/wattfox";
 
 /**
  * Version 355 – Leads an Wattfox: Im Endpoint-Editor setzt „Vorlage Wattfox“ Anmeldung, Adresse der Testumgebung und den Body mit der Herkunft ein.
- * Nach dem Speichern schickt „Testleads an Wattfox senden (9)“ die verlangten Testleads und zeigt die Nummern von Wattfox.
+ * Nach dem Speichern schickt „Testleads an Wattfox senden (3)“ einen je Sparte (seit v357; „Alle 9“ die aus der früheren Mail) und zeigt die Nummern von Wattfox.
  */
 type Member = { membershipId: number; userId: number; status: string };
 async function settle(ms: number) { await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); }); }
@@ -51,15 +51,21 @@ describe("Version 355", () => {
     expect(saved).toMatchObject({ url: WATTFOX.leadsUrl, bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, authEnabled: true, auth: { headerName: "X-AUTH-TOKEN", tokenPath: "auth_token", ttlMinutes: 1380 } });
     expect(saved.auth.credentials).toEqual([{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }]);
 
-    // wieder öffnen: Testleads senden → 9 von 9, Nummern von Wattfox, kopierbar
+    // wieder öffnen: Testleads senden → einer je Sparte (3 von 3), Nummern von Wattfox, kopierbar; „Alle 9“ → 9 von 9
     await click(byText(root, "button", "Bearbeiten"));
     const again = document.body.querySelector(".fixed.inset-0")!;
+    expect(again.querySelector(".ig-wattfox-send")?.textContent).toBe("Testleads an Wattfox senden (3)");
     await click(again.querySelector(".ig-wattfox-send"), 1200);
-    const panel = again.querySelector(".ig-wattfox-tests");
+    let panel = again.querySelector(".ig-wattfox-tests");
+    expect(panel?.textContent).toContain("Testleads an Wattfox: 3 von 3 angekommen");
+    expect(Array.from(panel?.querySelectorAll("li .font-medium") ?? []).map((node) => node.textContent)).toEqual(["✓ Photovoltaik", "✓ Wärmepumpe", "✓ PV mit Wärmepumpe"]);
+    expect(panel?.textContent).toMatch(/Wattfox-Nr\. \d+/);
+    await click(byText(panel!, "button", "Nummern kopieren"), 200);
+    await click(again.querySelector(".ig-wattfox-send-all"), 1200);
+    panel = again.querySelector(".ig-wattfox-tests");
     expect(panel?.textContent).toContain("Testleads an Wattfox: 9 von 9 angekommen");
     expect(panel?.querySelectorAll("li")).toHaveLength(9);
-    expect(panel?.textContent).toContain("PV mit Wärmepumpe 1"); expect(panel?.textContent).toMatch(/Wattfox-Nr\. \d+/);
-    await click(byText(panel!, "button", "Nummern kopieren"), 200);
+    expect(panel?.textContent).toContain("PV mit Wärmepumpe 1");
   });
 
   it("ohne Zugang: Abbruch mit klarem Hinweis – an eine Live-Adresse nur ausdrücklich", async () => {
@@ -69,7 +75,7 @@ describe("Version 355", () => {
     const base = { membershipId: buyer.membershipId, categoryId: category.id, enabled: true, method: "POST", url: WATTFOX.leadsUrl, sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: true, auth: { loginUrl: WATTFOX.loginUrl, credentials: [{ name: "user", value: "" }, { name: "pass", value: "" }], tokenPath: "auth_token", headerName: "X-AUTH-TOKEN", prefix: "", ttlMinutes: 1380 }, bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, rotate: false, valueMappings: [] };
     const saved = await callProcedure("leadops.saveDeliveryEndpoint", base) as { id: number };
     const result = await callProcedure("leadops.sendWattfoxTestLeads", { membershipId: buyer.membershipId, id: saved.id }) as { sent: number; ok: number; total: number; results: Array<{ response: string }> };
-    expect(result).toMatchObject({ sent: 1, ok: 0, total: 9 }); expect(result.results[0].response).toContain("Anmeldung");
+    expect(result).toMatchObject({ sent: 1, ok: 0, total: 3 }); expect(result.results[0].response).toContain("Anmeldung");
     await callProcedure("leadops.saveDeliveryEndpoint", { ...base, id: saved.id, url: "https://api-v1.photovoltaik-angebotsvergleich.de/v1/leads" });
     await expect(callProcedure("leadops.sendWattfoxTestLeads", { membershipId: buyer.membershipId, id: saved.id })).rejects.toThrow(/Live-System/);
   });

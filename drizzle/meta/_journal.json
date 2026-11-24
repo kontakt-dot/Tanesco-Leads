@@ -820,6 +820,13 @@
       "when": 1796200000000,
       "tag": "0116_pruefragen_nachholen",
       "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1796300000000,
+      "tag": "0117_kampagnen_vom_dialer",
+      "breakpoints": true
     }
   ]
 }

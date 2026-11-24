@@ -15,7 +15,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
-import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, optIns, rawBatches, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
+import { callQaConfigs, callRecords, leadCategories, leadStatusEvents, leads, memberships, optIns, rawBatches, rawContacts, users, type CallQaConfig, type CallRecord } from "../drizzle/schema";
+import { campaignKey, campaignName, dialerCampaignOf, dialerNamesOf, resolveDialerCampaign } from "../shared/dialer-campaign";
 import { batchCategoryIds, convertRawContact, normalizeRawPhone } from "./raw-data";
 import { CONTACT_MAPPING, dialerInfo, extractDialerContact, matchDialerCategory, mergeDialerData, type DialerContact } from "../shared/dialer-contact";
 import { invokeLLM } from "./_core/llm";
@@ -145,8 +146,8 @@ export async function campaignSummary(db: Db, tenantId: number, campaign: string
   const rows = await db.select({ answers: callRecords.qualificationAnswers }).from(callRecords).where(and(...conditions));
   const own = await criteriaForCampaign(db, tenantId, campaign);
   const summaryConfig = await ensureCallQaConfig(db, tenantId);
-  const ownRow = campaign ? (await db.select({ instructions: callQaCampaigns.instructions, presetKey: callQaCampaigns.presetKey }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0] : undefined;
-  return { questions, calls: rows.length, summary: summarizeAnswers(rows.map((row) => row.answers as Record<string, QualificationAnswer> | null), questions), criteria: own.criteria, criteriaCustom: own.custom, instructions: ownRow?.instructions ?? null, defaultCampaign: summaryConfig.defaultCampaign ?? null, presetLabel: presetByKey((campaign ? ownRow?.presetKey : summaryConfig.presetKey) ?? "")?.label ?? null };
+  const ownRow = campaign ? (await db.select({ instructions: callQaCampaigns.instructions, presetKey: callQaCampaigns.presetKey, dialerNames: callQaCampaigns.dialerNames, buyerUserId: callQaCampaigns.buyerUserId }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, campaign))).limit(1))[0] : undefined;
+  return { questions, calls: rows.length, summary: summarizeAnswers(rows.map((row) => row.answers as Record<string, QualificationAnswer> | null), questions), criteria: own.criteria, criteriaCustom: own.custom, instructions: ownRow?.instructions ?? null, defaultCampaign: summaryConfig.defaultCampaign ?? null, presetLabel: presetByKey((campaign ? ownRow?.presetKey : summaryConfig.presetKey) ?? "")?.label ?? null, buyerUserId: ownRow?.buyerUserId ?? null, dialerNames: dialerNamesOf(ownRow?.dialerNames) };
 }
 export async function setQualificationAnswer(db: Db, tenantId: number, callId: number, key: string, answer: QualificationAnswer["answer"], note?: string | null) {
   const record = (await db.select().from(callRecords).where(and(eq(callRecords.id, callId), eq(callRecords.tenantId, tenantId))).limit(1))[0]; if (!record) throw new Error("Gespräch nicht gefunden.");
@@ -220,7 +221,7 @@ export async function describeDialerWebhook(db: Db, token: string) {
   const config = (await db.select().from(callQaConfigs).where(eq(callQaConfigs.webhookToken, token)).limit(1))[0];
   if (!config) return { status: 404, body: { ok: false, error: "unknown webhook token" } };
   const mapping = { ...DEFAULT_MAPPING, ...((config.fieldMapping ?? {}) as Record<string, string>) };
-  return { status: 200, body: { ok: true, service: "Gesprächsbewertung", method: "POST", content_type: "application/json", enabled: config.enabled, consent_required: config.consentRequired, transcription: transcriptionService(config), recording_auth_header: Boolean(config.recordingAuthHeader), expected_fields: mapping, required: [mapping.callId, mapping.phone, mapping.recordingUrl, mapping.agent], recommended: [mapping.category], category_values: ["PV", "WP", "PV+WP"], test_mode: "POST mit \"test\": true prüft die Felder und den Aufnahme-Link, ohne etwas zu speichern" } };
+  return { status: 200, body: { ok: true, service: "Gesprächsbewertung", method: "POST", content_type: "application/json", enabled: config.enabled, consent_required: config.consentRequired, transcription: transcriptionService(config), recording_auth_header: Boolean(config.recordingAuthHeader), expected_fields: mapping, required: [mapping.callId, mapping.phone, mapping.recordingUrl, mapping.agent], recommended: [mapping.category, mapping.campaign], category_values: ["PV", "WP", "PV+WP"], campaign_hint: "Name der Kampagne im Dialer – danach trennen wir die Gespräche (Regeln und Käufer je Kampagne)", test_mode: "POST mit \"test\": true prüft die Felder und den Aufnahme-Link, ohne etwas zu speichern" } };
 }
 /** Rohdaten-Kontakt zur Rufnummer (noch nicht Lead) – damit eine Freigabe ihn zum Lead macht und eine Ablehnung ihn verwirft. */
 async function rawContactByPhone(db: Db, tenantId: number, phone: string) {
@@ -317,6 +318,75 @@ async function dialerContactCategory(db: Db, tenantId: number, rawContactId: num
   await allowBatchCategory(db, batch, call.leadCategoryId); return call.leadCategoryId;
 }
 
+/** Kampagne bei uns für einen Kampagnennamen vom Dialer: Zuordnung → gleicher Name → Standard („Neue Gespräche vom Dialer landen in“) → Name laut Dialer. */
+export async function campaignTargetFor(db: Db, config: Pick<CallQaConfig, "tenantId" | "defaultCampaign">, dialerName: string | null) {
+  const rows = await db.select({ name: callQaCampaigns.name, dialerNames: callQaCampaigns.dialerNames }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, config.tenantId));
+  return resolveDialerCampaign(dialerName, rows, config.defaultCampaign);
+}
+
+/** Kampagnen, die der Dialer mitgeschickt hat – je Name: Gespräche, zuletzt, wohin sie bei uns gehören und wie viele noch woanders liegen. */
+export async function listDialerCampaignNames(db: Db, tenantId: number) {
+  const config = await ensureCallQaConfig(db, tenantId);
+  const rows = await db.select({ name: callRecords.dialerCampaign, campaign: callRecords.campaign, calls: sql<number>`COUNT(*)`, lastAt: sql<Date | string | null>`MAX(COALESCE(${callRecords.startedAt}, ${callRecords.createdAt}))` }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), isNotNull(callRecords.dialerCampaign))).groupBy(callRecords.dialerCampaign, callRecords.campaign);
+  const campaigns = await db.select({ name: callQaCampaigns.name, dialerNames: callQaCampaigns.dialerNames }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId));
+  const groups = new Map<string, { name: string; calls: number; lastAt: Date | null; byCampaign: Map<string, number> }>();
+  for (const row of rows) {
+    const name = campaignName(row.name); if (!name) continue; const key = campaignKey(name);
+    const group = groups.get(key) ?? { name, calls: 0, lastAt: null as Date | null, byCampaign: new Map<string, number>() }; groups.set(key, group);
+    const count = Number(row.calls) || 0; group.calls += count; group.byCampaign.set(row.campaign ?? "", (group.byCampaign.get(row.campaign ?? "") ?? 0) + count);
+    const at = row.lastAt ? new Date(row.lastAt) : null; if (at && !Number.isNaN(at.getTime()) && (!group.lastAt || at > group.lastAt)) group.lastAt = at;
+  }
+  return Array.from(groups.values()).map((group) => {
+    const target = resolveDialerCampaign(group.name, campaigns, config.defaultCampaign);
+    const elsewhere = Array.from(group.byCampaign.entries()).filter(([campaign]) => campaign !== (target.campaign ?? "")).reduce((sum, [, count]) => sum + count, 0);
+    return { name: group.name, calls: group.calls, lastAt: group.lastAt, target: target.campaign, via: target.via, elsewhere };
+  }).sort((a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0) || a.name.localeCompare(b.name, "de"));
+}
+
+/**
+ * Kampagne aus dem Dialer einer Kampagne bei uns zuordnen (campaign = null: Zuordnung lösen). Fehlt die Kampagne, wird sie angelegt
+ * (mit den Standard-Prüffragen). Mit moveExisting kommen die bisherigen Gespräche dieser Dialer-Kampagne mit; die Prüffragen der
+ * neuen Kampagne holt die Nachprüfung im Hintergrund nach (Entscheidungen werden dabei nur strenger).
+ */
+export async function assignDialerCampaign(db: Db, tenantId: number, input: { dialerName: string; campaign: string | null; moveExisting?: boolean }) {
+  const dialerName = campaignName(input.dialerName); if (!dialerName) throw new Error("Bitte die Kampagne aus dem Dialer angeben.");
+  const key = campaignKey(dialerName); const target = campaignName(input.campaign);
+  const rows = await db.select({ id: callQaCampaigns.id, name: callQaCampaigns.name, dialerNames: callQaCampaigns.dialerNames }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId));
+  // erst überall lösen – ein Dialer-Name gehört immer zu genau einer Kampagne
+  for (const row of rows) { const names = dialerNamesOf(row.dialerNames); const kept = names.filter((name) => campaignKey(name) !== key); if (kept.length !== names.length && row.name !== target) await db.update(callQaCampaigns).set({ dialerNames: kept.length ? kept : null }).where(eq(callQaCampaigns.id, row.id)); }
+  let created = false;
+  if (target) {
+    const own = rows.find((row) => row.name === target);
+    if (own) await db.update(callQaCampaigns).set({ dialerNames: [...dialerNamesOf(own.dialerNames).filter((name) => campaignKey(name) !== key), dialerName] }).where(eq(callQaCampaigns.id, own.id));
+    else { await db.insert(callQaCampaigns).values({ tenantId, name: target, questions: await defaultQuestionsFor(db, tenantId), dialerNames: [dialerName] }); created = true; }
+  }
+  let moved = 0; const config = await ensureCallQaConfig(db, tenantId);
+  const destination = (await campaignTargetFor(db, config, dialerName)).campaign;
+  if (input.moveExisting && destination) {
+    const calls = await db.select({ id: callRecords.id, dialerCampaign: callRecords.dialerCampaign, campaign: callRecords.campaign }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), isNotNull(callRecords.dialerCampaign)));
+    const ids = calls.filter((call) => campaignKey(call.dialerCampaign) === key && call.campaign !== destination).map((call) => call.id);
+    for (let index = 0; index < ids.length; index += 500) await db.update(callRecords).set({ campaign: destination }).where(and(eq(callRecords.tenantId, tenantId), inArray(callRecords.id, ids.slice(index, index + 500))));
+    moved = ids.length;
+    if (moved) void recheckCallAnswers(db, { tenantId }).catch(() => undefined); // fehlende Prüffragen der neuen Kampagne nachholen
+  }
+  return { success: true as const, dialerName, campaign: destination, assigned: target, created, moved };
+}
+
+/** Käufer einer Kampagne setzen (null = Leads gehen wieder an alle passenden Käufer). */
+export async function setCampaignBuyer(db: Db, tenantId: number, input: { campaign: string; buyerUserId: number | null }) {
+  const name = campaignName(input.campaign); if (!name) throw new Error("Bitte eine Kampagne wählen.");
+  let buyerName: string | null = null;
+  if (input.buyerUserId) {
+    const member = (await db.select({ name: users.name, company: users.company, email: users.email }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, input.buyerUserId))).limit(1))[0];
+    if (!member) throw new Error("Diesen Käufer gibt es hier nicht.");
+    buyerName = member.company || member.name || member.email || `Käufer ${input.buyerUserId}`;
+  }
+  const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, name))).limit(1))[0];
+  if (own) await db.update(callQaCampaigns).set({ buyerUserId: input.buyerUserId }).where(eq(callQaCampaigns.id, own.id));
+  else await db.insert(callQaCampaigns).values({ tenantId, name, questions: await defaultQuestionsFor(db, tenantId), buyerUserId: input.buyerUserId });
+  return { success: true as const, campaign: name, buyerUserId: input.buyerUserId, buyerName };
+}
+
 export async function ingestDialerCall(db: Db, token: string, payload: Record<string, unknown>, options: { fetchImpl?: typeof fetch } = {}) {
   const config = (await db.select().from(callQaConfigs).where(eq(callQaConfigs.webhookToken, token)).limit(1))[0];
   if (!config) return { status: 404, body: { error: "unknown webhook token" } };
@@ -325,6 +395,9 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
   const contact = extractDialerContact(payload, mapping); // Kontakt, Ergebnis und Notiz – falls der Dialer sie mitschickt
   const recordingOf = () => text(get("recordingUrl")) || contact.recordingUrl || ""; // Link zur Aufnahme – auch, wenn er unter den Feldern steht („pv_recording_1“)
   const phone = text(get("phone")) || contact.phone || ""; const leadRef = text(get("leadId"));
+  // Kampagne laut Dialer – und wohin sie bei uns gehört (Zuordnung → gleicher Name → Standard → Name laut Dialer)
+  const dialerCampaign = campaignName(get("campaign")) ?? dialerCampaignOf(payload, mapping.campaign);
+  const campaignTarget = await campaignTargetFor(db, config, dialerCampaign);
   // Testmodus: "test": true → Felder und Aufnahme-Link prüfen, nichts speichern (für den Dialer-Entwickler beim Einrichten)
   if (truthy(payload.test) || truthy(payload.dry_run)) {
     const found: string[] = []; const missing: string[] = [];
@@ -343,13 +416,13 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
     const consent = truthy(get("consent")) || !config.consentRequired;
     const known = phone || leadRef ? await findDialerTarget(db, config.tenantId, leadRef, phone) : { lead: undefined, rawContact: undefined };
     const would = known.lead || known.rawContact ? (contact.hasData ? "updated" : "matched") : phone && contact.hasIdentity ? "created" : "none";
-    return { status: 200, body: { ok: required.length === 0 && (recording.reachable !== false), test: true, stored: false, enabled: config.enabled, fields_found: found, fields_missing: missing, required_missing: required, recording, contact: { found: contact.found, would }, agent: agentGiven ? text(get("agent")) : null, category: contact.category ? { value: contact.category, recognised: Boolean(namedCategory), as: namedCategory?.name ?? null } : null, recommended_missing: contact.category ? [] : [mapping.category], would_evaluate: config.enabled && consent && technical.length === 0 && recording.reachable !== false, reason: !config.enabled ? "Gesprächsbewertung ist in der App ausgeschaltet" : required.length ? `Pflichtfelder fehlen: ${required.join(", ")}` : recording.reachable === false ? "Aufnahme-Link nicht abrufbar" : !consent ? `Einwilligung erforderlich – Feld „${mapping.consent}“ muss true sein` : "alles in Ordnung", transcription: transcriptionService(config) } };
+    return { status: 200, body: { ok: required.length === 0 && (recording.reachable !== false), test: true, stored: false, enabled: config.enabled, fields_found: found, fields_missing: missing, required_missing: required, recording, contact: { found: contact.found, would }, agent: agentGiven ? text(get("agent")) : null, category: contact.category ? { value: contact.category, recognised: Boolean(namedCategory), as: namedCategory?.name ?? null } : null, recommended_missing: [...(contact.category ? [] : [mapping.category]), ...(dialerCampaign ? [] : [mapping.campaign])], campaign: dialerCampaign ? { value: dialerCampaign, lands_in: campaignTarget.campaign } : null, would_evaluate: config.enabled && consent && technical.length === 0 && recording.reachable !== false, reason: !config.enabled ? "Gesprächsbewertung ist in der App ausgeschaltet" : required.length ? `Pflichtfelder fehlen: ${required.join(", ")}` : recording.reachable === false ? "Aufnahme-Link nicht abrufbar" : !consent ? `Einwilligung erforderlich – Feld „${mapping.consent}“ muss true sein` : "alles in Ordnung", transcription: transcriptionService(config) } };
   }
   if (!config.enabled) return { status: 403, body: { error: "call evaluation disabled" } };
   const externalCallId = text(get("callId")) || null;
   if (externalCallId) { const existing = (await db.select({ id: callRecords.id, status: callRecords.status }).from(callRecords).where(and(eq(callRecords.tenantId, config.tenantId), eq(callRecords.externalCallId, externalCallId))).limit(1))[0]; if (existing) return { status: 200, body: { ok: true, call_id: existing.id, duplicate: true, status: existing.status } }; }
   const target = await findDialerTarget(db, config.tenantId, leadRef, phone); const lead = target.lead; let rawContact = target.rawContact;
-  const campaign = config.defaultCampaign?.trim() || text(get("campaign")) || null;
+  const campaign = campaignTarget.campaign;
   // Kontakt-Daten übernehmen: bekannten Lead oder Kontakt ergänzen – oder (Rufnummer unbekannt, Name oder Firma da) den Kontakt anlegen
   let contactState: "created" | "updated" | "matched" | "none" = lead || rawContact ? "matched" : "none";
   try {
@@ -364,7 +437,7 @@ export async function ingestDialerCall(db: Db, token: string, payload: Record<st
   const agentNamed = agentRaw && !isJunkAgentName(agentRaw) && /[A-Za-z\u00C0-\u024F]{2,}/.test(agentRaw) ? agentRaw : null;
   const dialerAgent = agentNamed ? (agentNamed.split(" ").length === 1 ? canonicalAgentName(agentNamed, await knownAgentNames(db, config.tenantId).catch(() => [])) || agentNamed : agentNamed) : null; // nur der Vorname: den bekannten vollen Namen nehmen
   const startedAtRaw = text(get("startedAt")); const startedAt = startedAtRaw && !Number.isNaN(new Date(startedAtRaw).getTime()) ? new Date(startedAtRaw) : new Date();
-  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: dialerAgent ?? (isJunkAgentName(agentRaw) ? null : agentRaw || null), agentSource: dialerAgent ? "dialer" : null, leadCategoryId: namedCategory?.id ?? null, campaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: recordingOf() || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
+  const inserted = await db.insert(callRecords).values({ tenantId: config.tenantId, provider: config.provider, externalCallId, leadId: lead?.id ?? null, rawContactId: rawContact?.id ?? null, phone: phone || lead?.phone || null, agentName: dialerAgent ?? (isJunkAgentName(agentRaw) ? null : agentRaw || null), agentSource: dialerAgent ? "dialer" : null, leadCategoryId: namedCategory?.id ?? null, campaign, dialerCampaign, direction: /in|eingehend/i.test(text(get("direction"))) ? "eingehend" : "ausgehend", startedAt, durationSeconds: Number(get("duration")) || null, recordingUrl: recordingOf() || null, consent, consentSource: truthy(get("consent")) ? `Dialer-Feld ${mapping.consent}` : config.consentRequired ? null : "Einstellung: keine Einwilligung erforderlich", transcript: text(get("transcript")) || null, status: consent ? "eingegangen" : "ohne_einwilligung", payload: payload as never });
   const callId = Number(inserted[0]?.insertId) || 0;
   if (!consent) { if (lead) await db.insert(leadStatusEvents).values({ tenantId: config.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: "Gespräch eingegangen, aber ohne dokumentierte Einwilligung – nicht ausgewertet." }); return { status: 202, body: { ok: true, call_id: callId, lead_id: lead?.publicId ?? null, contact: contactState, evaluated: false, reason: "no consent" } }; }
   const result = await processCall(db, callId, { ...options, auto: true });
@@ -1082,9 +1155,16 @@ export async function importRecordingLinks(db: Db, tenantId: number, input: { te
 export async function renameCallCampaign(db: Db, tenantId: number, input: { from: string; to: string }) {
   const from = input.from.trim(); const to = input.to.trim().slice(0, 160);
   if (!from || !to) throw new Error("Bitte alten und neuen Namen angeben."); if (from === to) return { calls: 0, merged: false };
-  const existing = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, to))).limit(1))[0];
-  const own = (await db.select({ id: callQaCampaigns.id }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, from))).limit(1))[0];
-  if (own) { if (existing) await db.delete(callQaCampaigns).where(eq(callQaCampaigns.id, own.id)); else await db.update(callQaCampaigns).set({ name: to }).where(eq(callQaCampaigns.id, own.id)); }
+  const existing = (await db.select({ id: callQaCampaigns.id, dialerNames: callQaCampaigns.dialerNames, buyerUserId: callQaCampaigns.buyerUserId }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, to))).limit(1))[0];
+  const own = (await db.select({ id: callQaCampaigns.id, dialerNames: callQaCampaigns.dialerNames, buyerUserId: callQaCampaigns.buyerUserId }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), eq(callQaCampaigns.name, from))).limit(1))[0];
+  if (own) {
+    if (existing) {
+      // Zusammenlegen: Kampagnen vom Dialer und Käufer gehen mit (der Käufer der Ziel-Kampagne bleibt, wenn sie schon einen hat)
+      const names = dialerNamesOf([...dialerNamesOf(existing.dialerNames), ...dialerNamesOf(own.dialerNames)]);
+      await db.update(callQaCampaigns).set({ dialerNames: names.length ? names : null, buyerUserId: existing.buyerUserId ?? own.buyerUserId ?? null }).where(eq(callQaCampaigns.id, existing.id));
+      await db.delete(callQaCampaigns).where(eq(callQaCampaigns.id, own.id));
+    } else await db.update(callQaCampaigns).set({ name: to }).where(eq(callQaCampaigns.id, own.id));
+  }
   const result = await db.update(callRecords).set({ campaign: to }).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.campaign, from)));
   const calls = Number((result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
   // Landen neue Gespräche vom Dialer in dieser Kampagne, gilt das auch unter dem neuen Namen
@@ -1380,7 +1460,7 @@ function callSearchCondition(search: string | null | undefined) {
   return and(...words.map((word) => {
     const q = `%${word.replace(/[\\%_]/g, "\\$&")}%`; const digits = phoneFragment(word);
     return or(
-      like(callRecords.phone, q), like(callRecords.agentName, q), like(callRecords.agentAlias, q), like(callRecords.campaign, q), like(callRecords.summary, q), like(callRecords.transcript, q), like(callRecords.externalCallId, q),
+      like(callRecords.phone, q), like(callRecords.agentName, q), like(callRecords.agentAlias, q), like(callRecords.campaign, q), like(callRecords.dialerCampaign, q), like(callRecords.summary, q), like(callRecords.transcript, q), like(callRecords.externalCallId, q),
       ...(digits ? [sql`REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(${callRecords.phone}, ''), ' ', ''), '-', ''), '/', ''), '+', '') LIKE ${`%${digits}%`}`] : []),
       sql`EXISTS (SELECT 1 FROM ${leads} WHERE ${leads.id} = ${callRecords.leadId} AND (CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}) LIKE ${q} OR ${leads.publicId} LIKE ${q} OR ${leads.city} LIKE ${q} OR ${leads.postcode} LIKE ${q} OR ${leads.email} LIKE ${q}))`,
       sql`EXISTS (SELECT 1 FROM ${rawContacts} WHERE ${rawContacts.id} = ${callRecords.rawContactId} AND (CONCAT_WS(' ', ${rawContacts.firstName}, ${rawContacts.lastName}) LIKE ${q} OR ${rawContacts.company} LIKE ${q} OR ${rawContacts.city} LIKE ${q}))`,
@@ -1406,7 +1486,7 @@ export async function listCalls(db: Db, tenantId: number, filter: { decision?: s
   const defaults = await defaultQuestionsFor(db, tenantId); const questionSets = new Map<string, QualificationQuestion[]>();
   for (const row of await db.select({ name: callQaCampaigns.name, questions: callQaCampaigns.questions }).from(callQaCampaigns).where(eq(callQaCampaigns.tenantId, tenantId))) { const qs = normalizeQuestions(row.questions as QualificationQuestion[] | null); if (qs.length) questionSets.set(row.name, qs); }
   const questionsOf = (campaign: string | null) => (campaign ? questionSets.get(campaign) : undefined) ?? defaults;
-  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany, categoryName, categoryEmoji }) => ({ id: call.id, recheckFrom: (call.recheckFrom ?? null) as CallRecord["decision"] | null, fulfilment: questionFulfilment(questionsOf(call.campaign), call.qualificationAnswers as Record<string, QualificationAnswer> | null), optIn: optInOf(call.leadId, call.id), leadCategoryId: call.leadCategoryId, category: categoryName ? { id: call.leadCategoryId!, name: categoryName, emoji: categoryEmoji ?? null } : null, externalCallId: call.externalCallId, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
+  return rows.map(({ call, leadPublicId, leadName, leadLastName, leadStatus, reviewer, rawFirst, rawLast, rawCompany, categoryName, categoryEmoji }) => ({ id: call.id, recheckFrom: (call.recheckFrom ?? null) as CallRecord["decision"] | null, fulfilment: questionFulfilment(questionsOf(call.campaign), call.qualificationAnswers as Record<string, QualificationAnswer> | null), optIn: optInOf(call.leadId, call.id), leadCategoryId: call.leadCategoryId, category: categoryName ? { id: call.leadCategoryId!, name: categoryName, emoji: categoryEmoji ?? null } : null, externalCallId: call.externalCallId, dialerCampaign: call.dialerCampaign ?? null, provider: call.provider, leadId: call.leadId, rawContactId: call.rawContactId, rawContactName: call.rawContactId ? [rawFirst, rawLast].filter(Boolean).join(" ") || rawCompany || "Rohdaten-Kontakt" : null, leadPublicId, leadName: [leadName, leadLastName].filter(Boolean).join(" ") || null, leadStatus, phone: call.phone, agentName: call.agentName, campaign: call.campaign, direction: call.direction, startedAt: call.startedAt, durationSeconds: call.durationSeconds, consent: call.consent, status: call.status, score: call.score, verdict: call.verdict, decision: call.decision, decidedBy: call.decidedBy, reviewer, reviewedAt: call.reviewedAt, summary: call.summary, nextStep: call.nextStep, error: call.error, createdAt: call.createdAt, qualificationAnswers: (call.qualificationAnswers ?? null) as Record<string, QualificationAnswer> | null }));
 }
 
 export async function getCall(db: Db, tenantId: number, callId: number) {
