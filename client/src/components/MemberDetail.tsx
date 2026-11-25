@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { roleLabel } from "@/components/MemberDirectory";
 import IntegrationTab from "@/components/IntegrationTab";
 import { confirmAction } from "@/lib/confirm";
+import { orderStatusLabel } from "../../../shared/order-status";
 
 type Tab = "stammdaten" | "passwort" | "bestellungen" | "lieferant" | "reklamation" | "zahlung" | "benachrichtigungen" | "aktivitaet" | "ansicht" | "tools";
 const TABS: Array<{ key: Tab; label: string; hint: string }> = [
@@ -113,7 +114,7 @@ function PasswordTab({ membershipId }: { membershipId: number }) {
 
 function OrdersTab({ orders, categories }: { orders: Detail["orders"]; categories: Detail["categories"] }) {
   const categoryName = (id: number) => categories.find((category) => category.id === id)?.shortcode ?? `#${id}`;
-  return <section className="surface-panel operations-panel overflow-hidden">{orders.length ? <div className="table-wrap"><table className="flux-table"><thead><tr><th>Bestellung</th><th>Kategorie</th><th>Menge</th><th>Preis</th><th>Echtzeit</th><th>Status</th><th>Angelegt</th></tr></thead><tbody>{orders.map((order) => <tr key={order.id}><td className="text-slate-100">{order.orderNumber} · {order.name}</td><td>{categoryName(order.categoryId)}</td><td>{order.deliveredCount}/{order.quantity}</td><td>{euro(order.unitPrice)}</td><td>{order.realtimeDelivery ? "ja" : "nein"}</td><td><Badge variant="outline" className="border-white/15 text-slate-200">{order.active ? order.status : "pausiert"}</Badge></td><td>{new Date(order.createdAt).toLocaleDateString("de-DE")}</td></tr>)}</tbody></table></div> : <div className="p-7 text-center text-sm text-slate-500"><strong className="block text-slate-300">Keine Bestellungen</strong>Für diesen Käufer wurde noch keine Bestellung angelegt.</div>}</section>;
+  return <section className="surface-panel operations-panel overflow-hidden">{orders.length ? <div className="table-wrap"><table className="flux-table"><thead><tr><th>Bestellung</th><th>Kategorie</th><th>Menge</th><th>Preis</th><th>Echtzeit</th><th>Status</th><th>Angelegt</th></tr></thead><tbody>{orders.map((order) => <tr key={order.id}><td className="text-slate-100">{order.orderNumber} · {order.name}</td><td>{categoryName(order.categoryId)}</td><td>{order.quantity ? `${order.deliveredCount}/${order.quantity}` : `${order.deliveredCount} · unbegrenzt`}</td><td>{euro(order.unitPrice)}</td><td>{order.realtimeDelivery ? "ja" : "nein"}</td><td><Badge variant="outline" className="border-white/15 text-slate-200">{orderStatusLabel(order.status, order.active)}</Badge></td><td>{new Date(order.createdAt).toLocaleDateString("de-DE")}</td></tr>)}</tbody></table></div> : <div className="p-7 text-center text-sm text-slate-500"><strong className="block text-slate-300">Keine Bestellungen</strong>Für diesen Käufer wurde noch keine Bestellung angelegt.</div>}</section>;
 }
 
 function SupplierTab({ data, onDone }: { data: Detail; onDone: () => void }) {

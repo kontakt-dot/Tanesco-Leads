@@ -146,8 +146,10 @@ describe("Tanesco Leads UX-Verträge", () => {
     expect(source).toContain("order.supplierText");
     expect(source).toContain("updateOrderStatus.useMutation");
     expect(source).toContain('<option value="aktiv">Aktiv</option>');
-    expect(source).toContain('<option value="offen">Offen</option>');
     expect(source).toContain('<option value="pausiert">Inaktiv</option>');
+    // seit v365 nur noch Aktiv/Inaktiv – „offen“ steht dort als Inaktiv
+    expect(source).not.toContain('<option value="offen">Offen</option>');
+    expect(source).toContain("orderStatusChoice(");
   });
 
   it("ordnet Kategorie-, Lead- und Benutzeraktionen klar ausgerichtet an", () => {

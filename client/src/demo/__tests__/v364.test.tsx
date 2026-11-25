@@ -9,7 +9,7 @@ import { callProcedure, getStore, resetStore } from "../backend";
 import { WATTFOX } from "../../../../shared/wattfox";
 
 /**
- * Version 364 – Wattfox geht live: „Live-Adresse einsetzen“ (Zugang leeren, neu eintippen) und „Anmeldung prüfen“ statt „Test senden“ –
+ * Version 364 – Wattfox geht live: „Live-Adresse einsetzen“ (seit v365 bleibt der Zugang dabei stehen) und „Anmeldung prüfen“ statt „Test senden“ –
  * prüft nur Adresse und Zugang, es geht kein Lead raus; Testleads nur noch für die Testumgebung.
  * Leads: Zeitraum „Letzter Monat“, „Erstellt zwischen …“ statt „Eigene Zeitspanne“.
  */
@@ -28,7 +28,7 @@ describe("Version 364", () => {
   beforeEach(() => { cleanup(); resetStore(); });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); resetStore(); });
 
-  it("Wattfox live: Live-Adresse einsetzen leert den Zugang; gespeichert heißt der Knopf „Anmeldung prüfen“ – kein Lead, keine Testleads", async () => {
+  it("Wattfox live: Live-Adresse einsetzen tauscht beide Adressen; gespeichert heißt der Knopf „Anmeldung prüfen“ – kein Lead, keine Testleads", async () => {
     const members = await callProcedure("leadops.listMembers", undefined) as Member[];
     const buyer = members.find((member) => member.status === "aktiv" && member.userId !== (getStore().tables.users as unknown as Array<{ id: number }>)[0].id && !(getStore().tables.deliveryEndpoints as unknown as Array<{ membershipId: number }>).some((row) => row.membershipId === member.membershipId)) ?? members[1];
     const view = mountIntegration(buyer.membershipId); await settle(1200);
@@ -39,11 +39,11 @@ describe("Version 364", () => {
     const values = () => Array.from(document.body.querySelectorAll<HTMLInputElement>(".fixed.inset-0 .ig-credential input[data-secret]"));
     await change(values()[0], "testfirma", 50); await change(values()[1], "geheim", 50);
     expect(editor.querySelector(".ig-wattfox-address")!.textContent).toContain("Testumgebung von Wattfox");
-    // auf Live umstellen: beide Adressen tauschen, der Zugang wird geleert (dort gilt ein anderer)
+    // auf Live umstellen: beide Adressen tauschen – Benutzername und Passwort bleiben stehen (seit v365)
     await click(editor.querySelector(".ig-wattfox-live"), 200);
     expect(editor.querySelector(".ig-wattfox-address")!.textContent).toContain("Live-System von Wattfox");
     expect(Array.from(editor.querySelectorAll<HTMLInputElement>("input")).map((input) => input.value)).toEqual(expect.arrayContaining([WATTFOX.liveLeadsUrl, WATTFOX.liveLoginUrl]));
-    expect(values().map((input) => input.value)).toEqual(["", ""]);
+    expect(values().map((input) => input.value)).toEqual(["testfirma", "geheim"]);
     expect(editor.querySelector(".ig-wattfox-live")!.textContent).toBe("Testumgebung einsetzen");
     await change(values()[0], "livefirma", 50); await change(values()[1], "livegeheim", 50);
     await click(byText(editor, "button", "Speichern"), 1000);

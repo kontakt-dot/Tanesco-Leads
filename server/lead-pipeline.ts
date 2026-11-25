@@ -336,7 +336,7 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
         deliveryId = Number(inserted[0]?.insertId) || 0;
         await tx.update(leads).set({ status: "zugewiesen", assignedAt: now }).where(eq(leads.id, lead.id));
         if (currentLead.status !== "zugewiesen") await tx.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: currentLead.status, nextStatus: "zugewiesen", actorUserId: input.actorUserId, note: `Auslieferung an ${stop.buyerName} (${target.chain.name}, Stop ${stop.position})` });
-        if (target.order) { const delivered = target.order.deliveredCount + 1; await tx.update(orders).set({ deliveredCount: delivered, status: delivered >= target.order.quantity ? "erfüllt" : target.order.status }).where(eq(orders.id, target.order.id)); }
+        if (target.order) { const delivered = target.order.deliveredCount + 1; await tx.update(orders).set({ deliveredCount: delivered, status: target.order.quantity && delivered >= target.order.quantity ? "erfüllt" : target.order.status }).where(eq(orders.id, target.order.id)); }
       });
       stopTotal.set(stop.id, (stopTotal.get(stop.id) ?? 0) + 1);
       // Opt-in: jede Zustellung ist eine „Verwendung“ der Einwilligung (Frist von 5 Jahren beginnt neu); fehlt für diesen Käufer eine Einwilligung, geht auf Wunsch die SMS-Bestätigung raus

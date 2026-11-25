@@ -376,3 +376,6 @@
 .operations-panel .table-wrap.wrap-cells table { min-width: 0; }
 .operations-panel .table-wrap.wrap-cells td { white-space: normal; vertical-align: top; }
 .operations-panel .table-wrap.wrap-cells th { white-space: normal; }
+
+/* Bestellung (v365): Hinweis unter einem Feld, z. B. „Leer = unbegrenzt“ */
+.order-form-hint { color: #9a98b8; font-size: 10.5px; font-weight: 500; line-height: 1.4; }

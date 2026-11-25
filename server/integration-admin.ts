@@ -10,6 +10,7 @@ import { ensureMemberSettings, requireMembership } from "./member-admin";
 import { verifyPassword } from "./_core/auth";
 import { SAVED_SECRET, isPlainCredential } from "../shared/credentials";
 import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../shared/wattfox";
+import { gluedAddressError, hasGluedAddress } from "../shared/endpoint-url";
 import { PLACEHOLDERS, buildEndpointBody, checkEndpointLogin, decryptAuth, decryptHeaders, encryptJson, forgetEndpointToken, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
 
 export const SECRET_MASK = SAVED_SECRET;
@@ -100,6 +101,9 @@ export type EndpointInput = { id?: number; categoryId: number; enabled: boolean;
 
 export async function saveDeliveryEndpoint(db: Db, tenantId: number, membershipId: number, input: EndpointInput, options: { /** wer speichert – sein Passwort darf nicht in den Zugangsdaten stehen */ actorUserIds?: number[] } = {}) {
   await requireMembership(db, tenantId, membershipId);
+  // zwei zusammengeklebte Adressen (alte nicht gelöscht) – sähe gültig aus, liefe aber nur in Fehler
+  if (hasGluedAddress(input.url)) throw new Error(gluedAddressError("oben"));
+  if (input.auth && hasGluedAddress(input.auth.loginUrl)) throw new Error(gluedAddressError("anmeldung"));
   const existing = input.id ? (await db.select().from(deliveryEndpoints).where(and(eq(deliveryEndpoints.id, input.id), eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))).limit(1))[0] : undefined;
   if (input.id && !existing) throw new Error("Endpoint wurde nicht gefunden.");
   // Maskierte Zugangsdaten unverändert lassen

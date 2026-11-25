@@ -6554,4 +6554,70 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const test = await owner.leadops.testDeliveryEndpoint({ membershipId, id: endpoint.id });
     expect(test).toMatchObject({ ok: true, loginOnly: false }); expect(outbound.slice(start).some((call) => call.url === WATTFOX.leadsUrl)).toBe(true);
   }, 60000);
+
+  it("v365. Bestellung: Leadmenge leer = unbegrenzt (nie „erfüllt“, keine Mengen-Grenze); der Dialer ist ein echter Lieferant – Liste und Leads verknüpft, auch per Update", async () => {
+    const { readFileSync } = await import("node:fs"); const { sql: rawSql } = await import("drizzle-orm");
+    const { orders: ordersTable, orderOperationalConfigs: configsTable, suppliers: suppliersTable, rawBatches: batchesTable, rawContacts: rawTable } = await import("../drizzle/schema");
+    const { evaluateOrderEligibility } = await import("./order-eligibility");
+    const stamp = Date.now().toString(36);
+    // (a) neue Bestellung ohne Menge = unbegrenzt
+    const created = await owner.leadops.createOrder({ name: `V365 Unbegrenzt ${stamp}`, buyerName: "V365 Käufer", categoryId: S.wp.id, quantity: null, unitPrice: 30, status: "offen" });
+    const orderRow = async () => (await db.select().from(ordersTable).where(eq(ordersTable.id, created.orderId)))[0];
+    const configRow = async () => (await db.select().from(configsTable).where(eq(configsTable.orderId, created.orderId)))[0];
+    expect((await orderRow()).quantity).toBeNull(); expect((await configRow()).requestedQuantity).toBe(0);
+    const workspace = { orderId: created.orderId, name: `V365 Unbegrenzt ${stamp}`, buyerName: "V365 Käufer", buyerUserId: null, categoryId: S.wp.id, categoryIds: [S.wp.id], unitPrice: 30, supplierId: null, supplierMode: "alle" as const, supplierIds: [], deliveryInterval: "sofort" as const, compensateClaims: false, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit" as const, pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } };
+    // mit Zahl: Grenze gilt; wieder leer: unbegrenzt
+    await owner.leadops.saveOrderWorkspace({ ...workspace, quantity: 25 }); expect((await orderRow()).quantity).toBe(25); expect((await configRow()).requestedQuantity).toBe(25);
+    await owner.leadops.saveOrderWorkspace({ ...workspace, quantity: null }); expect((await orderRow()).quantity).toBeNull(); expect((await configRow()).requestedQuantity).toBe(0);
+    await expect(owner.leadops.saveOrderWorkspace({ ...workspace, quantity: 0 })).rejects.toThrow(); // 0 ist keine Menge – leer heißt unbegrenzt
+    const config = { ...(await configRow()), active: true };
+    expect(evaluateOrderEligibility(config as never, { supplierId: null, postcode: "10115", cost: 0 }, 100000)).toEqual({ eligible: true }); // keine Mengen-Grenze
+    expect(evaluateOrderEligibility({ ...config, requestedQuantity: 25 } as never, { supplierId: null, postcode: "10115", cost: 0 }, 25)).toMatchObject({ eligible: false, reason: "Bestellmenge erreicht (25/25)" });
+    // Suche zeigt sie (Menge leer)
+    const found = await owner.leadops.globalSearch({ query: `V365 Käufer`, limit: 5 }).catch(() => null);
+    if (found) expect((found.orders ?? []).some((row: { quantity: number | null }) => row.quantity === null)).toBe(true);
+    // (b) Dialer als Lieferant: eine Meldung vom Dialer verknüpft die Liste „Kontakte vom Dialer“ mit dem Lieferanten der Quelle
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: `v365-${stamp}`, phone: "+49 30 5550365", contact: { first_name: "Dora", last_name: `Dialer${stamp}`, postcode: "10115", city: "Berlin" } }) });
+    const batch = (await db.select().from(batchesTable).where(eq(batchesTable.tenantId, S.tenantId))).find((row) => (row.mapping as { auto?: string } | null)?.auto === "dialer")!;
+    expect(batch.supplierId).toBeTruthy();
+    const supplier = (await db.select().from(suppliersTable).where(eq(suppliersTable.id, batch.supplierId!)))[0];
+    expect(supplier.name.toLowerCase()).toBe(String(batch.sourceName).toLowerCase()); expect(supplier.userId).toBeNull();
+    expect((await owner.leadops.listSuppliers()).some((row) => row.id === supplier.id)).toBe(true); // wählbar in Bestellungen und Lieferketten
+    // schon übernommene Leads der Liste hängen am Lieferanten
+    const convertedLeads = (await db.select({ leadId: rawTable.leadId }).from(rawTable).where(eq(rawTable.batchId, batch.id))).map((row) => row.leadId).filter((id): id is number => Boolean(id));
+    if (convertedLeads.length) expect((await db.select().from(leads).where(inArray(leads.id, convertedLeads))).every((row) => row.supplierId === supplier.id)).toBe(true);
+    // (c) Update (Migration 0121): eine Dialer-Liste ohne Lieferant (anderer Mandant-Stand simuliert) wird verknüpft, ihre Leads ebenso – ohne doppelten Lieferanten
+    await db.update(batchesTable).set({ supplierId: null }).where(eq(batchesTable.id, batch.id));
+    const lead = await db.insert(leads).values({ tenantId: S.tenantId, publicId: `V5D${stamp.slice(-6).toUpperCase()}`, categoryId: S.wp.id, kind: "verkauf", firstName: "Alt", lastName: `Dialerlead${stamp}`, email: `v365-${stamp}@example.de`, phone: "+49 30 5551365", postcode: "10115", city: "Berlin", country: "DE", status: "genehmigt", cost: "0.00", supplierId: null, supplierName: batch.sourceName, metadata: {} });
+    const leadId = Number(lead[0].insertId);
+    await db.insert(rawTable).values({ tenantId: S.tenantId, batchId: batch.id, categoryId: S.wp.id, firstName: "Alt", lastName: `Dialerlead${stamp}`, phone: "+49 30 5551365", status: "konvertiert", leadId } as never);
+    const suppliersBefore = (await db.select().from(suppliersTable).where(eq(suppliersTable.tenantId, S.tenantId))).length;
+    for (const statement of readFileSync("drizzle/0121_dialer_als_lieferant.sql", "utf8").split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) await db.execute(rawSql.raw(statement));
+    expect((await db.select().from(batchesTable).where(eq(batchesTable.id, batch.id)))[0].supplierId).toBe(supplier.id);
+    expect((await db.select().from(leads).where(eq(leads.id, leadId)))[0]).toMatchObject({ supplierId: supplier.id, supplierName: supplier.name });
+    expect((await db.select().from(suppliersTable).where(eq(suppliersTable.tenantId, S.tenantId))).length).toBe(suppliersBefore); // vorhandener Lieferant gleichen Namens wird genommen
+  }, 60000);
+
+  it("v365. Endpoint: zwei Adressen hintereinander (alte beim Einfügen nicht gelöscht) werden nicht gespeichert – oben und bei der Anmeldung; Adresse in Parametern bleibt erlaubt", async () => {
+    const { WATTFOX, WATTFOX_TEMPLATE } = await import("../shared/wattfox");
+    const { deliveryEndpoints } = await import("../drizzle/schema");
+    const stamp = Date.now().toString(36);
+    const created = await owner.leadops.createMember({ firstName: "Gero", lastName: "Doppelt", company: "V365 Käufer GmbH", email: `v365-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const membershipId = created.membershipId;
+    const auth = (loginUrl: string) => ({ loginUrl, credentials: [{ name: "user", value: "beispielfirma" }, { name: "pass", value: "beispiel-geheim" }], tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes });
+    const config = { membershipId, categoryId: S.wp.id, enabled: true, method: "POST" as const, url: WATTFOX.leadsUrl, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: true, auth: auth(WATTFOX.loginUrl), bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, rotate: false, valueMappings: [] };
+    const endpoint = await owner.leadops.saveDeliveryEndpoint(config);
+    const stored = async () => (await db.select().from(deliveryEndpoints).where(eq(deliveryEndpoints.id, endpoint.id)))[0];
+    // oben: Test-Adresse und direkt dahinter die Live-Adresse
+    await expect(owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, url: `${WATTFOX.leadsUrl}${WATTFOX.liveLeadsUrl}` })).rejects.toThrow("In der Adresse oben (neben „POST“) stehen zwei Adressen hintereinander – bitte alles im Feld löschen und nur die eine Adresse einfügen. Gespeichert wurde nichts.");
+    await expect(owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, url: WATTFOX.liveLeadsUrl, auth: auth(`${WATTFOX.loginUrl} ${WATTFOX.liveLoginUrl}`) })).rejects.toThrow("In der Anmelde-Adresse stehen zwei Adressen hintereinander");
+    expect((await stored()).url).toBe(WATTFOX.leadsUrl); // nichts gespeichert
+    // eine Adresse in den Parametern ist keine doppelte Adresse
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, url: "https://partner-crm.example/hook?weiter=https://partner-crm.example/danke" });
+    expect((await stored()).url).toBe("https://partner-crm.example/hook?weiter=https://partner-crm.example/danke");
+    // richtig umgestellt: beide Live-Adressen, Zugang bleibt
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, url: WATTFOX.liveLeadsUrl, auth: auth(WATTFOX.liveLoginUrl) });
+    expect((await stored()).url).toBe(WATTFOX.liveLeadsUrl);
+  }, 60000);
 });

@@ -29,7 +29,7 @@ import { readPath } from "./outbound-templates";
 import { describeShape, fieldNames, looseItems, looseStrings, readAnswers, readCriteriaScores } from "./llm-shape";
 
 export type Criterion = { key: string; label: string; weight: number; description: string };
-import { callQaCampaigns, categoryFieldMappings, categoryFields } from "../drizzle/schema";
+import { callQaCampaigns, categoryFieldMappings, categoryFields, suppliers } from "../drizzle/schema";
 import { dialerFieldMatches, type LeadFieldDef } from "../shared/lead-fields";
 import { CALL_QA_PRESETS, presetByKey } from "../shared/call-qa-presets";
 import { callPeriodRange, type CallPeriod } from "../shared/call-period";
@@ -252,13 +252,31 @@ async function findDialerTarget(db: Db, tenantId: number, leadRef: string, phone
 const DIALER_BATCH_MARK = "dialer";
 const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const isDialerBatch = (batch: { mapping: unknown }) => plainObject(batch.mapping) && batch.mapping.auto === DIALER_BATCH_MARK;
-/** Die Liste, in der Kontakte aus Meldungen des Dialers landen – wird beim ersten Kontakt angelegt (alle Kategorien erlaubt). */
+/**
+ * Der Dialer als Lieferant (seit v365): Leads aus der Liste „Kontakte vom Dialer“ bekommen den Lieferanten „OnDialer“ (bzw. „Dialer“) –
+ * nicht nur als Namen, sondern als echten Lieferanten. So lässt er sich in Bestellungen und Lieferketten auswählen.
+ * Gibt es einen Lieferanten mit diesem Namen schon, wird er genommen; sonst angelegt (ohne Benutzerkonto). Bereits übernommene Leads der Liste werden mit verknüpft.
+ */
+async function ensureDialerSupplier(db: Db, batch: typeof rawBatches.$inferSelect): Promise<typeof rawBatches.$inferSelect> {
+  if (batch.supplierId) return batch;
+  const name = (batch.sourceName || "Dialer").trim().slice(0, 160);
+  const all = await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).where(eq(suppliers.tenantId, batch.tenantId));
+  let supplier = all.find((row) => row.name.trim().toLowerCase() === name.toLowerCase());
+  if (!supplier) { const inserted = await db.insert(suppliers).values({ tenantId: batch.tenantId, name, email: null, userId: null, status: "aktiv" }); supplier = { id: Number(inserted[0]?.insertId) || 0, name }; }
+  if (!supplier.id) return batch;
+  await db.update(rawBatches).set({ supplierId: supplier.id }).where(eq(rawBatches.id, batch.id));
+  const converted = (await db.select({ leadId: rawContacts.leadId }).from(rawContacts).where(and(eq(rawContacts.batchId, batch.id), isNotNull(rawContacts.leadId)))).map((row) => row.leadId!).filter(Boolean);
+  for (let index = 0; index < converted.length; index += 500) await db.update(leads).set({ supplierId: supplier.id, supplierName: supplier.name }).where(and(eq(leads.tenantId, batch.tenantId), isNull(leads.supplierId), inArray(leads.id, converted.slice(index, index + 500))));
+  return { ...batch, supplierId: supplier.id };
+}
+/** Die Liste, in der Kontakte aus Meldungen des Dialers landen – wird beim ersten Kontakt angelegt (alle Kategorien erlaubt), mit dem Dialer als Lieferant. */
 async function ensureDialerBatch(db: Db, config: Pick<CallQaConfig, "tenantId" | "provider">) {
-  const existing = (await db.select().from(rawBatches).where(eq(rawBatches.tenantId, config.tenantId))).find(isDialerBatch); if (existing) return existing;
+  const existing = (await db.select().from(rawBatches).where(eq(rawBatches.tenantId, config.tenantId))).find(isDialerBatch); if (existing) return ensureDialerSupplier(db, existing);
   const categories = await db.select({ id: leadCategories.id }).from(leadCategories).where(eq(leadCategories.tenantId, config.tenantId)).orderBy(asc(leadCategories.id));
   if (!categories.length) return null; // ohne Kategorie kann kein Lead entstehen
   const inserted = await db.insert(rawBatches).values({ tenantId: config.tenantId, name: "Kontakte vom Dialer", categoryId: categories[0].id, categoryIds: categories.map((item) => item.id), sourceName: config.provider === "ondialer" ? "OnDialer" : "Dialer", mapping: { auto: DIALER_BATCH_MARK }, rowCount: 0, createdByUserId: null });
-  return (await db.select().from(rawBatches).where(eq(rawBatches.id, Number(inserted[0]?.insertId) || 0)).limit(1))[0] ?? null;
+  const created = (await db.select().from(rawBatches).where(eq(rawBatches.id, Number(inserted[0]?.insertId) || 0)).limit(1))[0];
+  return created ? ensureDialerSupplier(db, created) : null;
 }
 async function allowBatchCategory(db: Db, batch: { id: number; categoryId: number; categoryIds: unknown }, categoryId: number) {
   const ids = batchCategoryIds(batch); if (!ids.includes(categoryId)) await db.update(rawBatches).set({ categoryIds: [...ids, categoryId] }).where(eq(rawBatches.id, batch.id));
