@@ -21,6 +21,12 @@ export const WATTFOX = {
   leadsUrl: "https://prelive.wattfox.net/v1/leads",
   tokenPath: "auth_token",
   tokenHeader: "X-AUTH-TOKEN",
+  /**
+   * Live-System laut Beschreibung von Wattfox (PDF „Lead API“, Stand März 2024). Wattfox hat am 25.11.2026 das Senden an die Live-API freigegeben,
+   * die Adresse aber nicht eigens genannt – „Anmeldung prüfen“ zeigt, ob Adresse und Live-Zugang stimmen (ohne einen Lead zu senden).
+   */
+  liveLoginUrl: "https://api-v1.photovoltaik-angebotsvergleich.de/v1/login",
+  liveLeadsUrl: "https://api-v1.photovoltaik-angebotsvergleich.de/v1/leads",
   /** Der Schlüssel gilt 24 Stunden – kurz vorher neu anmelden */
   tokenMinutes: 1380,
   products: { pv: 2, heating: 20 },

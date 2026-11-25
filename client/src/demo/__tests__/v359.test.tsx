@@ -41,7 +41,7 @@ describe("Version 359", () => {
 
   it("Zeitraum: Gestern, Erstellt ab …, Erstellt vor … – die Tabelle zeigt genau diese Leads", async () => {
     const root = await open("page=Leads"); const all = salesLeads();
-    expect(Array.from(period(root).options).map((option) => option.textContent)).toEqual(["Gesamter Zeitraum", "Heute", "Gestern", "Diese Woche", "Letzte Woche", "Letzte 2 Wochen", "Dieser Monat", "Eigene Zeitspanne", "Erstellt ab …", "Erstellt vor …"]);
+    expect(Array.from(period(root).options).map((option) => option.textContent)).toEqual(["Gesamter Zeitraum", "Heute", "Gestern", "Diese Woche", "Letzte Woche", "Letzte 2 Wochen", "Dieser Monat", "Letzter Monat", "Erstellt zwischen …", "Erstellt ab …", "Erstellt vor …"]); // seit v364: „Letzter Monat“, „Erstellt zwischen …“ statt „Eigene Zeitspanne“
     // Gestern
     const yesterday = localDay(dashboardRange("yesterday", "", "").from);
     await change(period(root), "yesterday"); expect(found(root)).toBe(all.filter((lead) => localDay(lead.createdAt) === yesterday).length);

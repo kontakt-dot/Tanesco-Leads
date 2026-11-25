@@ -10,7 +10,7 @@ import { ensureMemberSettings, requireMembership } from "./member-admin";
 import { verifyPassword } from "./_core/auth";
 import { SAVED_SECRET, isPlainCredential } from "../shared/credentials";
 import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../shared/wattfox";
-import { PLACEHOLDERS, buildEndpointBody, decryptAuth, decryptHeaders, encryptJson, forgetEndpointToken, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
+import { PLACEHOLDERS, buildEndpointBody, checkEndpointLogin, decryptAuth, decryptHeaders, encryptJson, forgetEndpointToken, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
 
 export const SECRET_MASK = SAVED_SECRET;
 
@@ -134,6 +134,11 @@ export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipI
   const endpoint = (await db.select().from(deliveryEndpoints).where(and(eq(deliveryEndpoints.id, id), eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))).limit(1))[0];
   if (!endpoint) throw new Error("Endpoint wurde nicht gefunden.");
   if (endpoint.authEnabled) await assertNoOwnPassword(db, actorUserIds, decryptAuth(endpoint.authConfigEncrypted)?.credentials ?? [], "senden");
+  if (isWattfoxTemplate(endpoint.bodyTemplate) && !isTestAddress(endpoint.url)) {
+    // Live-System von Wattfox: nur die Anmeldung prüfen – ein erfundener Lead hätte dort nichts zu suchen (die Callagents würden ihn anrufen)
+    const login = await checkEndpointLogin(endpoint, { fetchImpl });
+    return { ok: login.ok, status: login.status, loginOnly: true, requestBody: "", responseBody: login.ok ? "Anmeldung im Live-System von Wattfox klappt – Adresse und Zugang stimmen. Es wurde kein Lead gesendet." : `${login.error ?? "Anmeldung fehlgeschlagen"} – Anmelde-Adresse, Benutzername und Passwort prüfen. Es wurde kein Lead gesendet.` };
+  }
   const category = (await db.select({ name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.id, endpoint.categoryId)).limit(1))[0];
   const fields = await db.select({ fieldKey: categoryFields.fieldKey, options: categoryFields.options }).from(categoryFields).where(eq(categoryFields.categoryId, endpoint.categoryId));
   const metadata: Record<string, unknown> = { salutation: "Herr", street: "Musterstraße 12", test: true };
@@ -141,7 +146,7 @@ export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipI
   const values = leadTemplateValues({ id: 0, publicId: `TEST-${nanoid(6).toUpperCase()}`, firstName: "Test", lastName: "Lead", email: "test@example.com", phone: "+49 30 0000000", postcode: "10115", city: "Berlin", country: "DE", metadata, createdAt: new Date() }, category, { test: true });
   const preview = buildEndpointBody(endpoint, values);
   const result = await sendToEndpoint(endpoint, values, { fetchImpl });
-  return { ok: result.ok, status: result.status ?? 0, responseBody: result.error ?? result.body.slice(0, 1500), requestBody: preview.body };
+  return { ok: result.ok, status: result.status ?? 0, loginOnly: false, responseBody: result.error ?? result.body.slice(0, 1500), requestBody: preview.body };
 }
 
 /**

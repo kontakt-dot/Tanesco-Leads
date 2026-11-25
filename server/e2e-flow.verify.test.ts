@@ -6526,4 +6526,32 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const notes = async (id: number) => (await db.select().from(eventsTable).where(eq(eventsTable.leadId, id))).map((row) => row.note);
     expect(await notes(german)).toContain("PLZ: „9633“ → „09633“ – die führende Null fehlte (Dialer oder Excel-Liste) und wurde ergänzt"); expect(await notes(austrian)).toEqual([]); expect(await notes(fine)).toEqual([]);
   }, 60000);
+
+  it("v364. Wattfox live: „Test senden“ prüft im Live-System nur die Anmeldung – es geht kein Lead raus; Testleads nur für die Testumgebung", async () => {
+    const { WATTFOX, WATTFOX_TEMPLATE } = await import("../shared/wattfox");
+    const stamp = Date.now().toString(36);
+    const created = await owner.leadops.createMember({ firstName: "Lia", lastName: "Live", company: "V364 Käufer GmbH", email: `v364-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const membershipId = created.membershipId;
+    const auth = (user: string) => ({ loginUrl: WATTFOX.liveLoginUrl, credentials: [{ name: "user", value: user }, { name: "pass", value: "live-geheim" }], tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes });
+    const config = { membershipId, categoryId: S.pv.id, enabled: true, method: "POST" as const, url: WATTFOX.liveLeadsUrl, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: true, auth: auth("livefirma"), bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, rotate: false, valueMappings: [] };
+    const endpoint = await owner.leadops.saveDeliveryEndpoint(config);
+    // (a) Zugang stimmt: nur die Anmeldung an die Live-Adresse – kein Lead
+    let start = outbound.length;
+    const ok = await owner.leadops.testDeliveryEndpoint({ membershipId, id: endpoint.id });
+    expect(ok).toMatchObject({ ok: true, status: 200, loginOnly: true, requestBody: "", responseBody: "Anmeldung im Live-System von Wattfox klappt – Adresse und Zugang stimmen. Es wurde kein Lead gesendet." });
+    expect(outbound.slice(start).map((call) => call.url)).toEqual([WATTFOX.liveLoginUrl]);
+    // (b) falscher Zugang: klarer Grund, ebenfalls kein Lead
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth("falsch-v362") });
+    start = outbound.length;
+    const wrong = await owner.leadops.testDeliveryEndpoint({ membershipId, id: endpoint.id });
+    expect(wrong).toMatchObject({ ok: false, status: 401, loginOnly: true, responseBody: "Anmeldung beim Partner fehlgeschlagen (HTTP 401) – Anmelde-Adresse, Benutzername und Passwort prüfen. Es wurde kein Lead gesendet." });
+    expect(outbound.slice(start).every((call) => call.url === WATTFOX.liveLoginUrl)).toBe(true);
+    // (c) Testleads gehen nie ins Live-System (ohne ausdrückliches allowLive)
+    await expect(owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).rejects.toThrow("Die Adresse sieht nach dem Live-System aus. Testleads gehen nur an die Testumgebung von Wattfox.");
+    // (d) Testumgebung: „Test senden“ schickt wie bisher einen Testlead
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, url: WATTFOX.leadsUrl, auth: { ...auth("testfirma"), loginUrl: WATTFOX.loginUrl } });
+    start = outbound.length;
+    const test = await owner.leadops.testDeliveryEndpoint({ membershipId, id: endpoint.id });
+    expect(test).toMatchObject({ ok: true, loginOnly: false }); expect(outbound.slice(start).some((call) => call.url === WATTFOX.leadsUrl)).toBe(true);
+  }, 60000);
 });

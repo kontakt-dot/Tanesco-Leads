@@ -36,6 +36,20 @@ async function obtainToken(endpoint: DeliveryEndpoint, auth: AuthConfig, fetchIm
   return token;
 }
 
+/**
+ * Nur anmelden, nichts senden: Stimmen Anmelde-Adresse und Zugang? Für Live-Systeme (Wattfox) – dort soll kein erfundener Testlead landen.
+ * Der Token wird wie sonst zwischengespeichert.
+ */
+export async function checkEndpointLogin(endpoint: DeliveryEndpoint, options: { fetchImpl?: typeof fetch } = {}): Promise<{ ok: boolean; status: number; error?: string }> {
+  const auth = endpoint.authEnabled ? decryptAuth(endpoint.authConfigEncrypted) : null;
+  if (!auth?.loginUrl) return { ok: false, status: 0, error: "Für diesen Endpoint ist keine Anmeldung eingerichtet" };
+  try { await obtainToken(endpoint, auth, options.fetchImpl ?? fetch, true); return { ok: true, status: 200 }; }
+  catch (error) {
+    const message = error instanceof Error ? error.message : String(error); const status = Number(/HTTP (\d{3})/.exec(message)?.[1] ?? 0);
+    return { ok: false, status, error: status || /Token/.test(message) ? message : `Die Anmelde-Adresse ist nicht erreichbar (${message})` };
+  }
+}
+
 export function decryptHeaders(encrypted: string | null): HeaderPair[] { if (!encrypted) return []; try { const parsed = JSON.parse(decryptIntegrationSecret(encrypted)); return Array.isArray(parsed) ? parsed : []; } catch { return []; } }
 export function decryptAuth(encrypted: string | null): AuthConfig | null { if (!encrypted) return null; try { return JSON.parse(decryptIntegrationSecret(encrypted)) as AuthConfig; } catch { return null; } }
 export const encryptJson = (value: unknown) => encryptIntegrationSecret(JSON.stringify(value));

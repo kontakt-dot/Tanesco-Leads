@@ -21,6 +21,14 @@ describe("dashboard Zeitraumlogik", () => {
     expect(monday.from.toISOString()).toBe("2026-08-31T00:00:00.000Z");
   });
 
+  it("Letzter Monat: der ganze Vormonat (v364)", () => {
+    const range = dashboardRange("last_month", "", "", now);
+    expect(range.from.toISOString()).toBe("2026-07-01T00:00:00.000Z"); expect(range.until.toISOString()).toBe("2026-07-31T23:59:59.999Z"); expect(range.label).toBe("Letzter Monat"); expect(range.valid).toBe(true);
+    const january = dashboardRange("last_month", "", "", new Date("2027-01-10T08:00:00.000Z")); // über den Jahreswechsel
+    expect(january.from.toISOString()).toBe("2026-12-01T00:00:00.000Z"); expect(january.until.toISOString()).toBe("2026-12-31T23:59:59.999Z");
+    expect(dashboardRange("last_month", "", "", new Date("2026-03-05T08:00:00.000Z")).until.toISOString()).toBe("2026-02-28T23:59:59.999Z"); // Februar
+  });
+
   it("validiert eigene Zeitspannen und bildet den unmittelbar vorherigen Zeitraum", () => {
     const range = dashboardRange("custom", "2026-08-10", "2026-08-12", now);
     expect(range.valid).toBe(true);

@@ -1,4 +1,4 @@
-export type DashboardPeriod = "today" | "yesterday" | "week" | "month" | "last_week" | "last_two_weeks" | "all" | "custom";
+export type DashboardPeriod = "today" | "yesterday" | "week" | "month" | "last_month" | "last_week" | "last_two_weeks" | "all" | "custom";
 
 export type DashboardRange = {
   from: Date;
@@ -62,6 +62,7 @@ export function dashboardRange(period: DashboardPeriod, customFrom: string, cust
   if (period === "yesterday") { const from = atStartOfDay(now); from.setDate(from.getDate() - 1); return { from, until: atEndOfDay(from), label: "Gestern", valid: true }; }
   if (period === "week") { const from = atStartOfDay(now); from.setDate(from.getDate() - ((from.getDay() + 6) % 7)); return { from, until: now, label: "Diese Woche", valid: true }; }
   if (period === "month") { const from = atStartOfDay(now); from.setDate(1); return { from, until: now, label: "Dieser Monat", valid: true }; }
+  if (period === "last_month") { const from = new Date(now.getFullYear(), now.getMonth() - 1, 1); const until = atEndOfDay(new Date(now.getFullYear(), now.getMonth(), 0)); return { from, until, label: "Letzter Monat", valid: true }; } // der ganze Vormonat
   if (period === "last_week") { const until = atStartOfDay(now); until.setDate(until.getDate() - ((until.getDay() + 6) % 7) - 1); const from = atStartOfDay(until); from.setDate(from.getDate() - 6); return { from, until: atEndOfDay(until), label: "Letzte Woche", valid: true }; }
   if (period === "last_two_weeks") { const until = atStartOfDay(now); until.setDate(until.getDate() - ((until.getDay() + 6) % 7) - 1); const from = atStartOfDay(until); from.setDate(from.getDate() - 13); return { from, until: atEndOfDay(until), label: "Letzte 2 Wochen", valid: true }; }
   if (period === "all") return { from: new Date(0), until: now, label: "Gesamte Zeitspanne", valid: true };

@@ -202,3 +202,22 @@ describe("Stromverbrauch als Zahl (v362)", () => {
     }
   });
 });
+
+describe("Live-System von Wattfox: nur anmelden, kein Lead (v364)", () => {
+  beforeAll(() => { process.env.JWT_SECRET = process.env.JWT_SECRET || "wattfox-test-secret"; });
+
+  it("Live-Adresse laut Beschreibung; checkEndpointLogin meldet sich nur an – klappt, 401 oder nicht erreichbar", async () => {
+    expect(WATTFOX.liveLoginUrl).toBe("https://api-v1.photovoltaik-angebotsvergleich.de/v1/login"); expect(WATTFOX.liveLeadsUrl).toBe("https://api-v1.photovoltaik-angebotsvergleich.de/v1/leads");
+    expect(isTestAddress(WATTFOX.liveLeadsUrl)).toBe(false); expect(isTestAddress(WATTFOX.leadsUrl)).toBe(true);
+    const { encryptJson, checkEndpointLogin } = await import("./outbound-endpoints");
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init: { body: string }) => { calls.push(url); const user = JSON.parse(init.body).user; if (user === "netzfehler") throw new Error("getaddrinfo ENOTFOUND"); return user === "livefirma" ? new Response(JSON.stringify({ auth_token: "live-1" }), { status: 200 }) : new Response("{}", { status: 401 }); }) as unknown as typeof fetch;
+    const endpoint = (user: string) => ({ id: 99100 + user.length, url: WATTFOX.liveLeadsUrl, method: "POST", headersEncrypted: null, authEnabled: true, authConfigEncrypted: encryptJson({ loginUrl: WATTFOX.liveLoginUrl, credentials: [{ name: "user", value: user }, { name: "pass", value: "x" }], tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes }), bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, valueMappings: [] }) as never;
+    expect(await checkEndpointLogin(endpoint("livefirma"), { fetchImpl })).toEqual({ ok: true, status: 200 });
+    expect(await checkEndpointLogin(endpoint("falsch"), { fetchImpl })).toEqual({ ok: false, status: 401, error: "Anmeldung beim Partner fehlgeschlagen (HTTP 401)" });
+    expect(await checkEndpointLogin(endpoint("netzfehler"), { fetchImpl })).toMatchObject({ ok: false, status: 0, error: expect.stringContaining("Die Anmelde-Adresse ist nicht erreichbar") });
+    expect(calls.every((url) => url === WATTFOX.liveLoginUrl)).toBe(true); // nur die Anmeldung – nie ein Lead
+    expect(await checkEndpointLogin({ ...(endpoint("livefirma") as object), authEnabled: false } as never, { fetchImpl })).toMatchObject({ ok: false, error: "Für diesen Endpoint ist keine Anmeldung eingerichtet" });
+  });
+});
+
