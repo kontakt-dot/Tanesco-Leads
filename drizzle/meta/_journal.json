@@ -827,6 +827,13 @@
       "when": 1796300000000,
       "tag": "0117_kampagnen_vom_dialer",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "5",
+      "when": 1796400000000,
+      "tag": "0118_wattfox_utm_campaign",
+      "breakpoints": true
     }
   ]
 }

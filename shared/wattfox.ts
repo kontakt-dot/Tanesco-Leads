@@ -6,7 +6,8 @@
  *    (otherinterests mit dessen productId; ist die Wärmepumpe dabei, immer auch childinterests [6]).
  *  - Pflicht laut Wattfox: Anrede (bei PV), Vor- und Nachname, Straße, PLZ, Ort, Telefon, E-Mail – dazu immer der Umsetzungszeitraum.
  *  - Herkunft (utm_…) steht in der Vorlage des Endpoints; utm_source und utm_medium dürfen nicht geändert werden.
- *    utm_campaign nennt Wattfox (der Wert der früheren Anbindung gilt nicht mehr) – leer wird es gar nicht mitgeschickt.
+ *    utm_campaign laut Wattfox (Mail vom 25.11.2026): „Hauskompass, Meta vorqualifiziert“ – zeigt den Callagents von Wattfox, unter welcher
+ *    Marke der Kunde gewonnen wurde; nur nach Rücksprache mit Wattfox ändern (andere Marke = anderer Wert). Leer wird es gar nicht mitgeschickt.
  *  - Unsere Angaben werden in die Werte von Wattfox übersetzt. Was nicht genau passt (Dachalter, beheizte Fläche …),
  *    geht mit dem nächstliegenden Wert raus – der genaue Wert steht zusätzlich im Hinweisfeld (notes).
  *
@@ -24,8 +25,8 @@ export const WATTFOX = {
   tokenMinutes: 1380,
   products: { pv: 2, heating: 20 },
   heatPumpChild: 6,
-  /** utm_campaign: den Wert einträgt der Mandant, sobald Wattfox ihn nennt */
-  utm: { utm_source: "Tanesco Digital GbR", utm_medium: "affiliate", utm_campaign: "" },
+  /** Herkunft laut Wattfox – utm_source und utm_medium nie ändern, utm_campaign nur nach Rücksprache (Marke, unter der der Kunde gewonnen wurde) */
+  utm: { utm_source: "Tanesco Digital GbR", utm_medium: "affiliate", utm_campaign: "Hauskompass, Meta vorqualifiziert" },
 } as const;
 
 /** Inhalt des Feldes „Body“ für die Wattfox-Vorlage: Die Felder baut die Software selbst, hier stehen nur Herkunft und eigene Zusätze. */

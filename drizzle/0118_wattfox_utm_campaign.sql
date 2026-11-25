@@ -1,0 +1,1 @@
+UPDATE `deliveryEndpoints` SET `bodyTemplate` = REPLACE(`bodyTemplate`, '"utm_campaign": ""', '"utm_campaign": "Hauskompass, Meta vorqualifiziert"') WHERE `bodyTemplate` LIKE '%"vorlage"%' AND `bodyTemplate` LIKE '%wattfox%' AND `bodyTemplate` LIKE '%"utm_campaign": ""%';

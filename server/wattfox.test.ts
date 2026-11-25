@@ -91,7 +91,9 @@ describe("Wattfox-Vorlage im Body der Lieferadresse", () => {
     const payload = JSON.parse(built.body);
     expect(payload).toMatchObject({ productId: 2, salutation: "Frau", firstname: "Laura", street: "Probeweg 9", zip: "79115", implementation: "1 bis 3 Monate", utm_source: "Tanesco Digital GbR", utm_medium: "affiliate" });
     expect(payload.utm_source).toBe("Tanesco Digital GbR"); // nicht die Herkunft des Leads (facebook)
-    expect(payload.utm_campaign).toBeUndefined(); // den Wert nennt Wattfox – leer geht er gar nicht mit (der Wert der früheren Anbindung gilt nicht mehr), und nie der des Leads („Herbst“)
+    expect(payload.utm_campaign).toBe("Hauskompass, Meta vorqualifiziert"); // Wert laut Wattfox (Marke für die Callagents) – nie der des Leads („Herbst“)
+    const blank = JSON.parse(buildEndpointBody({ ...endpoint, bodyTemplate: JSON.stringify({ vorlage: "wattfox", ...WATTFOX.utm, utm_campaign: "" }) }, leadTemplateValues(lead, { name: "Photovoltaik", shortcode: "PV" })).body);
+    expect(blank.utm_campaign).toBeUndefined(); // leer geht es gar nicht mit
     expect(WATTFOX_TEMPLATE).not.toContain("Hyper");
     expect(payload.lead_id).toBeUndefined(); expect(payload.lead_number).toBeUndefined(); expect(payload.vorlage).toBeUndefined();
   });

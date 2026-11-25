@@ -6149,8 +6149,8 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(calls.map((call) => call.body.productId)).toEqual([2, 2, 2, 20, 20, 20, 2, 2, 20]);
     expect(calls.map((call) => call.body.otherinterests ?? null)).toEqual([null, null, null, null, null, null, [20], [20], [2]]);
     expect(calls.map((call) => call.body.childinterests ?? null)).toEqual([null, null, null, [6], [6], [6], [6], [6], [6]]);
-    // Herkunft: utm_source und utm_medium fest; utm_campaign nennt Wattfox – solange es leer ist, geht es gar nicht mit (der Wert der früheren Anbindung gilt nicht mehr)
-    expect([...few, ...calls].every((call) => call.body.utm_source === "Tanesco Digital GbR" && call.body.utm_medium === "affiliate" && call.body.utm_campaign === undefined)).toBe(true);
+    // Herkunft: utm_source und utm_medium fest; utm_campaign laut Wattfox „Hauskompass, Meta vorqualifiziert“ (seit Version 360 in der Vorlage)
+    expect([...few, ...calls].every((call) => call.body.utm_source === "Tanesco Digital GbR" && call.body.utm_medium === "affiliate" && call.body.utm_campaign === "Hauskompass, Meta vorqualifiziert")).toBe(true);
     expect([...few, ...calls].every((call) => call.body.lead_id === undefined && call.body.vorlage === undefined && String(call.body.notes).startsWith("TESTLEAD"))).toBe(true);
     // Testleads zählen nicht als Zustellung
     expect((await db.select().from(integrationEvents).where(eq(integrationEvents.endpointId, endpoint.id))).length).toBe(0);
@@ -6406,4 +6406,22 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await owner.leadops.setCallQaDefaultCampaign({ campaign: savedDefault });
     }
   }, 120000);
+
+  it("v360. Wattfox: utm_campaign laut Wattfox in der Vorlage – gespeicherte Wattfox-Lieferadressen mit leerem Wert bekommen ihn, andere bleiben, wie sie sind", async () => {
+    const { deliveryEndpoints: endpointsTable } = await import("../drizzle/schema"); const { WATTFOX_TEMPLATE } = await import("../shared/wattfox");
+    const { readFileSync } = await import("node:fs"); const { sql: rawSql } = await import("drizzle-orm");
+    expect(JSON.parse(WATTFOX_TEMPLATE)).toMatchObject({ vorlage: "wattfox", utm_source: "Tanesco Digital GbR", utm_medium: "affiliate", utm_campaign: "Hauskompass, Meta vorqualifiziert" });
+    const stamp = Date.now().toString(36);
+    const categoryId = (await owner.leadops.createCategory({ shortcode: `V360${stamp}`.slice(0, 16).toUpperCase(), name: `V360 Wattfox ${stamp}`, defaultLeadPrice: "10.00" })).id!;
+    const created = await owner.leadops.createMember({ firstName: "Wim", lastName: "Fox", company: "V360 Käufer GmbH", email: `v360-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const base = { membershipId: created.membershipId, categoryId, enabled: true, method: "POST" as const, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, omitAutoFields: false, rotate: false, valueMappings: [] };
+    const oldWattfox = JSON.stringify({ vorlage: "wattfox", utm_source: "Tanesco Digital GbR", utm_medium: "affiliate", utm_campaign: "" }, null, 2); // so stand es seit Version 357 in der Vorlage
+    const other = JSON.stringify({ first_name: "{{first_name}}", utm_campaign: "" }, null, 2); // keine Wattfox-Vorlage
+    await owner.leadops.saveDeliveryEndpoint({ ...base, url: "https://prelive.wattfox.net/v1/leads", bodyTemplate: oldWattfox });
+    await owner.leadops.saveDeliveryEndpoint({ ...base, url: "https://v360-anderer.example/leads", bodyTemplate: other });
+    for (const statement of readFileSync("drizzle/0118_wattfox_utm_campaign.sql", "utf8").split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) await db.execute(rawSql.raw(statement));
+    const rows = await db.select().from(endpointsTable).where(eq(endpointsTable.membershipId, created.membershipId));
+    expect(JSON.parse(rows.find((row) => row.url.includes("wattfox"))!.bodyTemplate!)).toMatchObject({ vorlage: "wattfox", utm_campaign: "Hauskompass, Meta vorqualifiziert" });
+    expect(rows.find((row) => row.url.includes("anderer"))!.bodyTemplate).toBe(other);
+  }, 60000);
 });
