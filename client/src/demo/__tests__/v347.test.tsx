@@ -111,7 +111,9 @@ describe("Version 347", () => {
     expect(root.querySelector("h1")!.textContent).toBe("Herr Lindner");
     const cards = () => Array.from(root.querySelectorAll<HTMLElement>(".lead-page-card")); const card = (title: string) => cards().find((item) => item.querySelector("header span")?.textContent?.trim() === title)!;
     const pairs = (node: HTMLElement) => Object.fromEntries(Array.from(node.querySelectorAll(".lead-kv > div")).map((item) => [item.querySelector("dt")!.textContent, item.querySelector("dd")!.textContent]));
-    expect(pairs(card("Kontakt"))).toMatchObject({ Name: "Herr Lindner", Adresse: "Rings-Lebener-Straße 116798 Fürstenberg/Havel · DE", "Lead-Kategorie": "Photovoltaik (PV)" }); expect(pairs(card("Kontakt"))).toHaveProperty("Geliefert");
+    expect(pairs(card("Kontakt"))).toMatchObject({ Name: "Herr Lindner", Adresse: "Rings-Lebener-Straße 116798 Fürstenberg/Havel · DE" });
+    // seit v367: Kategorie im Kopf der Seite, der Zeitpunkt des Eingangs unter „Herkunft“
+    expect(root.querySelector(".lp-hero .lp-cat-code")!.textContent).toBe("PV"); expect(root.querySelector(".lp-hero .lp-cat-name")!.textContent).toBe("Photovoltaik"); expect(pairs(card("Herkunft"))).toHaveProperty("Eingegangen");
     const fields = pairs(card("Fachfelder")); expect(fields).toMatchObject({ Hausart: "Ein-/Zweifamilienhaus", Dachart: "Flachdach", Stromverbrauch: "3.000 - 4.000 kWh", Stromspeicher: "Weiß nicht", Entscheider: "Ja, Eigentümergemeinschaft", Umsetzung: "1-3 Monate", Anrede: "Herr" });
     for (const technical of ["Source", "Rawbatch", "Callscore", "Callverdict", "Calldecision", "Callrecordid", "Rawcontactid", "Street"]) expect(Object.keys(fields).map((key) => key.toLowerCase())).not.toContain(technical.toLowerCase());
     expect(card("Fachfelder").querySelector(".lead-fields-note")!.textContent).toContain("Aus dem Gespräch übernommen");

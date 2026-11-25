@@ -1214,9 +1214,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await expect(buyer.leadops.getMemberDetail({ membershipId })).rejects.toThrow("vorbehalten");
     // Lead-Seite: alle relevanten Informationen auf einen Blick (auch für den Käufer selbst, eingeschränkt auf seine Leads)
     const page = await owner.leadops.getLeadDetail({ publicId: lead.publicId });
-    expect(page).toMatchObject({ publicId: lead.publicId, status: "zugewiesen", category: { name: S.pv.name } });
+    expect(page).toMatchObject({ publicId: lead.publicId, status: "zugewiesen", category: { name: S.pv.name }, internal: true });
+    expect(page.category).toHaveProperty("color"); // v367: Kreis und Kopf der Lead-Seite in der Farbe der Kategorie
     expect(page.deliveries[0]).toMatchObject({ buyerName: "Kundin Solar GmbH", unitPrice: "39.00", result: "angenommen" }); expect(page.deliveries[0].orderNumber).toBe(order.orderNumber);
-    expect((await buyer.leadops.getLeadDetail({ publicId: lead.publicId })).publicId).toBe(lead.publicId);
+    const seenByBuyer = await buyer.leadops.getLeadDetail({ publicId: lead.publicId });
+    expect(seenByBuyer.publicId).toBe(lead.publicId); expect(seenByBuyer.internal).toBe(false); // v367: Einkauf, Verkauf und Marge nur intern
     // E-Mail-Automatik: Willkommensmail sofort (ohne SMTP simuliert), Erinnerungen geplant; nach Anmeldung werden fällige Erinnerungen übersprungen
     const mails = await owner.leadops.emailOverview({});
     const mine = mails.events.filter((event) => event.membershipId === membershipId);

@@ -1315,7 +1315,7 @@ export const appRouter = router({
       const lead = (await db.select().from(leads).where(and(leadScope(tenant), eq(leads.publicId, input.publicId))).limit(1))[0];
       if (!lead) throw new Error("Lead wurde nicht gefunden.");
       const [category, supplier, fieldRows, deliveryRows, claimRows, tagRows] = await Promise.all([
-        db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1),
+        db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode, color: leadCategories.color }).from(leadCategories).where(eq(leadCategories.id, lead.categoryId)).limit(1),
         lead.supplierId ? db.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, status: suppliers.status }).from(suppliers).where(eq(suppliers.id, lead.supplierId)).limit(1) : Promise.resolve([]),
         db.select({ fieldKey: categoryFields.fieldKey, label: categoryFields.label, fieldType: categoryFields.fieldType, options: categoryFields.options }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenant.id), eq(categoryFields.categoryId, lead.categoryId))).orderBy(asc(categoryFields.sortOrder), asc(categoryFields.id)),
         db.select({ delivery: leadDeliveries, chainName: deliveryChains.name, stopPosition: deliveryStops.position, orderNumber: orders.orderNumber, orderName: orders.name }).from(leadDeliveries).leftJoin(deliveryChains, eq(deliveryChains.id, leadDeliveries.chainId)).leftJoin(deliveryStops, eq(deliveryStops.id, leadDeliveries.stopId)).leftJoin(orders, eq(orders.id, leadDeliveries.orderId)).where(and(eq(leadDeliveries.tenantId, tenant.id), eq(leadDeliveries.leadId, lead.id))).orderBy(desc(leadDeliveries.occurredAt)),
@@ -1332,7 +1332,8 @@ export const appRouter = router({
         // Zusatzfelder ohne eigene Definition – mit lesbarem Namen, ohne die Vermerke der Software (Nummer des Gesprächs, Name der Liste …)
         extra: extraMetaFields(metadata, fieldRows.map((field) => field.fieldKey)),
         call: leadCall, fieldsFromCallAt: typeof metadata.callFieldsAt === "string" ? metadata.callFieldsAt : null,
-        category: category[0] ? { id: category[0].id, name: category[0].name, shortcode: category[0].shortcode } : null,
+        /** seit v367: nur intern (nicht für Käufer- und Lieferanten-Zugänge) zeigt die Lead-Seite Einkauf, Verkauf und Marge */ internal: !partnerScopeOf(tenant),
+        category: category[0] ? { id: category[0].id, name: category[0].name, shortcode: category[0].shortcode, /** seit v367: dieselbe Farbe wie in der Liste */ color: category[0].color ?? null } : null,
         supplier: supplier[0] ? { id: supplier[0].id, name: supplier[0].name, email: supplier[0].email, status: supplier[0].status } : lead.supplierName ? { id: null, name: lead.supplierName, email: null, status: null } : null,
         fields: fieldRows.map((field) => ({ key: field.fieldKey, label: field.label, type: field.fieldType, value: metadata[field.fieldKey] ?? null, options: fieldOptions(field) })),
         metadata,

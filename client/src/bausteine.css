@@ -1017,3 +1017,214 @@ html:not(.dark) .order-overview .order-status-select.status-pausiert{border-colo
 @media (max-width:1320px){.order-stream-head{display:none}.order-stream-row{grid-template-columns:minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,1fr) auto;grid-template-areas:"id buyer cats status" "progress progress money actions";row-gap:12px}}
 @media (max-width:860px){.order-overview-head.compact{flex-direction:column;align-items:stretch}.order-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.order-kpis>div:nth-child(3){box-shadow:inset 0 1px 0 var(--ov-line)}.order-kpis>div:nth-child(4){box-shadow:inset 1px 0 0 var(--ov-line),inset 0 1px 0 var(--ov-line)}}
 @media (max-width:720px){.order-stream-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"id status" "buyer buyer" "cats cats" "progress progress" "money actions";padding:14px 16px 14px 18px}}
+
+/* ─────────────────────────── Lead-Seite (v367): die Akte eines Leads ───────────────────────────
+   Kopf mit Kreis in der Kategoriefarbe, Name, Status, Ort, Alter, Lieferant und ID; darunter Anrufen / E-Mail / Kontakt kopieren.
+   Weg des Leads in vier Schritten, darunter Einkauf · Verkauf · Erstattet · Marge (nur intern). Karten mit Überschrift in normaler Schreibweise.
+   Für beide Farbschemata von Hand; die allgemeinen Regeln des hellen Schemas (weiße Karten, Großbuchstaben) werden hier gezielt überschrieben. */
+.lead-profile{
+  --lp-ink:#f2f0fe;--lp-ink-2:#cfcbf3;--lp-muted:#9a9cba;--lp-faint:#7d81a4;
+  --lp-line:rgba(255,255,255,.08);--lp-line-2:rgba(255,255,255,.15);--lp-card:rgba(31,28,51,.55);--lp-soft:rgba(255,255,255,.035);--lp-chip:rgba(255,255,255,.06);
+  --lp-hero:rgba(31,28,51,.66);--lp-accent:#a39bff;--lp-accent-strong:#7a70f5;
+  --lp-good:#5ee0a8;--lp-good-bg:rgba(52,211,153,.12);--lp-good-line:rgba(52,211,153,.36);--lp-good-ink:#06140e;
+  --lp-warn:#fcc488;--lp-warn-bg:rgba(251,146,60,.12);--lp-warn-line:rgba(251,146,60,.36);
+  --lp-bad:#fb8a9b;--lp-bad-bg:rgba(244,63,94,.12);--lp-bad-line:rgba(244,63,94,.36);
+  --lp-info:#8cc4ff;--lp-info-bg:rgba(59,130,246,.12);--lp-info-line:rgba(59,130,246,.36);
+  --lp-now:#8cc4ff;--lp-now-strong:#4f9dff;
+  display:grid;gap:16px
+}
+html:not(.dark) .lead-profile{
+  --lp-ink:#17130f;--lp-ink-2:#344054;--lp-muted:#667085;--lp-faint:#98a2b3;
+  --lp-line:#e7e9ee;--lp-line-2:#d0d5dd;--lp-card:#ffffff;--lp-soft:#f8fafb;--lp-chip:#f2f4f7;
+  --lp-hero:#ffffff;--lp-accent:#bc001d;--lp-accent-strong:#bc001d;
+  --lp-good:#067647;--lp-good-bg:#ecfdf3;--lp-good-line:#abefc6;--lp-good-ink:#ffffff;
+  --lp-warn:#b54708;--lp-warn-bg:#fffaeb;--lp-warn-line:#fedf89;
+  --lp-bad:#b42318;--lp-bad-bg:#fef3f2;--lp-bad-line:#fecdca;
+  --lp-info:#175cd3;--lp-info-bg:#eff8ff;--lp-info-line:#b2ddff;
+  --lp-now:#175cd3;--lp-now-strong:#2e7cf6;
+}
+.lp-back{display:inline-flex;align-items:center;gap:6px;width:fit-content;padding:0;border:0;background:none;color:var(--lp-accent);font-family:inherit;font-size:13px;font-weight:650;cursor:pointer}
+.lp-back svg{width:15px;height:15px;transition:transform .15s}
+.lp-back:hover svg{transform:translateX(-2px)}
+.lp-back:focus-visible,.lp-id:focus-visible,.lp-quick-btn:focus-visible,.lp-copy:focus-visible,.lp-link:focus-visible{outline:2px solid var(--lp-accent-strong);outline-offset:2px}
+/* Kopf */
+.lp-hero{position:relative;overflow:hidden;padding:24px 26px 18px;border:1px solid var(--lp-line);border-radius:22px;background:radial-gradient(900px 260px at 0% 0%,color-mix(in srgb,var(--cat) 20%,transparent),transparent 62%),var(--lp-hero)}
+html:not(.dark) .lp-hero{background:radial-gradient(900px 260px at 0% 0%,color-mix(in srgb,var(--cat) 10%,transparent),transparent 62%),var(--lp-hero);box-shadow:0 1px 2px rgba(16,24,40,.04),0 16px 40px -24px rgba(16,24,40,.18)}
+.lp-hero-top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:18px 24px}
+.lp-identity{display:flex;align-items:center;gap:18px;min-width:0}
+.lp-avatar{flex:none;display:grid;place-items:center;width:68px;height:68px;border-radius:50%;font-style:normal;font-size:22px;font-weight:800;letter-spacing:.01em;color:color-mix(in srgb,var(--cat) 55%,#fff);background:color-mix(in srgb,var(--cat) 22%,transparent);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--cat) 50%,transparent),0 0 0 6px color-mix(in srgb,var(--cat) 9%,transparent)}
+html:not(.dark) .lp-avatar{color:color-mix(in srgb,var(--cat) 80%,#000);background:color-mix(in srgb,var(--cat) 12%,#fff);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--cat) 35%,#fff),0 0 0 6px color-mix(in srgb,var(--cat) 6%,#fff)}
+.lp-identity-text{min-width:0}
+.lp-kicker{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 6px;font-size:12.5px;color:var(--lp-muted)}
+.lp-cat-code{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;font-size:10px;font-weight:750;letter-spacing:.04em;color:color-mix(in srgb,var(--cat) 55%,#fff);background:color-mix(in srgb,var(--cat) 20%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--cat) 40%,transparent)}
+html:not(.dark) .lp-cat-code{color:color-mix(in srgb,var(--cat) 80%,#000);background:color-mix(in srgb,var(--cat) 11%,#fff);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--cat) 30%,#fff)}
+.lp-cat-name{font-weight:650;color:var(--lp-ink-2)}
+.lp-status{display:inline-flex;align-items:center;gap:7px;height:22px;padding:0 9px 0 8px;border-radius:999px;font-size:11.5px;font-weight:650;color:color-mix(in srgb,var(--cat) 50%,#fff);background:color-mix(in srgb,var(--cat) 16%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--cat) 32%,transparent)}
+.lp-status i{width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,var(--cat) 24%,transparent)}
+html:not(.dark) .lp-status{color:color-mix(in srgb,var(--cat) 78%,#000);background:color-mix(in srgb,var(--cat) 10%,#fff);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--cat) 26%,#fff)}
+.lead-profile .lp-identity h1{margin:0;color:var(--lp-ink);font-size:clamp(24px,2.3vw,32px);font-weight:800;line-height:1.15;letter-spacing:-.02em;overflow-wrap:anywhere}
+.lp-facts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin:10px 0 0;font-size:13px;color:var(--lp-muted)}
+.lp-facts>span{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.lp-facts svg{flex:none;width:14px;height:14px;color:var(--lp-faint)}
+.lp-id{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid var(--lp-line-2);border-radius:7px;background:var(--lp-chip);color:var(--lp-muted);font-family:inherit;cursor:pointer;transition:border-color .12s,color .12s}
+.lp-id code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;letter-spacing:.04em;color:inherit;background:none}
+.lp-id svg{width:12px;height:12px;color:inherit}
+.lp-id:hover{border-color:var(--lp-accent-strong);color:var(--lp-ink)}
+.lp-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+/* Nebenaktionen im dunklen Schema mit sichtbarem Rand (sonst schweben sie als bloßer Text) */
+html.dark .lp-actions>button:not(.flux-button){border:1px solid var(--lp-line-2);background:var(--lp-soft);color:var(--lp-ink)}
+html.dark .lp-actions>button:not(.flux-button):hover:not(:disabled){border-color:var(--lp-accent-strong);background:var(--lp-chip)}
+.lp-quick{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:20px;padding-top:18px;border-top:1px solid var(--lp-line)}
+.lp-quick-btn{display:flex;align-items:center;gap:12px;min-width:0;padding:10px 14px;border:1px solid var(--lp-line-2);border-radius:14px;background:var(--lp-soft);color:var(--lp-ink);font-family:inherit;text-align:left;text-decoration:none;cursor:pointer;transition:border-color .14s,transform .14s,background-color .14s}
+.lp-quick-btn>i{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:11px;font-style:normal;background:color-mix(in srgb,var(--lp-accent-strong) 16%,transparent);color:var(--lp-accent)}
+.lp-quick-btn.is-call>i{background:var(--lp-good-bg);color:var(--lp-good)}
+.lp-quick-btn svg{width:17px;height:17px}
+.lp-quick-btn>span{display:flex;flex-direction:column;min-width:0}
+.lp-quick-btn small{font-size:11.5px;color:var(--lp-muted)}
+.lp-quick-btn b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;font-weight:700;color:var(--lp-ink)}
+.lp-quick-btn:hover{border-color:var(--lp-accent-strong)}
+@media (hover:hover) and (pointer:fine){.lp-quick-btn:hover{transform:translateY(-1px)}}
+.lp-quick-btn.is-empty{cursor:default;opacity:.55}
+.lp-quick-btn.is-empty:hover{border-color:var(--lp-line-2);transform:none}
+/* Weg des Leads */
+.lp-journey{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;padding:18px 22px;border:1px solid var(--lp-line);border-radius:18px;background:var(--lp-card);list-style:none}
+.lp-step{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:10px;min-width:0;padding-right:14px}
+.lp-step:not(:last-child)::after{content:"";position:absolute;top:15px;left:42px;right:8px;height:2px;border-radius:2px;background:var(--lp-line-2)}
+.lp-step.is-done:not(:last-child)::after{background:linear-gradient(90deg,var(--lp-good),color-mix(in srgb,var(--lp-good) 35%,transparent))}
+.lp-step-mark{position:relative;z-index:1;display:grid;place-items:center;width:32px;height:32px;border:2px solid var(--lp-line-2);border-radius:50%;background:var(--lp-card);color:var(--lp-faint);font-size:13px;font-weight:800}
+.lp-step-mark svg{width:16px;height:16px;stroke-width:3}
+.lp-step.is-done .lp-step-mark{border-color:var(--lp-good);background:var(--lp-good);color:var(--lp-good-ink)}
+/* „läuft gerade“ in Blau – dieselbe Farbe wie „im Reklamationsfenster“ an der Auslieferung, nie zu verwechseln mit Rot (gescheitert) */
+.lp-step.is-current .lp-step-mark{border-color:var(--lp-now-strong);color:var(--lp-now);box-shadow:0 0 0 4px color-mix(in srgb,var(--lp-now-strong) 22%,transparent)}
+.lp-step.is-warn .lp-step-mark{border-color:var(--lp-warn);background:var(--lp-warn-bg);color:var(--lp-warn)}
+.lp-step.is-fail .lp-step-mark{border-color:var(--lp-bad);background:var(--lp-bad-bg);color:var(--lp-bad)}
+.lp-step.is-todo .lp-step-mark{border-style:dashed}
+.lp-step-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.lp-step-text b{font-size:13.5px;font-weight:700;color:var(--lp-ink)}
+.lp-step.is-todo .lp-step-text b{color:var(--lp-muted)}
+.lp-step.is-warn .lp-step-text b{color:var(--lp-warn)}
+.lp-step.is-fail .lp-step-text b{color:var(--lp-bad)}
+.lp-step-text small{font-size:12px;line-height:1.4;color:var(--lp-muted);overflow-wrap:anywhere}
+/* Was der Lead gebracht hat */
+.lp-money{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;overflow:hidden;border:1px solid var(--lp-line);border-radius:18px;background:var(--lp-card)}
+.lp-money>div{padding:14px 20px}
+.lp-money>div+div{box-shadow:inset 1px 0 0 var(--lp-line)}
+.lp-money dt{font-size:12px;font-weight:600;color:var(--lp-muted)}
+.lp-money dd{display:flex;flex-direction:column;gap:1px;margin:3px 0 0}
+.lp-money dd b{font-size:20px;font-weight:800;letter-spacing:-.01em;color:var(--lp-ink);font-variant-numeric:tabular-nums}
+.lp-money dd small{font-size:11.5px;color:var(--lp-faint)}
+.lp-money .is-margin.is-plus{background:linear-gradient(135deg,color-mix(in srgb,var(--lp-good) 10%,transparent),transparent 70%)}
+.lp-money .is-margin.is-plus b{color:var(--lp-good)}
+.lp-money .is-margin.is-minus{background:linear-gradient(135deg,color-mix(in srgb,var(--lp-bad) 10%,transparent),transparent 70%)}
+.lp-money .is-margin.is-minus b{color:var(--lp-bad)}
+/* Karten */
+.lead-profile .lp-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+@media (min-width:1180px){.lead-profile .lp-grid{grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr)}}
+.lp-col{display:grid;align-content:start;gap:16px;min-width:0}
+.lead-profile .lead-page-card{border:1px solid var(--lp-line);border-radius:18px;background:var(--lp-card);overflow:hidden}
+.lead-profile .lead-page-card>header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 18px;border-bottom:1px solid var(--lp-line);color:var(--lp-ink);font-size:13.5px;font-weight:700;letter-spacing:0;text-transform:none}
+.lead-profile .lead-page-card>div{padding:16px 18px}
+html:not(.dark) .lead-profile .lead-page-card{border-color:var(--lp-line)!important;border-radius:18px!important;background:var(--lp-card)!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important}
+html:not(.dark) .lead-profile .lead-page-card>header{border-bottom-color:var(--lp-line)!important;color:var(--lp-ink)!important}
+.lp-title{display:inline-flex;align-items:center;gap:10px}
+.lp-title-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;font-style:normal;background:color-mix(in srgb,var(--lp-accent-strong) 15%,transparent);color:var(--lp-accent)}
+.lp-title-icon svg{width:15px;height:15px}
+.lp-head-note{font-size:12px;font-weight:500;color:var(--lp-faint)}
+.lp-link{padding:0;border:0;background:none;color:var(--lp-accent);font-family:inherit;font-size:12.5px;font-weight:600;text-decoration:none;cursor:pointer}
+.lp-link:hover{text-decoration:underline;text-underline-offset:3px}
+.lp-empty{margin:0;font-size:13px;line-height:1.5;color:var(--lp-muted)}
+.lead-profile .lead-kv{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 22px}
+.lead-profile .lead-kv dt{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--lp-faint)}
+.lead-profile .lead-kv dd{margin:3px 0 0;font-size:13.5px;font-weight:600;color:var(--lp-ink)}
+html:not(.dark) .lead-profile .lead-kv dt{color:var(--lp-faint)!important}
+html:not(.dark) .lead-profile .lead-kv dd{color:var(--lp-ink)!important}
+/* Fachfelder als Kacheln */
+.lead-profile .lp-tiles{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.lead-profile .lp-tiles>div{padding:11px 13px;border:1px solid var(--lp-line);border-radius:12px;background:var(--lp-soft)}
+.lead-profile .lp-tiles.is-empty>div{border-style:dashed;opacity:.65}
+/* Kontakt */
+.lp-value-row{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%}
+.lp-value-row.is-top{align-items:flex-start}
+.lp-contact{display:inline-flex;align-items:center;gap:7px;min-width:0;color:var(--lp-ink);text-decoration:none;overflow-wrap:anywhere}
+.lp-contact:hover{color:var(--lp-accent)}
+.lp-contact svg,.lp-inline-icon{flex:none;width:14px;height:14px;color:var(--lp-faint)}
+.lp-inline-icon{margin-top:3px}
+.lp-copy{flex:none;display:inline-grid;place-items:center;width:26px;height:26px;border:0;border-radius:8px;background:none;color:var(--lp-faint);opacity:.75;cursor:pointer;transition:background-color .12s,color .12s,opacity .12s}
+.lp-copy svg{width:13px;height:13px}
+.lp-copy:hover{opacity:1;background:var(--lp-chip);color:var(--lp-accent)}
+/* Gespräch */
+.lp-score{display:block;height:6px;margin:12px 0 2px;overflow:hidden;border-radius:999px;background:var(--lp-chip)}
+.lp-score i{display:block;height:100%;border-radius:inherit;background:var(--lp-good)}
+.lp-score.is-warn i{background:var(--lp-warn)}
+.lp-score.is-bad i{background:var(--lp-bad)}
+.lead-profile .lead-call-summary{margin:14px 0 0;padding:12px 14px 12px 16px;border-left:3px solid var(--lp-accent-strong);border-radius:0 12px 12px 0;background:var(--lp-soft);color:var(--lp-ink-2);font-size:13px;line-height:1.6}
+/* Auslieferung und Reklamationen */
+.lp-list{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.lp-entry{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:start;padding:12px;border:1px solid var(--lp-line);border-radius:14px;background:var(--lp-soft)}
+.lp-entry-avatar{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;font-style:normal;font-size:12px;font-weight:750;color:var(--lp-accent);background:color-mix(in srgb,var(--lp-accent-strong) 15%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--lp-accent-strong) 36%,transparent)}
+.lp-entry-mark{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;font-style:normal;background:var(--lp-chip);color:var(--lp-muted)}
+.lp-entry-mark svg{width:16px;height:16px}
+.lp-entry-mark.is-warn{background:var(--lp-warn-bg);color:var(--lp-warn)}
+.lp-entry-mark.is-bad{background:var(--lp-bad-bg);color:var(--lp-bad)}
+.lp-entry-mark.is-good{background:var(--lp-good-bg);color:var(--lp-good)}
+.lp-entry-main{min-width:0}
+.lp-entry-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.lp-entry-head strong{font-size:13.5px;font-weight:700;color:var(--lp-ink)}
+.lp-entry-main p{margin:4px 0 0;font-size:12px;line-height:1.45;color:var(--lp-muted);overflow-wrap:anywhere}
+.lp-entry-main p.lp-entry-foot{color:var(--lp-faint)}
+.lp-entry-main p.lp-entry-foot:empty{display:none}
+.lp-entry-side{display:flex;flex-direction:column;align-items:flex-end;gap:2px;white-space:nowrap}
+.lp-entry-side b{font-size:14px;font-weight:800;color:var(--lp-ink);font-variant-numeric:tabular-nums}
+.lp-entry-side small{font-size:11px;color:var(--lp-faint);font-variant-numeric:tabular-nums}
+.lp-chip{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid var(--lp-line-2);border-radius:999px;background:var(--lp-chip);color:var(--lp-ink-2);font-size:11px;font-weight:650;white-space:nowrap}
+.lp-chip.is-good{border-color:var(--lp-good-line);background:var(--lp-good-bg);color:var(--lp-good)}
+.lp-chip.is-warn{border-color:var(--lp-warn-line);background:var(--lp-warn-bg);color:var(--lp-warn)}
+.lp-chip.is-bad{border-color:var(--lp-bad-line);background:var(--lp-bad-bg);color:var(--lp-bad)}
+.lp-chip.is-info{border-color:var(--lp-info-line);background:var(--lp-info-bg);color:var(--lp-info)}
+/* Kleinigkeiten: kopiert (Haken), Frist des Reklamationsfensters, Anteil der Marge, der laufende Schritt atmet */
+.lp-id.is-copied,.lp-copy.is-copied{color:var(--lp-good);border-color:var(--lp-good-line)}
+.lp-copy.is-copied{opacity:1;background:var(--lp-good-bg)}
+.lp-quick-btn.is-copied{border-color:var(--lp-good-line)}
+.lp-quick-btn.is-copied>i{background:var(--lp-good-bg);color:var(--lp-good)}
+.lp-quick-btn.is-copied b{color:var(--lp-good)}
+.lp-step-bar{display:block;width:min(100%,170px);height:4px;margin-top:7px;overflow:hidden;border-radius:999px;background:var(--lp-chip)}
+.lp-step-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,color-mix(in srgb,var(--lp-now-strong) 55%,transparent),var(--lp-now-strong))}
+.lp-money-meter{display:block;width:min(100%,150px);height:4px;margin-top:7px;overflow:hidden;border-radius:999px;background:var(--lp-chip)}
+.lp-money-meter i{display:block;height:100%;border-radius:inherit;background:var(--lp-good)}
+.lp-step.is-current .lp-step-mark{animation:lp-breathe 2.6s ease-out infinite}
+@keyframes lp-breathe{0%{box-shadow:0 0 0 4px color-mix(in srgb,var(--lp-now-strong) 22%,transparent),0 0 0 4px color-mix(in srgb,var(--lp-now-strong) 34%,transparent)}70%,100%{box-shadow:0 0 0 4px color-mix(in srgb,var(--lp-now-strong) 22%,transparent),0 0 0 13px transparent}}
+/* Lead-Log auf der Lead-Seite: Art des Eintrags in normaler Schreibweise */
+.lead-profile .lead-log-kind{padding:1px 8px;border-color:var(--lp-line-2);background:var(--lp-chip);color:var(--lp-muted);font-size:11px;font-weight:600;letter-spacing:0;text-transform:none}
+html:not(.dark) .lead-profile .lead-log-kind{border-color:var(--lp-line-2)!important;background:var(--lp-chip)!important;color:var(--lp-muted)!important}
+/* Laden und „nicht gefunden“ */
+.lp-skel{display:block;border-radius:8px;background:linear-gradient(90deg,var(--lp-chip) 25%,color-mix(in srgb,var(--lp-chip) 40%,var(--lp-line-2)) 50%,var(--lp-chip) 75%);background-size:300% 100%;animation:lp-shimmer 1.4s ease-in-out infinite}
+.lp-avatar.lp-skel{border-radius:50%;box-shadow:none}
+.lp-hero.lp-loading,html:not(.dark) .lp-hero.lp-loading{background:var(--lp-hero)}
+.lp-journey.lp-loading{gap:22px}
+@keyframes lp-shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
+.lp-missing{display:flex;align-items:flex-start;gap:16px;padding:24px 26px;border:1px solid var(--lp-line);border-radius:22px;background:var(--lp-card)}
+.lp-missing>i{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:14px;font-style:normal;background:var(--lp-warn-bg);color:var(--lp-warn)}
+.lp-missing>i svg{width:20px;height:20px}
+.lp-missing h2{margin:0;color:var(--lp-ink);font-size:18px;font-weight:750;letter-spacing:-.01em}
+.lp-missing p{margin:4px 0 0;max-width:60ch;color:var(--lp-muted);font-size:13.5px;line-height:1.55}
+@media (prefers-reduced-motion:reduce){.lp-quick-btn,.lp-back svg,.lp-id,.lp-copy{transition:none}.lp-quick-btn:hover{transform:none}.lp-step.is-current .lp-step-mark,.lp-skel{animation:none}}
+@media (max-width:1100px){.lp-journey{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:18px}.lp-step:nth-child(2)::after{display:none}}
+@media (max-width:860px){.lp-quick{grid-template-columns:minmax(0,1fr)}.lp-money{grid-template-columns:repeat(2,minmax(0,1fr))}.lp-money>div:nth-child(3){box-shadow:inset 0 1px 0 var(--lp-line)}.lp-money>div:nth-child(4){box-shadow:inset 1px 0 0 var(--lp-line),inset 0 1px 0 var(--lp-line)}}
+@media (max-width:600px){
+  .lp-hero{padding:18px 16px 14px;border-radius:18px}
+  .lp-identity{align-items:flex-start;gap:14px}
+  .lp-avatar{width:52px;height:52px;font-size:18px}
+  .lp-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch;width:100%}
+  .lp-actions .flux-button{grid-column:1/-1;order:-1}
+  .lp-actions>button{min-width:0;height:auto;min-height:40px;white-space:normal;line-height:1.2;text-align:center}
+  .lp-journey{grid-template-columns:minmax(0,1fr);row-gap:14px;padding:14px 16px}
+  .lp-step{flex-direction:row;align-items:center;gap:12px;padding-right:0}
+  .lp-step::after{display:none}
+  .lead-profile .lead-kv{grid-template-columns:minmax(0,1fr)}
+  .lead-profile .lp-tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .lead-profile .lp-tiles>div{padding:9px 11px}
+  .lp-missing{padding:18px 16px;border-radius:18px}
+  .lp-entry{grid-template-columns:32px minmax(0,1fr)}
+  .lp-entry-avatar,.lp-entry-mark{width:32px;height:32px}
+  .lp-entry-side{grid-column:2;flex-direction:row;align-items:baseline;gap:8px}
+}

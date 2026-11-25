@@ -4,7 +4,7 @@ import { Clock3, X } from "lucide-react";
 import { useEffect } from "react";
 
 const toneClass: Record<string, string> = { violett: "bg-violet-400", gruen: "bg-emerald-400", rot: "bg-red-400", blau: "bg-sky-400", orange: "bg-amber-400", grau: "bg-slate-500" };
-const typeLabel: Record<string, string> = { erfasst: "Erfasst", auslieferung: "Auslieferung", reklamation: "Reklamation", status: "Status", api: "API", automation: "Automatisierung" };
+const typeLabel: Record<string, string> = { erfasst: "Erfasst", auslieferung: "Auslieferung", reklamation: "Reklamation", status: "Status", api: "API", automation: "Automatisierung", integration: "Integration", automatisierung: "Automatisierung" };
 const stamp = (value: Date | string) => new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 
 /** Zeitleiste der Lead-Ereignisse (neueste zuerst) – in Schublade und auf der Lead-Seite. */
@@ -14,7 +14,7 @@ export function LeadLogTimeline({ publicId, limit }: { publicId: string; limit?:
   if (audit.isLoading) return <p className="text-sm text-slate-400">Lead-Log wird geladen …</p>;
   if (audit.error) return <p className="text-sm text-red-200">{audit.error.message}</p>;
   if (!items.length) return <p className="text-sm text-slate-400">Noch keine Ereignisse.</p>;
-  return <ol className="lead-log-list">{items.map((item) => <li key={item.id} className="lead-log-item"><span className={`lead-log-dot ${toneClass[item.tone] ?? toneClass.grau}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-baseline justify-between gap-x-3"><strong className="text-sm text-slate-100">{item.title}</strong><span className="flex items-center gap-1 whitespace-nowrap text-[11px] text-slate-500"><Clock3 className="h-3 w-3" />{stamp(item.occurredAt)}</span></div>{item.detail && <p className="mt-0.5 break-words text-xs text-slate-400">{item.detail}</p>}<span className="mt-1 inline-block rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[.12em] text-slate-500">{typeLabel[item.type] ?? item.type}</span></div></li>)}</ol>;
+  return <ol className="lead-log-list">{items.map((item) => <li key={item.id} className="lead-log-item"><span className={`lead-log-dot ${toneClass[item.tone] ?? toneClass.grau}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-baseline justify-between gap-x-3"><strong className="text-sm text-slate-100">{item.title}</strong><span className="flex items-center gap-1 whitespace-nowrap text-[11px] text-slate-500"><Clock3 className="h-3 w-3" />{stamp(item.occurredAt)}</span></div>{item.detail && <p className="mt-0.5 break-words text-xs text-slate-400">{item.detail}</p>}<span className="lead-log-kind mt-1 inline-block rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[.12em] text-slate-500">{typeLabel[item.type] ?? item.type}</span></div></li>)}</ol>;
 }
 
 /** Lead-Log als schmale Schublade am rechten Rand. */

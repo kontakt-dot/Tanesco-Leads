@@ -22,7 +22,7 @@ vi.mock("../client/src/lib/trpc", () => ({
     if (key === "listCategoryFields") return { useQuery: () => ({ data: [{ id: 9, label: "Dachausrichtung", fieldKey: "dachausrichtung", fieldType: "auswahl", options: ["Süd", "Ost"], required: false }], isLoading: false, error: null }) };
     if (key === "listSuppliers" || key === "listMembers" || key === "listAutomationRules" || key === "listDeliveryChains" || key === "listOrders" || key === "listPartnerIntegrations" || key === "listLeadImportBatches") return { useQuery: () => ({ data: [], isLoading: false, error: null }) };
     if (key === "getLeadAuditLog") return { useQuery: () => ({ data: [{ id: "status-1", type: "status", title: "Status geändert", detail: "neu → zugewiesen", tone: "violett", occurredAt: new Date("2026-08-18T08:01:00.000Z") }], isLoading: false, isError: false, error: null }) };
-    if (key === "getLeadDetail") return { useQuery: () => ({ data: { id: 1, publicId: lead.id, firstName: "Anna", lastName: "Muster", email: lead.email, phone: lead.phone, postcode: "50667", city: "Köln", country: "DE", status: "neu", cost: "12.00", createdAt: new Date("2026-08-18T08:00:00.000Z"), updatedAt: new Date("2026-08-18T08:00:00.000Z"), assignedAt: null, category: { id: 1, name: "Photovoltaik", shortcode: "PV" }, supplier: { id: 1, name: "Solar Quelle", email: null, status: "aktiv" }, fields: [{ key: "dachausrichtung", label: "Dachausrichtung", type: "auswahl", value: "Süd" }], metadata: { dachausrichtung: "Süd" }, deliveries: [], claims: [], tags: [] }, isLoading: false, error: null }) };
+    if (key === "getLeadDetail") return { useQuery: () => ({ data: { id: 1, publicId: lead.id, firstName: "Anna", lastName: "Muster", email: lead.email, phone: lead.phone, postcode: "50667", city: "Köln", country: "DE", status: "neu", cost: "12.00", createdAt: new Date("2026-08-18T08:00:00.000Z"), updatedAt: new Date("2026-08-18T08:00:00.000Z"), assignedAt: null, category: { id: 1, name: "Photovoltaik", shortcode: "PV", color: "#f59e0b" }, supplier: { id: 1, name: "Solar Quelle", email: null, status: "aktiv" }, internal: true, fields: [{ key: "dachausrichtung", label: "Dachausrichtung", type: "auswahl", value: "Süd" }], metadata: { dachausrichtung: "Süd" }, deliveries: [], claims: [], tags: [] }, isLoading: false, error: null }) };
     if (key === "importLead") return { useMutation: () => ({ mutate: vi.fn(), mutateAsync: importLeadMutateAsync, isPending: false }) };
     if (key === "startLeadImportBatch") return { useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(async () => ({ batchId: 1 })), isPending: false }) };
     return { useMutation: mutation };
@@ -79,7 +79,7 @@ describe("Lead-Verwaltung – UI-Gesamtfluss", () => {
     fireEvent.click(screen.getByText(/Anna Muster/).closest("button")!);
     expect(screen.getByRole("heading", { level: 1, name: /Anna Muster/ })).toBeVisible();
     expect(screen.getByText("Kontakt")).toBeVisible(); expect(screen.getByText("Fachfelder")).toBeVisible(); expect(screen.getByText("Süd")).toBeVisible(); expect(screen.getByText("Solar Quelle")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "← Zurück zu den Leads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zurück zu den Leads" }));
     expect(screen.getByRole("heading", { level: 1, name: "Leads" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Lead anlegen/ }));
     expect(screen.getByText("Neuen Lead anlegen")).toBeVisible();

@@ -31,3 +31,15 @@ export function nameInitials(name: string | null | undefined): string {
   if (!words.length || /^name unbekannt$/i.test(String(name ?? "").trim())) return "?";
   return (words.length === 1 ? words[0].slice(0, 1) : `${words[0].slice(0, 1)}${words[words.length - 1].slice(0, 1)}`).toUpperCase();
 }
+
+/**
+ * Rufnummer lesbar (seit v367, nur zur Anzeige – Links und Kopien behalten die Nummer, wie sie ist):
+ * „+4915112340071“ → „+49 151 12340071“, „01511234567“ → „0151 1234567“. Festnetz und Ausland bleiben unverändert (Vorwahlen sind unterschiedlich lang),
+ * ebenso Nummern, die schon Leerzeichen haben.
+ */
+export function formatPhone(raw: string | null | undefined): string {
+  const value = (raw ?? "").trim(); if (!value || /\s/.test(value)) return value;
+  const international = /^(?:\+49|0049)(1[5-7]\d)(\d{6,9})$/.exec(value); if (international) return `+49 ${international[1]} ${international[2]}`;
+  const national = /^0(1[5-7]\d)(\d{6,9})$/.exec(value); if (national) return `0${national[1]} ${national[2]}`;
+  return value;
+}
