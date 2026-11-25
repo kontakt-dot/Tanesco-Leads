@@ -62,7 +62,7 @@ describe("Version 365", () => {
     cleanup();
     const overview = await open(`page=Bestellungen&orderId=${created.orderId}&overview=1`, 2200);
     const row = Array.from(overview.querySelectorAll<HTMLElement>(".order-stream-row")).find((node) => node.textContent?.includes("V365 Menge"))!;
-    expect(row.querySelector(".order-progress")!.textContent).toBe("Lieferstatus0 geliefertMenge unbegrenzt");
+    expect(row.querySelector(".order-progress-line")!.textContent).toBe("0geliefertunbegrenzt"); expect(row.querySelector(".order-progress-foot")!.textContent).toBe("Menge unbegrenzt · täglich"); // seit v366 mit Balken
   }, 40_000);
 
   it("Wattfox: „Live-Adresse einsetzen“ lässt das gespeicherte Passwort stehen – erst speichern, dann „Anmeldung prüfen“", async () => {

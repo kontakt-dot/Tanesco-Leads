@@ -6620,4 +6620,24 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, url: WATTFOX.liveLeadsUrl, auth: auth(WATTFOX.liveLoginUrl) });
     expect((await stored()).url).toBe(WATTFOX.liveLeadsUrl);
   }, 60000);
+
+  it("v366. Kacheln je Zeitraum: Leads eines Zeitraums je Status und die Vergleichsspanne davor; Bestellungen mit Startdatum in der Liste", async () => {
+    const { orderOperationalConfigs: configsTable } = await import("../drizzle/schema");
+    const stamp = Date.now().toString(36).slice(-5).toUpperCase();
+    // ein Tag weit in der Vergangenheit (keine anderen Testleads): drei Leads, am Tag davor einer
+    const day = new Date(Date.now() - 1100 * 86_400_000); day.setHours(0, 0, 0, 0);
+    const insert = (offsetHours: number, status: "genehmigt" | "zugewiesen" | "reklamiert", key: string) => db.insert(leads).values({ tenantId: S.tenantId, publicId: `V6${key}${stamp}`, categoryId: S.wp.id, kind: "verkauf", firstName: "Zeit", lastName: `Raum${key}`, email: `v366-${key.toLowerCase()}-${stamp.toLowerCase()}@example.de`, phone: "+49 30 5556366", postcode: "10115", city: "Berlin", country: "DE", status, cost: "0.00", createdAt: new Date(day.getTime() + offsetHours * 3_600_000), metadata: {} } as never);
+    await insert(9, "genehmigt", "A"); await insert(11, "zugewiesen", "B"); await insert(15, "reklamiert", "C"); await insert(-10, "genehmigt", "D");
+    const from = day; const to = new Date(day.getTime() + 86_400_000 - 1);
+    const result = await owner.leadops.leadsPeriod({ from, to, previousFrom: new Date(from.getTime() - 86_400_000), previousTo: new Date(to.getTime() - 86_400_000) });
+    expect(result).toEqual({ total: 3, previous: 1, statuses: { genehmigt: 1, zugewiesen: 1, reklamiert: 1 } });
+    // ohne Vergleichsspanne („Erstellt vor …“) kein Vergleich
+    expect((await owner.leadops.leadsPeriod({ from: null, to: new Date(from.getTime() - 1), previousFrom: null, previousTo: null })).previous).toBeNull();
+    // Bestellung, die erst später startet: Start steht in der Liste (Bestellübersicht „startet am …“), ohne Enddatum
+    const created = await owner.leadops.createOrder({ name: `V366 Start ${stamp}`, buyerName: "V366 Käufer", categoryId: S.wp.id, quantity: null, unitPrice: 10, status: "offen" });
+    const start = new Date(Date.now() + 5 * 86_400_000); start.setMilliseconds(0);
+    await db.update(configsTable).set({ startsAt: start }).where(eq(configsTable.orderId, created.orderId));
+    const listed = (await owner.leadops.listOrders({})).find((order) => order.id === created.orderId)!;
+    expect(new Date(listed.startsAt!).getTime()).toBe(start.getTime()); expect(listed.endsAt).toBeNull();
+  }, 60000);
 });

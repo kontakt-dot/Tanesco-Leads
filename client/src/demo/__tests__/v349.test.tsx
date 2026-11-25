@@ -88,17 +88,23 @@ describe("Version 349", () => {
     await click(tile(root, "delivered")); expect(search().value).toBe(""); expect(activeTab(root)).toBe("Zugewiesen"); expect(found(root)).toBe(de(withStatus("zugewiesen").length)); expect(active()).toEqual(["lo-tile is-delivered is-active"]);
     expect(texts(root, ".lt-row .lt-pill-status").every((text) => text === "Zugewiesen")).toBe(true);
     await click(tile(root, "claimed")); expect(activeTab(root)).toBe("Reklamiert"); expect(found(root)).toBe(de(withStatus("reklamiert").length)); expect(active()).toEqual(["lo-tile is-claimed is-active"]);
-    // ein Tag ist gewählt – „Bereit zum Ausliefern“ zeigt trotzdem alle wartenden, nicht nur die dieses Tages
-    await click(bars(root)[12]); expect(bars(root)[12].getAttribute("aria-pressed")).toBe("true"); expect(found(root)).toBe(de(all.filter((lead) => localDay(lead.createdAt) === now.days[12].day).length)); expect(active()).toEqual([]);
-    await click(tile(root, "ready")); expect(activeTab(root)).toBe("Freigegeben"); expect(found(root)).toBe(de(withStatus("genehmigt").length)); expect(active()).toEqual(["lo-tile is-ready is-active"]); expect(bars(root).some((bar) => bar.getAttribute("aria-pressed") === "true")).toBe(false);
-    // heute neu
+    // ein Tag ist gewählt (gestern): Seit v366 folgen die Kacheln ihm – die zweite heißt „Gestern“, „Bereit zum Ausliefern“ zählt nur die wartenden dieses Tages
+    const dayLeads = all.filter((lead) => localDay(lead.createdAt) === now.days[12].day);
+    await click(bars(root)[12], 1200); expect(bars(root)[12].getAttribute("aria-pressed")).toBe("true"); expect(found(root)).toBe(de(dayLeads.length)); expect(active()).toEqual(["lo-tile is-today is-active"]);
+    expect(texts(root, ".lo-tile .lo-label")[1]).toBe("Gestern"); expect(tile(root, "today").querySelector("strong")!.textContent).toBe(de(dayLeads.length));
+    await click(tile(root, "ready")); expect(activeTab(root)).toBe("Freigegeben"); expect(found(root)).toBe(de(dayLeads.filter((lead) => lead.status === "genehmigt").length)); expect(active()).toEqual(["lo-tile is-ready is-active"]); expect(bars(root)[12].getAttribute("aria-pressed")).toBe("true");
+    // „Leads gesamt“ nimmt den Tag weg – dann heute neu
+    await click(tile(root, "all")); expect(bars(root).some((bar) => bar.getAttribute("aria-pressed") === "true")).toBe(false); expect(texts(root, ".lo-tile .lo-label")[1]).toBe("Heute neu");
     await click(tile(root, "today")); expect(activeTab(root)).toBe("Alle"); expect(found(root)).toBe(de(all.filter((lead) => localDay(lead.createdAt) === localDay(new Date())).length)); expect(active()).toEqual(["lo-tile is-today is-active"]);
     // die letzten 7 Tage: Knopf über den Säulen
     const week = root.querySelector<HTMLButtonElement>(".lo-week")!; expect(week.querySelector("b")!.textContent).toBe(de(now.week)); expect(week.getAttribute("aria-pressed")).toBe("false");
     const weekStart = localDay(Date.now() - 6 * 86_400_000); const inWeek = all.filter((lead) => localDay(lead.createdAt) >= weekStart && localDay(lead.createdAt) <= localDay(new Date())).length;
-    await click(week); expect(found(root)).toBe(de(inWeek)); expect(root.querySelector(".lo-week")!.getAttribute("aria-pressed")).toBe("true"); expect(active()).toEqual(["lo-week is-active"]);
-    // wer danach selbst einen Reiter wählt, sieht eine Mischung – dann ist keine Kachel gewählt
-    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".lt-tabs button")).find((button) => button.firstChild?.textContent === "Freigegeben")); expect(active()).toEqual([]);
+    await click(week); expect(found(root)).toBe(de(inWeek)); expect(root.querySelector(".lo-week")!.getAttribute("aria-pressed")).toBe("true"); expect(active()).toEqual(["lo-tile is-today is-active", "lo-week is-active"]); // die zweite Kachel zeigt die 7 Tage
+    // wer danach den Reiter „Freigegeben“ wählt, sieht die freigegebenen dieser 7 Tage – genau die Zahl der Kachel „Bereit zum Ausliefern“ (seit v366)
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".lt-tabs button")).find((button) => button.firstChild?.textContent === "Freigegeben")); expect(active()).toEqual(["lo-tile is-ready is-active"]);
+    expect(tile(root, "ready").querySelector("strong")!.textContent).toBe(found(root));
+    // eine Suche dazu ist eine Mischung – dann ist keine Kachel gewählt
+    await type(search(), "a", 900); expect(active()).toEqual([]);
     await click(tile(root, "all")); expect(found(root)).toBe(de(all.length)); expect(activeTab(root)).toBe("Alle"); expect(active()).toEqual(["lo-tile is-all is-active"]);
   }, 80_000);
 

@@ -1,13 +1,15 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { Pencil, Route, Trash2 } from "lucide-react";
+import { CalendarClock, Infinity as Unlimited, Pencil, Route, Trash2 } from "lucide-react";
+import type React from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
+import { categoryColor } from "@/lib/colors";
 import { orderStatusChoice } from "../../../shared/order-status";
+import { nameInitials } from "../../../shared/lead-age";
 
 type OrderOverviewProps = {
-  categories: Array<{ id: number; name: string }>;
+  categories: Array<{ id: number; name: string; shortcode?: string | null; color?: string | null }>;
   order?: unknown;
   form?: unknown;
   suppliers?: unknown;
@@ -25,7 +27,17 @@ function orderEditLink(orderId: number) {
 }
 
 function formatMoney(value: number) { return value.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }); }
+const number = (value: number) => value.toLocaleString("de-DE");
+const shortDate = (value: Date | string) => new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+const INTERVAL: Record<string, string> = { sofort: "sofort", "täglich": "täglich", "wöchentlich": "wöchentlich", monatlich: "monatlich" };
+const tint = (color: string) => ({ ["--cat" as string]: color }) as React.CSSProperties;
 
+/**
+ * Bestellübersicht (neu gestaltet in Version 366): oben vier Zahlen über alle Bestellungen, darunter je Bestellung eine Zeile –
+ * links ein Streifen in der Farbe des Status (Aktiv grün, Inaktiv bernstein), Käufer mit Kürzel, Kategorien als Marken,
+ * der Lieferstand als Balken (unbegrenzt ohne Ende), Preis und Wert, Status und Aktionen rechts. Beginnt eine Bestellung erst später,
+ * steht das am Namen („startet am 30.11.“) – bis dahin bekommt sie keine Leads.
+ */
 export function OrderOverview({ categories }: OrderOverviewProps) {
   const utils = trpc.useUtils();
   const orders = trpc.leadops.listOrders.useQuery({}, { retry: false });
@@ -38,10 +50,46 @@ export function OrderOverview({ categories }: OrderOverviewProps) {
     onSuccess: async () => { await utils.leadops.listOrders.invalidate(); toast.success("Bestellstatus aktualisiert."); },
     onError: (error) => toast.error(error.message),
   });
-  const activeOrders = orders.data?.filter((order) => order.status === "aktiv").length ?? 0;
+  const list = orders.data ?? [];
+  const activeOrders = list.filter((order) => order.status === "aktiv").length;
+  const deliveredAll = list.reduce((sum, order) => sum + order.deliveredCount, 0);
+  const openAll = list.filter((order) => order.status === "aktiv" || order.status === "offen" || order.status === "pausiert").reduce((sum, order) => sum + (order.quantity ? Math.max(order.quantity - order.deliveredCount, 0) : 0), 0);
+  const unlimitedActive = list.some((order) => !order.quantity && order.status !== "storniert" && order.status !== "erfüllt");
+  const valueAll = list.reduce((sum, order) => sum + Number(order.unitPrice) * order.deliveredCount, 0);
+  const now = Date.now();
 
-  return <section className="surface-panel order-overview"><div className="order-overview-head compact"><div><span className="eyebrow">BESTELLÜBERSICHT</span><h2>Alle Bestellungen</h2><p>Prüfe Käufer, Lieferant, Lieferfortschritt und Status direkt dort, wo du die Bestellung steuerst.</p></div><span className="order-overview-summary">{orders.data?.length ?? 0} insgesamt · {activeOrders} aktiv</span></div>
-    <div className="order-stream" aria-label="Alle Bestellungen">{orders.isLoading && <p className="order-empty">Bestellungen werden geladen.</p>}{orders.data?.map((order) => { const delivered = order.deliveredCount; const unlimited = !order.quantity; const statusChoice = orderStatusChoice(order.status); const remaining = order.quantity ? Math.max(order.quantity - delivered, 0) : 0; const completion = order.quantity ? Math.round((delivered / order.quantity) * 100) : 0; const categoryIds = Array.isArray(order.categoryIds) ? order.categoryIds.filter((id): id is number => typeof id === "number") : [order.categoryId]; const categoryText = categories.filter((category) => categoryIds.includes(category.id)).map((category) => category.name).join(" · ") || "Keine Kategorie"; const chainCount = chains.data?.filter((chain) => chain.orderId === order.id).length ?? 0; const value = Number(order.unitPrice) * (order.quantity ?? delivered); /* unbegrenzt: Wert der gelieferten */ return <article key={order.id} className="order-stream-row"><div className="order-stream-identity"><strong>{order.name || order.orderNumber}</strong><span>{order.orderNumber}</span></div><div className="order-stream-metric order-party"><small>Käufer</small><span title={order.buyerName}>{order.buyerName}</span></div><div className="order-stream-metric"><small>Kategorie</small><span title={categoryText}>{categoryText}</span></div><div className="order-stream-metric order-party"><small>Lieferant</small><span title={order.supplierText}>{order.supplierText}</span></div><div className="order-stream-metric"><small>Intervall</small><b>{order.deliveryInterval}</b></div><div className="order-stream-metric order-progress"><small>Lieferstatus</small>{unlimited ? <><b>{delivered} geliefert</b><em>Menge unbegrenzt</em></> : <><b>{delivered}/{order.quantity} · {remaining} offen</b><em>{completion}% erfüllt</em></>}</div><div className="order-stream-metric"><small>Preis & Wert</small><b>{formatMoney(Number(order.unitPrice))}/Lead</b><span>{formatMoney(value)}</span></div><div className="order-stream-metric"><small>Lieferkette</small><span className="inline-flex items-center gap-1"><Route className="h-3.5 w-3.5" />{chainCount || "—"}</span></div><select aria-label={`Status für ${order.orderNumber}`} className={`order-status-select status-${statusChoice}`} value={statusChoice} title={statusChoice === "aktiv" ? "Aktiv: bekommt Leads" : statusChoice === "pausiert" ? "Inaktiv: bekommt keine Leads" : undefined} disabled={updateStatus.isPending} onChange={(event) => updateStatus.mutate({ id: order.id, status: event.target.value as "aktiv" | "pausiert" })}><option value="aktiv">Aktiv</option><option value="pausiert">Inaktiv</option>{statusChoice === "erfüllt" && <option value="erfüllt" disabled>Erfüllt</option>}{statusChoice === "storniert" && <option value="storniert" disabled>Storniert</option>}</select><div className="order-stream-actions"><Button size="sm" variant="ghost" asChild><a href={orderEditLink(order.id)}><Pencil /> Bearbeiten</a></Button><Button size="sm" variant="ghost" className="text-rose-300 hover:bg-rose-500/10 hover:text-rose-100" disabled={deleteOrder.isPending} onClick={async () => { if (await confirmAction(`Bestellung ${order.orderNumber} wirklich löschen? Zugehörige Lieferketten, Auslieferungsdaten und Bestellkonfigurationen werden entfernt. Bereits zugeordnete Leads bleiben erhalten, werden aber von dieser Bestellung gelöst.`)) deleteOrder.mutate({ orderId: order.id }); }}><Trash2 /> Löschen</Button></div></article>; })}</div>
+  return <section className="surface-panel order-overview"><div className="order-overview-head compact"><div><span className="eyebrow">BESTELLÜBERSICHT</span><h2>Alle Bestellungen</h2><p>Prüfe Käufer, Lieferant, Lieferfortschritt und Status direkt dort, wo du die Bestellung steuerst.</p></div>
+      <dl className="order-kpis" aria-label="Alle Bestellungen in Zahlen">
+        <div className="is-active"><dt>Aktiv</dt><dd><b>{number(activeOrders)}</b><small>von {number(list.length)}</small></dd></div>
+        <div><dt>Geliefert</dt><dd><b>{number(deliveredAll)}</b><small>Leads</small></dd></div>
+        <div><dt>Noch offen</dt><dd><b>{number(openAll)}</b><small>{unlimitedActive ? "+ unbegrenzte" : "Leads"}</small></dd></div>
+        <div><dt>Wert geliefert</dt><dd><b>{formatMoney(valueAll)}</b></dd></div>
+      </dl>
+    </div>
+    <div className="order-stream" aria-label="Alle Bestellungen">{orders.isLoading && <p className="order-empty">Bestellungen werden geladen.</p>}
+      {list.length > 0 && <div className="order-stream-head" aria-hidden="true"><span>Bestellung</span><span>Käufer und Lieferant</span><span>Kategorie</span><span>Lieferstatus</span><span>Preis & Wert</span><span>Status</span><span /></div>}
+      {list.map((order) => {
+      const delivered = order.deliveredCount; const unlimited = !order.quantity; const statusChoice = orderStatusChoice(order.status);
+      const remaining = order.quantity ? Math.max(order.quantity - delivered, 0) : 0; const completion = order.quantity ? Math.min(100, Math.round((delivered / order.quantity) * 100)) : 0;
+      const categoryIds = Array.isArray(order.categoryIds) ? order.categoryIds.filter((id): id is number => typeof id === "number") : [order.categoryId];
+      const orderCategories = categories.filter((category) => categoryIds.includes(category.id)); const categoryText = orderCategories.map((category) => category.name).join(" · ") || "Keine Kategorie";
+      const chainCount = chains.data?.filter((chain) => chain.orderId === order.id).length ?? 0;
+      const value = Number(order.unitPrice) * delivered; /* geliefert – daneben der Wert der ganzen Bestellung (bei unbegrenzt gibt es keinen) */ const orderValue = order.quantity ? Number(order.unitPrice) * order.quantity : null;
+      const startsLater = order.startsAt && new Date(order.startsAt).getTime() > now; const ended = order.endsAt && new Date(order.endsAt).getTime() < now;
+      const interval = INTERVAL[order.deliveryInterval] ?? order.deliveryInterval;
+      return <article key={order.id} className={`order-stream-row is-${statusChoice}`}>
+        <div className="order-stream-identity"><strong title={order.name || order.orderNumber}>{order.name || order.orderNumber}</strong><span className="order-stream-meta"><code>{order.orderNumber}</code>{startsLater ? <em className="order-flag is-later" title="Bis dahin bekommt die Bestellung keine Leads"><CalendarClock aria-hidden="true" />startet am {shortDate(order.startsAt!)}</em> : ended ? <em className="order-flag is-ended" title="Die Bestellung bekommt keine Leads mehr">endete am {shortDate(order.endsAt!)}</em> : null}{chainCount > 0 && <span className="order-chain" title={`${chainCount} ${chainCount === 1 ? "Lieferkette" : "Lieferketten"}`}><Route aria-hidden="true" />{chainCount}</span>}</span></div>
+        <div className="order-stream-metric order-party order-buyer"><i className="order-avatar" aria-hidden="true">{nameInitials(order.buyerName)}</i><span className="order-buyer-text"><small>Käufer</small><b title={order.buyerName}>{order.buyerName}</b><span className="order-supplier" title={`Lieferant: ${order.supplierText}`}>{order.supplierText}</span></span></div>
+        <div className="order-stream-metric order-cats"><small>Kategorie</small><span className="order-cat-list" title={categoryText}>{orderCategories.length ? orderCategories.map((category) => <b key={category.id} className="order-cat" style={tint(categoryColor(category))}>{category.shortcode || category.name.slice(0, 3).toUpperCase()}</b>) : <em className="order-none">Keine Kategorie</em>}</span></div>
+        <div className={`order-stream-metric order-progress ${unlimited ? "is-unlimited" : ""}`}><small>Lieferstatus</small>
+          <span className="order-progress-line"><b>{number(delivered)}</b>{unlimited ? <span>geliefert</span> : <span>/ {number(order.quantity!)} geliefert</span>}<em>{unlimited ? <><Unlimited aria-hidden="true" />unbegrenzt</> : `${completion} %`}</em></span>
+          <span className="order-bar" role="progressbar" aria-label={unlimited ? "Menge unbegrenzt" : `${completion} % geliefert`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={unlimited ? undefined : completion}><i style={{ width: unlimited ? "100%" : `${completion}%` }} /></span>
+          <span className="order-progress-foot">{unlimited ? `Menge unbegrenzt · ${interval}` : `${number(remaining)} offen · ${interval}`}</span>
+        </div>
+        <div className="order-stream-metric order-money"><small>Preis & Wert</small><b>{formatMoney(Number(order.unitPrice))}<span> je Lead</span></b><span title={orderValue !== null ? "Wert der gelieferten Leads von dem der ganzen Bestellung" : "Wert der gelieferten Leads"}>Wert {formatMoney(value)}{orderValue !== null && <> von {formatMoney(orderValue)}</>}</span></div>
+        <select aria-label={`Status für ${order.orderNumber}`} className={`order-status-select status-${statusChoice}`} value={statusChoice} title={statusChoice === "aktiv" ? "Aktiv: bekommt Leads" : statusChoice === "pausiert" ? "Inaktiv: bekommt keine Leads" : undefined} disabled={updateStatus.isPending} onChange={(event) => updateStatus.mutate({ id: order.id, status: event.target.value as "aktiv" | "pausiert" })}><option value="aktiv">Aktiv</option><option value="pausiert">Inaktiv</option>{statusChoice === "erfüllt" && <option value="erfüllt" disabled>Erfüllt</option>}{statusChoice === "storniert" && <option value="storniert" disabled>Storniert</option>}</select>
+        <div className="order-stream-actions"><Button size="sm" variant="ghost" className="order-edit" asChild><a href={orderEditLink(order.id)}><Pencil /> Bearbeiten</a></Button><Button size="sm" variant="ghost" className="order-delete" aria-label={`Bestellung ${order.orderNumber} löschen`} title="Löschen" disabled={deleteOrder.isPending} onClick={async () => { if (await confirmAction(`Bestellung ${order.orderNumber} wirklich löschen? Zugehörige Lieferketten, Auslieferungsdaten und Bestellkonfigurationen werden entfernt. Bereits zugeordnete Leads bleiben erhalten, werden aber von dieser Bestellung gelöst.`)) deleteOrder.mutate({ orderId: order.id }); }}><Trash2 /></Button></div>
+      </article>; })}</div>
     {!orders.isLoading && !orders.data?.length && <div className="order-empty">Noch keine Bestellungen vorhanden. Lege die erste Bestellung an – die Kennzahlen landen danach direkt hier.</div>}
   </section>;
 }

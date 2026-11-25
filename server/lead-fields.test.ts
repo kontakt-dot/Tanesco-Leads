@@ -203,8 +203,8 @@ describe("Spalten der Leads-Tabelle", () => {
     expect(fitLeadColumns(0, ["phone"]).autoHidden).toEqual([]); // Handy: Karten statt Spalten
   });
   it("baut das Raster mit Auswahl, ID und Lead links und den Aktionen rechts und liest die gemerkte Auswahl", () => {
-    expect(leadGridTemplate(["category", "price"])).toBe("34px 84px minmax(170px,1.5fr) minmax(150px,1.1fr) 88px 84px");
-    expect(leadGridTemplate(["category", "price"], true)).toBe("34px 84px minmax(170px,1.5fr) minmax(150px,1fr) minmax(88px,1fr) 84px");
+    expect(leadGridTemplate(["category", "price"])).toBe("34px 84px minmax(200px,1.6fr) minmax(150px,1.1fr) 88px 76px"); // seit v366: Lead mit Kreis breiter, Aktionen schmaler
+    expect(leadGridTemplate(["category", "price"], true)).toBe("34px 84px minmax(200px,1.6fr) minmax(150px,1fr) minmax(88px,1fr) 76px");
     expect(readHiddenColumns(null)).toEqual(DEFAULT_HIDDEN); expect(readHiddenColumns('["phone","type","buyer"]')).toEqual(["phone", "buyer"]); expect(readHiddenColumns("kaputt")).toEqual(DEFAULT_HIDDEN); expect(readHiddenColumns("[]")).toEqual([]);
   });
 });

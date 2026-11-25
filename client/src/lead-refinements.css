@@ -263,29 +263,6 @@
 
 /* Kompakte Bestellübersicht: alle Kernkennzahlen direkt in einer Zeile je Bestellung. */
 .order-overview-head.compact { align-items: center; padding: 18px 22px; }
-.order-overview-summary { border: 1px solid rgba(158,151,255, .2); border-radius: 999px; background: rgba(107,96,248, .09); padding: 7px 10px; color: #d2cbfc; font-size: 11px; font-weight: 700; white-space: nowrap; }
-.order-stream { display: grid; }
-.order-stream-row { display: grid; grid-template-columns: minmax(140px, 1.15fr) minmax(78px, .66fr) minmax(92px, .78fr) 68px minmax(106px, .85fr) minmax(94px, .74fr) 58px auto auto; align-items: center; gap: 11px; padding: 13px 20px; }
-.order-stream-row + .order-stream-row { border-top: 1px solid rgba(255, 255, 255, .06); }
-.order-stream-row:hover { background: linear-gradient(90deg, rgba(101,90,243, .09), rgba(84, 208, 216, .025)); }
-.order-stream-identity { min-width: 0; }
-.order-stream-identity strong, .order-stream-identity span, .order-stream-metric span, .order-stream-metric b, .order-stream-metric em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.order-stream-identity strong { color: #f2f0fe; font-size: 12px; font-weight: 760; }
-.order-stream-identity span { margin-top: 3px; color: #8c90aa; font-size: 10px; }
-.order-stream-metric { min-width: 0; }
-.order-stream-metric small { display: block; margin-bottom: 3px; color: #777d9b; font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
-.order-stream-metric b { color: #eae7fa; font-size: 11px; font-weight: 720; }
-.order-stream-metric span { color: #b8bbcf; font-size: 10px; }
-.order-stream-metric em { margin-top: 2px; color: #61d9d1; font-size: 9px; font-style: normal; }
-.order-stream-row > [data-slot="badge"] { justify-self: center; font-size: 10px; text-transform: capitalize; }
-.order-status-select { min-width: 92px; /* „Inaktiv“ passt ganz hinein (v365) */ border: 1px solid rgba(164,157,255, .24); border-radius: 999px; background: rgba(84,75,209, .12); padding: 5px 18px 5px 9px; color: #e1ddfd; font-size: 10px; font-weight: 750; line-height: 1.2; outline: none; }
-.order-status-select.status-aktiv { border-color: rgba(77, 214, 153, .32); background: rgba(51, 180, 118, .11); color: #a7f3c7; }
-.order-status-select.status-pausiert { border-color: rgba(251, 146, 60, .32); background: rgba(234, 112, 43, .1); color: #fecb97; }
-.order-status-select:hover:not(:disabled) { border-color: rgba(201,197,255, .55); background-color: rgba(111,101,247, .2); }
-.order-stream-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
-.order-stream-actions button { height: 30px; padding: 0 8px; font-size: 10px; }
-.order-stream-row { grid-template-columns: minmax(135px, 1.1fr) minmax(125px, 1fr) minmax(82px, .7fr) minmax(130px, 1fr) 68px minmax(108px, .9fr) minmax(94px, .75fr) 58px 78px auto; }
-.order-stream-metric.order-party span { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
 
 .category-header-actions { display: flex; flex: 0 0 auto; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .lead-header-actions { display: flex; flex: 1 1 auto; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 8px; min-width: 0; }
@@ -369,8 +346,6 @@
 /* Zwischen Handy und Laptop (Tablet): Die Knöpfe rutschen unter den Titel – sonst drücken sie den Text auf ein Wort je Zeile zusammen. */
 @media (max-width: 1080px) { .page-intro:has(> .people-header-actions) { flex-wrap: wrap; } .page-intro:has(> .people-header-actions) > div:first-child { flex: 1 1 100%; } }
 @media (max-width: 760px) { .category-builder-teaser, .category-builder-head, .category-builder-result-head, .category-builder-actions { align-items: stretch; flex-direction: column; } .category-builder-teaser > button, .category-builder-head > button, .category-builder-actions > button, .category-builder-save-actions > button { width: 100%; } .category-builder-basics, .category-builder-preview, .category-builder-review, .category-builder-field-list article, .category-builder-edit-grid { grid-template-columns: 1fr; } .category-builder-counts { align-self: flex-start; } .category-builder-save-actions { margin-left: 0; } .category-builder-field-aside { grid-template-columns: 1fr; } }
-@media (max-width: 1220px) { .order-stream-row { grid-template-columns: minmax(155px, 1.4fr) minmax(90px, .9fr) minmax(100px, .9fr) 78px minmax(115px, 1fr) minmax(105px, .95fr) 65px auto; } .order-stream-actions { grid-column: 1 / -1; justify-content: flex-end; margin-top: -3px; } }
-@media (max-width: 720px) { .order-stream-row { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 11px; padding: 13px 15px; } .order-stream-identity { grid-column: 1 / -1; } .order-stream-metric:nth-of-type(4), .order-stream-metric:nth-of-type(5) { display: none; } .order-stream-row > [data-slot="badge"] { justify-self: end; } .order-overview-summary { font-size: 10px; } }
 
 /* Tabellen mit umbrechenden Zellen (Gespräche, Telefonie, Benutzer) */
 .operations-panel .table-wrap.wrap-cells table { min-width: 0; }

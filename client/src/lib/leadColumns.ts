@@ -15,9 +15,9 @@ export const LEAD_COLUMNS = [
 ] as const;
 export type LeadColumnKey = (typeof LEAD_COLUMNS)[number]["key"];
 export const LEAD_COLUMN_KEYS = LEAD_COLUMNS.map((column) => column.key) as LeadColumnKey[];
-/** Feste Spalten: Auswahl, ID, Lead (Name und Ort) links – Aktionen (Ansicht, Lead-Log) rechts. */
-export const FIXED_TRACKS = { select: "34px", id: "84px", lead: "minmax(170px,1.5fr)", actions: "84px" } as const;
-const FIXED_WIDTH = 34 + 84 + 170 + 84; const GAP = 10;
+/** Feste Spalten: Auswahl, ID, Lead (Kreis, Name und Ort – seit v366 mit dem Kreis breiter) links – Aktionen (Ansicht, Lead-Log) rechts. */
+export const FIXED_TRACKS = { select: "34px", id: "84px", lead: "minmax(200px,1.6fr)", actions: "76px" } as const;
+const FIXED_WIDTH = 34 + 84 + 200 + 76; const GAP = 12;
 /** Diese Spalten fallen bei wenig Platz zuerst weg – in dieser Reihenfolge. */
 export const AUTO_HIDE_ORDER: LeadColumnKey[] = ["assigned", "phone", "supplier", "buyer", "email", "delivered"];
 export const DEFAULT_HIDDEN: LeadColumnKey[] = ["assigned", "phone"];

@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Check, Clock, Equal, Flag, X } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { claimRate, hintText, statusSplit, todayComparison, waitingAge, weekComparison, type OverviewHint, type OverviewTone } from "../../../shared/lead-overview";
+import { periodComparison, periodSplit, type TilePeriod } from "../../../shared/lead-period";
 
 const number = (value: number | undefined) => (typeof value === "number" ? value.toLocaleString("de-DE") : "–");
 const euro = (value: number) => value.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -34,13 +35,20 @@ function openPage(event: React.MouseEvent<HTMLAnchorElement>, page: string) {
  * Je Zahl eine Zeile; der Rest (wo alle Leads stehen, gestern, was noch wartet, Wert, offene Reklamationen) steht im Hinweis beim Überfahren.
  * Jede Zahl und jede Säule ist ein Filter. Darunter steht nur dann ein Hinweis, wenn etwas zu tun ist.
  */
-export default function LeadsOverviewStrip({ active, activeDay, onAll, onToday, onWeek, onReady, onDelivered, onClaimed, onDay, onWaiting }: {
+export default function LeadsOverviewStrip({ active, activeDay, period, onPeriod, onAll, onToday, onWeek, onReady, onDelivered, onClaimed, onDay, onWaiting }: {
   active: OverviewFilter; activeDay: string | null;
+  /** Gewählter Zeitraum der Tabelle (seit v366): Die zweite Kachel heißt dann wie der Zeitraum, Bereit/Ausgeliefert/Reklamiert zählen nur seine Leads */
+  period: TilePeriod | null; onPeriod: () => void;
   onAll: () => void; onToday: () => void; onWeek: () => void; onReady: () => void; onDelivered: () => void; onClaimed: () => void; onDay: (day: string) => void;
   /** Die freigegebenen Leads zeigen – bei einer einzelnen Kategorie nur die dieser Kategorie */
   onWaiting: (categoryId: number | null) => void;
 }) {
   const overview = trpc.leadops.leadsOverview.useQuery(undefined, { retry: false, refetchInterval: 60_000, placeholderData: (previous) => previous });
+  const periodInput = useMemo(() => ({ from: period?.from ?? null, to: period?.to ?? null, previousFrom: period?.previousFrom ?? null, previousTo: period?.previousTo ?? null }), [period]);
+  const periodData = trpc.leadops.leadsPeriod.useQuery(periodInput, { enabled: Boolean(period), retry: false, refetchInterval: 60_000 });
+  const scoped = period && periodData.data ? periodSplit(periodData.data.statuses) : null;
+  const periodCompare = period && periodData.data ? periodComparison(periodData.data.total, periodData.data.previous, period.versus) : null;
+  const periodRate = scoped ? claimRate(scoped.delivered, scoped.claimed) : null;
   const [hover, setHover] = useState<number | null>(null); const [hidden, setHidden] = useState<Record<string, number>>({});
   useEffect(() => { setHidden(readHidden()); }, []);
   const data = overview.data; const days = data?.days ?? []; const max = Math.max(1, ...days.map((day) => day.count));
@@ -61,8 +69,8 @@ export default function LeadsOverviewStrip({ active, activeDay, onAll, onToday, 
     return <span className={`lo-insight is-${tone}`}>{head ? <span className="lo-part">{icon}{head}</span> : icon}{parts(tail)}</span>;
   };
   /** Eine Zahl der Leiste: Name, Zahl, eine Zeile darunter. Was sonst noch dazugehört, steht im Hinweis beim Überfahren. */
-  const tile = (key: Exclude<OverviewFilter, "day" | "week" | null>, label: string, dot: string | null, value: number | undefined, onClick: () => void, body: React.ReactNode, foot: string, title?: string) =>
-    <button type="button" className={`lo-tile is-${key} ${active === key ? "is-active" : ""}`} aria-pressed={active === key} onClick={onClick} title={[foot, title].filter(Boolean).join(" – ") || undefined}>
+  const tile = (key: Exclude<OverviewFilter, "day" | "week" | null>, label: string, dot: string | null, value: number | undefined, onClick: () => void, body: React.ReactNode, foot: string, title?: string, on = active === key) =>
+    <button type="button" className={`lo-tile is-${key} ${on ? "is-active" : ""}`} aria-pressed={on} onClick={onClick} title={[foot, title].filter(Boolean).join(" – ") || undefined}>
       <span className="lo-label">{dot && <i className={`lo-dot is-${dot}`} aria-hidden="true" />}{label}</span>
       <strong>{number(value)}</strong>
       {body}
@@ -74,18 +82,31 @@ export default function LeadsOverviewStrip({ active, activeDay, onAll, onToday, 
         {tile("all", "Leads gesamt", null, data?.total, onAll,
           insight("leise", null, "alle anzeigen"),
           "", splitTotal ? split.filter((part) => part.count > 0).map((part) => `${number(part.count)} ${part.label} (${part.share} %)`).join(" · ") : undefined)}
-        {tile("today", "Heute neu", null, data?.today, onToday,
+        {period ? tile("today", period.label, null, periodData.data?.total, onPeriod,
+          periodCompare ? insight(periodCompare.tone, toneIcon(periodCompare.arrow), periodCompare.text) : insight("leise", null, periodData.data && !period.versus ? "ohne Vergleich" : " "),
+          period.versus && typeof periodData.data?.previous === "number" ? `${period.versus.charAt(0).toUpperCase()}${period.versus.slice(1)}: ${number(periodData.data.previous)}` : "",
+          period.versus ? `Verglichen wird mit ${period.versus}${period.running ? " bis zur selben Uhrzeit" : ""}.` : "Vor diesem Tag gibt es keinen gleich langen Zeitraum zum Vergleichen.", active === "today" || active === "day" || active === "week")
+        : tile("today", "Heute neu", null, data?.today, onToday,
           todayCompare ? insight(todayCompare.tone, toneIcon(todayCompare.arrow), todayCompare.text) : insight("ruhig", null, " "),
           data ? `gestern bis jetzt ${number(data.yesterdaySoFar ?? 0)} · ganzer Tag ${number(data.yesterday)}` : "",
           data && today ? `Verglichen wird mit gestern bis zur selben Uhrzeit. ${dayLabel(days[days.length - 8]?.day ?? today, true).split(",")[0]} vor einer Woche: ${leads(data.sameDayLastWeek ?? 0)}.` : undefined)}
-        {tile("ready", "Bereit zum Ausliefern", "bereit", data?.ready, onReady,
+        {period ? tile("ready", "Bereit zum Ausliefern", "bereit", scoped?.ready, onReady,
+          !scoped ? insight("ruhig", null, " ") : !scoped.total ? insight("leise", null, `keine Leads ${period.scope}`) : scoped.ready ? insight("ruhig", null, period.scope) : insight("gut", <Check aria-hidden="true" />, `alles ${period.scope} ist raus`),
+          "", `Freigegebene Leads ${period.scope}, die noch an keinen Käufer gegangen sind`)
+        : tile("ready", "Bereit zum Ausliefern", "bereit", data?.ready, onReady,
           !data ? insight("ruhig", null, " ") : data.ready ? (age ? insight(age.tone, <Clock aria-hidden="true" />, age.text) : insight("ruhig", null, " ")) : insight("gut", <Check aria-hidden="true" />, "alles Freigegebene ist raus"),
           waitingElse ? `dazu ${waitingElse}` : "", "Freigegebene Leads, die noch an keinen Käufer gegangen sind")}
-        {tile("delivered", "Ausgeliefert", "ausgeliefert", data?.delivered, onDelivered,
+        {period ? tile("delivered", "Ausgeliefert", "ausgeliefert", scoped?.delivered, onDelivered,
+          !scoped ? insight("ruhig", null, " ") : scoped.delivered ? insight("ruhig", null, `${number(Math.round((scoped.delivered / Math.max(1, scoped.total)) * 100))} % ${period.scope}`) : insight("ruhig", null, "noch keiner"),
+          "", `Leads ${period.scope}, die an einen Käufer gegangen sind`)
+        : tile("delivered", "Ausgeliefert", "ausgeliefert", data?.delivered, onDelivered,
           !data ? insight("ruhig", null, " ") : data.delivered || data.deliveredWeek ? insight("ruhig", null, `${number(data.deliveredWeek ?? 0)} in 7 Tagen · heute ${number(data.deliveredToday ?? 0)}`) : insight("ruhig", null, "noch keiner"),
           data ? ((data.valueWeek ?? 0) > 0 ? `${euro(data.valueWeek)} in 7 Tagen` : data.total && data.delivered ? `${Math.round((data.delivered / data.total) * 100)} % aller Leads` : "") : "",
           "Leads, die an einen Käufer gegangen sind. Der Betrag ist die Summe ihrer Preise – ohne Abgelehnte und Reklamierte.")}
-        {tile("claimed", "Reklamiert", "reklamiert", data?.status?.reklamiert, onClaimed,
+        {period ? tile("claimed", "Reklamiert", "reklamiert", scoped?.claimed, onClaimed,
+          !scoped ? insight("ruhig", null, " ") : periodRate === null ? insight("ruhig", null, "noch nichts ausgeliefert") : insight(periodRate >= 20 ? "achtung" : "ruhig", null, `${number(periodRate)} % der ausgelieferten`),
+          "", `Anteil der reklamierten Leads ${period.scope} an denen, die ausgeliefert wurden`)
+        : tile("claimed", "Reklamiert", "reklamiert", data?.status?.reklamiert, onClaimed,
           !data ? insight("ruhig", null, " ") : rate === null ? insight("ruhig", null, "noch nichts ausgeliefert") : insight(rate >= 20 ? "achtung" : "ruhig", null, `${number(rate)} % der ausgelieferten`),
           data ? ((data.claimsOpen ?? 0) > 0 ? `${number(data.claimsOpen)} ${data.claimsOpen === 1 ? "wartet" : "warten"} auf Entscheidung` : data.status?.reklamiert ? "alle entschieden" : "") : "",
           "Anteil der reklamierten Leads an allen, die je ausgeliefert wurden")}

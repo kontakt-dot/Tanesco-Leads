@@ -64,7 +64,7 @@ export default function ApiErrorsWorkspace() {
   const health = data?.health ?? []; const broken = health.filter((row) => row.state === "gestoert").length; const shaky = health.filter((row) => row.state === "warnung").length;
 
   return <div className="fx-scope af">
-    <header className="page-intro compact"><div><span className="eyebrow">LEAD-OPERATIONS</span><h1>API-Fehler</h1><p>Alles, was beim Ausliefern hakt. Du siehst den Grund in einfachen Worten, korrigierst den Lead und schickst ihn noch einmal los.</p></div>
+    <header className="page-intro compact"><div><span className="eyebrow">ANALYSE</span><h1>API-Fehler</h1><p>Alles, was beim Ausliefern hakt. Du siehst den Grund in einfachen Worten, korrigierst den Lead und schickst ihn noch einmal los.</p></div>
       <div className="flex flex-wrap items-center gap-3"><select aria-label="Zeitraum" className="filter-select af-days" value={days} onChange={(event) => setDays(Number(event.target.value) as Days)}><option value={7}>Letzte 7 Tage</option><option value={30}>Letzte 30 Tage</option><option value={90}>Letzte 90 Tage</option></select><Button variant="outline" onClick={() => setGuideOpen(true)}><BookOpen className="h-4 w-4" /> Welche Fehler gibt es?</Button></div></header>
 
     <section className="af-tiles" aria-label="Offene Probleme nach Art">

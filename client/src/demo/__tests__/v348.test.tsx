@@ -58,9 +58,11 @@ describe("Version 348", () => {
 
     const root = await open("page=API-Fehler", 2500); await until(() => root.querySelectorAll(".af-row").length > 0);
     expect(root.querySelector("h1")!.textContent).toBe("API-Fehler");
-    // Menü: unter LEAD-OPERATIONS direkt nach „Lieferkette“, mit der Zahl der offenen Probleme
-    const group = Array.from(root.querySelectorAll(".nav-group")).find((node) => node.querySelector(".nav-group-label")?.textContent === "LEAD-OPERATIONS")!; const items = texts(group, ".nav-item > span");
-    expect(items.indexOf("API-Fehler")).toBe(items.indexOf("Lieferkette") + 1); expect(items.indexOf("Lieferkette")).toBeGreaterThanOrEqual(0);
+    // Menü: unter ANALYSE direkt nach „Gebietskarte“ (seit v365, vorher unter LEAD-OPERATIONS), mit der Zahl der offenen Probleme
+    const group = Array.from(root.querySelectorAll(".nav-group")).find((node) => node.querySelector(".nav-group-label")?.textContent === "ANALYSE")!; const items = texts(group, ".nav-item > span");
+    expect(items.slice(0, 2)).toEqual(["Dashboard", "Gebietskarte"]); expect(items.indexOf("API-Fehler")).toBe(2);
+    const operations = Array.from(root.querySelectorAll(".nav-group")).find((node) => node.querySelector(".nav-group-label")?.textContent === "LEAD-OPERATIONS")!; expect(texts(operations, ".nav-item > span")).not.toContain("API-Fehler");
+    expect(root.querySelector(".page-intro .eyebrow")!.textContent).toBe("ANALYSE");
     const entry = Array.from(group.querySelectorAll<HTMLElement>(".nav-item")).find((node) => node.querySelector("span")?.textContent === "API-Fehler")!;
     expect(entry.className).toContain("active"); await until(() => Boolean(entry.querySelector(".nav-badge"))); expect(entry.querySelector(".nav-badge")!.textContent).toBe(String(data.counts.open)); expect(entry.querySelector(".nav-badge")!.getAttribute("aria-label")).toBe(`${data.counts.open} offene Probleme`);
     // Kacheln

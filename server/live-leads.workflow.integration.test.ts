@@ -16,6 +16,7 @@ const listInput = vi.fn();
 vi.mock("../client/src/lib/trpc", () => ({
   trpc: { useUtils: () => ({ leadops: new Proxy({}, { get: () => ({ invalidate: vi.fn() }) }) }), leadops: new Proxy({}, { get: (_target, key: string) => {
     if (key === "listLeadsPaged") return { useQuery: (input: unknown) => { listInput(input); return { data: { rows: [lead, secondLead], total: 2, page: 1, pageCount: 1, duplicateIds: [] }, isLoading: false, error: null }; } };
+    if (key === "leadsPeriod") return { useQuery: () => ({ data: undefined, isLoading: false, error: null }) }; // seit v366: Kacheln je Zeitraum
     if (key === "leadsOverview") return { useQuery: () => ({ data: { total: 2, today: 0, yesterday: 0, week: 2, open: 2, ready: 2, delivered: 0, days: [{ day: "2026-08-17", count: 0 }, { day: "2026-08-18", count: 2 }] }, isLoading: false, error: null }) };
     if (key === "listCategories") return { useQuery: () => ({ data: [category], isLoading: false, error: null }) };
     if (key === "listCategoryFields") return { useQuery: () => ({ data: [{ id: 9, label: "Dachausrichtung", fieldKey: "dachausrichtung", fieldType: "auswahl", options: ["Süd", "Ost"], required: false }], isLoading: false, error: null }) };
