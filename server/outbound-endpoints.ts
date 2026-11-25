@@ -17,6 +17,8 @@ import { buildEndpointBody, evaluateResponseRules, leadTemplateValues, readPath,
 /* ------------------------------------------------------------------ Anmeldung per Token */
 
 const tokenCache = new Map<number, { token: string; expiresAt: number }>();
+/** Nach dem Speichern eines Endpoints: zwischengespeicherten Token vergessen – mit geänderten Zugangsdaten wird neu angemeldet (sonst merkte man einen Fehler erst nach Ablauf). */
+export function forgetEndpointToken(endpointId: number) { tokenCache.delete(endpointId); }
 
 
 async function obtainToken(endpoint: DeliveryEndpoint, auth: AuthConfig, fetchImpl: typeof fetch, force = false) {

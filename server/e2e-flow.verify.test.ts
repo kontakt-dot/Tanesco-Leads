@@ -123,6 +123,7 @@ beforeAll(async () => {
     const headers: Record<string, string> = {}; new Headers(init?.headers).forEach((value, key) => { headers[key] = value; });
     let parsedBody: unknown = null; try { parsedBody = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : init?.body ? { formData: true } : null; } catch { parsedBody = String(init?.body); }
     outbound.push({ url, method: init?.method ?? "GET", headers, body: parsedBody });
+    if (url.endsWith("/login") && (parsedBody as { user?: string } | null)?.user === "falsch-v362") return new Response(JSON.stringify({ error: "invalid credentials" }), { status: 401, headers: { "content-type": "application/json" } }); // falscher Zugang
     if (url.endsWith("/login")) return new Response(JSON.stringify({ auth_token: "tok-12345" }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("aroundhome-d2d")) return new Response(JSON.stringify({ data: [{ uuid: "d2d-1", status: "qualified", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-2", status: "open", sub_id: "D2D-TEST1", created_at: new Date().toISOString() }, { uuid: "d2d-3", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar", sub_id: "D2D-TEST2", created_at: new Date(Date.now() - 24 * 3_600_000).toISOString() }, { uuid: "d2d-4", status: "qualified", sub_id: "D2D-FREMD", created_at: new Date().toISOString() }] }), { status: 200, headers: { "content-type": "application/json" } });
     if (url.includes("aroundhome-export")) return new Response(JSON.stringify({ data: [{ uuid: S.aroundhomeRef ?? "none", status: "cancelled", cancellation_reason: "Kunde nicht erreichbar" }, { uuid: "ah-unbekannt", status: "cancelled", cancellation_reason: "Dublette" }, { uuid: "ah-ok", status: "confirmed" }] }), { status: 200, headers: { "content-type": "application/json" } });
@@ -156,6 +157,10 @@ beforeAll(async () => {
       if ((init?.method ?? "GET") === "OPTIONS") return new Response(null, { status: 204 });
       const email = String((parsedBody as { email?: unknown } | null)?.email ?? "");
       return !/^[^@\s]+@[^@\s.][^@\s]*\.[a-z]{2,}$/i.test(email) ? new Response(JSON.stringify({ errors: { email: ["is invalid"] } }), { status: 422, headers: { "content-type": "application/json" } }) : new Response(JSON.stringify({ uuid: `v348-${outbound.length}` }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.includes("prelive.wattfox.net/v1/leads")) { // wie die Testumgebung von Wattfox (25.11.): Zahlenfelder nur als Ziffern
+      const sent = (parsedBody ?? {}) as Record<string, unknown>; const notDigit = ["stromverbrauch", "hz_groessederflaeche", "hz_baujahrgebaeude", "productId"].find((key) => key in sent && !Number.isInteger(sent[key]));
+      if (headers["x-auth-token"] === "tok-12345" && notDigit) return new Response(JSON.stringify({ status: "error", error: `4034: ${notDigit}: ${String(sent[notDigit])} is not a valid digit` }), { status: 400, headers: { "content-type": "application/json" } });
     }
     if (url.includes("prelive.wattfox.net/v1/leads")) return headers["x-auth-token"] !== "tok-12345" ? new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }) : new Response(JSON.stringify({ wf_leadid: 7000 + outbound.length, firstname: (parsedBody as { firstname?: string } | null)?.firstname ?? null }), { status: 200, headers: { "content-type": "application/json" } }); // Testumgebung von Wattfox
     if (url.includes("secured") && headers["x-auth-token"] !== "tok-12345") return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
@@ -654,7 +659,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const endpoint = await owner.leadops.saveDeliveryEndpoint({ membershipId, categoryId: S.wp.id, enabled: true, method: "POST", url: "https://partner-crm.example/secured/leads", sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [{ name: "X-Api-Version", value: "2" }], authEnabled: true, auth: { loginUrl: "https://partner-crm.example/login", credentials: [{ name: "user", value: "tanesco" }, { name: "pass", value: "geheim" }], tokenPath: "auth_token", headerName: "X-AUTH-TOKEN", prefix: "", ttlMinutes: 60 }, bodyTemplate: '{ "inquiry": { "contact": { "first_name": "{{first_name}}", "last_name": "{{last_name}}", "email": "{{email}}", "zip_code": "{{postal_code}}" }, "questions": { "heizung": "{{custom_data.heizungsart}}" }, "language_code": "de" } }', omitAutoFields: false, rotate: false, valueMappings: [{ field: "heizungsart", ourValue: "Gas", customerCode: "222" }] });
     expect(endpoint.id).toBeGreaterThan(0);
     const saved = (await owner.leadops.getMemberIntegration({ membershipId })).endpoints[0];
-    expect(saved.auth?.credentials.map((pair) => pair.value)).toEqual(["••••••••", "••••••••"]); // Zugangsdaten werden maskiert ausgeliefert
+    expect(saved.auth?.credentials.map((pair) => pair.value)).toEqual(["tanesco", "••••••••"]); // das Passwort wird maskiert ausgeliefert, der Benutzername lesbar (seit v362)
     const test = await owner.leadops.testDeliveryEndpoint({ membershipId, id: endpoint.id });
     expect(test).toMatchObject({ ok: true, status: 200 });
     expect(JSON.parse(test.requestBody)).toMatchObject({ lead_id: expect.stringMatching(/^TEST-/), inquiry: { contact: { first_name: "Test" }, questions: { heizung: "222" } } }); // Beispielwert „Gas“ → Kunden-Code
@@ -6456,6 +6461,41 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       // (d) korrigiert: speichern und senden gehen wieder
       await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }]) });
       expect(await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).toMatchObject({ sent: 3, ok: 3, total: 3 });
+    } finally { await db.update(users).set({ passwordHash: null }).where(eq(users.id, ownerUserId)); }
+  }, 60000);
+
+  it("v362. Wattfox: Stromverbrauch als Zahl (die Testumgebung prüft auf Ziffern); gespeicherter Benutzername lesbar, Passwort verdeckt, eigenes Passwort markiert; nach dem Speichern wird neu angemeldet", async () => {
+    const { WATTFOX, WATTFOX_TEMPLATE } = await import("../shared/wattfox"); const { hashPassword } = await import("./_core/auth");
+    const { deliveryEndpoints: endpointsTable } = await import("../drizzle/schema"); const { decryptAuth, encryptJson } = await import("./outbound-endpoints");
+    const stamp = Date.now().toString(36);
+    const created = await owner.leadops.createMember({ firstName: "Wanda", lastName: "Watt", company: "V362 Käufer GmbH", email: `v362-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const membershipId = created.membershipId;
+    const auth = (credentials: Array<{ name: string; value: string }>) => ({ loginUrl: WATTFOX.loginUrl, credentials, tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes });
+    const config = { membershipId, categoryId: S.pv.id, enabled: true, method: "POST" as const, url: WATTFOX.leadsUrl, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: true, auth: auth([{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }]), bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, rotate: false, valueMappings: [] };
+    const endpoint = await owner.leadops.saveDeliveryEndpoint(config);
+    const stored = async () => decryptAuth((await db.select().from(endpointsTable).where(eq(endpointsTable.id, endpoint.id)))[0].authConfigEncrypted)!.credentials;
+    // (a) alle 3 Testleads kommen an – auch Photovoltaik (vorher: „4034: stromverbrauch: 4.000 - 6.000 kWh is not a valid digit“)
+    const start = outbound.length;
+    expect(await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).toMatchObject({ sent: 3, ok: 3, total: 3 });
+    const pv = outbound.slice(start).find((call) => call.url === WATTFOX.leadsUrl && (call.body as { productId?: number }).productId === 2)!.body as { stromverbrauch?: unknown; notes?: string };
+    expect(pv.stromverbrauch).toBe(5000); expect(String(pv.notes)).toContain("Stromverbrauch laut Gespräch: 4.000 - 6.000 kWh");
+    // (b) gespeichert: Benutzername lesbar, Passwort verdeckt; unverändert speichern behält beides
+    const listed = async () => (await owner.leadops.getMemberIntegration({ membershipId })).endpoints.find((row) => row.id === endpoint.id)!;
+    expect((await listed()).auth?.credentials).toEqual([{ name: "user", value: "testfirma" }, { name: "pass", value: "••••••••" }]);
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "testfirma" }, { name: "pass", value: "••••••••" }]) });
+    expect(await stored()).toEqual([{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }]);
+    // (c) nach dem Speichern meldet sich die Software neu an – ein falscher Zugang fällt sofort auf (vorher galt der alte Schlüssel bis zu 23 Stunden weiter)
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "falsch-v362" }, { name: "pass", value: "••••••••" }]) });
+    const wrong = await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id });
+    expect(wrong).toMatchObject({ sent: 1, ok: 0, total: 3 }); expect(wrong.results[0].response).toContain("401");
+    await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "testfirma" }, { name: "pass", value: "••••••••" }]) });
+    expect(await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).toMatchObject({ sent: 3, ok: 3 });
+    // (d) steht das eigene Passwort für diese Software drin (vom Browser eingesetzt): verdeckt und markiert – der Editor sagt, was zu tun ist
+    const own = "Eigenes!Passwort2026";
+    await db.update(users).set({ passwordHash: await hashPassword(own) }).where(eq(users.id, ownerUserId));
+    try {
+      await db.update(endpointsTable).set({ authConfigEncrypted: encryptJson(auth([{ name: "user", value: own }, { name: "pass", value: "geheim" }])) }).where(eq(endpointsTable.id, endpoint.id));
+      expect((await listed()).auth?.credentials).toEqual([{ name: "user", value: "••••••••", ownPassword: true }, { name: "pass", value: "••••••••" }]);
     } finally { await db.update(users).set({ passwordHash: null }).where(eq(users.id, ownerUserId)); }
   }, 60000);
 });

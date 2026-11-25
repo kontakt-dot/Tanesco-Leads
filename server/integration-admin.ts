@@ -8,10 +8,11 @@ import { decryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
 import { ensureMemberSettings, requireMembership } from "./member-admin";
 import { verifyPassword } from "./_core/auth";
+import { SAVED_SECRET, isPlainCredential } from "../shared/credentials";
 import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../shared/wattfox";
-import { PLACEHOLDERS, buildEndpointBody, decryptAuth, decryptHeaders, encryptJson, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
+import { PLACEHOLDERS, buildEndpointBody, decryptAuth, decryptHeaders, encryptJson, forgetEndpointToken, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
 
-export const SECRET_MASK = "••••••••";
+export const SECRET_MASK = SAVED_SECRET;
 
 /**
  * Zugangsdaten eines Partners dürfen nie das eigene Passwort für diese Software sein. Das passiert, wenn der Browser sein
@@ -19,10 +20,9 @@ export const SECRET_MASK = "••••••••";
  * Geprüft wird gegen den angemeldeten Benutzer (und bei „Als Benutzer eingeloggt“ gegen den, der eingeloggt hat).
  */
 export async function assertNoOwnPassword(db: Db, actorUserIds: number[] | undefined, credentials: Array<{ name: string; value: string }>, when: "speichern" | "senden" = "speichern") {
-  const ids = Array.from(new Set((actorUserIds ?? []).filter((id) => Number.isInteger(id) && id > 0)));
   const values = credentials.filter((pair) => pair.value && pair.value !== SECRET_MASK);
-  if (!ids.length || !values.length) return;
-  const hashes = (await db.select({ passwordHash: users.passwordHash }).from(users).where(inArray(users.id, ids))).map((row) => row.passwordHash).filter((hash): hash is string => Boolean(hash));
+  if (!values.length) return;
+  const hashes = await actorPasswordHashes(db, actorUserIds);
   for (const pair of values) for (const hash of hashes) {
     if (!(await verifyPassword(pair.value, hash))) continue;
     const field = pair.name.trim() || "Zugangsdaten";
@@ -41,12 +41,33 @@ export const AROUNDHOME_RESPONSE_PRESET: Array<{ value: string; label: string; r
   { value: "6", label: "E-Mail auf Sperrliste", reason: "Sperrliste" },
 ];
 
-function presentEndpoint(endpoint: DeliveryEndpoint) {
-  const auth = decryptAuth(endpoint.authConfigEncrypted);
-  return { id: endpoint.id, categoryId: endpoint.categoryId, enabled: endpoint.enabled, method: endpoint.method, url: endpoint.url, sourceFilterMode: endpoint.sourceFilterMode, sourceSupplierIds: Array.isArray(endpoint.sourceSupplierIds) ? (endpoint.sourceSupplierIds as number[]) : [], fieldFilters: Array.isArray(endpoint.fieldFilters) ? (endpoint.fieldFilters as FieldFilter[]) : [], headers: decryptHeaders(endpoint.headersEncrypted), authEnabled: endpoint.authEnabled, auth: auth ? { ...auth, credentials: auth.credentials.map((pair) => ({ name: pair.name, value: pair.value ? SECRET_MASK : "" })) } : null, bodyTemplate: endpoint.bodyTemplate ?? "", omitAutoFields: endpoint.omitAutoFields, rotate: endpoint.rotate, valueMappings: Array.isArray(endpoint.valueMappings) ? (endpoint.valueMappings as ValueMapping[]) : [], sentCount: endpoint.sentCount, position: endpoint.position };
+/** Passwort-Hashes der Handelnden (für „eigenes Passwort in den Zugangsdaten?“). */
+async function actorPasswordHashes(db: Db, actorUserIds: number[] | undefined) {
+  const ids = Array.from(new Set((actorUserIds ?? []).filter((id) => Number.isInteger(id) && id > 0)));
+  if (!ids.length) return [] as string[];
+  return (await db.select({ passwordHash: users.passwordHash }).from(users).where(inArray(users.id, ids))).map((row) => row.passwordHash).filter((hash): hash is string => Boolean(hash));
 }
 
-export async function getMemberIntegration(db: Db, tenantId: number, membershipId: number) {
+/**
+ * Zugangsdaten für den Browser: Benutzername lesbar, Geheimnisse als SAVED_SECRET. Steht das eigene Passwort für diese Software drin
+ * (vom Browser eingesetzt), bleibt auch der Benutzername verdeckt und die Zeile bekommt `ownPassword` – der Editor sagt, was zu tun ist.
+ */
+async function presentCredentials(credentials: Array<{ name: string; value: string }>, ownHashes: string[]) {
+  return Promise.all(credentials.map(async (pair) => {
+    if (!pair.value) return { name: pair.name, value: "" };
+    let own = false; for (const hash of ownHashes) if (await verifyPassword(pair.value, hash)) { own = true; break; }
+    if (own) return { name: pair.name, value: SECRET_MASK, ownPassword: true as const };
+    return { name: pair.name, value: isPlainCredential(pair.name) ? pair.value : SECRET_MASK };
+  }));
+}
+
+async function presentEndpoint(endpoint: DeliveryEndpoint, ownHashes: string[] = []) {
+  const decrypted = decryptAuth(endpoint.authConfigEncrypted);
+  const auth = decrypted ? { ...decrypted, credentials: await presentCredentials(decrypted.credentials, ownHashes) } : null;
+  return { id: endpoint.id, categoryId: endpoint.categoryId, enabled: endpoint.enabled, method: endpoint.method, url: endpoint.url, sourceFilterMode: endpoint.sourceFilterMode, sourceSupplierIds: Array.isArray(endpoint.sourceSupplierIds) ? (endpoint.sourceSupplierIds as number[]) : [], fieldFilters: Array.isArray(endpoint.fieldFilters) ? (endpoint.fieldFilters as FieldFilter[]) : [], headers: decryptHeaders(endpoint.headersEncrypted), authEnabled: endpoint.authEnabled, auth, bodyTemplate: endpoint.bodyTemplate ?? "", omitAutoFields: endpoint.omitAutoFields, rotate: endpoint.rotate, valueMappings: Array.isArray(endpoint.valueMappings) ? (endpoint.valueMappings as ValueMapping[]) : [], sentCount: endpoint.sentCount, position: endpoint.position };
+}
+
+export async function getMemberIntegration(db: Db, tenantId: number, membershipId: number, options: { /** wer schaut – sein Passwort in Zugangsdaten wird erkannt */ actorUserIds?: number[] } = {}) {
   await requireMembership(db, tenantId, membershipId);
   const settings = await ensureMemberSettings(db, tenantId, membershipId);
   const [endpoints, rules, hooks, categories, fields, supplierRows, reasons] = await Promise.all([
@@ -59,8 +80,9 @@ export async function getMemberIntegration(db: Db, tenantId: number, membershipI
     db.select({ id: reclamationReasons.id, name: reclamationReasons.name, active: reclamationReasons.active, forwardToNextStop: reclamationReasons.forwardToNextStop }).from(reclamationReasons).where(eq(reclamationReasons.tenantId, tenantId)).orderBy(asc(reclamationReasons.sortOrder)),
   ]);
   const categoryIds = new Set(categories.map((category) => category.id));
+  const ownHashes = endpoints.some((endpoint) => endpoint.authConfigEncrypted) ? await actorPasswordHashes(db, options.actorUserIds) : [];
   return {
-    endpoints: endpoints.map(presentEndpoint),
+    endpoints: await Promise.all(endpoints.map(async (endpoint) => presentEndpoint(endpoint, endpoint.authConfigEncrypted ? ownHashes : []))),
     responseMappingEnabled: settings.responseMappingEnabled,
     rules: rules.map((rule) => ({ id: rule.id, source: rule.source, field: rule.field ?? "", op: rule.op, value: rule.value, label: rule.label ?? "", reasonId: rule.reasonId, active: rule.active })),
     returnWebhooks: hooks.map((hook) => ({ id: hook.id, categoryId: hook.categoryId, enabled: hook.enabled, method: hook.method, url: hook.url ?? "", headers: decryptHeaders(hook.headersEncrypted), bodyTemplate: hook.bodyTemplate ?? "", omitAutoFields: hook.omitAutoFields })),
@@ -85,7 +107,7 @@ export async function saveDeliveryEndpoint(db: Db, tenantId: number, membershipI
   if (auth && existing) { const previous = decryptAuth(existing.authConfigEncrypted); auth = { ...auth, credentials: auth.credentials.map((pair) => ({ name: pair.name, value: pair.value === SECRET_MASK ? previous?.credentials.find((item) => item.name === pair.name)?.value ?? "" : pair.value })) }; }
   if (auth) await assertNoOwnPassword(db, options.actorUserIds, auth.credentials);
   const values = { tenantId, membershipId, categoryId: input.categoryId, enabled: input.enabled, method: input.method, url: input.url.trim(), sourceFilterMode: input.sourceFilterMode, sourceSupplierIds: input.sourceSupplierIds, fieldFilters: input.fieldFilters.filter((filter) => filter.field && filter.value !== undefined), headersEncrypted: input.headers.filter((pair) => pair.name).length ? encryptJson(input.headers.filter((pair) => pair.name)) : null, authEnabled: input.authEnabled, authConfigEncrypted: auth ? encryptJson(auth) : null, bodyTemplate: input.bodyTemplate, omitAutoFields: input.omitAutoFields, rotate: input.rotate, valueMappings: input.valueMappings.filter((mapping) => mapping.field && mapping.ourValue) };
-  if (existing) { await db.update(deliveryEndpoints).set(values).where(eq(deliveryEndpoints.id, existing.id)); return { id: existing.id }; }
+  if (existing) { await db.update(deliveryEndpoints).set(values).where(eq(deliveryEndpoints.id, existing.id)); forgetEndpointToken(existing.id); return { id: existing.id }; } // geänderte Zugangsdaten: neu anmelden
   const siblings = await db.select({ position: deliveryEndpoints.position }).from(deliveryEndpoints).where(and(eq(deliveryEndpoints.membershipId, membershipId), eq(deliveryEndpoints.categoryId, input.categoryId)));
   const inserted = await db.insert(deliveryEndpoints).values({ ...values, position: siblings.length });
   return { id: Number(inserted[0]?.insertId) || 0 };

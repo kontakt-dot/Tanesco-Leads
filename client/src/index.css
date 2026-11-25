@@ -4152,3 +4152,6 @@ html:not(.dark) .audience-status .is-picked{background:#ecfdf3!important;color:#
 
 /* Endpoint-Editor (Benutzer → Integration): deckend – sonst scheint die Seite dahinter durch */
 .ig-dialog{background:#1c192d}
+
+/* Felder für Zugangsdaten (v362): Punkte nur für den Wert – der Platzhalter („gespeichert – zum Ändern neu eintippen“) bleibt lesbar */
+input[data-secret]::placeholder{-webkit-text-security:none}

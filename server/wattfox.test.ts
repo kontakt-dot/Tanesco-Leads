@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { WATTFOX, WATTFOX_TEMPLATE, isTestAddress, isWattfoxTemplate, wattfoxArea, wattfoxHeating, wattfoxImplementation, wattfoxOrientation, wattfoxPayload, wattfoxRoofAge, wattfoxTestLeads } from "../shared/wattfox";
+import { WATTFOX, WATTFOX_TEMPLATE, isTestAddress, isWattfoxTemplate, wattfoxArea, wattfoxConsumption, wattfoxHeating, wattfoxImplementation, wattfoxOrientation, wattfoxPayload, wattfoxRoofAge, wattfoxTestLeads } from "../shared/wattfox";
 import { buildEndpointBody, extractPartnerReference, leadTemplateValues } from "./outbound-templates";
 
 const tests = wattfoxTestLeads({ all: true }); // die 9 aus der früheren Mail von Wattfox
@@ -10,7 +10,7 @@ describe("Wattfox: Leads im Format von Wattfox", () => {
     const { payload, products, missing } = wattfoxPayload(byLabel("PV 1"));
     expect(products).toEqual({ main: "pv", extra: null });
     expect(missing).toEqual([]);
-    expect(payload).toMatchObject({ productId: 2, salutation: "Herr", firstname: "Max", lastname: "Testmann", street: "Teststraße 1", zip: "79110", city: "Freiburg", country: "DE", implementation: "1 bis 3 Monate", ph_artdesgebaeude: "Ein-/Zweifamilienhaus", ph_ausrichtungderflaeche: "Süd", ph_alterderflaeche: "bis 25 Jahre alt", ph_dachflaeche: "60", ph_stromspeicher: "Ja", stromverbrauch: "4.000 - 6.000 kWh" });
+    expect(payload).toMatchObject({ productId: 2, salutation: "Herr", firstname: "Max", lastname: "Testmann", street: "Teststraße 1", zip: "79110", city: "Freiburg", country: "DE", implementation: "1 bis 3 Monate", ph_artdesgebaeude: "Ein-/Zweifamilienhaus", ph_ausrichtungderflaeche: "Süd", ph_alterderflaeche: "bis 25 Jahre alt", ph_dachflaeche: "60", ph_stromspeicher: "Ja", stromverbrauch: 5000 });
     expect(payload.childinterests).toBeUndefined(); expect(payload.otherinterests).toBeUndefined();
     expect(String(payload.notes)).toContain("TESTLEAD"); expect(String(payload.notes)).toContain("Dachalter laut Gespräch: Unter 30 Jahre"); expect(String(payload.notes)).toContain("Erreichbarkeit: nachmittags");
     expect(Object.keys(payload).some((key) => key.startsWith("hz_") || key.startsWith("wp_"))).toBe(false);
@@ -168,16 +168,37 @@ describe("Interesse an beidem aus dem anderen Fragebogen (v356)", () => {
   it("PV-Lead mit Wärmepumpen-Fragen → ein Lead: PV mit Zusatzinteresse Wärmepumpe und den Feldern beider Produkte", () => {
     const { payload, products, missing } = wattfoxPayload(lead);
     expect(products).toEqual({ main: "pv", extra: "wp" }); expect(missing).toEqual([]);
-    expect(payload).toMatchObject({ productId: 2, otherinterests: [20], childinterests: [6], implementation: "bis in 1 Monat", ph_artdesgebaeude: "Ein-/Zweifamilienhaus", ph_ausrichtungderflaeche: "Süd", ph_alterderflaeche: "25 bis 75 Jahre alt", ph_stromspeicher: "Ja", stromverbrauch: "4000 kWh im Jahr", hz_gebaeudetyp: "Ein- / Zweifamilienhaus", hz_bisherigeheizung: ["Gasheizung"], hz_taetigkeit: "Austausch / Modernisierung", hz_groessederflaeche: 121, hz_personen: "3-4 Personen", wp_artderpumpe: "Luft-Wärmepumpe", wp_waermeabgabesystem: ["Heizkörper", "Fußbodenheizung"] });
+    expect(payload).toMatchObject({ productId: 2, otherinterests: [20], childinterests: [6], implementation: "bis in 1 Monat", ph_artdesgebaeude: "Ein-/Zweifamilienhaus", ph_ausrichtungderflaeche: "Süd", ph_alterderflaeche: "25 bis 75 Jahre alt", ph_stromspeicher: "Ja", stromverbrauch: 4000, hz_gebaeudetyp: "Ein- / Zweifamilienhaus", hz_bisherigeheizung: ["Gasheizung"], hz_taetigkeit: "Austausch / Modernisierung", hz_groessederflaeche: 121, hz_personen: "3-4 Personen", wp_artderpumpe: "Luft-Wärmepumpe", wp_waermeabgabesystem: ["Heizkörper", "Fußbodenheizung"] });
     // derselbe Kunde als Wärmepumpen-Lead → Wärmepumpe mit Zusatzinteresse PV
     expect(wattfoxPayload({ ...lead, lead_type: "Wärmepumpe", lead_type_shortcode: "WP" }).products).toEqual({ main: "wp", extra: "pv" });
     // ohne jedes Zeichen für beides bleibt es ein Produkt
     expect(wattfoxPayload({ ...lead, "custom_data.wp_interesse_photovolatikanalge": "Nein" }).products).toEqual({ main: "pv", extra: null });
   });
 
-  it("„Freistehendes“ zählt als Ein-/Zweifamilienhaus, eine nackte Zahl bekommt ihre Einheit", () => {
+  it("„Freistehendes“ zählt als Ein-/Zweifamilienhaus; nur Stromkosten im Monat → kein Stromverbrauch, die Kosten mit Einheit im Hinweisfeld", () => {
     const { payload } = wattfoxPayload({ ...lead, "custom_data.pv_hausart": "", "custom_data.pv_stromverbrauch": "", "custom_data.pv_monatliche_stromkosten": "120" });
     expect(payload.ph_artdesgebaeude).toBe("Ein-/Zweifamilienhaus"); expect(String(payload.notes)).toContain("Gebäude laut Gespräch: Freistehendes");
-    expect(payload.stromverbrauch).toBe("120 € im Monat"); expect(String(payload.notes)).not.toContain("Monatliche Stromkosten");
+    expect(payload.stromverbrauch).toBeUndefined(); expect(String(payload.notes)).toContain("Monatliche Stromkosten: 120 € im Monat"); // als Zahl hielte Wattfox 120 für kWh
+  });
+});
+
+describe("Stromverbrauch als Zahl (v362)", () => {
+  // Testumgebung von Wattfox am 25.11.: „4034: stromverbrauch: 4.000 - 6.000 kWh is not a valid digit“ – die Beschreibung sagt „String“, geprüft wird auf Ziffern
+  it("unsere Stufen → Mitte, „Über …“ → die Zahl, nur eine Zahl → genau diese; der genaue Wert steht im Hinweisfeld", () => {
+    expect(["0 - 3.000 kWh", "3.000 - 4.000 kWh", "4.000 - 6.000 kWh", "Über 6.000 kWh"].map(wattfoxConsumption)).toEqual([{ value: 1500, exact: false }, { value: 3500, exact: false }, { value: 5000, exact: false }, { value: 6000, exact: false }]);
+    expect(wattfoxConsumption("4500")).toEqual({ value: 4500, exact: true }); expect(wattfoxConsumption("4.500 kWh")).toEqual({ value: 4500, exact: true }); expect(wattfoxConsumption("4000 kWh im Jahr")).toEqual({ value: 4000, exact: true });
+    expect(wattfoxConsumption("ca. 4000")).toEqual({ value: 4000, exact: false }); expect(wattfoxConsumption("3,5 - 4,5")).toEqual({ value: 4, exact: false });
+    expect(wattfoxConsumption("weiß nicht")).toBeNull(); expect(wattfoxConsumption("")).toBeNull(); expect(wattfoxConsumption(null)).toBeNull();
+    const { payload } = wattfoxPayload(byLabel("PV 1"));
+    expect(payload.stromverbrauch).toBe(5000); expect(String(payload.notes)).toContain("Stromverbrauch laut Gespräch: 4.000 - 6.000 kWh");
+    const unknown = wattfoxPayload({ ...byLabel("PV 1"), "custom_data.stromverbrauch": "weiß nicht" }).payload;
+    expect(unknown.stromverbrauch).toBeUndefined(); expect(String(unknown.notes)).toContain("Stromverbrauch laut Gespräch: weiß nicht");
+  });
+
+  it("alle Testleads: Zahlenfelder sind ganze Zahlen (so nimmt die Testumgebung von Wattfox sie an)", () => {
+    for (const test of tests) {
+      const { payload } = wattfoxPayload(test.values);
+      for (const key of ["productId", "stromverbrauch", "hz_groessederflaeche", "hz_baujahrgebaeude"]) if (key in payload) expect(Number.isInteger(payload[key]), `${test.label}: ${key} = ${String(payload[key])}`).toBe(true);
+    }
   });
 });

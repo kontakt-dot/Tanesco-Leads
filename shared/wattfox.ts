@@ -220,7 +220,21 @@ function salutationOf(raw: unknown): "Herr" | "Frau" | null {
   return null;
 }
 
-/** Nur eine Zahl („4000“)? Dann mit Einheit – Wattfox nimmt Verbrauch, Abschlag oder Kosten als Text. */
+/**
+ * Stromverbrauch als ganze Zahl (kWh im Jahr) – Wattfox prüft auf Ziffern („4034: stromverbrauch: … is not a valid digit“), obwohl die
+ * Beschreibung „String“ sagt. Unsere Stufen („4.000 - 6.000 kWh“) gehen mit der Mitte raus, „Über 6.000 kWh“ mit 6000; der genaue Wert steht im Hinweisfeld.
+ */
+export function wattfoxConsumption(raw: string | null): { value: number; exact: boolean } | null {
+  if (!raw) return null;
+  const value = plain(raw).replace(/(\d)\.(\d{3})\b/g, "$1$2");
+  const range = /(\d+(?:,\d+)?)\s*(-|–|bis)\s*(\d+(?:,\d+)?)/.exec(value);
+  const number = (text: string) => Number(text.replace(",", "."));
+  if (range) { const result = Math.round((number(range[1]) + number(range[3])) / 2); return result > 0 ? { value: result, exact: false } : null; }
+  const single = numberIn(value); if (single === null || single <= 0) return null;
+  return { value: Math.round(single), exact: /^\s*\d+(?:[.,]\d+)?\s*(kwh)?(\s*(im|pro|\/)\s*jahr)?\s*$/.test(value) };
+}
+
+/** Nur eine Zahl („120“)? Dann mit Einheit – für das Hinweisfeld. */
 function withUnit(raw: string | null, unit: string): string | null {
   if (!raw) return null;
   return /^\s*\d+(?:[.,]\d+)?\s*$/.test(raw) ? `${raw.trim()} ${unit}` : raw;
@@ -267,16 +281,18 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
     const orientationRaw = fields.get("dachausrichtung", "pv_dachausrichtung", "ausrichtung"); const orientation = wattfoxOrientation(orientationRaw);
     const ageRaw = fields.get("dachalter", "pv_dachalter"); const older = fields.get("dach_aelter_als_30_jahre", "pv_dach_aelter_als_30_jahre"); const age = wattfoxRoofAge(ageRaw, older);
     const storageRaw = fields.get("stromspeicher", "pv_stromspeicher"); const storage = wattfoxStorage(storageRaw);
+    const consumptionRaw = fields.get("stromverbrauch", "pv_stromverbrauch"); const consumption = wattfoxConsumption(consumptionRaw);
     Object.assign(payload, {
       ph_artdesgebaeude: building?.value,
       ph_ausrichtungderflaeche: orientation?.value,
       ph_alterderflaeche: age?.value,
       ph_dachflaeche: fields.get("dachflaeche", "pv_dachflaeche", "dachflaeche_m2", "sonnige_flaeche") ?? undefined,
       ph_stromspeicher: storage?.value,
-      stromverbrauch: withUnit(fields.get("stromverbrauch", "pv_stromverbrauch"), "kWh im Jahr") ?? withUnit(fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten"), "€ im Monat") ?? undefined,
+      stromverbrauch: consumption?.value, // nur als Zahl (kWh im Jahr) – Stromkosten im Monat stehen im Hinweisfeld, als Zahl hielte Wattfox sie für kWh
     });
     exactOr("Gebäude", buildingRaw, building); exactOr("Dachausrichtung", orientationRaw, orientation); exactOr("Dachalter", ageRaw ?? (older ? `älter als 30 Jahre: ${older}` : null), age); exactOr("Stromspeicher", storageRaw, storage);
-    const costs = fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten"); if (costs && fields.get("stromverbrauch", "pv_stromverbrauch")) note("Monatliche Stromkosten", costs); // sonst steht sie schon unter „stromverbrauch“
+    if (consumptionRaw && !consumption) note("Stromverbrauch laut Gespräch", consumptionRaw); else exactOr("Stromverbrauch", consumptionRaw, consumption);
+    note("Monatliche Stromkosten", withUnit(fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten"), "€ im Monat"));
     note("Dachart", fields.get("dachart", "pv_dachart")); note("Dachmaterial", fields.get("dachmaterial", "pv_dachmaterial")); note("Bestandsanlage", fields.get("bestandsanlage", "pv_bestandsanlage"));
     note("Wallbox", fields.get("wallbox", "pv_wallbox")); note("Finanzierung gewünscht", fields.get("finanzierung", "pv_finanzierung"));
   }
