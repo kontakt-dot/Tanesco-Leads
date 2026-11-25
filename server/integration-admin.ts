@@ -1,16 +1,36 @@
 /**
  * Benutzer → Reiter „Integration“: ausgehende API-Calls, Partner-Response-Mapping, Lieferanten-Rückgabe-Webhooks.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { categoryFields, deliveryEndpoints, integrationPresets, leadCategories, memberOperationalSettings, partnerResponseRules, reclamationReasons, supplierReturnWebhooks, suppliers, users, type DeliveryEndpoint, type IntegrationPreset } from "../drizzle/schema";
 import { decryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
 import { ensureMemberSettings, requireMembership } from "./member-admin";
+import { verifyPassword } from "./_core/auth";
 import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../shared/wattfox";
 import { PLACEHOLDERS, buildEndpointBody, decryptAuth, decryptHeaders, encryptJson, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
 
 export const SECRET_MASK = "••••••••";
+
+/**
+ * Zugangsdaten eines Partners dürfen nie das eigene Passwort für diese Software sein. Das passiert, wenn der Browser sein
+ * gespeichertes Passwort in ein Zugangsfeld einsetzt (z. B. ins Feld „user“) – es ginge dann bei jeder Anmeldung an den Partner.
+ * Geprüft wird gegen den angemeldeten Benutzer (und bei „Als Benutzer eingeloggt“ gegen den, der eingeloggt hat).
+ */
+export async function assertNoOwnPassword(db: Db, actorUserIds: number[] | undefined, credentials: Array<{ name: string; value: string }>, when: "speichern" | "senden" = "speichern") {
+  const ids = Array.from(new Set((actorUserIds ?? []).filter((id) => Number.isInteger(id) && id > 0)));
+  const values = credentials.filter((pair) => pair.value && pair.value !== SECRET_MASK);
+  if (!ids.length || !values.length) return;
+  const hashes = (await db.select({ passwordHash: users.passwordHash }).from(users).where(inArray(users.id, ids))).map((row) => row.passwordHash).filter((hash): hash is string => Boolean(hash));
+  for (const pair of values) for (const hash of hashes) {
+    if (!(await verifyPassword(pair.value, hash))) continue;
+    const field = pair.name.trim() || "Zugangsdaten";
+    throw new Error(when === "speichern"
+      ? `Im Feld „${field}“ steht dein Passwort für diese Software – das hat vermutlich der Browser eingesetzt. Bitte das Feld leeren und die Zugangsdaten vom Partner selbst eintippen. Gespeichert wurde nichts.`
+      : `Im Feld „${field}“ steht dein Passwort für diese Software – das hat vermutlich der Browser eingesetzt. Bitte im Endpoint das Feld leeren, die Zugangsdaten vom Partner eintippen und speichern. Gesendet wurde nichts.`);
+  }
+}
 
 /** Aroundhome-Preset für das Response-Mapping (Body-Feld code → Reklamationsgrund). */
 export const AROUNDHOME_RESPONSE_PRESET: Array<{ value: string; label: string; reason: string }> = [
@@ -56,13 +76,14 @@ export async function getMemberIntegration(db: Db, tenantId: number, membershipI
 
 export type EndpointInput = { id?: number; categoryId: number; enabled: boolean; method: "POST" | "PUT" | "PATCH"; url: string; sourceFilterMode: "alle" | "nur" | "ausser"; sourceSupplierIds: number[]; fieldFilters: FieldFilter[]; headers: HeaderPair[]; authEnabled: boolean; auth: AuthConfig | null; bodyTemplate: string; omitAutoFields: boolean; rotate: boolean; valueMappings: ValueMapping[] };
 
-export async function saveDeliveryEndpoint(db: Db, tenantId: number, membershipId: number, input: EndpointInput) {
+export async function saveDeliveryEndpoint(db: Db, tenantId: number, membershipId: number, input: EndpointInput, options: { /** wer speichert – sein Passwort darf nicht in den Zugangsdaten stehen */ actorUserIds?: number[] } = {}) {
   await requireMembership(db, tenantId, membershipId);
   const existing = input.id ? (await db.select().from(deliveryEndpoints).where(and(eq(deliveryEndpoints.id, input.id), eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))).limit(1))[0] : undefined;
   if (input.id && !existing) throw new Error("Endpoint wurde nicht gefunden.");
   // Maskierte Zugangsdaten unverändert lassen
   let auth = input.auth;
   if (auth && existing) { const previous = decryptAuth(existing.authConfigEncrypted); auth = { ...auth, credentials: auth.credentials.map((pair) => ({ name: pair.name, value: pair.value === SECRET_MASK ? previous?.credentials.find((item) => item.name === pair.name)?.value ?? "" : pair.value })) }; }
+  if (auth) await assertNoOwnPassword(db, options.actorUserIds, auth.credentials);
   const values = { tenantId, membershipId, categoryId: input.categoryId, enabled: input.enabled, method: input.method, url: input.url.trim(), sourceFilterMode: input.sourceFilterMode, sourceSupplierIds: input.sourceSupplierIds, fieldFilters: input.fieldFilters.filter((filter) => filter.field && filter.value !== undefined), headersEncrypted: input.headers.filter((pair) => pair.name).length ? encryptJson(input.headers.filter((pair) => pair.name)) : null, authEnabled: input.authEnabled, authConfigEncrypted: auth ? encryptJson(auth) : null, bodyTemplate: input.bodyTemplate, omitAutoFields: input.omitAutoFields, rotate: input.rotate, valueMappings: input.valueMappings.filter((mapping) => mapping.field && mapping.ourValue) };
   if (existing) { await db.update(deliveryEndpoints).set(values).where(eq(deliveryEndpoints.id, existing.id)); return { id: existing.id }; }
   const siblings = await db.select({ position: deliveryEndpoints.position }).from(deliveryEndpoints).where(and(eq(deliveryEndpoints.membershipId, membershipId), eq(deliveryEndpoints.categoryId, input.categoryId)));
@@ -86,10 +107,11 @@ export async function duplicateDeliveryEndpoint(db: Db, tenantId: number, member
 }
 
 /** „Test senden“: synthetischer Testlead mit Beispielwerten der Kategorie-Felder (test: true), Antwort wird nicht als Zustellung gewertet. */
-export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipId: number, id: number, fetchImpl?: typeof fetch) {
+export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipId: number, id: number, fetchImpl?: typeof fetch, actorUserIds: number[] = []) {
   await requireMembership(db, tenantId, membershipId);
   const endpoint = (await db.select().from(deliveryEndpoints).where(and(eq(deliveryEndpoints.id, id), eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))).limit(1))[0];
   if (!endpoint) throw new Error("Endpoint wurde nicht gefunden.");
+  if (endpoint.authEnabled) await assertNoOwnPassword(db, actorUserIds, decryptAuth(endpoint.authConfigEncrypted)?.credentials ?? [], "senden");
   const category = (await db.select({ name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.id, endpoint.categoryId)).limit(1))[0];
   const fields = await db.select({ fieldKey: categoryFields.fieldKey, options: categoryFields.options }).from(categoryFields).where(eq(categoryFields.categoryId, endpoint.categoryId));
   const metadata: Record<string, unknown> = { salutation: "Herr", street: "Musterstraße 12", test: true };
@@ -105,13 +127,14 @@ export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipI
  * (je 3 für PV und Wärmepumpe, dazu 3 mit Zusatzinteresse). Nur für eine Wattfox-Vorlage; zählt nicht als Zustellung. An eine Adresse, die nicht nach Testumgebung
  * aussieht, nur ausdrücklich (allowLive) – damit nie aus Versehen erfundene Leads im Live-System landen.
  */
-export async function sendWattfoxTestLeads(db: Db, tenantId: number, membershipId: number, id: number, options: { allowLive?: boolean; /** alle 9 statt einem je Sparte */ all?: boolean; fetchImpl?: typeof fetch } = {}) {
+export async function sendWattfoxTestLeads(db: Db, tenantId: number, membershipId: number, id: number, options: { allowLive?: boolean; /** alle 9 statt einem je Sparte */ all?: boolean; fetchImpl?: typeof fetch; /** wer sendet – sein Passwort darf nicht in den Zugangsdaten stehen */ actorUserIds?: number[] } = {}) {
   await requireMembership(db, tenantId, membershipId);
   const tests = wattfoxTestLeads({ all: options.all });
   const endpoint = (await db.select().from(deliveryEndpoints).where(and(eq(deliveryEndpoints.id, id), eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))).limit(1))[0];
   if (!endpoint) throw new Error("Endpoint wurde nicht gefunden.");
   if (!isWattfoxTemplate(endpoint.bodyTemplate)) throw new Error("Das ist keine Wattfox-Vorlage – erst „Vorlage Wattfox“ einsetzen und speichern.");
   if (!isTestAddress(endpoint.url) && !options.allowLive) throw new Error("Die Adresse sieht nach dem Live-System aus. Testleads gehen nur an die Testumgebung von Wattfox.");
+  if (endpoint.authEnabled) await assertNoOwnPassword(db, options.actorUserIds, decryptAuth(endpoint.authConfigEncrypted)?.credentials ?? [], "senden");
   const results: Array<{ label: string; ok: boolean; status: number; reference: string | null; response: string; requestBody: string }> = [];
   for (const test of tests) {
     const result = await sendToEndpoint(endpoint, test.values, { fetchImpl: options.fetchImpl });
@@ -218,7 +241,7 @@ export async function saveReturnWebhookPreset(db: Db, tenantId: number, userId: 
 }
 
 /** Preset bei einem Benutzer hinzufügen; URL, Kategorie und Schlüssel können beim Hinzufügen überschrieben werden. */
-export async function applyIntegrationPreset(db: Db, tenantId: number, userId: number, input: { presetId: number; membershipId: number; categoryId?: number | null; url?: string | null; headers?: HeaderPair[] | null; authCredentials?: HeaderPair[] | null }) {
+export async function applyIntegrationPreset(db: Db, tenantId: number, userId: number, input: { presetId: number; membershipId: number; categoryId?: number | null; url?: string | null; headers?: HeaderPair[] | null; authCredentials?: HeaderPair[] | null; /** dazu: wer „Als Benutzer“ eingeloggt hat */ actorUserIds?: number[] }) {
   await requireMembership(db, tenantId, input.membershipId);
   const preset = (await db.select().from(integrationPresets).where(and(eq(integrationPresets.id, input.presetId), eq(integrationPresets.tenantId, tenantId))).limit(1))[0];
   if (!preset) throw new Error("Preset wurde nicht gefunden.");
@@ -230,7 +253,7 @@ export async function applyIntegrationPreset(db: Db, tenantId: number, userId: n
     const headers = merge(data.headers ?? [], input.headers);
     const auth = data.auth ? { ...data.auth, credentials: merge(data.auth.credentials ?? [], input.authCredentials) } : null;
     if (headers.some((pair) => !pair.value) || (auth?.credentials ?? []).some((pair) => !pair.value)) throw new Error("Bitte die fehlenden Schlüssel bzw. Zugangsdaten für diesen Benutzer eintragen.");
-    const saved = await saveDeliveryEndpoint(db, tenantId, input.membershipId, { categoryId, enabled: true, method: data.method, url: input.url?.trim() || data.url, sourceFilterMode: data.sourceFilterMode, sourceSupplierIds: [], fieldFilters: data.fieldFilters ?? [], headers, authEnabled: data.authEnabled, auth, bodyTemplate: data.bodyTemplate, omitAutoFields: data.omitAutoFields, rotate: data.rotate, valueMappings: data.valueMappings ?? [] });
+    const saved = await saveDeliveryEndpoint(db, tenantId, input.membershipId, { categoryId, enabled: true, method: data.method, url: input.url?.trim() || data.url, sourceFilterMode: data.sourceFilterMode, sourceSupplierIds: [], fieldFilters: data.fieldFilters ?? [], headers, authEnabled: data.authEnabled, auth, bodyTemplate: data.bodyTemplate, omitAutoFields: data.omitAutoFields, rotate: data.rotate, valueMappings: data.valueMappings ?? [] }, { actorUserIds: [userId, ...(input.actorUserIds ?? [])] });
     result = { kind: "endpoint", id: saved.id };
   } else if (preset.kind === "response_mapping") {
     const data = payload as MappingPresetPayload;

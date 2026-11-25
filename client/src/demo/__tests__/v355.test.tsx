@@ -43,7 +43,7 @@ describe("Version 355", () => {
     expect(editor.querySelector(".ig-wattfox-note")?.textContent).toContain("Die Felder baut die Software selbst");
     expect(editor.querySelector(".ig-wattfox-note")?.textContent).toContain("Testumgebung von Wattfox");
     // Zugangsdaten eintragen (Feldnamen user/pass sind schon da) und speichern
-    const secrets = Array.from(editor.querySelectorAll('input[type="password"]'));
+    const secrets = Array.from(editor.querySelectorAll('.ig-credential input[data-secret]')); // seit v361: Benutzername lesbar, Passwort als Punkte
     expect(secrets).toHaveLength(2);
     await type(secrets[0], "testfirma"); await type(secrets[1], "geheim");
     await click(byText(editor, "button", "Speichern"), 1000);

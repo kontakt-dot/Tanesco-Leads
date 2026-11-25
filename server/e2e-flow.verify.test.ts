@@ -6424,4 +6424,38 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(JSON.parse(rows.find((row) => row.url.includes("wattfox"))!.bodyTemplate!)).toMatchObject({ vorlage: "wattfox", utm_campaign: "Hauskompass, Meta vorqualifiziert" });
     expect(rows.find((row) => row.url.includes("anderer"))!.bodyTemplate).toBe(other);
   }, 60000);
+
+  it("v361. Zugangsdaten: Das eigene Passwort für diese Software wird nie als Zugang eines Partners gespeichert oder gesendet (der Browser hatte es ins Feld „user“ gesetzt)", async () => {
+    const { WATTFOX, WATTFOX_TEMPLATE } = await import("../shared/wattfox"); const { hashPassword } = await import("./_core/auth");
+    const { deliveryEndpoints: endpointsTable } = await import("../drizzle/schema"); const { decryptAuth, encryptJson } = await import("./outbound-endpoints");
+    const own = "Eigenes!Passwort2026"; const stamp = Date.now().toString(36);
+    const created = await owner.leadops.createMember({ firstName: "Pia", lastName: "Partner", company: "V361 Käufer GmbH", email: `v361-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const membershipId = created.membershipId;
+    const auth = (credentials: Array<{ name: string; value: string }>) => ({ loginUrl: WATTFOX.loginUrl, credentials, tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes });
+    const config = { membershipId, categoryId: S.pv.id, enabled: true, method: "POST" as const, url: WATTFOX.leadsUrl, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: true, auth: auth([{ name: "user", value: own }, { name: "pass", value: "" }]), bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true, rotate: false, valueMappings: [] };
+    const count = async () => (await db.select().from(endpointsTable).where(eq(endpointsTable.membershipId, membershipId))).length;
+    await db.update(users).set({ passwordHash: await hashPassword(own) }).where(eq(users.id, ownerUserId));
+    try {
+      // (a) Speichern mit dem eigenen Passwort im Feld „user“ → abgelehnt, nichts gespeichert
+      await expect(owner.leadops.saveDeliveryEndpoint(config)).rejects.toThrow("Im Feld „user“ steht dein Passwort für diese Software – das hat vermutlich der Browser eingesetzt.");
+      expect(await count()).toBe(0);
+      // (b) mit dem Zugang des Partners: gespeichert; unverändert (Punkte) wieder speichern geht; das eigene Passwort in „pass“ nicht
+      const endpoint = await owner.leadops.saveDeliveryEndpoint({ ...config, auth: auth([{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }]) });
+      expect(await count()).toBe(1);
+      await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "••••••••" }, { name: "pass", value: "••••••••" }]) });
+      await expect(owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "••••••••" }, { name: "pass", value: own }]) })).rejects.toThrow("Im Feld „pass“ steht dein Passwort");
+      expect(decryptAuth((await db.select().from(endpointsTable).where(eq(endpointsTable.id, endpoint.id)))[0].authConfigEncrypted)!.credentials).toEqual([{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }]);
+      // (c) schon vorher so gespeichert (vor Version 361): Testleads an Wattfox und „Test senden“ brechen ab – nichts geht raus
+      await db.update(endpointsTable).set({ authConfigEncrypted: encryptJson(auth([{ name: "user", value: own }, { name: "pass", value: "" }])) }).where(eq(endpointsTable.id, endpoint.id));
+      const start = outbound.length;
+      await expect(owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).rejects.toThrow("Im Feld „user“ steht dein Passwort für diese Software – das hat vermutlich der Browser eingesetzt. Bitte im Endpoint das Feld leeren, die Zugangsdaten vom Partner eintippen und speichern. Gesendet wurde nichts.");
+      await expect(owner.leadops.testDeliveryEndpoint({ membershipId, id: endpoint.id })).rejects.toThrow("Gesendet wurde nichts.");
+      expect(outbound.slice(start)).toHaveLength(0);
+      // … und unverändert (Punkte = der gespeicherte Wert) wieder speichern ebenfalls nicht
+      await expect(owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "••••••••" }, { name: "pass", value: "geheim" }]) })).rejects.toThrow("Im Feld „user“");
+      // (d) korrigiert: speichern und senden gehen wieder
+      await owner.leadops.saveDeliveryEndpoint({ ...config, id: endpoint.id, auth: auth([{ name: "user", value: "testfirma" }, { name: "pass", value: "geheim" }]) });
+      expect(await owner.leadops.sendWattfoxTestLeads({ membershipId, id: endpoint.id })).toMatchObject({ sent: 3, ok: 3, total: 3 });
+    } finally { await db.update(users).set({ passwordHash: null }).where(eq(users.id, ownerUserId)); }
+  }, 60000);
 });
