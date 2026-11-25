@@ -170,7 +170,7 @@
 .order-tabs button [data-slot="badge"] { min-width: 18px; padding: 1px 5px; font-size: 9px; }
 .order-form-content { padding: 22px; }
 .order-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.order-form-field { display: grid; gap: 7px; color: #f1effe; font-size: 11px; font-weight: 650; }
+.order-form-field { display: grid; gap: 7px; align-content: start; color: #f1effe; font-size: 11px; font-weight: 650; } /* align-content: start – ein Hinweis unter einem Feld schiebt das Nachbarfeld nicht nach unten (v365) */
 .order-form-field.span-2 { grid-column: span 2; }
 .order-form-field select, .order-form-field input, .order-form-field textarea { width: 100%; border: 1px solid rgba(177,171,255, .16); border-radius: 9px; background: rgba(12,9,27, .55); padding: 9px 10px; color: #edebfc; font-size: 12px; font-weight: 500; }
 .order-form-field textarea { min-height: 82px; resize: vertical; }
@@ -278,7 +278,7 @@
 .order-stream-metric span { color: #b8bbcf; font-size: 10px; }
 .order-stream-metric em { margin-top: 2px; color: #61d9d1; font-size: 9px; font-style: normal; }
 .order-stream-row > [data-slot="badge"] { justify-self: center; font-size: 10px; text-transform: capitalize; }
-.order-status-select { min-width: 78px; border: 1px solid rgba(164,157,255, .24); border-radius: 999px; background: rgba(84,75,209, .12); padding: 5px 18px 5px 9px; color: #e1ddfd; font-size: 10px; font-weight: 750; line-height: 1.2; outline: none; }
+.order-status-select { min-width: 92px; /* „Inaktiv“ passt ganz hinein (v365) */ border: 1px solid rgba(164,157,255, .24); border-radius: 999px; background: rgba(84,75,209, .12); padding: 5px 18px 5px 9px; color: #e1ddfd; font-size: 10px; font-weight: 750; line-height: 1.2; outline: none; }
 .order-status-select.status-aktiv { border-color: rgba(77, 214, 153, .32); background: rgba(51, 180, 118, .11); color: #a7f3c7; }
 .order-status-select.status-pausiert { border-color: rgba(251, 146, 60, .32); background: rgba(234, 112, 43, .1); color: #fecb97; }
 .order-status-select:hover:not(:disabled) { border-color: rgba(201,197,255, .55); background-color: rgba(111,101,247, .2); }

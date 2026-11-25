@@ -2423,6 +2423,7 @@ html:not(.dark) .category-builder-edit-grid input, html:not(.dark) .category-bui
 html:not(.dark) .category-builder-review > div { border-left: 2px solid #d9dfe7 !important; background: #f8fafb !important; }
 html:not(.dark) .category-builder-review strong { color: #0f172a !important; }
 html:not(.dark) .category-builder-review p { color: #4b5568 !important; }
+html:not(.dark) .order-form-hint { color: #8a94a6 !important; }
 html:not(.dark) .action-picker button { border: 1px solid #e8ecf1 !important; background: #ffffff !important; color: #0f172a !important; }
 html:not(.dark) .action-picker button:hover { border-color: #d9dfe7 !important; background: #ffffff !important; }
 html:not(.dark) .action-picker button.active { border-color: #d9dfe7 !important; background: linear-gradient(135deg, rgba(var(--acc1), .14), rgba(var(--acc2), .10)) !important; box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .05) !important; }
