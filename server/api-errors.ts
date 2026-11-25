@@ -7,6 +7,7 @@
  */
 import { and, desc, eq, gte, inArray, like, or } from "drizzle-orm";
 import { automationExecutionLogs, categoryFields, deliveryEndpoints, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberships, partnerIntegrations, suppliers, users } from "../drizzle/schema";
+import { normalizePostcode } from "../shared/postcode";
 import { LEAD_FIELD_LABEL, NOT_POSSIBLE_PREFIX, PRECHECK_STATUS, buildApiErrorOverview, emailProblem, phoneProblem, plainReason, postcodeProblem, type ApiErrorOverview, type ApiNoteRow, type LeadContactField } from "../shared/api-errors";
 import { fieldOptions, leadDisplayName } from "../shared/lead-fields";
 import { deliverLeadNow, metadataOf, type Db, type LeadRow } from "./lead-pipeline";
@@ -96,6 +97,7 @@ export async function correctLead(db: Db, tenantId: number, actorUserId: number 
     const raw = input[key]; if (raw === undefined) continue;
     let value = tidy(raw).slice(0, MAX_LENGTH[key]);
     if (key === "email") value = value.replace(/\s+/g, "").toLowerCase();
+    if (key === "postcode") value = normalizePostcode(value, lead.country) ?? ""; // „9633“ → „09633“ (führende Null)
     if (value === tidy(current[key])) continue;
     if (key === "email" && value) { const problem = emailProblem(value); if (problem) throw new Error(`E-Mail-Adresse: ${problem}`); }
     if (key === "phone" && value) { const problem = phoneProblem(value); if (problem) throw new Error(`Rufnummer: ${problem}`); }

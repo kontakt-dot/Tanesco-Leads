@@ -4,6 +4,7 @@
  * mit englischen oder deutschen Feldnamen. Hier wird er aus der Meldung gelesen und mit vorhandenen Daten zusammengeführt.
  * Bewusst ohne Datenbank: Server, Vorschau und Tests nutzen dieselbe Logik.
  */
+import { normalizePostcode } from "./postcode";
 
 /** Zuordnung der zusätzlichen Felder (Pfad in der Meldung, Punkt-Schreibweise) – in den Einstellungen änderbar. */
 export const CONTACT_MAPPING = { result: "result", note: "note", callbackAt: "callback_at", contactId: "contact.id", firstName: "contact.first_name", lastName: "contact.last_name", company: "contact.company", street: "contact.street", postcode: "contact.postcode", city: "contact.city", country: "contact.country", email: "contact.email", contactFields: "contact.fields", category: "category" } as const;
@@ -107,9 +108,11 @@ export function extractDialerContact(payload: unknown, mapping: Partial<Record<s
   let street = pick("street", "street", "contact.street", 200);
   const houseNumber = clean(findIn(container, "houseNumber", false)?.value, 20) ?? clean(findIn(top, "houseNumber", true)?.value, 20);
   if (street && houseNumber && !street.toLowerCase().endsWith(houseNumber.toLowerCase())) street = `${street} ${houseNumber}`.slice(0, 200);
-  const postcode = pick("postcode", "postcode", "contact.postcode", 24); const city = pick("city", "city", "contact.city", 120);
   const countryRaw = clean(readPath(top, path("country")), 40) ?? clean(findIn(container, "country", false)?.value, 40) ?? clean(findIn(top, "country", true)?.value, 40);
-  const country = COUNTRY[(countryRaw ?? "").toLowerCase()] ?? "DE"; if (countryRaw) found.push("contact.country");
+  const country = COUNTRY[(countryRaw ?? "").toLowerCase()] ?? "DE";
+  // PLZ: in Deutschland 5 Ziffern – kommt sie als Zahl oder aus einer Excel-Liste ohne führende Null („9633“), bekommt sie die Null zurück
+  const postcode = normalizePostcode(pick("postcode", "postcode", "contact.postcode", 24), country); const city = pick("city", "city", "contact.city", 120);
+  if (countryRaw) found.push("contact.country");
   const emailRaw = pick("email", "email", "contact.email", 320); const email = emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw.toLowerCase() : null; if (emailRaw && !email) found.pop();
   const phone = clean(findIn(container, "phone", false)?.value, 48);
   const externalId = pick("contactId", "id", "contact.id", 120);

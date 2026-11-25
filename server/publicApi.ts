@@ -17,6 +17,7 @@ import * as outreach from "./sales-outreach";
 import * as pipelineExtras from "./pipeline-extras";
 import * as mailEvents from "./mail-events";
 import { emailCampaignRecipients } from "../drizzle/schema";
+import { normalizePostcode } from "../shared/postcode";
 
 async function verifyBearer(req: Request, scope: string) {
   const value = req.headers.authorization;
@@ -104,7 +105,7 @@ export function registerPublicApiRoutes(app: Express) {
     if (auth.membershipId && !supplierById) return res.status(403).json({ error: "supplier profile missing for this token" });
     const supplier = supplierById ?? (supplierName ? tenantSuppliers.find((row) => row.name.toLowerCase() === supplierName.toLowerCase()) : undefined);
     const cost = typeof body.cost === "number" && Number.isFinite(body.cost) && body.cost >= 0 ? body.cost.toFixed(2) : "0.00";
-    const inserted = await auth.db.insert(leads).values({ tenantId: auth.tenantId, publicId, categoryId, firstName: typeof body.firstName === "string" ? body.firstName : undefined, lastName: typeof body.lastName === "string" ? body.lastName : undefined, email: typeof body.email === "string" ? body.email : undefined, phone: typeof body.phone === "string" ? body.phone : undefined, postcode: typeof body.postcode === "string" ? body.postcode : undefined, city: typeof body.city === "string" ? body.city : undefined, country: body.country === "AT" || body.country === "CH" ? body.country : "DE", supplierId: supplier?.id, supplierName: supplier?.name ?? (supplierName || undefined), metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : undefined, status: "neu", cost });
+    const inserted = await auth.db.insert(leads).values({ tenantId: auth.tenantId, publicId, categoryId, firstName: typeof body.firstName === "string" ? body.firstName : undefined, lastName: typeof body.lastName === "string" ? body.lastName : undefined, email: typeof body.email === "string" ? body.email : undefined, phone: typeof body.phone === "string" ? body.phone : undefined, postcode: typeof body.postcode === "string" || typeof body.postcode === "number" ? normalizePostcode(body.postcode, body.country === "AT" || body.country === "CH" ? body.country : "DE") ?? undefined : undefined, city: typeof body.city === "string" ? body.city : undefined, country: body.country === "AT" || body.country === "CH" ? body.country : "DE", supplierId: supplier?.id, supplierName: supplier?.name ?? (supplierName || undefined), metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : undefined, status: "neu", cost });
     const leadId = Number(inserted[0]?.insertId) || 0;
     if (leadId && typeof body.phone === "string" && body.phone.trim()) {
       const phoneCheck = await checkPhoneNumber(auth.db, auth.tenantId, body.phone);

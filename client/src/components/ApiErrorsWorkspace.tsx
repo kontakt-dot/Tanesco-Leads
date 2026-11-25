@@ -4,7 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { BookOpen, Check, ChevronDown, ExternalLink, Pencil, RefreshCw, Search, Send, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { API_ERROR_GUIDE, API_ERROR_KIND_LABEL, LEAD_FIELD_LABEL, emailProblem, phoneProblem, postcodeProblem, suggestEmail, type ApiErrorKind, type ApiHealthRow, type ApiProblem, type LeadContactField } from "../../../shared/api-errors";
+import { API_ERROR_GUIDE, API_ERROR_KIND_LABEL, LEAD_FIELD_LABEL, emailProblem, phoneProblem, postcodeProblem, postcodeSuggestion, suggestEmail, type ApiErrorKind, type ApiHealthRow, type ApiProblem, type LeadContactField } from "../../../shared/api-errors";
 
 type Days = 7 | 30 | 90;
 type Filter = "alle" | "daten" | "empfaenger" | "kein_abnehmer";
@@ -163,6 +163,7 @@ function LeadCorrection({ problem, onSaved, onCancel }: { problem: ApiProblem; o
   const changes = () => { const out: Partial<Record<LeadContactField, string>> & { fields?: Record<string, string> } = {}; for (const key of CONTACT_FIELDS) if (values[key].trim() !== problem.lead[key].trim()) out[key] = values[key]; if (Object.keys(extra).length) out.fields = extra; return out; };
   const submit = (deliver: boolean) => save.mutate({ publicId: problem.publicId, changes: changes(), deliver });
   const suggestion = wrong("email") ? suggestEmail(values.email) : null;
+  const plzSuggestion = wrong("postcode") ? postcodeSuggestion(values.postcode, problem.lead.country) : null; // „9633“ → „09633“
   const fields = detail.data?.fields ?? [];
   return <form className="af-edit" aria-label={`${problem.name} korrigieren`} onSubmit={(event) => { event.preventDefault(); if (!invalid && !noName) submit(true); }}>
     <h4>Angaben korrigieren</h4>
@@ -171,6 +172,7 @@ function LeadCorrection({ problem, onSaved, onCancel }: { problem: ApiProblem; o
       <Input value={values[key]} inputMode={key === "phone" ? "tel" : key === "email" ? "email" : key === "postcode" ? "numeric" : undefined} autoComplete="off" spellCheck={false} aria-invalid={Boolean(hint)} onChange={(event) => setValues({ ...values, [key]: event.target.value })} />
       {hint ? <small role="alert">{hint}</small> : marked.has(key) && values[key].trim() === problem.lead[key].trim() ? <small>Hier hakt es – bitte prüfen.</small> : null}
       {key === "email" && suggestion && <button type="button" className="af-suggest" onClick={() => setValues({ ...values, email: suggestion })}>Meintest du <b>{suggestion}</b>? Übernehmen</button>}
+      {key === "postcode" && plzSuggestion && <button type="button" className="af-suggest" onClick={() => setValues({ ...values, postcode: plzSuggestion })}>Die führende Null fehlt: <b>{plzSuggestion}</b> übernehmen</button>}
     </label>; })}</div>
     <button type="button" className="af-more" aria-expanded={extraOpen} onClick={() => setExtraOpen(!extraOpen)}><ChevronDown aria-hidden="true" /> {extraOpen ? "Felder der Kategorie ausblenden" : `Felder der Kategorie „${problem.categoryName}“ bearbeiten`}</button>
     {extraOpen && (detail.isLoading ? <p className="af-edit-note">Felder werden geladen …</p> : !fields.length ? <p className="af-edit-note">Diese Kategorie hat keine eigenen Felder.</p> : <div className="af-edit-grid">{fields.map((field) => { const current = field.key in extra ? extra[field.key] : field.value === null || field.value === undefined ? "" : String(field.value); const set = (value: string) => setExtra({ ...extra, [field.key]: value });

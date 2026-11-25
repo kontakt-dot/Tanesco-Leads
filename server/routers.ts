@@ -19,6 +19,7 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { countUsers, ensureTenantForUser, getDb, getTenantForUser, getUserByEmail, getUserByOpenId, listRecentLeads, upsertUser } from "./db";
 import { ENV } from "./_core/env";
 import { generateTemporaryPassword, hashPassword, impersonatorOf, signSession, validatePasswordStrength, verifyPassword } from "./_core/auth";
+import { normalizePostcode } from "../shared/postcode";
 import * as memberAdmin from "./member-admin";
 import * as avatars from "./avatars";
 import { avatarUrlOf } from "../shared/avatar";
@@ -741,7 +742,7 @@ export const appRouter = router({
       const publicId = nanoid(8).toUpperCase();
       const scope = partnerScopeOf(tenant); let supplierId = input.supplierId; let supplierName = input.supplierName;
       if (scope?.partnerType === "lieferant") { if (!scope.supplierIds.length) throw new Error("Ihrem Zugang ist kein Lieferantenprofil zugeordnet (E-Mail-Adresse des Profils muss der Ihres Zugangs entsprechen)."); if (!supplierId || !scope.supplierIds.includes(supplierId)) supplierId = scope.supplierIds[0]; supplierName = (await db.select({ name: suppliers.name }).from(suppliers).where(eq(suppliers.id, supplierId)).limit(1))[0]?.name ?? supplierName; }
-      const inserted = await db.insert(leads).values({ tenantId: tenant.id, publicId, categoryId: input.categoryId, firstName: input.firstName, lastName: input.lastName, email: input.email, phone: input.phone, postcode: input.postcode, city: input.city, country: input.country, supplierId, supplierName, cost: input.cost.toFixed(2), metadata: input.metadata, status: "neu" });
+      const inserted = await db.insert(leads).values({ tenantId: tenant.id, publicId, categoryId: input.categoryId, firstName: input.firstName, lastName: input.lastName, email: input.email, phone: input.phone, postcode: normalizePostcode(input.postcode, input.country), city: input.city, country: input.country, supplierId, supplierName, cost: input.cost.toFixed(2), metadata: input.metadata, status: "neu" });
       const leadId = Number(inserted[0].insertId); await db.insert(leadStatusEvents).values({ tenantId: tenant.id, leadId, nextStatus: "neu", actorUserId: ctx.user.id, note: "Lead manuell oder per Dateiimport angelegt." });
       const automation = await triggerLeadAutomations(db, { tenantId: tenant.id, actorUserId: ctx.user.id, leadId, triggerType: "lead_erstellt" });
       return { publicId, automation };

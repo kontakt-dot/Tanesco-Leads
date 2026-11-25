@@ -5824,7 +5824,7 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       // (b) Korrigieren wird geprüft, bevor etwas gespeichert wird: E-Mail, Rufnummer, PLZ, Antworten eines Auswahl-Felds, fremde Felder, leerer Name
       await expect(owner.leadops.correctLead({ publicId: wrong, changes: { email: "p.hansen@beispiel" }, deliver: true })).rejects.toThrow(/^E-Mail-Adresse: /);
       await expect(owner.leadops.correctLead({ publicId: wrong, changes: { phone: "0151 12" } })).rejects.toThrow(/^Rufnummer: /);
-      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { postcode: "2410" } })).rejects.toThrow("PLZ: Eine deutsche PLZ hat 5 Ziffern.");
+      await expect(owner.leadops.correctLead({ publicId: wrong, changes: { postcode: "241" } })).rejects.toThrow("PLZ: Eine deutsche PLZ hat 5 Ziffern."); // („2410“ bekäme seit v363 die führende Null: „02410“)
       await expect(owner.leadops.correctLead({ publicId: wrong, changes: { fields: { v348_dachform: "Kuppel" } } })).rejects.toThrow("Dachform (Probe): Bitte eine der Antworten wählen (Satteldach, Flachdach).");
       await expect(owner.leadops.correctLead({ publicId: wrong, changes: { fields: { gibtsnicht: "x" } } })).rejects.toThrow(/gehört nicht zur Kategorie/);
       await expect(owner.leadops.correctLead({ publicId: wrong, changes: { firstName: "", lastName: " " } })).rejects.toThrow("Vorname oder Nachname muss stehen bleiben.");
@@ -6497,5 +6497,33 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await db.update(endpointsTable).set({ authConfigEncrypted: encryptJson(auth([{ name: "user", value: own }, { name: "pass", value: "geheim" }])) }).where(eq(endpointsTable.id, endpoint.id));
       expect((await listed()).auth?.credentials).toEqual([{ name: "user", value: "••••••••", ownPassword: true }, { name: "pass", value: "••••••••" }]);
     } finally { await db.update(users).set({ passwordHash: null }).where(eq(users.id, ownerUserId)); }
+  }, 60000);
+
+  it("v363. PLZ mit führender Null: vom Dialer als Zahl, über die Lieferanten-API und beim Korrigieren „1067“ → „01067“; das Update repariert gespeicherte Leads (Österreich bleibt 4-stellig)", async () => {
+    const { readFileSync } = await import("node:fs"); const { sql: rawSql } = await import("drizzle-orm");
+    const { rawContacts: rawTable, leadStatusEvents: eventsTable } = await import("../drizzle/schema");
+    const stamp = Date.now().toString(36);
+    // (a) Der Dialer schickt die PLZ als Zahl (so kam „9633“ statt „09633“ an) → der Kontakt hat sie mit Null
+    const settings = await owner.leadops.getCallQaSettings(); const dialerUrl = settings.webhookUrl.replace(/^https?:\/\/[^/]+/, apiBase).replace("/api/partner/dialer/", "/api/partner/ondialer/");
+    const response = await fetch(dialerUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ call_id: `v363-${stamp}`, phone: "+49 351 5550363", contact: { first_name: "Nora", last_name: `Nullplz${stamp}`, postcode: 1067, city: "Dresden" } }) });
+    expect(response.status).toBe(202); // ohne Einwilligung nicht ausgewertet – der Kontakt wird trotzdem angelegt
+    const raw = (await db.select().from(rawTable).where(and(eq(rawTable.tenantId, S.tenantId), eq(rawTable.lastName, `Nullplz${stamp}`))))[0];
+    expect(raw?.postcode).toBe("01067");
+    // (b) Lieferanten-API: PLZ als Zahl (vorher fiel sie ganz weg) und als Text ohne Null
+    const viaApi = await (await postLead(S.token, { categoryId: S.wp.id, firstName: "Ole", lastName: `Apiplz${stamp}`, email: `v363-${stamp}@example.de`, phone: "+49 341 5550363", postcode: 4109, city: "Leipzig", supplierName: "Partner Solar GmbH" })).json();
+    const leadOf = async (publicId: string) => (await db.select().from(leads).where(eq(leads.publicId, publicId)))[0];
+    expect((await leadOf(viaApi.id)).postcode).toBe("04109");
+    // (c) Korrigieren unter „API-Fehler“: „1067“ eintippen → gespeichert wird „01067“
+    await owner.leadops.correctLead({ publicId: viaApi.id, changes: { postcode: "1067" } });
+    expect((await leadOf(viaApi.id)).postcode).toBe("01067");
+    // (d) Update (Migration 0119): gespeicherte Leads mit 4 Ziffern in Deutschland bekommen die Null – mit Eintrag im Lead-Log; Österreich bleibt
+    const insert = async (publicId: string, postcode: string, country: "DE" | "AT") => { await db.insert(leads).values({ tenantId: S.tenantId, publicId, categoryId: S.wp.id, kind: "verkauf", firstName: "Alt", lastName: `Daten${stamp}`, email: `${publicId.toLowerCase()}@example.de`, phone: "+49 30 5550363", postcode, city: "Ort", country, status: "neu", cost: "0.00", metadata: {} }); return (await leadOf(publicId)).id; };
+    const short = stamp.slice(-6).toUpperCase(); // Lead-Nummer: höchstens 12 Zeichen
+    const german = await insert(`V3DE${short}`, "9633", "DE"); const austrian = await insert(`V3AT${short}`, "1010", "AT"); const fine = await insert(`V3OK${short}`, "01067", "DE");
+    for (const statement of readFileSync("drizzle/0119_plz_fuehrende_null.sql", "utf8").split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) await db.execute(rawSql.raw(statement));
+    const byId = async (id: number) => (await db.select().from(leads).where(eq(leads.id, id)))[0].postcode;
+    expect([await byId(german), await byId(austrian), await byId(fine)]).toEqual(["09633", "1010", "01067"]);
+    const notes = async (id: number) => (await db.select().from(eventsTable).where(eq(eventsTable.leadId, id))).map((row) => row.note);
+    expect(await notes(german)).toContain("PLZ: „9633“ → „09633“ – die führende Null fehlte (Dialer oder Excel-Liste) und wurde ergänzt"); expect(await notes(austrian)).toEqual([]); expect(await notes(fine)).toEqual([]);
   }, 60000);
 });

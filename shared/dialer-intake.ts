@@ -9,6 +9,7 @@
 import { extractDialerContact, type DialerContact } from "./dialer-contact";
 import { isPlaceholder, isSalutation, tidySalutation } from "./lead-fields";
 import { dialerCampaignOf } from "./dialer-campaign";
+import { normalizePostcode } from "./postcode";
 
 export type SpokenContact = { firstName: string | null; lastName: string | null; street: string | null; postcode: string | null; city: string | null; email: string | null; /** „Herr“ oder „Frau“, wenn der Kunde so angesprochen wird */ salutation?: "Herr" | "Frau" | null };
 export const EMPTY_SPOKEN: SpokenContact = { firstName: null, lastName: null, street: null, postcode: null, city: null, email: null };
@@ -16,7 +17,7 @@ const tidy = (value: unknown, max: number): string | null => { const text = type
 /** Antwort der KI (oder beliebige Angaben) in saubere Felder bringen – leere und „unbekannt“ fallen weg, die PLZ muss fünf Ziffern haben. */
 export function cleanSpokenContact(value: unknown): SpokenContact {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const postcode = tidy(raw.postcode, 12)?.replace(/\D/g, "") ?? ""; const email = tidy(raw.email, 320)?.toLowerCase() ?? "";
+  const postcode = tidy(typeof raw.postcode === "number" ? String(raw.postcode) : raw.postcode, 12)?.replace(/\D/g, "") ?? ""; const email = tidy(raw.email, 320)?.toLowerCase() ?? ""; // auch als Zahl (dann ohne führende Null – die kommt beim Zusammenführen zurück)
   // „Herr“/„Frau“ ist kein Vorname: Die Anrede wandert in ihr eigenes Feld – auch aus „Herr Bade“ im Nachnamen
   let firstName = tidy(raw.firstName, 120); let lastName = tidy(raw.lastName, 120); let salutation = tidySalutation(raw.salutation);
   if (firstName && isSalutation(firstName)) { salutation = salutation ?? tidySalutation(firstName); firstName = null; }
@@ -37,7 +38,7 @@ export function contactFromTranscript(transcript: string | null | undefined): Sp
 export function withSpokenContact(contact: DialerContact, spoken: SpokenContact): DialerContact {
   const named = Boolean(contact.firstName || contact.lastName);
   const fields = !named && spoken.salutation && !contact.fields.anrede ? { ...contact.fields, anrede: spoken.salutation } : contact.fields; // Anrede aus dem Gespräch als Zusatzfeld
-  const merged = { ...contact, fields, firstName: named ? contact.firstName : spoken.firstName, lastName: named ? contact.lastName : spoken.lastName, street: contact.street ?? spoken.street, postcode: contact.postcode ?? spoken.postcode, city: contact.city ?? spoken.city, email: contact.email ?? spoken.email };
+  const merged = { ...contact, fields, firstName: named ? contact.firstName : spoken.firstName, lastName: named ? contact.lastName : spoken.lastName, street: contact.street ?? spoken.street, postcode: contact.postcode ?? normalizePostcode(spoken.postcode, contact.country), city: contact.city ?? spoken.city, email: contact.email ?? spoken.email };
   return { ...merged, hasIdentity: Boolean(merged.firstName || merged.lastName || merged.company), hasData: true };
 }
 

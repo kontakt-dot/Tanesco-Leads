@@ -22,6 +22,7 @@ import { extractPartnerReference, handOverToBuyerEndpoints, notifySupplierReturn
 import { suppliers } from "../drizzle/schema";
 import { logActivity } from "./activity";
 import { NOT_POSSIBLE_PREFIX } from "../shared/api-errors";
+import { normalizePostcode } from "../shared/postcode";
 
 export type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 export type LeadRow = typeof leads.$inferSelect;
@@ -442,7 +443,7 @@ export async function runAutomationsForLead(db: Db, input: { tenantId: number; a
 
       if (actionType === "lead_typ_duplizieren") {
         const categoryId = numericConfig("categoryId") || rule.targetCategoryId; const publicId = nanoid(8).toUpperCase();
-        const values = { tenantId, publicId, categoryId, firstName: source.firstName, lastName: source.lastName, email: source.email, phone: source.phone, postcode: source.postcode, city: source.city, country: source.country, supplierId: source.supplierId, supplierName: source.supplierName, assignedUserId: source.assignedUserId, cost: source.cost, metadata: source.metadata, status: "genehmigt" as const };
+        const values = { tenantId, publicId, categoryId, firstName: source.firstName, lastName: source.lastName, email: source.email, phone: source.phone, postcode: normalizePostcode(source.postcode, source.country), city: source.city, country: source.country, supplierId: source.supplierId, supplierName: source.supplierName, assignedUserId: source.assignedUserId, cost: source.cost, metadata: source.metadata, status: "genehmigt" as const };
         const inserted = await db.insert(leads).values(values);
         createdLeadId = Number(inserted[0]?.insertId) || undefined; duplicated += 1; summary = `Lead ${publicId} in Zielkategorie ${categoryId} dupliziert`;
         const created: LeadRow | undefined = createdLeadId ? { ...source, ...values, id: createdLeadId, assignedAt: null, createdAt: new Date(), updatedAt: new Date() } : undefined;

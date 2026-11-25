@@ -8,6 +8,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { dialerCalls, leadCategories, leadStatusEvents, leads, rawBatches, rawContacts, suppliers, users, type RawContact } from "../drizzle/schema";
 import { triggerLeadAutomations, type Db } from "./lead-pipeline";
+import { normalizePostcode } from "../shared/postcode";
 
 export type RawRowInput = { firstName?: string | null; lastName?: string | null; company?: string | null; phone?: string | null; email?: string | null; postcode?: string | null; city?: string | null; country?: string | null; category?: string | null; data?: Record<string, unknown> };
 export const RAW_FIELDS = ["firstName", "lastName", "company", "phone", "email", "postcode", "city", "country"] as const;
@@ -90,7 +91,7 @@ export async function createBatch(db: Db, tenantId: number, userId: number, inpu
     if (phone) seenPhones.add(phone); if (email) seenEmails.add(email);
     const duplicate = Boolean(duplicateOfLeadId || duplicateInRaw); if (duplicate) duplicates += 1;
     const country = (row.country ?? "DE").trim().toUpperCase().slice(0, 2); const validCountry = ["DE", "AT", "CH"].includes(country) ? country : "DE";
-    return { tenantId, batchId, categoryId: resolveCategory(row.category), firstName, lastName, company, phone, email, postcode: row.postcode?.trim() || null, city: row.city?.trim() || null, country: validCountry, data: row.data ?? null, status: duplicate ? ("duplikat" as const) : ("neu" as const), duplicateOfLeadId: duplicateOfLeadId || null, note: duplicate ? (duplicateOfLeadId ? "Bereits als Lead vorhanden" : "Doppelt in den Rohdaten") : null };
+    return { tenantId, batchId, categoryId: resolveCategory(row.category), firstName, lastName, company, phone, email, postcode: normalizePostcode(row.postcode, validCountry), city: row.city?.trim() || null, country: validCountry, data: row.data ?? null, status: duplicate ? ("duplikat" as const) : ("neu" as const), duplicateOfLeadId: duplicateOfLeadId || null, note: duplicate ? (duplicateOfLeadId ? "Bereits als Lead vorhanden" : "Doppelt in den Rohdaten") : null };
   }).filter((row): row is NonNullable<typeof row> => row !== null);
   for (let index = 0; index < values.length; index += 500) await db.insert(rawContacts).values(values.slice(index, index + 500));
   await db.update(rawBatches).set({ rowCount: values.length }).where(eq(rawBatches.id, batchId));
@@ -129,7 +130,7 @@ export async function convertRawContact(db: Db, tenantId: number, rawContactId: 
   const initialStatus = options.initialStatus ?? "neu";
   const publicId = nanoid(8).toUpperCase();
   const data = contact.data && typeof contact.data === "object" && !Array.isArray(contact.data) ? (contact.data as Record<string, unknown>) : {};
-  const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, firstName: contact.firstName, lastName: contact.lastName, email: contact.email, phone: contact.phone, postcode: contact.postcode, city: contact.city, country: (contact.country as "DE" | "AT" | "CH") ?? "DE", supplierId: supplier?.id ?? null, supplierName: supplier?.name ?? batch.sourceName ?? "Rohdaten (Callcenter)", cost: "0.00", metadata: { ...data, ...(contact.company ? { company: contact.company } : {}), rawContactId: contact.id, rawBatch: batch.name, source: batch.sourceName ?? batch.name, ...(options.deferAutomations ? { automationPending: true } : {}) }, status: initialStatus });
+  const inserted = await db.insert(leads).values({ tenantId, publicId, categoryId, firstName: contact.firstName, lastName: contact.lastName, email: contact.email, phone: contact.phone, postcode: normalizePostcode(contact.postcode, contact.country ?? "DE"), city: contact.city, country: (contact.country as "DE" | "AT" | "CH") ?? "DE", supplierId: supplier?.id ?? null, supplierName: supplier?.name ?? batch.sourceName ?? "Rohdaten (Callcenter)", cost: "0.00", metadata: { ...data, ...(contact.company ? { company: contact.company } : {}), rawContactId: contact.id, rawBatch: batch.name, source: batch.sourceName ?? batch.name, ...(options.deferAutomations ? { automationPending: true } : {}) }, status: initialStatus });
   const leadId = Number(inserted[0]?.insertId) || 0;
   await db.insert(leadStatusEvents).values({ tenantId, leadId, nextStatus: initialStatus, actorUserId: options.actorUserId, note: `Aus Rohdaten übernommen (${batch.name})${options.note ? ` – ${options.note}` : ""}` });
   await db.update(rawContacts).set({ status: "konvertiert", leadId, categoryId, note: options.note?.slice(0, 320) ?? contact.note }).where(eq(rawContacts.id, contact.id));

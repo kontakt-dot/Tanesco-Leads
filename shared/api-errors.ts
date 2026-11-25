@@ -7,6 +7,7 @@
  * Die Rechnung hängt an keiner Datenbank – Server und Vorschau geben dieselben Zeilen hinein.
  */
 import { isPlaceholder, leadDisplayName } from "./lead-fields";
+import { normalizePostcode } from "./postcode";
 
 /* ------------------------------------------------------------------ Arten von Fehlern */
 
@@ -232,6 +233,11 @@ export function phoneProblem(value: string | null | undefined): string | null {
   return null;
 }
 
+/** Vorschlag für eine PLZ, die nicht passt: „9633“ in Deutschland → „09633“ (die führende Null ging verloren). Sonst null. */
+export function postcodeSuggestion(value: string | null | undefined, country: string | null | undefined): string | null {
+  const fixed = normalizePostcode(value, country); return fixed && fixed !== String(value ?? "").trim() && !postcodeProblem(fixed, country) ? fixed : null;
+}
+
 /** Passt die PLZ zum Land? Geprüft werden Deutschland (5 Ziffern), Österreich und Schweiz (4 Ziffern). */
 export function postcodeProblem(value: string | null | undefined, country: string | null | undefined): string | null {
   const text = String(value ?? "").trim();
@@ -253,7 +259,7 @@ export function leadDataProblems(lead: LeadContact): LeadDataProblem[] {
   const mail = emailProblem(email); if (mail) out.push({ field: "email", title: "Die E-Mail-Adresse ist nicht gültig.", hint: mail, suggestion: suggestEmail(email) });
   const tel = phoneProblem(phone); if (tel) out.push({ field: "phone", title: "Die Rufnummer ist nicht brauchbar.", hint: tel });
   if (!email && !phone) out.push({ field: "phone", title: "Weder Rufnummer noch E-Mail-Adresse.", hint: "Ohne Kontaktweg kann kein Käufer den Kunden erreichen." });
-  const plz = postcodeProblem(isPlaceholder(lead.postcode) ? "" : lead.postcode, lead.country); if (plz) out.push({ field: "postcode", title: "Die PLZ passt nicht.", hint: plz });
+  const plz = postcodeProblem(isPlaceholder(lead.postcode) ? "" : lead.postcode, lead.country); if (plz) out.push({ field: "postcode", title: "Die PLZ passt nicht.", suggestion: postcodeSuggestion(lead.postcode, lead.country), hint: plz });
   return out;
 }
 
