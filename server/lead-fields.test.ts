@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callAnswerList, cleanFieldValue, cleanFieldValues, extraMetaFields, fieldsFromTranscript, fieldsToRead, isPlaceholder, isTechnicalMeta, leadDisplayName, metaLabel, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
+import { callAnswerList, cleanFieldValue, cleanFieldValues, extraMetaFields, fieldsFromTranscript, fieldsToRead, isPlaceholder, isTechnicalMeta, leadDisplayName, metaLabel, readableLabel, readableValue, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
 import { cleanSpokenContact, contactFromTranscript, withSpokenContact } from "../shared/dialer-intake";
 import { extractDialerContact } from "../shared/dialer-contact";
 import { berlinDayBefore, claimRate, deliversByItself, emptyLeadCounts, emptyLeadsOverview, hintText, leadsOverview, overviewHints, OVERVIEW_DAYS, statusSplit, todayComparison, waitingAge, weekComparison } from "../shared/lead-overview";
@@ -74,8 +74,20 @@ describe("Felder der Lead-Kategorie aus dem Gespräch", () => {
     for (const key of ["rawContactId", "rawBatch", "source", "callScore", "callVerdict", "callDecision", "callRecordId", "callFieldsAt", "street", "assignedOrderId", "partnerReference"]) expect(isTechnicalMeta(key), key).toBe(true);
     expect(isTechnicalMeta("hausart")).toBe(false);
     const extras = extraMetaFields({ source: "OnDialer", rawBatch: "Kontakte vom Dialer", callScore: 98, callRecordId: 382, rawContactId: 119, street: "Lindenweg 14", anrede: "Herr", hausart: "Mehrfamilienhaus", monatliche_stromkosten: "140 €", leer: "", platz: "<UNKNOWN>", liste: ["a", "b"], tief: { x: 1 }, ok: true }, ["hausart"]);
-    expect(extras).toEqual([{ key: "anrede", label: "Anrede", value: "Herr" }, { key: "monatliche_stromkosten", label: "Monatliche stromkosten", value: "140 €" }, { key: "liste", label: "Liste", value: "a, b" }, { key: "ok", label: "Ok", value: "Ja" }]);
-    expect(metaLabel("dialerResult")).toBe("Ergebnis im Dialer"); expect(metaLabel("stromverbrauchKwh")).toBe("Stromverbrauch Kwh");
+    expect(extras).toEqual([{ key: "anrede", label: "Anrede", value: "Herr" }, { key: "monatliche_stromkosten", label: "Monatliche Stromkosten", value: "140 €" }, { key: "liste", label: "Liste", value: "a, b" }, { key: "ok", label: "Ok", value: "Ja" }]);
+    expect(metaLabel("dialerResult")).toBe("Ergebnis im Dialer"); expect(metaLabel("stromverbrauchKwh")).toBe("Stromverbrauch kWh");
+  });
+
+  it("Feldnamen groß und lesbar (v368): Wörter groß, WP/PV/kWh fest, Umlaute, „ist“ vorn fällt weg; Werte beginnen groß", () => {
+    // so kamen die Wärmepumpen-Felder aus dem Gespräch an („Wp ist neubau“, „Wp gebaeudetyp“ …)
+    expect(["wp_ist_neubau", "wp_gebaeudetyp", "wp_erreichbarkeit", "wp_ist_eigentuemer", "wp_beheizte_flaeche", "wp_termin_erwuenscht", "wp_warmwasser_system", "wp_bevorzugte_waermepumpe", "wp_aktuelle_waermeverteilung", "wp_interesse_photovolatikanlage", "pv_stromverbrauch_kwh", "speicher_gewuenscht", "eigentuemer"].map(metaLabel))
+      .toEqual(["WP Neubau", "WP Gebäudetyp", "WP Erreichbarkeit", "WP Eigentümer", "WP Beheizte Fläche", "WP Termin Erwünscht", "WP Warmwasser System", "WP Bevorzugte Wärmepumpe", "WP Aktuelle Wärmeverteilung", "WP Interesse Photovoltaikanlage", "PV Stromverbrauch kWh", "Speicher Gewünscht", "Eigentümer"]);
+    // schon gut geschriebene Namen bleiben, kleine Wörter bleiben klein, „aktuelle“/„Steuer“ werden nicht verdorben
+    expect(readableLabel("Beheizte Fläche")).toBe("Beheizte Fläche"); expect(readableLabel("Anzahl der Personen im Haushalt")).toBe("Anzahl der Personen im Haushalt");
+    expect(readableLabel("aktuelle steuer")).toBe("Aktuelle Steuer"); expect(readableLabel("E-Mail")).toBe("E-Mail"); expect(readableLabel("ist")).toBe("Ist"); expect(readableLabel("  ")).toBe("  ");
+    expect(readableLabel(readableLabel("wp ist neubau"))).toBe("WP Neubau"); // zweimal angewendet bleibt gleich
+    expect(readableValue("heizkörper")).toBe("Heizkörper"); expect(readableValue("heizkörper & Fußbodenheizung")).toBe("Heizkörper & Fußbodenheizung");
+    expect(readableValue("max@beispiel.de")).toBe("max@beispiel.de"); expect(readableValue("www.beispiel.de")).toBe("www.beispiel.de"); expect(readableValue("4-6 Monate")).toBe("4-6 Monate"); expect(readableValue("")).toBe(""); expect(readableValue("iPhone")).toBe("iPhone");
   });
   it("listet die Antworten auf die Prüffragen in der Reihenfolge der Fragen – ohne „Entfällt“ und ohne Unbeantwortetes", () => {
     const questions = [{ key: "eigentuemer", label: "Ist der Kunde Eigentümer?" }, { key: "gas", label: "Erdgas?" }, { key: "interesse", label: "Hat der Kunde Interesse?" }, { key: "offen", label: "Noch offen?" }];

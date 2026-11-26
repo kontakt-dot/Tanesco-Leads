@@ -70,9 +70,50 @@ export function outboundMeta(metadata: unknown): Record<string, unknown> {
 }
 
 const META_LABELS: Record<string, string> = { street: "Straße", company: "Firma", anrede: "Anrede", salutation: "Anrede", dialerResult: "Ergebnis im Dialer", dialerNote: "Notiz im Dialer", dialerCallbackAt: "Rückruf laut Dialer", utm_source: "Quelle (Anzeige)", utm_campaign: "Kampagne (Anzeige)", utm_medium: "Medium (Anzeige)" };
-/** Lesbarer Name für ein Zusatzfeld ohne eigene Definition („monatliche_stromkosten“ → „Monatliche Stromkosten“). */
+/** Lesbarer Name für ein Zusatzfeld ohne eigene Definition („monatliche_stromkosten“ → „Monatliche Stromkosten“, „wp_ist_neubau“ → „WP Neubau“). */
 export function metaLabel(key: string): string {
-  return META_LABELS[key] ?? key.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().replace(/^./, (letter) => letter.toUpperCase());
+  return META_LABELS[key] ?? readableLabel(key.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, "$1 $2").replace(/[_-]+/g, " "));
+}
+
+/** Kürzel und Einheiten mit fester Schreibweise */
+const LABEL_TOKENS: Record<string, string> = { pv: "PV", wp: "WP", plz: "PLZ", id: "ID", utm: "UTM", kwh: "kWh", kwp: "kWp", qm: "qm", url: "URL", api: "API", crm: "CRM", sms: "SMS", ki: "KI", "e-mail": "E-Mail", email: "E-Mail" };
+/** Wortteile, die in Feldnamen ohne Umlaut ankommen – nur diese bekannten Stämme werden ersetzt, damit z. B. „aktuelle“ oder „Steuer“ heil bleiben */
+const UMLAUT_STEMS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/gebaeude/g, "gebäude"], [/flaeche/g, "fläche"], [/waerme/g, "wärme"], [/wuensch/g, "wünsch"], [/eigentuemer/g, "eigentümer"], [/groesse/g, "größe"], [/hoehe/g, "höhe"],
+  [/zusaetz/g, "zusätz"], [/moeglich/g, "möglich"], [/jaehr/g, "jähr"], [/koerper/g, "körper"], [/fussboden/g, "fußboden"], [/strasse/g, "straße"], [/verfueg/g, "verfüg"],
+  [/pruef/g, "prüf"], [/kuehl/g, "kühl"], [/loesung/g, "lösung"], [/schaetz/g, "schätz"], [/aenderung/g, "änderung"], [/naechst/g, "nächst"], [/taeglich/g, "täglich"],
+  [/haeufig/g, "häufig"], [/buero/g, "büro"], [/^ueber/g, "über"], [/^fuer$/g, "für"], [/photovolatik/g, "photovoltaik"],
+];
+/** Kleine Wörter bleiben klein, außer ganz vorn („Anzahl der Personen im Haushalt“) */
+const SMALL_WORDS = new Set(["und", "oder", "mit", "im", "in", "am", "an", "auf", "aus", "bei", "für", "von", "vom", "zu", "zum", "zur", "pro", "je", "bis", "ab", "ohne", "nach", "vor", "seit", "per", "als", "der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "&"]);
+const upperFirst = (word: string) => `${word.charAt(0).toLocaleUpperCase("de-DE")}${word.slice(1)}`;
+
+/**
+ * Feldname groß und lesbar (seit Version 368): jedes Wort beginnt groß (kleine Wörter wie „der“, „im“ nicht),
+ * Kürzel wie WP, PV, PLZ und kWh stehen fest, „ae/oe/ue“ wird bei bekannten Wörtern zum Umlaut,
+ * ein „ist“ am Anfang fällt weg („wp ist neubau“ → „WP Neubau“). Schon gut geschriebene Namen bleiben, wie sie sind – nur der erste Buchstabe jedes Worts wird groß.
+ */
+export function readableLabel(label: string): string {
+  const words = String(label ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (!words.length) return String(label ?? "");
+  const lower = (word: string) => word.toLocaleLowerCase("de-DE");
+  if (words.length > 2 && LABEL_TOKENS[lower(words[0])] && lower(words[1]) === "ist") words.splice(1, 1);
+  else if (words.length > 1 && lower(words[0]) === "ist") words.shift();
+  return words.map((word, index) => {
+    const small = lower(word);
+    if (LABEL_TOKENS[small]) return LABEL_TOKENS[small];
+    if (word !== small) return upperFirst(word); // schon mit Großbuchstaben geschrieben – so lassen
+    const fixed = UMLAUT_STEMS.reduce((text, [stem, replacement]) => text.replace(stem, replacement), small);
+    return index > 0 && SMALL_WORDS.has(fixed) ? fixed : upperFirst(fixed);
+  }).join(" ");
+}
+
+/** Wert für die Anzeige: erster Buchstabe groß („heizkörper“ → „Heizkörper“) – nicht bei E-Mail-Adressen und Links */
+export function readableValue(value: string): string {
+  const text = String(value ?? ""); const first = text.charAt(0);
+  if (!first || /@|^(https?:\/\/|www\.)/i.test(text) || /^[a-zäöüß]+[A-ZÄÖÜ]/.test(text)) return text; // E-Mail, Link, Marken wie „iPhone“ bleiben
+  const upper = first.toLocaleUpperCase("de-DE");
+  return upper !== first && upper.length === 1 ? `${upper}${text.slice(1)}` : text;
 }
 /** Zusatzfelder eines Leads, die weder zur Kategorie gehören noch Vermerke der Software sind – mit lesbarem Namen. */
 export function extraMetaFields(metadata: unknown, knownKeys: Iterable<string> = []): Array<{ key: string; label: string; value: string }> {
