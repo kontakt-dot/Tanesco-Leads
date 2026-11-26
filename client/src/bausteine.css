@@ -2082,3 +2082,27 @@ html:not(.dark) .tp .live-agent-head strong,html:not(.dark) .tp .live-recent-mai
 @media (prefers-reduced-motion:reduce){.tp-mode,.tp-tabs button{transition:none}}
 
 .af-field select{font-size:14px}
+
+/* ============================================================
+   Kontrast der Emoji-Kacheln (v375): Ein Emoji steht immer auf ruhigem Grund – weiß im hellen, dunkelgrau im dunklen Design.
+   Die Farbe der Kategorie bleibt als schmaler Streifen, nicht mehr als Fläche hinter dem Emoji (die Sonne auf einer roten
+   Kategorie war kaum zu erkennen). Gilt für Lieferkette (Kopf je Kategorie), Lead-Kategorien und die Kategorie-Karten der Bestellung.
+   ============================================================ */
+.lk-group-badge,.lc-mark,.of .of-cats button[data-emoji]::before{background:rgba(255,255,255,.09)!important;border:1px solid rgba(255,255,255,.18)!important;box-shadow:none!important}
+html:not(.dark) .lk-group-badge,html:not(.dark) .lc-mark,html:not(.dark) .of .of-cats button[data-emoji]::before{background:#fff!important;border-color:#e4e7ec!important;box-shadow:0 1px 2px rgba(16,24,40,.06)!important}
+.lk-group{position:relative;background:var(--lt-head)!important}
+.lk-group::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--cat,var(--lt-accent))}
+.lc-head{background:var(--lt-head)!important}
+.lc-item.is-on{border-color:var(--lt-line-2)!important;background:var(--lt-head)!important}
+.lc-item-text code,.lc-head-text code{color:var(--lt-ink-2)!important;background:var(--lt-chip)!important}
+/* gewählte Kategorie in der Bestellung: weiße Karte mit Rand und Haken statt farbiger Fläche */
+.of .of-cats button.selected{position:relative;background:var(--lt-field)!important;border:1.5px solid var(--lt-accent-strong)!important;box-shadow:none!important}
+.of .of-cats button.selected::after{content:"";position:absolute;top:-7px;right:-7px;width:18px;height:18px;border-radius:50%;background:var(--lt-accent-strong) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5 9-10'/%3E%3C/svg%3E") center/11px no-repeat;box-shadow:0 0 0 2px var(--lt-field)}
+html:not(.dark) .of .of-cats button.selected{background:#fff!important}
+html:not(.dark) .of .of-cats button.selected small{color:#667085!important}
+.of-chips span{background:var(--lt-chip)!important;border-color:var(--lt-line-2)!important}
+.tp-called-list{margin:0;padding:10px 12px;border:1px solid var(--lt-line);border-radius:12px;background:var(--lt-tile);font-size:13px;color:var(--lt-ink-2)}
+.tp-called-list b{font-weight:650;color:var(--lt-ink)}.tp-called-list small{font-size:12px;color:var(--lt-muted)}
+.of .of-cats button.selected{color:var(--lt-ink)!important}
+.lc-mark{width:auto!important;min-width:40px;padding:0 5px;white-space:nowrap}
+.lc-mark-lg{min-width:54px;padding:0 7px}

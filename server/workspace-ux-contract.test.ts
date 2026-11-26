@@ -166,9 +166,13 @@ describe("Tanesco Leads UX-Verträge", () => {
     expect(styles).toContain(".people-header-actions");
   });
 
-  it("ordnet Statistikperspektiven fachlich nach Käufer, Lieferanten, Bestellungen, Lieferketten und Integrationen", () => {
+  it("Statistik zeigt nur noch Integrationen (seit v375) – keine Reiter für Käufer, Lieferanten, Bestellungen, Lieferketten", () => {
     const source = component("StatisticsWorkspace.tsx");
-    expect(source).toContain('const views: View[] = ["Käufer", "Lieferanten", "Bestellungen", "Lieferketten", "Integrationen"]');
+    expect(source).toContain("<PartnerReport />");
+    expect(source).not.toContain("const views"); expect(source).not.toContain("status-tabs"); expect(source).not.toContain("-Perspektive");
+    const shell = component("FluxoraWorkspace.tsx");
+    expect(shell).toContain('{ label: "ORGANISATION", pages: ["Teams", "Benutzer", "Kooperationen"] }'); // Menüpunkt „Integrationen“ gibt es nicht mehr
+    expect(shell).not.toContain('{ page: "Integrationen"'); expect(shell).toContain("/?page=Einstellungen&setting=Integrationen"); // alte Links landen in den Einstellungen
   });
 
   it("bietet einen Kategorien-Builder mit Datei-Upload, editierbarer Entwurfsvorschau und bewusster Übernahme", () => {

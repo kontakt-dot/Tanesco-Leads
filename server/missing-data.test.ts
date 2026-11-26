@@ -60,6 +60,20 @@ describe("API-Fehler – was fehlt, steht da, bevor der Lead rausgeht", () => {
     expect(endpointNeeds(lead, [{ ...endpoint, enabled: false }], pv)).toEqual([]); expect(endpointNeeds(lead, [{ ...endpoint, categoryId: 2 }], pv)).toEqual([]);
     expect(endpointNeeds(lead, [{ ...endpoint, bodyTemplate: "{\"email\":\"{{email}}\"}" }], pv)).toEqual([]); // eigene Vorlagen kennen keine Pflichtangaben
     expect(endpointNeeds(lead, [{ ...endpoint, sourceFilterMode: "nur", sourceSupplierIds: [9] }], pv)).toEqual([]); // diese Schnittstelle bekommt den Lead gar nicht
+  });
+  it("Kampagne → Käufer (v375): Ein Käufer, der den Lead nach dieser Regel nie bekommt, verlangt von ihm auch nichts", () => {
+    const endpoint: NeedEndpoint = { enabled: true, categoryId: 1, bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: false, valueMappings: null, sourceFilterMode: "alle", sourceSupplierIds: null, fieldFilters: null, buyerName: "Wattfox", buyerUserId: 40 };
+    const lead = { id: 7, publicId: "L7", firstName: "Laura", lastName: "Sommer", email: "l.sommer@example.de", phone, postcode: "48249", city: "Dülmen", country: "DE", metadata: { street: "Hauptstraße 12" }, createdAt: new Date(), categoryId: 1, supplierId: null };
+    const pv = { name: "Photovoltaik", shortcode: "PV" }; const need = [{ buyer: "Wattfox", missing: ["Anrede (Herr/Frau)"] }];
+    const wattfoxOnly = [{ campaign: "Wattfox PV und WP", buyerUserId: 40, buyerName: "Wattfox" }];
+    expect(endpointNeeds(lead, [endpoint], pv)).toEqual(need); // Lead ohne Gespräch: wie bisher
+    expect(endpointNeeds(lead, [endpoint], pv, { campaignRules: null })).toEqual(need);
+    expect(endpointNeeds(lead, [endpoint], pv, { campaignRules: { campaign: "Wattfox PV und WP", bindings: wattfoxOnly } })).toEqual(need); // seine eigene Kampagne
+    expect(endpointNeeds(lead, [endpoint], pv, { campaignRules: { campaign: "wattfox pv und wp", bindings: wattfoxOnly } })).toEqual(need); // Schreibweise egal
+    expect(endpointNeeds(lead, [endpoint], pv, { campaignRules: { campaign: "HausKompass", bindings: wattfoxOnly } })).toEqual([]); // Wattfox ist an eine andere Kampagne gebunden
+    expect(endpointNeeds(lead, [endpoint], pv, { campaignRules: { campaign: "HausKompass", bindings: [{ campaign: "HausKompass", buyerUserId: 41, buyerName: "Solar Nord" }] } })).toEqual([]); // diese Kampagne liefert nur an einen anderen
+    expect(endpointNeeds(lead, [endpoint], pv, { campaignRules: { campaign: "HausKompass", bindings: [{ campaign: "Aroundhome", buyerUserId: 41, buyerName: "Solar Nord" }] } })).toEqual(need); // weder Kampagne noch Wattfox gebunden
+    expect(endpointNeeds(lead, [{ ...endpoint, buyerUserId: null }], pv, { campaignRules: { campaign: "Wattfox PV und WP", bindings: wattfoxOnly } })).toEqual([]); // Schnittstelle ohne Käufer: die Kampagne liefert nur an Wattfox
     expect(WATTFOX.tokenHeader).toBe("X-AUTH-TOKEN");
   });
   it("Übersicht: freigegebener Lead ohne E-Mail steht als „Angaben“ da – alte Leads und abgehakte nicht", () => {

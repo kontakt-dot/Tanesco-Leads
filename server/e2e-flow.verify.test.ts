@@ -6220,6 +6220,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, carla.id))).map((event) => event.note)).toContain("Anrede aus dem Gespräch übernommen: Frau");
     expect((await owner.leadops.apiErrorOverview({ days: 30 })).problems.some((problem) => problem.publicId === "WF-E2E-004")).toBe(false); // Anrede, Straße, E-Mail: alles da
     expect((await salutationsFromCalls(db, { tenantId: S.tenantId })).filled).toBe(0);
+    // (g2) v375: Regel „Kampagne → Käufer“ gilt auch für „Angaben fehlen“. Dora kommt aus der Kampagne „PV Q4“ – ihr fehlt die Anrede für den Käufer mit Wattfox-Schnittstelle.
+    // Ist dieser Käufer an eine andere Kampagne gebunden, bekommt er Leads aus „PV Q4“ nie: Dann verlangt er von Dora nichts mehr (die fehlende E-Mail-Adresse bleibt als allgemeiner Hinweis).
+    const doraNeeds = async () => ((await owner.leadops.apiErrorOverview({ days: 30 })).problems.find((problem) => problem.publicId === "WF-E2E-005")?.dataProblems ?? []).map((item) => [item.field, item.hint]);
+    const doraFirst = await doraNeeds(); expect(doraFirst.map(([field]) => field)).toEqual(expect.arrayContaining(["salutation", "email"])); expect(doraFirst.find(([field]) => field === "salutation")![1]).toMatch(/ nimmt den Lead nur damit an\.$/);
+    const boundElsewhere = `V375 nur Wattfox ${Date.now().toString(36)}`;
+    await owner.leadops.setCallQaCampaignBuyer({ campaign: boundElsewhere, buyerUserId: inviteeUserId });
+    expect(await doraNeeds()).toEqual([["email", "Ohne E-Mail-Adresse nehmen viele Käufer den Lead nicht an."]]);
+    const { leadCampaignRulesFor } = await import("./lead-pipeline"); const rules375 = await leadCampaignRulesFor(db, S.tenantId, [dora.id, carla.id, incomplete.id]);
+    expect(rules375.get(dora.id)).toMatchObject({ campaign: "PV Q4" }); expect(rules375.get(dora.id)!.bindings.some((binding) => binding.campaign === boundElsewhere && binding.buyerUserId === inviteeUserId)).toBe(true); expect(rules375.has(incomplete.id)).toBe(false); // Lead ohne Gespräch: keine Einschränkung
+    // gehört „PV Q4“ selbst diesem Käufer, fehlt die Anrede wieder; ohne Bindung ebenso
+    await owner.leadops.setCallQaCampaignBuyer({ campaign: boundElsewhere, buyerUserId: null }); await owner.leadops.setCallQaCampaignBuyer({ campaign: "PV Q4", buyerUserId: inviteeUserId });
+    expect((await doraNeeds()).map(([field]) => field)).toEqual(doraFirst.map(([field]) => field));
+    await owner.leadops.setCallQaCampaignBuyer({ campaign: "PV Q4", buyerUserId: null });
+    expect((await doraNeeds()).map(([field]) => field)).toEqual(doraFirst.map(([field]) => field));
     await db.delete(callRecords).where(inArray(callRecords.externalCallId, ["wf-e2e-anrede-1", "wf-e2e-anrede-2"]));
     await db.update(leads).set({ status: "deaktiviert" }).where(inArray(leads.publicId, ["WF-E2E-003", "WF-E2E-004", "WF-E2E-005"])); // spätere Tests zählen offene Leads
     // (h) v373: Statistik „Integrationen“ – das WattFox-Konto zeigt die Zustellungen über die Schnittstelle des Käufers; Aufrufe von WattFox werden Transaktionen (einmal je Bestellnummer)

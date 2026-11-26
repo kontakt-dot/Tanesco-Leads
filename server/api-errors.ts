@@ -11,7 +11,8 @@ import { normalizePostcode } from "../shared/postcode";
 import { LEAD_FIELD_LABEL, NOT_POSSIBLE_PREFIX, PRECHECK_STATUS, buildApiErrorOverview, emailProblem, phoneProblem, plainReason, postcodeProblem, type ApiErrorOverview, type ApiNoteRow, type LeadContactField } from "../shared/api-errors";
 import { fieldOptions, leadDisplayName, tidySalutation } from "../shared/lead-fields";
 import { endpointNeeds } from "./outbound-templates";
-import { deliverLeadNow, metadataOf, type Db, type LeadRow } from "./lead-pipeline";
+import { deliverLeadNow, leadCampaignRulesFor, metadataOf, type Db, type LeadRow } from "./lead-pipeline";
+import type { LeadCampaignRules } from "../shared/dialer-campaign";
 
 const MAX_EVENTS = 6000; const MAX_NOTES = 3000; const MAX_PRECHECK = 3000;
 
@@ -45,7 +46,7 @@ export async function apiErrorOverview(db: Db, tenantId: number, options: { days
       .from(automationExecutionLogs).where(and(eq(automationExecutionLogs.tenantId, tenantId), gte(automationExecutionLogs.occurredAt, since), or(like(automationExecutionLogs.summary, "%Auslieferung offen:%"), like(automationExecutionLogs.summary, "Keine aktive Lieferkette%"), like(automationExecutionLogs.summary, "Die zugeordnete %")))).orderBy(desc(automationExecutionLogs.occurredAt)).limit(MAX_NOTES),
     // Noch nicht ausgeliefert: Angaben vorab prüfen (nur Leads für den Verkauf, die neuesten zuerst)
     db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), inArray(leads.status, Array.from(PRECHECK_STATUS) as Array<LeadRow["status"]>))).orderBy(desc(leads.id)).limit(MAX_PRECHECK),
-    db.select({ id: deliveryEndpoints.id, url: deliveryEndpoints.url, enabled: deliveryEndpoints.enabled, membershipId: deliveryEndpoints.membershipId, categoryId: deliveryEndpoints.categoryId, bodyTemplate: deliveryEndpoints.bodyTemplate, omitAutoFields: deliveryEndpoints.omitAutoFields, valueMappings: deliveryEndpoints.valueMappings, sourceFilterMode: deliveryEndpoints.sourceFilterMode, sourceSupplierIds: deliveryEndpoints.sourceSupplierIds, fieldFilters: deliveryEndpoints.fieldFilters, name: users.name, company: users.company })
+    db.select({ id: deliveryEndpoints.id, url: deliveryEndpoints.url, enabled: deliveryEndpoints.enabled, membershipId: deliveryEndpoints.membershipId, buyerUserId: memberships.userId, categoryId: deliveryEndpoints.categoryId, bodyTemplate: deliveryEndpoints.bodyTemplate, omitAutoFields: deliveryEndpoints.omitAutoFields, valueMappings: deliveryEndpoints.valueMappings, sourceFilterMode: deliveryEndpoints.sourceFilterMode, sourceSupplierIds: deliveryEndpoints.sourceSupplierIds, fieldFilters: deliveryEndpoints.fieldFilters, name: users.name, company: users.company })
       .from(deliveryEndpoints).leftJoin(memberships, eq(memberships.id, deliveryEndpoints.membershipId)).leftJoin(users, eq(users.id, memberships.userId)).where(eq(deliveryEndpoints.tenantId, tenantId)),
     db.select({ id: partnerIntegrations.id, name: partnerIntegrations.name, status: partnerIntegrations.status, callbackUrl: partnerIntegrations.callbackUrl }).from(partnerIntegrations).where(eq(partnerIntegrations.tenantId, tenantId)),
     db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)),
@@ -65,7 +66,10 @@ export async function apiErrorOverview(db: Db, tenantId: number, options: { days
   const supplierName = new Map(supplierRows.map((row) => [row.id, row.name])); // am Lead steht der Name des Lieferanten nicht immer – dann über seine Nummer
   // Pflichtangaben der Schnittstellen (Wattfox-Vorlage): Was fehlt den noch nicht ausgelieferten Leads? So steht es hier, bevor der Lead losgeht
   const categoryById = new Map(categories.map((row) => [row.id, row])); const needEndpoints = endpointRows.map((row) => ({ ...row, buyerName: row.company ?? row.name ?? "Käufer" }));
-  const needs = leadRows.filter((lead) => lead.kind === "verkauf" && PRECHECK_STATUS.has(lead.status)).flatMap((lead) => endpointNeeds(lead, needEndpoints, categoryById.get(lead.categoryId) ?? null).map((need) => ({ ...need, leadId: lead.id })));
+  // Regel „Kampagne → Käufer“ wie beim Ausliefern: Ein Käufer, der den Lead gar nicht bekommt, verlangt von ihm auch nichts (v375)
+  const precheckLeads = leadRows.filter((lead) => lead.kind === "verkauf" && PRECHECK_STATUS.has(lead.status));
+  const campaignRules = needEndpoints.some((endpoint) => endpoint.enabled) ? await leadCampaignRulesFor(db, tenantId, precheckLeads.map((lead) => lead.id)) : new Map<number, LeadCampaignRules>();
+  const needs = precheckLeads.flatMap((lead) => endpointNeeds(lead, needEndpoints, categoryById.get(lead.categoryId) ?? null, { campaignRules: campaignRules.get(lead.id) ?? null }).map((need) => ({ ...need, leadId: lead.id })));
   return buildApiErrorOverview({
     now, days, events, notes, deliveries, categories, integrations, needs,
     leads: leadRows.filter((lead) => lead.kind === "verkauf").map((lead) => ({ id: lead.id, publicId: lead.publicId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, status: lead.status, categoryId: lead.categoryId, supplierName: lead.supplierName ?? (lead.supplierId ? supplierName.get(lead.supplierId) ?? null : null), metadata: lead.metadata, createdAt: lead.createdAt })),

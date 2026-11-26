@@ -5,6 +5,7 @@
 import { outboundMeta } from "../shared/lead-fields";
 import { isWattfoxTemplate, wattfoxLeadId, wattfoxPayload, wattfoxTemplateOptions } from "../shared/wattfox";
 import { normalizePostcode } from "../shared/postcode";
+import { campaignDeliverySkip, type LeadCampaignRules } from "../shared/dialer-campaign";
 
 export type TemplateLead = { id: number; publicId: string; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; postcode: string | null; city: string | null; country: string | null; metadata: unknown; createdAt: Date | string };
 export type EndpointLike = { id: number; enabled: boolean; url: string; sourceFilterMode: "alle" | "nur" | "ausser"; sourceSupplierIds: unknown; fieldFilters: unknown; rotate: boolean; sentCount: number; position: number; bodyTemplate: string | null; omitAutoFields: boolean; valueMappings: unknown };
@@ -58,15 +59,20 @@ export function buildEndpointBody(endpoint: Pick<EndpointLike, "bodyTemplate" | 
 
 /* ------------------------------------------------------------------ Filter & Auswahl */
 
-export type NeedEndpoint = Pick<EndpointLike, "enabled" | "bodyTemplate" | "omitAutoFields" | "valueMappings" | "sourceFilterMode" | "sourceSupplierIds" | "fieldFilters"> & { categoryId: number; buyerName: string };
+export type NeedEndpoint = Pick<EndpointLike, "enabled" | "bodyTemplate" | "omitAutoFields" | "valueMappings" | "sourceFilterMode" | "sourceSupplierIds" | "fieldFilters"> & { categoryId: number; buyerName: string; /** Käufer der Schnittstelle – für die Regel „Kampagne → Käufer“ */ buyerUserId?: number | null };
 /**
  * Vor dem Ausliefern: Welche Pflichtangaben fehlen einem Lead für die Schnittstellen seiner Kategorie? Gerechnet wird wie beim Senden –
  * heute kennt nur die Wattfox-Vorlage Pflichtangaben (Anrede bei PV, Name, Anschrift, Telefon, E-Mail). Für die Seite „API-Fehler“.
+ *
+ * `campaignRules` (seit v375): Kommt der Lead aus einem Gespräch, gilt die Regel „Kampagne → Käufer“ wie beim Ausliefern. Ein Käufer, der
+ * den Lead danach gar nicht bekommt (die Kampagne liefert nur an einen anderen, oder der Käufer ist an andere Kampagnen gebunden),
+ * verlangt von diesem Lead auch nichts – sonst stünden Leads als „Anrede fehlt“ da, die nie an ihn gehen.
  */
-export function endpointNeeds(lead: TemplateLead & { categoryId: number; supplierId?: number | null }, endpoints: NeedEndpoint[], category?: { name: string; shortcode: string } | null): Array<{ buyer: string; missing: string[] }> {
+export function endpointNeeds(lead: TemplateLead & { categoryId: number; supplierId?: number | null }, endpoints: NeedEndpoint[], category?: { name: string; shortcode: string } | null, options: { campaignRules?: LeadCampaignRules | null } = {}): Array<{ buyer: string; missing: string[] }> {
   const relevant = endpoints.filter((endpoint) => endpoint.enabled && endpoint.categoryId === lead.categoryId && isWattfoxTemplate(endpoint.bodyTemplate)); if (!relevant.length) return [];
   const values = leadTemplateValues(lead, category); const out: Array<{ buyer: string; missing: string[] }> = [];
   for (const endpoint of relevant) {
+    if (options.campaignRules && campaignDeliverySkip(options.campaignRules, endpoint.buyerUserId ?? null)) continue;
     if (!matchesSourceFilter(endpoint, lead.supplierId ?? null) || !matchesFieldFilters(endpoint.fieldFilters as FieldFilter[] | null, values)) continue;
     const missing = buildEndpointBody(endpoint, values).missing ?? [];
     if (missing.length && !out.some((need) => need.buyer === endpoint.buyerName)) out.push({ buyer: endpoint.buyerName, missing });

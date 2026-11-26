@@ -611,12 +611,6 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
       <div className="gq-decide-foot"><div className="gq-tools"><button type="button" className="cq-tool" disabled={reevaluate.isPending || data.status === "ohne_einwilligung"} title="Das Gespräch nach den aktuellen Regeln der Kampagne neu bewerten" onClick={() => reevaluate.mutate({ callId })}><RefreshCw aria-hidden="true" /><span>Neu bewerten</span></button>{data.leadId && <button type="button" className="cq-tool" title="Einwilligungsstelle aus der Abschrift als Opt-in-Nachweis anlegen (ohne Freigabe)" disabled={optInFromCall.isPending} onClick={() => optInFromCall.mutate({ callId })}><FileCheck2 aria-hidden="true" /><span>Opt-in aus Gespräch</span></button>}</div>
         <div className="gq-assign"><Input value={linkId} placeholder="Lead-ID zuordnen" aria-label="Lead-ID zuordnen" onChange={(event) => setLinkId(event.target.value)} /><Button size="sm" variant="outline" onClick={() => link.mutate({ callId, publicId: linkId.trim() })} disabled={!linkId.trim()}>Zuordnen</Button></div></div>
     </section>
-    {dialer && (dialerFacts.length > 0 || dialer.fields.length > 0 || dialer.note) && <section className="surface-panel operations-panel gq-panel gq-dialer" aria-label="Vom Dialer gemeldet">
-      <div className="gq-panel-head"><div><h2>Vom Dialer gemeldet</h2><p>Diese Angaben hat der Dialer mit dem Gespräch geschickt. {data.leadPublicId ? "Sie stehen im Lead; vorhandene Angaben wurden nicht überschrieben." : "Bei einer Freigabe wird daraus der Lead."}</p></div></div>
-      {(dialerFacts.length > 0 || dialer.fields.length > 0) && <dl className="gq-dialer-facts">{dialerFacts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}{dialer.fields.map((field) => <div key={field.label} className="is-extra"><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>}
-      {dialer.note && <p className="gq-dialer-note"><b>Notiz des Agenten</b>{dialer.note}</p>}
-    </section>}
-    {data.leadPublicId && <section className="surface-panel operations-panel gq-panel"><OptInPanel publicId={data.leadPublicId} onChanged={refresh} /></section>}
     <div className="gq-detail-grid">
       <section className="surface-panel operations-panel gq-panel" aria-label="Prüffragen">
         <div className="gq-panel-head"><div><h2>Prüffragen{data.campaign ? <span> {data.campaign}</span> : null}</h2><p>Diese Fragen entscheiden über Freigabe, Prüfung oder Zurückweisung. Jede Antwort lässt sich von Hand ändern – die Entscheidung folgt sofort.{data.nextStep ? <> <b>Aktuell:</b> {data.nextStep}</> : null}</p></div></div>
@@ -641,6 +635,13 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
         {segments.length > 0 ? <TimedTranscript segments={segments} onJump={canPlay ? jump : null} subscribe={subscribeTime} /> : <Transcript text={data.transcript ?? null} fallback={data.status === "ohne_einwilligung" ? "Ohne dokumentierte Einwilligung wird das Gespräch nicht transkribiert." : "Noch kein Transkript."} />}
       </section>
     </div>
+    {/* Seit v375 ganz unten, unter dem Transkript: erst die Bewertung (Prüffragen, Kriterien, Transkript), dann die Rohangaben des Dialers und die Opt-in-Nachweise */}
+    {dialer && (dialerFacts.length > 0 || dialer.fields.length > 0 || dialer.note) && <section className="surface-panel operations-panel gq-panel gq-dialer" aria-label="Vom Dialer gemeldet">
+      <div className="gq-panel-head"><div><h2>Vom Dialer gemeldet</h2><p>Diese Angaben hat der Dialer mit dem Gespräch geschickt. {data.leadPublicId ? "Sie stehen im Lead; vorhandene Angaben wurden nicht überschrieben." : "Bei einer Freigabe wird daraus der Lead."}</p></div></div>
+      {(dialerFacts.length > 0 || dialer.fields.length > 0) && <dl className="gq-dialer-facts">{dialerFacts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}{dialer.fields.map((field) => <div key={field.label} className="is-extra"><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>}
+      {dialer.note && <p className="gq-dialer-note"><b>Notiz des Agenten</b>{dialer.note}</p>}
+    </section>}
+    {data.leadPublicId && <section className="surface-panel operations-panel gq-panel"><OptInPanel publicId={data.leadPublicId} onChanged={refresh} /></section>}
   </div>;
 }
 

@@ -19,6 +19,7 @@ import { SipgateProvider, parseSipgateEvent, sameNumber, sipgateStatusOf, type S
 
 export { DISPOSITIONS } from "../shared/dialer";
 import { DISPOSITIONS } from "../shared/dialer";
+import { keepHiddenFilter, type DialerLeadFilter } from "../shared/dialer-lead-filter";
 import { annotateActivity, logActivity } from "./activity";
 export type DispositionKey = (typeof DISPOSITIONS)[number]["key"];
 const RETRY_RESULTS = new Set(["besetzt", "keine_antwort", "anrufbeantworter", "abgebrochen", "fehlgeschlagen", "nicht_erreicht", "wiedervorlage"]);
@@ -105,7 +106,7 @@ export async function releaseNumber(db: Db, tenantId: number, id: number) {
 
 /* ------------------------------------------------------------------ Kampagnen & Wähllisten */
 
-export type LeadFilter = { categoryIds?: number[]; statuses?: string[]; tagIds?: number[]; supplierIds?: number[]; notCalledDays?: number | null; onlyWithoutCall?: boolean; rawBatchIds?: number[]; leadsEnabled?: boolean; leadIds?: number[]; kind?: "verkauf" | "vertrieb" };
+export type LeadFilter = DialerLeadFilter;
 
 export async function listCampaigns(db: Db, tenantId: number) {
   const campaigns = await db.select().from(dialerCampaigns).where(eq(dialerCampaigns.tenantId, tenantId)).orderBy(desc(dialerCampaigns.createdAt));
@@ -117,7 +118,11 @@ export async function listCampaigns(db: Db, tenantId: number) {
 
 export async function saveCampaign(db: Db, tenantId: number, userId: number, input: { id?: number; name: string; mode: "manuell" | "power" | "predictive"; leadFilter: LeadFilter; callerNumberId: number | null; maxAttempts: number | null; retryMinutes: number | null; wrapUpSeconds: number | null; pacingRatio: number | null; autoNotes?: boolean | null; callWindow: { weekdays: number[]; from: string; to: string } | null; script: string }) {
   const values = { tenantId, name: input.name.trim(), mode: input.mode, leadFilter: input.leadFilter, callerNumberId: input.callerNumberId, maxAttempts: input.maxAttempts, retryMinutes: input.retryMinutes, wrapUpSeconds: input.wrapUpSeconds, pacingRatio: input.pacingRatio === null ? null : input.pacingRatio.toFixed(2), autoNotes: input.autoNotes === undefined ? null : input.autoNotes, callWindow: input.callWindow, script: input.script, createdByUserId: userId };
-  if (input.id) { await db.update(dialerCampaigns).set(values).where(and(eq(dialerCampaigns.id, input.id), eq(dialerCampaigns.tenantId, tenantId))); return { id: input.id }; }
+  if (input.id) {
+    // Was das Fenster „Kampagne“ nicht kennt (Liste der Vertriebspipeline, fest gewählte Karten, Lieferanten), bleibt beim Speichern erhalten
+    const known = (await db.select({ leadFilter: dialerCampaigns.leadFilter }).from(dialerCampaigns).where(and(eq(dialerCampaigns.id, input.id), eq(dialerCampaigns.tenantId, tenantId))).limit(1))[0];
+    await db.update(dialerCampaigns).set({ ...values, leadFilter: keepHiddenFilter((known?.leadFilter ?? null) as LeadFilter | null, input.leadFilter) }).where(and(eq(dialerCampaigns.id, input.id), eq(dialerCampaigns.tenantId, tenantId))); return { id: input.id };
+  }
   const inserted = await db.insert(dialerCampaigns).values(values); return { id: Number(inserted[0]?.insertId) || 0 };
 }
 

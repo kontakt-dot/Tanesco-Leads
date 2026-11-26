@@ -205,14 +205,24 @@ export type DeliverLeadInput = { tenantId: number; actorUserId: number | null; l
  * null = keine Einschränkung (kein Gespräch oder keine Kampagne mit eigenem Käufer).
  */
 export async function leadCampaignRules(db: Db, tenantId: number, leadId: number): Promise<LeadCampaignRules | null> {
-  const calls = await db.select({ id: callRecords.id, campaign: callRecords.campaign, decision: callRecords.decision }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.leadId, leadId), isNotNull(callRecords.campaign))).orderBy(desc(callRecords.id)).limit(20);
-  const call = leadCampaignCall(calls); if (!call?.campaign) return null;
+  return (await leadCampaignRulesFor(db, tenantId, [leadId])).get(leadId) ?? null;
+}
+/** Dasselbe für viele Leads auf einmal (Seite „API-Fehler“: Welche Leads können überhaupt an welchen Käufer gehen?). Leads ohne Einschränkung fehlen in der Antwort. */
+export async function leadCampaignRulesFor(db: Db, tenantId: number, leadIds: number[]): Promise<Map<number, LeadCampaignRules>> {
+  const out = new Map<number, LeadCampaignRules>(); const ids = Array.from(new Set(leadIds)); if (!ids.length) return out;
   const bound = await db.select({ name: callQaCampaigns.name, buyerUserId: callQaCampaigns.buyerUserId }).from(callQaCampaigns).where(and(eq(callQaCampaigns.tenantId, tenantId), isNotNull(callQaCampaigns.buyerUserId)));
-  if (!bound.length) return null;
+  if (!bound.length) return out;
   const buyerIds = Array.from(new Set(bound.map((row) => row.buyerUserId!)));
   const buyers = await db.select({ id: users.id, name: users.name, company: users.company, email: users.email }).from(users).where(inArray(users.id, buyerIds));
   const nameOf = (id: number) => { const buyer = buyers.find((row) => row.id === id); return buyer?.company || buyer?.name || buyer?.email || `Käufer ${id}`; };
-  return { campaign: call.campaign, bindings: bound.map((row) => ({ campaign: row.name, buyerUserId: row.buyerUserId!, buyerName: nameOf(row.buyerUserId!) })) };
+  const bindings = bound.map((row) => ({ campaign: row.name, buyerUserId: row.buyerUserId!, buyerName: nameOf(row.buyerUserId!) }));
+  const byLead = new Map<number, Array<{ id: number; campaign: string | null; decision: string | null }>>();
+  for (let index = 0; index < ids.length; index += 800) {
+    const calls = await db.select({ id: callRecords.id, leadId: callRecords.leadId, campaign: callRecords.campaign, decision: callRecords.decision }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), inArray(callRecords.leadId, ids.slice(index, index + 800)), isNotNull(callRecords.campaign))).orderBy(desc(callRecords.id));
+    for (const call of calls) { if (!call.leadId) continue; const list = byLead.get(call.leadId) ?? []; if (list.length < 20) list.push({ id: call.id, campaign: call.campaign, decision: call.decision }); byLead.set(call.leadId, list); } // je Lead die 20 neuesten Gespräche
+  }
+  for (const [leadId, calls] of Array.from(byLead)) { const call = leadCampaignCall(calls); if (call?.campaign) out.set(leadId, { campaign: call.campaign, bindings }); }
+  return out;
 }
 
 export async function deliverLeadNow(db: Db, input: DeliverLeadInput): Promise<DeliveryResult> {
