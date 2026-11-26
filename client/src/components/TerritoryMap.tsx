@@ -6,11 +6,12 @@ import { Switch } from "@/components/ui/switch";
 import { confirmAction } from "@/lib/confirm";
 import { loadPlzGeo, PLZ_ATTRIBUTION, type PlzGeo } from "@/lib/plz-geo";
 import { trpc } from "@/lib/trpc";
-import { Check, ChevronDown, Download, Layers, Loader2, MapPinned, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronDown, Download, Layers, Loader2, MapPinned, Pencil, Plus, Sparkles, Trash2, Upload, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { describePostcodes, overlapsCsv, topPlaces, parsePostcodeText, TERRITORY_COLORS, type OverlapCustomer, type OverlapGroup, type ParsedPostcodes } from "../../../shared/territories";
 import { buildTerritoryDrafts, trimTable, type TerritoryDraft } from "../../../shared/territory-import";
+import { STATE_NAMES } from "../../../shared/plz-regions";
 
 /**
  * Gebietskarte: Deutschlandkarte wie im Dashboard, darauf die Einsatzgebiete der Kunden als farbige PLZ-Punkte.
@@ -55,7 +56,9 @@ export default function TerritoryMap() {
   const [focus, setFocus] = useState<number | null>(null);
   const [levels, setLevels] = useState<LevelSet>(ALL_LEVELS);
   const allLevels = SELL_LEVELS.every(([key]) => levels[key]); const chosenLevels = SELL_LEVELS.filter(([key]) => levels[key]).map(([key]) => key);
-  const [hover, setHover] = useState<{ plz: string; x: number; y: number } | null>(null);
+  // Hinweis beim Überfahren eines Punkts: Lage in Pixeln innerhalb der Karte (die Karte ist mittig eingepasst, deshalb nicht aus dem viewBox gerechnet)
+  const [hover, setHover] = useState<{ plz: string; left: number; top: number; width: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
   const [dialog, setDialog] = useState<{ open: boolean; edit: TerritoryRow | null }>({ open: false, edit: null });
   const [openRegion, setOpenRegion] = useState<string | null>(null);
   const remove = trpc.leadops.deleteTerritory.useMutation({ onSuccess: (result) => { toast.success(`Gebiet von „${result.customerName}“ gelöscht.`); refresh(); }, onError: (error) => toast.error(error.message) });
@@ -101,62 +104,105 @@ export default function TerritoryMap() {
   const levelLabel = allLevels ? "alle Stufen" : chosenLevels.length ? chosenLevels.map((key) => SELL_LEVELS.find(([k]) => k === key)?.[1] ?? "").join(", ") : "keine Stufe";
   const exportCsv = () => { const csv = overlapsCsv(listGroups, placeOf); const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Ueberschneidungen_${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url); };
 
-  return <>
-    <header className="page-intro compact territory-intro"><div><span className="eyebrow">ANALYSE</span><h1>Gebietskarte</h1><p>Wo haben wir welche Kunden, wo ist ihr Einsatzgebiet, welche Kategorie – und wo überschneiden sich die Gebiete? In diesen PLZ lässt sich ein Lead mehrfach verkaufen.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!listTotal} onClick={exportCsv} title={focused ? `Überschneidungen von ${focused.customerName} als CSV (Excel)` : "Alle Überschneidungen als CSV (Excel)"}><Download /> <span className="territory-btn-long">Überschneidungen als </span>CSV</Button><Button className="flux-button" size="sm" onClick={() => setDialog({ open: true, edit: null })}><Upload /> PLZ-Liste hochladen</Button></div></header>
-    <div className="metric-grid territory-kpis">
-      <div className="metric-card"><span className="eyebrow">KUNDEN</span><strong>{overlaps.data?.customers ?? rows.length}</strong><small>{rows.length} {rows.length === 1 ? "Gebiet" : "Gebiete"} in {overlaps.data?.categories ?? usedCategories.length} {(overlaps.data?.categories ?? usedCategories.length) === 1 ? "Kategorie" : "Kategorien"}</small></div>
-      <div className="metric-card"><span className="eyebrow">ABGEDECKTE PLZ</span><strong>{covered.toLocaleString("de-DE")}</strong><small>von {geo ? geo.universe.size.toLocaleString("de-DE") : "…"} PLZ in Deutschland{categoryFilter !== "alle" || rows.some((row) => row.active === false) ? " (nur eingeschaltete Kunden)" : ""}</small></div>
-      <div className="metric-card is-accent"><span className="eyebrow">ÜBERSCHNEIDUNGEN</span><strong>{totalOverlap.toLocaleString("de-DE")} PLZ</strong><small>{totalOverlap ? `bis zu ${maxCustomers} Kunden in derselben PLZ und Kategorie` : "noch keine PLZ bei mehreren Kunden"}</small></div>
-      <div className="metric-card"><span className="eyebrow">MEHRFACH VERKAUFEN</span><strong>{allGroups.reduce((sum, group) => sum + group.items.filter((item) => item.count >= 3).length, 0).toLocaleString("de-DE")} PLZ</strong><small>mit drei oder mehr Kunden · 1×: {levelCounts[1].toLocaleString("de-DE")} · 2×: {levelCounts[2].toLocaleString("de-DE")} · 3×: {levelCounts[3].toLocaleString("de-DE")} · mehr als 3×: {levelCounts[4].toLocaleString("de-DE")}</small></div>
-    </div>
-    <section className="surface-panel dashboard-filters territory-filters">
-      <div className="dashboard-filter-group"><span className="eyebrow">KATEGORIE</span><div className="dashboard-segments"><button type="button" className={categoryFilter === "alle" ? "active" : ""} onClick={() => setCategoryFilter("alle")}>Alle</button>{usedCategories.map((category) => <button key={category.id} type="button" className={categoryFilter === category.id ? "active" : ""} onClick={() => setCategoryFilter(category.id)}>{category.name}</button>)}</div></div>
-      <div className="dashboard-filter-group"><span className="eyebrow">KUNDEN</span><div className="territory-chips">{rows.length > 1 && <button type="button" className={`territory-chip territory-chip-all ${focused ? "" : "is-on"}`} aria-pressed={!focused} title="Alle Kunden gleich stark zeigen" onClick={() => setFocus(null)}>Alle</button>}{rows.map((row) => <button key={row.id} type="button" className={`territory-chip ${row.active === false ? "is-off" : ""} ${focused?.id === row.id ? "is-focus" : ""}`} style={{ ["--c" as string]: row.color }} aria-pressed={focused?.id === row.id} title={focused?.id === row.id ? "Hervorgehoben – nochmal klicken zeigt wieder alle gleich stark" : row.active === false ? "Ausgeschaltet – ein Klick schaltet den Kunden ein und hebt ihn hervor" : "Auf der Karte hervorheben – die anderen Gebiete bleiben sichtbar"} onClick={() => pick(row)}><i /> {row.customerName}{row.categoryName ? <small>{row.categoryName}</small> : null}{row.active === false && <small className="territory-chip-off">aus</small>}</button>)}{!rows.length && <span className="text-xs text-slate-500">Noch kein Gebiet – lade die erste PLZ-Liste hoch.</span>}</div></div>
-      <div className="dashboard-filter-group territory-levels"><span className="eyebrow">VERKAUFBAR</span><div className="dashboard-segments"><button type="button" className={allLevels ? "active" : ""} data-level="alle" title="Alle Stufen zeigen" onClick={() => setLevels(ALL_LEVELS)}>Alle</button>{SELL_LEVELS.map(([key, label, hint]) => <button key={key} type="button" className={levels[key] && !allLevels ? "active" : ""} aria-pressed={levels[key]} title={`${hint} – Klick schaltet die Stufe an oder aus, Doppelklick zeigt nur diese Stufe`} data-level={String(key)} onClick={() => toggleLevel(key)} onDoubleClick={() => onlyLevel(key)}><i className="territory-level-dot" style={{ background: LEVEL_COLORS[key] }} />{label}<small>{levelCounts[key].toLocaleString("de-DE")}</small></button>)}</div><small className="territory-levels-hint">{allLevels ? "Klick auf eine Stufe schaltet sie an oder aus – die anderen PLZ bleiben blass auf der Karte." : `Hervorgehoben: ${levelLabel} (${shownOn.toLocaleString("de-DE")} PLZ) – die anderen bleiben blass.`}</small></div>
+  // Kennzahlen für die Leiste oben und die Legende auf der Karte
+  const universe = geo?.universe.size ?? 0; const coverPct = universe ? Math.round((covered / universe) * 100) : 0;
+  const threePlus = allGroups.reduce((sum, group) => sum + group.items.filter((item) => item.count >= 3).length, 0);
+  const levelMax = Math.max(1, levelCounts[1], levelCounts[2], levelCounts[3], levelCounts[4]); const splitTotal = levelCounts[2] + levelCounts[3] + levelCounts[4];
+  const colorOf = (id: number) => rows.find((row) => row.id === id)?.color ?? LEVEL_COLORS[1];
+  // 1× hat keine eigene Farbe – der Punkt trägt die Farbe des Kunden. In der Legende deshalb ein Kreis aus den Kundenfarben.
+  const customerMix = visible.length ? `conic-gradient(${visible.slice(0, 8).map((row, index, all) => `${row.color} ${Math.round((index / all.length) * 360)}deg ${Math.round(((index + 1) / all.length) * 360)}deg`).join(", ")})` : LEVEL_COLORS[1];
+  const tipSide = hover ? [hover.top < 150 ? "is-below" : "", hover.left < 150 ? "is-left" : hover.width - hover.left < 150 ? "is-right" : ""].join(" ") : "";
+  const n = (value: number) => value.toLocaleString("de-DE");
+
+  return <div className="gk">
+    <header className="page-intro compact territory-intro"><div><span className="eyebrow">ANALYSE</span><h1>Gebietskarte</h1><p>Wo unsere Kunden Leads abnehmen, in welcher Kategorie – und wo sich ihre Gebiete überschneiden. Dort lässt sich ein Lead mehrfach verkaufen.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!listTotal} onClick={exportCsv} title={focused ? `Überschneidungen von ${focused.customerName} als CSV (Excel)` : "Alle Überschneidungen als CSV (Excel)"}><Download /> <span className="territory-btn-long">Überschneidungen als </span>CSV</Button><Button className="flux-button" size="sm" onClick={() => setDialog({ open: true, edit: null })}><Upload /> PLZ-Liste hochladen</Button></div></header>
+
+    <section className="gk-rail" aria-label="Kennzahlen der Gebiete">
+      <div className="gk-stat"><span className="gk-stat-label"><Users aria-hidden="true" />Kunden</span><strong>{n(overlaps.data?.customers ?? rows.length)}</strong><small>{rows.length} {rows.length === 1 ? "Gebiet" : "Gebiete"} in {overlaps.data?.categories ?? usedCategories.length} {(overlaps.data?.categories ?? usedCategories.length) === 1 ? "Kategorie" : "Kategorien"}</small></div>
+      <div className="gk-stat"><span className="gk-stat-label"><MapPinned aria-hidden="true" />Abgedeckt</span><strong>{n(covered)}<em>PLZ</em></strong><span className="gk-meter" role="meter" aria-label="Anteil der abgedeckten PLZ" aria-valuemin={0} aria-valuemax={100} aria-valuenow={coverPct}><i style={{ width: `${Math.max(coverPct ? 2 : 0, coverPct)}%` }} /></span><small>{universe ? `${coverPct} % von ${n(universe)} PLZ in Deutschland` : "PLZ werden geladen …"}{categoryFilter !== "alle" || rows.some((row) => row.active === false) ? " · nur eingeschaltete Kunden" : ""}</small></div>
+      <div className="gk-stat is-hot"><span className="gk-stat-label"><Layers aria-hidden="true" />Überschneidungen</span><strong>{n(totalOverlap)}<em>PLZ</em></strong>{splitTotal > 0 && <span className="gk-split" aria-hidden="true">{([2, 3, 4] as SellLevel[]).filter((key) => levelCounts[key] > 0).map((key) => <i key={key} style={{ flexGrow: levelCounts[key], background: LEVEL_COLORS[key] }} title={`${SELL_LEVELS.find(([k]) => k === key)?.[1]}: ${n(levelCounts[key])} PLZ`} />)}</span>}<small>{totalOverlap ? `bis zu ${maxCustomers} Kunden in derselben PLZ und Kategorie` : "noch keine PLZ bei mehreren Kunden"}</small></div>
+      <div className="gk-stat"><span className="gk-stat-label"><Sparkles aria-hidden="true" />Mehrfach verkaufbar</span><strong>{n(threePlus)}<em>PLZ</em></strong><small>mit drei oder mehr Kunden derselben Kategorie</small></div>
     </section>
-    <div className="lead-map-grid territory-grid">
-      <section className="surface-panel operations-panel territory-map-panel p-4">
-        <div className="lead-map-canvas territory-canvas" onMouseLeave={() => setHover(null)}>
-          <svg viewBox={map.viewBox.join(" ")} role="img" aria-label="Deutschlandkarte mit Einsatzgebieten" className="lead-map-svg territory-svg">
-            {map.states.map((state) => <path key={state.id} d={state.d} className="territory-state" />)}
-            {showRegions && regions && <g className="territory-regions" aria-label="PLZ-Gebiete (2-stellig)">
-              {Object.entries(regions.zones2).map(([code, zone]) => <path key={code} d={zone.d} className="territory-region" style={{ fill: ZONE_TINTS[Number(code[0])] }} data-region={code}><title>{`PLZ-Gebiet ${code} – ${zone.plz} PLZ`}</title></path>)}
-              {map.states.map((state) => <path key={`${state.id}-outline`} d={state.d} className="territory-state-outline" />)}
-              {Object.entries(regions.zones2).map(([code, zone]) => <text key={`${code}-label`} x={zone.cx} y={zone.cy} className="territory-region-label">{code}</text>)}
-            </g>}
-            {(!showRegions || !regions) && map.states.map((state) => <text key={`${state.id}-label`} x={state.cx} y={state.cy} className="lead-map-state-label">{state.id}</text>)}
-            {shown.map((point) => { const fill = dotColor(point.overlap, (focused && point.mine ? focused.color : point.customers[0]?.color) ?? "#8278ff"); return <circle key={point.plz} cx={point.x} cy={point.y} r={point.overlap >= 4 ? 3.5 : point.overlap >= 2 ? 3.1 : 2.1} fill={fill} className={`territory-dot ${point.overlap >= 2 ? "is-overlap" : ""} ${point.on ? "" : point.mine ? "is-dim" : "is-other"}`} data-count={point.overlap} data-on={point.on ? "1" : "0"} data-mine={point.mine ? "1" : "0"} onMouseEnter={() => setHover({ plz: point.plz, x: point.x, y: point.y })} />; })}
-          </svg>
-          {hovered && <div className="territory-tooltip" style={{ left: `${(hover!.x / map.viewBox[2]) * 100}%`, top: `${(hover!.y / map.viewBox[3]) * 100}%` }}><strong>{hovered.plz} {placeOf(hovered.plz) ?? ""}</strong>{regionOf(hovered.plz) && <small>PLZ-Gebiet {hovered.plz.slice(0, 2)} · {geo?.entries.get(hovered.plz)?.state ?? ""}</small>}{hovered.customers.filter((customer, index, all) => all.findIndex((other) => other.name.toLowerCase() === customer.name.toLowerCase()) === index).map((customer) => <span key={customer.id}><i style={{ background: customer.color }} /> {customer.name}</span>)}{hovered.overlap >= 2 ? <em>{hovered.overlap} Kunden in derselben Kategorie – Lead {timesText(hovered.overlap)} verkaufbar</em> : <em className="is-single">ein Kunde – Lead 1× verkaufbar</em>}</div>}
-          {!geo && !geoError && <p className="text-xs text-slate-500">Karte wird geladen …</p>}{geoError && <p className="text-xs text-red-300">{geoError}</p>}
-          {geo && !shown.length && <p className="territory-empty">{rows.length ? "Alle Kunden ausgeblendet – oben wieder einblenden." : "Noch keine Gebiete – „PLZ-Liste hochladen“ klicken."}</p>}
-          {geo && shown.length > 0 && !shownOn && <p className="territory-empty">{!chosenLevels.length ? "Keine Stufe gewählt – oben eine Stufe anklicken." : focused ? `${focused.customerName}: keine PLZ für ${levelLabel}.` : `Keine PLZ für ${levelLabel} im aktuellen Filter – die anderen Stufen bleiben blass sichtbar.`}</p>}
+
+    <div className="gk-grid">
+      <section className="gk-stage" aria-label="Karte der Einsatzgebiete">
+        <div className="gk-toolbar">
+          <div className="gk-seg" role="group" aria-label="Kategorie"><button type="button" className={categoryFilter === "alle" ? "is-on" : ""} aria-pressed={categoryFilter === "alle"} onClick={() => setCategoryFilter("alle")}>Alle Kategorien</button>{usedCategories.map((category) => <button key={category.id} type="button" className={categoryFilter === category.id ? "is-on" : ""} aria-pressed={categoryFilter === category.id} onClick={() => setCategoryFilter(category.id)}>{category.name}</button>)}</div>
+          <label className="gk-toggle" title="PLZ-Gebiete (2-stellig) mit Nummer ein- oder ausblenden"><Switch className="territory-switch" checked={showRegions} onCheckedChange={setShowRegions} aria-label="PLZ-Gebiete zeigen" /> PLZ-Gebiete</label>
         </div>
-        <div className="territory-legend"><label className="territory-regions-toggle" title="PLZ-Gebiete (2-stellig) mit Nummer ein- oder ausblenden"><Switch className="territory-switch" checked={showRegions} onCheckedChange={setShowRegions} aria-label="PLZ-Gebiete zeigen" /> PLZ-Gebiete</label>{visible.length > 1 && <span className="territory-legend-customers" aria-label="Kunden auf der Karte">{visible.slice(0, 8).map((row) => <button key={row.id} type="button" className={`territory-legend-customer ${focused && focused.id !== row.id ? "is-pale" : ""}`} title={focused?.id === row.id ? "Hervorgehoben – nochmal klicken zeigt wieder alle gleich stark" : "Hervorheben"} onClick={() => pick(row)}><i style={{ background: row.color }} />{row.customerName}</button>)}{visible.length > 8 && <em>+ {visible.length - 8} weitere</em>}</span>}{focused && <span className="territory-legend-focus">{focused.customerName} ist hervorgehoben – <button type="button" className="territory-link" onClick={() => setFocus(null)}>alle gleich zeigen</button></span>}<small>{PLZ_ATTRIBUTION}</small></div>
+
+        <div className="gk-canvas" ref={canvasRef} onMouseLeave={() => setHover(null)}>
+          <div className="gk-legend" role="group" aria-label="Wie oft lässt sich ein Lead verkaufen?">
+            <strong>Wie oft verkaufbar?</strong>
+            {SELL_LEVELS.map(([key, label, hint]) => <button key={key} type="button" className={`gk-level ${levels[key] ? "is-on" : ""}`} aria-pressed={levels[key]} data-level={String(key)} title={`${hint} – Klick schaltet die Stufe an oder aus, Doppelklick zeigt nur diese Stufe`} onClick={() => toggleLevel(key)} onDoubleClick={() => onlyLevel(key)}>
+              <i className="gk-level-dot" style={{ background: key === 1 ? customerMix : LEVEL_COLORS[key] }} /><span className="gk-level-name">{label}</span><b>{n(levelCounts[key])}</b>
+              <span className="gk-level-bar"><i style={{ width: `${levelCounts[key] ? Math.max(3, (levelCounts[key] / levelMax) * 100) : 0}%`, background: key === 1 ? "var(--gk-level-1)" : LEVEL_COLORS[key] }} /></span>
+            </button>)}
+            <small>{allLevels ? "1× trägt die Farbe des Kunden. Klick schaltet eine Stufe an oder aus." : `Hervorgehoben: ${levelLabel} (${n(shownOn)} PLZ).`}{!allLevels && <> <button type="button" className="gk-link" onClick={() => setLevels(ALL_LEVELS)}>Alle Stufen</button></>}</small>
+          </div>
+          <svg viewBox={map.viewBox.join(" ")} role="img" aria-label="Deutschlandkarte mit Einsatzgebieten" className="gk-map">
+            {map.states.map((state) => <path key={state.id} d={state.d} className="gk-state" />)}
+            {showRegions && regions && <g className="gk-zones" aria-label="PLZ-Gebiete (2-stellig)">
+              {Object.entries(regions.zones2).map(([code, zone]) => <path key={code} d={zone.d} className="gk-zone" style={{ fill: ZONE_TINTS[Number(code[0])] }} data-region={code}><title>{`PLZ-Gebiet ${code} – ${zone.plz} PLZ`}</title></path>)}
+              {Object.entries(regions.zones2).map(([code, zone]) => <text key={`${code}-label`} x={zone.cx} y={zone.cy} className="gk-zone-label">{code}</text>)}
+            </g>}
+            {map.states.map((state) => <path key={`${state.id}-outline`} d={state.d} className="gk-outline" />)}
+            {(!showRegions || !regions) && map.states.map((state) => <text key={`${state.id}-label`} x={state.cx} y={state.cy} className="gk-state-label">{state.id}</text>)}
+            <g className="gk-halos" aria-hidden="true">{shown.filter((point) => point.on && point.overlap >= 2).map((point) => <circle key={`halo-${point.plz}`} cx={point.x} cy={point.y} r={point.overlap >= 4 ? 9 : point.overlap === 3 ? 8 : 6.5} className={`gk-halo is-l${bucketOf(point.overlap)}`} />)}</g>
+            {shown.map((point) => { const fill = dotColor(point.overlap, (focused && point.mine ? focused.color : point.customers[0]?.color) ?? "#8278ff"); return <circle key={point.plz} cx={point.x} cy={point.y} r={point.overlap >= 4 ? 3.5 : point.overlap >= 2 ? 3.1 : 2.1} fill={fill} className={`territory-dot ${point.overlap >= 2 ? "is-overlap" : ""} ${point.on ? "" : point.mine ? "is-dim" : "is-other"}`} data-count={point.overlap} data-level={bucketOf(point.overlap)} data-on={point.on ? "1" : "0"} data-mine={point.mine ? "1" : "0"} onMouseEnter={(event) => { const box = canvasRef.current?.getBoundingClientRect(); const dot = event.currentTarget.getBoundingClientRect(); setHover({ plz: point.plz, left: box ? dot.left + dot.width / 2 - box.left : 0, top: box ? dot.top - box.top : 0, width: box?.width ?? 0 }); }} />; })}
+          </svg>
+          {hovered && <div className={`gk-tip ${tipSide}`} style={{ left: hover!.left, top: hover!.top }} role="status">
+            <div className="gk-tip-head"><b>{hovered.plz}</b><span>{placeOf(hovered.plz) ?? ""}</span></div>
+            {regionOf(hovered.plz) && <small>PLZ-Gebiet {hovered.plz.slice(0, 2)}{geo?.entries.get(hovered.plz)?.state ? ` · ${STATE_NAMES[geo.entries.get(hovered.plz)!.state] ?? geo.entries.get(hovered.plz)!.state}` : ""}</small>}
+            <ul>{hovered.customers.filter((customer, index, all) => all.findIndex((other) => other.name.toLowerCase() === customer.name.toLowerCase()) === index).map((customer) => <li key={customer.id}><i style={{ background: customer.color }} />{customer.name}</li>)}</ul>
+            <em className={`gk-tip-verdict is-l${bucketOf(hovered.overlap)}`}>{hovered.overlap >= 2 ? `${hovered.overlap} Kunden in derselben Kategorie – Lead ${timesText(hovered.overlap)} verkaufbar` : "Ein Kunde – Lead 1× verkaufbar"}</em>
+          </div>}
+          {!geo && !geoError && <p className="gk-empty"><Loader2 className="animate-spin" aria-hidden="true" /> Karte wird geladen …</p>}{geoError && <p className="gk-empty is-error">{geoError}</p>}
+          {geo && !shown.length && <p className="gk-empty">{rows.length ? "Alle Kunden ausgeblendet – unten wieder einblenden." : "Noch keine Gebiete – „PLZ-Liste hochladen“ klicken."}</p>}
+          {geo && shown.length > 0 && !shownOn && <p className="gk-empty">{!chosenLevels.length ? "Keine Stufe gewählt – links eine Stufe anklicken." : focused ? `${focused.customerName}: keine PLZ für ${levelLabel}.` : `Keine PLZ für ${levelLabel} im aktuellen Filter – die anderen Stufen bleiben blass sichtbar.`}</p>}
+        </div>
+
+        <div className="gk-foot">
+          {rows.length > 0 && <div className="gk-customers" role="group" aria-label="Kunden auf der Karte hervorheben">
+            {rows.length > 1 && <button type="button" className={`gk-chip gk-chip-all ${focused ? "" : "is-on"}`} aria-pressed={!focused} title="Alle Kunden gleich stark zeigen" onClick={() => setFocus(null)}>Alle Kunden</button>}
+            {rows.filter((row) => categoryFilter === "alle" || (row.categoryId ?? 0) === categoryFilter || row.active === false).map((row) => <button key={row.id} type="button" className={`gk-chip ${row.active === false ? "is-off" : ""} ${focused?.id === row.id ? "is-focus" : ""}`} style={{ ["--c" as string]: row.color }} aria-pressed={focused?.id === row.id} title={`${row.customerName}${row.categoryName ? ` · ${row.categoryName}` : ""} – ${focused?.id === row.id ? "hervorgehoben, nochmal klicken zeigt wieder alle gleich stark" : row.active === false ? "ausgeschaltet, ein Klick schaltet den Kunden ein und hebt ihn hervor" : "auf der Karte hervorheben, die anderen Gebiete bleiben sichtbar"}`} onClick={() => pick(row)}><i />{row.customerName}{row.active === false && <small>aus</small>}</button>)}
+          </div>}
+          <small className="gk-attrib">{PLZ_ATTRIBUTION}</small>
+        </div>
       </section>
-      <aside className="lead-map-side territory-side">
-        <section className="surface-panel operations-panel p-4"><div className="flex items-start justify-between gap-2"><div><span className="eyebrow">KUNDEN & GEBIETE</span><p className="mt-1 text-xs text-slate-500">{focused ? <><strong className="text-slate-200">{focused.customerName}</strong> ist hervorgehoben{focusStats ? ` (${focusStats.plz.toLocaleString("de-DE")} PLZ${focusStats.shared ? `, ${focusStats.shared.toLocaleString("de-DE")} davon mit anderen geteilt` : ""})` : ""} – die anderen Gebiete bleiben blasser sichtbar. <button type="button" className="territory-link" onClick={() => setFocus(null)}>Alle gleich zeigen</button></> : rows.length > 1 ? "Die Karte zeigt alle eingeschalteten Kunden. Ein Klick auf einen Kunden hebt sein Gebiet hervor – die anderen bleiben sichtbar." : "Die Karte zeigt das Gebiet des Kunden."}</p></div><Button size="sm" variant="outline" onClick={() => setDialog({ open: true, edit: null })}><Plus /> Neu</Button></div>
-          {territories.isLoading ? <p className="mt-3 text-xs text-slate-500">Lädt …</p> : !rows.length ? <p className="mt-3 text-xs text-slate-500">Noch kein Gebiet angelegt.</p> : <ul className="territory-list mt-3">{rows.filter((row) => categoryFilter === "alle" || (row.categoryId ?? 0) === categoryFilter).map((row) => <li key={row.id} className={`${focused?.id === row.id ? "is-focus" : ""} ${row.active === false ? "is-off" : ""}`}>
+
+      <aside className="gk-side territory-side">
+        <section className="gk-card">
+          <header className="gk-card-head"><div><h2>Kunden & Gebiete</h2><p>{focused ? <><strong>{focused.customerName}</strong> ist hervorgehoben{focusStats ? ` (${n(focusStats.plz)} PLZ${focusStats.shared ? `, ${n(focusStats.shared)} davon mit anderen geteilt` : ""})` : ""}. <button type="button" className="gk-link" onClick={() => setFocus(null)}>Alle gleich zeigen</button></> : rows.length > 1 ? "Ein Klick hebt das Gebiet auf der Karte hervor – die anderen bleiben sichtbar." : "Die Karte zeigt das Gebiet des Kunden."}</p></div><Button size="sm" variant="outline" onClick={() => setDialog({ open: true, edit: null })}><Plus /> Neu</Button></header>
+          {territories.isLoading ? <p className="gk-muted">Lädt …</p> : !rows.length ? <p className="gk-muted">Noch kein Gebiet angelegt.</p> : <ul className="gk-customer-list">{rows.filter((row) => categoryFilter === "alle" || (row.categoryId ?? 0) === categoryFilter).map((row) => <li key={row.id} className={`${focused?.id === row.id ? "is-focus" : ""} ${row.active === false ? "is-off" : ""}`} style={{ ["--c" as string]: row.color }}>
             <Switch className="territory-switch" checked={row.active !== false} disabled={setActive.isPending} aria-label={`${row.customerName} ${row.active === false ? "einschalten" : "ausschalten"}`} title={row.active === false ? "Ausgeschaltet – zählt nicht auf der Karte und bei den Überschneidungen" : "Eingeschaltet"} onCheckedChange={(value) => setActive.mutate({ id: row.id, active: value })} />
-            <button type="button" className="territory-list-main" aria-pressed={focused?.id === row.id} title={focused?.id === row.id ? "Hervorgehoben – nochmal klicken zeigt wieder alle gleich stark" : "Auf der Karte hervorheben – die anderen Gebiete bleiben sichtbar"} onClick={() => pick(row)}><i style={{ background: row.color }} /><span><strong>{row.customerName}</strong><small>{row.active === false ? "Ausgeschaltet · " : ""}{row.categoryName ?? "Ohne Kategorie"} · {geo ? describePostcodes(row.postcodes, placeOf) : `${row.postcodes.length} PLZ`}</small>{row.note && <small className="territory-note">{row.note}</small>}<small className="territory-meta">{row.sourceName ? `${row.sourceName} · ` : ""}{stamp(row.updatedAt)}{row.createdBy ? ` · ${row.createdBy.split(" ")[0]}` : ""}</small></span></button>
-            <span className="territory-list-actions"><button type="button" title="Gebiet bearbeiten" onClick={() => setDialog({ open: true, edit: row })}><Pencil className="h-3.5 w-3.5" /></button><button type="button" title="Gebiet löschen" disabled={remove.isPending} onClick={async () => { if (await confirmAction(`Gebiet von „${row.customerName}“ (${row.postcodes.length} PLZ) löschen?`, { danger: true })) remove.mutate({ id: row.id }); }}><Trash2 className="h-3.5 w-3.5" /></button></span>
+            <button type="button" className="gk-customer-main" aria-pressed={focused?.id === row.id} title={focused?.id === row.id ? "Hervorgehoben – nochmal klicken zeigt wieder alle gleich stark" : "Auf der Karte hervorheben – die anderen Gebiete bleiben sichtbar"} onClick={() => pick(row)}>
+              <span className="gk-customer-top"><strong>{row.customerName}</strong><b>{n(row.postcodes.length)}<em>PLZ</em></b></span>
+              <span className="gk-customer-tags"><span className="gk-tag">{row.categoryName ?? "Ohne Kategorie"}</span>{row.active === false && <span className="gk-tag is-off">ausgeschaltet</span>}</span>
+              {geo && topPlaces(row.postcodes, placeOf, 4).length > 0 && <small>{topPlaces(row.postcodes, placeOf, 4).join(", ")}{row.postcodes.length > 4 ? " …" : ""}</small>}
+              {row.note && <small className="gk-customer-note">{row.note}</small>}
+              <small className="gk-customer-meta">{row.sourceName ? `${row.sourceName} · ` : ""}{stamp(row.updatedAt)}{row.createdBy ? ` · ${row.createdBy.split(" ")[0]}` : ""}</small>
+            </button>
+            <span className="gk-customer-actions"><button type="button" title="Gebiet bearbeiten" aria-label={`Gebiet von ${row.customerName} bearbeiten`} onClick={() => setDialog({ open: true, edit: row })}><Pencil aria-hidden="true" /></button><button type="button" title="Gebiet löschen" aria-label={`Gebiet von ${row.customerName} löschen`} disabled={remove.isPending} onClick={async () => { if (await confirmAction(`Gebiet von „${row.customerName}“ (${row.postcodes.length} PLZ) löschen?`, { danger: true })) remove.mutate({ id: row.id }); }}><Trash2 aria-hidden="true" /></button></span>
           </li>)}</ul>}
         </section>
-        <section className="surface-panel operations-panel p-4"><span className="eyebrow">ÜBERSCHNEIDUNGEN</span><p className="mt-1 text-xs text-slate-500">{focused ? `Mit wem sich ${focused.customerName} PLZ teilt – „Alle“ bei den Kunden zeigt wieder alle Überschneidungen.` : "Welche Kunden sich PLZ teilen – dort lässt sich ein Lead mehrfach verkaufen. Klick zeigt die PLZ."}</p>
-          {overlaps.isLoading ? <p className="mt-3 text-xs text-slate-500">Rechnet …</p> : !combos.length ? <p className="mt-3 text-xs text-slate-500">Keine Überschneidungen{categoryFilter !== "alle" ? " in dieser Kategorie" : ""}{!allLevels ? ` für ${levelLabel}` : ""}.</p>
-            : <ul className="overlap-list">{combos.map((combo) => { const open = openRegion === combo.key; return <li key={combo.key} className={open ? "is-open" : ""}>
-              <button type="button" className="overlap-row" onClick={() => setOpenRegion(open ? null : combo.key)} aria-expanded={open}>
-                <span className="overlap-times" style={{ background: dotColor(combo.customers.length, "#94a3b8") }}>{combo.customers.length}×</span>
-                <span className="overlap-main"><strong>{combo.customers.map((customer) => customer.customerName).join(" + ")}</strong><small>{combo.postcodes.length.toLocaleString("de-DE")} PLZ · {topPlaces(combo.postcodes, placeOf, 3).join(", ")}{usedCategories.length > 1 ? ` · ${combo.categoryName}` : ""}</small></span>
-                <ChevronDown className="overlap-chevron h-4 w-4" aria-hidden="true" />
+
+        <section className="gk-card">
+          <header className="gk-card-head"><div><h2>Überschneidungen</h2><p>{focused ? `Mit wem sich ${focused.customerName} PLZ teilt. „Alle Kunden“ zeigt wieder alle Überschneidungen.` : "Welche Kunden sich PLZ teilen – dort lässt sich ein Lead mehrfach verkaufen. Ein Klick zeigt die PLZ."}</p></div>{combos.length > 0 && <span className="gk-count">{n(listTotal)} PLZ</span>}</header>
+          {overlaps.isLoading ? <p className="gk-muted">Rechnet …</p> : !combos.length ? <p className="gk-muted">Keine Überschneidungen{categoryFilter !== "alle" ? " in dieser Kategorie" : ""}{!allLevels ? ` für ${levelLabel}` : ""}.</p>
+            : <ul className="gk-combos">{combos.map((combo) => { const open = openRegion === combo.key; const times = combo.customers.length; return <li key={combo.key} className={open ? "is-open" : ""}>
+              <button type="button" className="gk-combo" onClick={() => setOpenRegion(open ? null : combo.key)} aria-expanded={open}>
+                <span className="gk-combo-times" style={{ ["--l" as string]: dotColor(times, LEVEL_COLORS[1]) }}>{times}×</span>
+                <span className="gk-combo-main"><strong><span className="gk-combo-who" aria-hidden="true">{combo.customers.map((customer) => <i key={customer.id} style={{ background: colorOf(customer.id) }} />)}</span>{combo.customers.map((customer) => customer.customerName).join(" + ")}</strong><small>{n(combo.postcodes.length)} PLZ · {topPlaces(combo.postcodes, placeOf, 3).join(", ")}{usedCategories.length > 1 ? ` · ${combo.categoryName}` : ""}</small></span>
+                <ChevronDown className="gk-chevron" aria-hidden="true" />
               </button>
-              {open && <div className="overlap-plz">{combo.postcodes.map((plz) => <span key={plz}><b>{plz}</b> {placeOf(plz) ?? ""}</span>)}</div>}
+              {open && <div className="gk-combo-plz">{combo.postcodes.map((plz) => <span key={plz}><b>{plz}</b> {placeOf(plz) ?? ""}</span>)}</div>}
             </li>; })}</ul>}
         </section>
       </aside>
     </div>
     {dialog.open && <TerritoryDialog edit={dialog.edit} geo={geo} categories={(categories.data ?? []).map((category) => ({ id: category.id, name: category.name }))} existing={rows.map((row) => ({ id: row.id, customerName: row.customerName, categoryId: row.categoryId, color: row.color, postcodes: row.postcodes }))} onClose={() => setDialog({ open: false, edit: null })} onSaved={() => { setDialog({ open: false, edit: null }); refresh(); }} />}
-  </>;
+  </div>;
 }
 
 /** Datei (CSV/TXT/Excel) in Zeilen und Zellen lesen – Excel über das erste Blatt, Text über das häufigste Trennzeichen. */

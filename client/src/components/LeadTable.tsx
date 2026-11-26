@@ -9,6 +9,7 @@ import { arrivalLabel, nameInitials } from "../../../shared/lead-age";
 export type LeadTableRow = {
   id: string; flag: string; name: string; place: string; email: string; phone: string; status: string; price: number;
   supplier: string; buyer: string; categoryName: string; categoryCode: string; categoryColor: string;
+  /** Emoji der Kategorie (eigenes oder aus dem Namen vorgeschlagen, z. B. ☀️ für Photovoltaik) – steht vor dem Namen */ categoryEmoji?: string;
   /** Wann der Lead vom Lieferanten ankam */ received: string; receivedFull: string;
   /** derselbe Zeitpunkt als Zahl – für „vor 12 Min.“, „Heute 17:28“ */ receivedAt?: number;
   /** Land des Kunden (DE, AT, CH) – die Flagge steht nur bei Leads aus dem Ausland */ country?: string;
@@ -42,7 +43,7 @@ export default function LeadTable({ rows, visible, wide, loading, selectedIds, a
   const columns = LEAD_COLUMNS.filter((column) => visible.includes(column.key));
   const style = { ["--lt-cols" as string]: leadGridTemplate(visible, wide) } as React.CSSProperties;
   const cell = (lead: LeadTableRow, key: LeadColumnKey) => {
-    if (key === "category") return <span className="lt-cat" title={lead.categoryName}><b className="lt-cat-code" style={tint(lead.categoryColor)}>{lead.categoryCode}</b><span className="lt-cat-name">{lead.categoryName}</span></span>;
+    if (key === "category") return <span className="lt-cat" title={lead.categoryName}><b className="lt-cat-code" style={tint(lead.categoryColor)}>{lead.categoryCode}</b>{lead.categoryEmoji && <span className="lt-cat-emoji" aria-hidden="true">{lead.categoryEmoji}</span>}<span className="lt-cat-name">{lead.categoryName}</span></span>;
     if (key === "email") return lead.email && lead.email !== DASH ? <a className="lt-link" href={`mailto:${lead.email}`} title={lead.email}>{lead.email}</a> : <span className="lt-none">{DASH}</span>;
     if (key === "phone") return lead.phone && lead.phone !== DASH ? <a className="lt-link lt-num" href={`tel:${lead.phone}`}>{lead.phone}</a> : <span className="lt-none">{DASH}</span>;
     if (key === "status") { const status = statusStyle(lead.status); return <span className="lt-pill-status" style={tint(status.color)}><i aria-hidden="true" />{status.label}</span>; }

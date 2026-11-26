@@ -30,9 +30,10 @@ describe("Gebietskarte – hervorheben statt ausblenden", () => {
     const root = view.container; const dots = () => Array.from(root.querySelectorAll<SVGCircleElement>(".territory-dot"));
     const total = dots().length; expect(total).toBeGreaterThan(50);
     expect(dots().every((dot) => dot.getAttribute("data-mine") === "1")).toBe(true); // ohne Hervorhebung gehört jede PLZ „dazu“
-    const chips = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".territory-chips .territory-chip")); const all = () => root.querySelector<HTMLButtonElement>(".territory-chip-all")!;
+    // seit v369: Kunden unten auf der Karte („.gk-customers“), Kennzahlen als Leiste („.gk-rail“), Kundenliste rechts („.gk-customer-main“)
+    const chips = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".gk-customers .gk-chip")); const all = () => root.querySelector<HTMLButtonElement>(".gk-chip-all")!;
     expect(all()).toBeTruthy(); expect(all().classList.contains("is-on")).toBe(true); expect(all().getAttribute("aria-pressed")).toBe("true");
-    const first = chips().find((chip) => !chip.classList.contains("territory-chip-all") && !chip.classList.contains("is-off"))!;
+    const first = chips().find((chip) => !chip.classList.contains("gk-chip-all") && !chip.classList.contains("is-off"))!;
     await click(first);
     // dieselbe Zahl an Punkten wie vorher – nichts verschwindet; die PLZ der anderen sind nur blasser
     expect(dots().length).toBe(total);
@@ -41,11 +42,12 @@ describe("Gebietskarte – hervorheben statt ausblenden", () => {
     expect(first.classList.contains("is-focus")).toBe(true); expect(all().classList.contains("is-on")).toBe(false);
     expect(root.querySelector(".territory-side")!.textContent).toContain("ist hervorgehoben"); expect(root.textContent).not.toContain("wird gezeigt – alle Kunden zeigen");
     // die Kennzahl „Abgedeckte PLZ“ gilt weiter für alle Kunden
-    const covered = () => Number(root.querySelectorAll(".territory-kpis .metric-card strong")[1]!.textContent!.replace(/\D/g, "")); const coveredFocused = covered();
+    const covered = () => Number(root.querySelectorAll(".gk-rail .gk-stat strong")[1]!.textContent!.replace(/\D/g, "")); const coveredFocused = covered();
     await click(all());
-    expect(dots().every((dot) => dot.getAttribute("data-mine") === "1")).toBe(true); expect(covered()).toBe(coveredFocused); expect(root.querySelector(".territory-chip.is-focus")).toBeNull();
-    // auch die Legende unter der Karte nennt alle Kunden – ein Klick dort hebt hervor, ein zweiter nimmt es zurück
-    const legend = root.querySelector<HTMLButtonElement>(".territory-legend-customer")!; await click(legend); expect(root.querySelector(".territory-chip.is-focus")).toBeTruthy(); await click(root.querySelector<HTMLButtonElement>(".territory-legend-customer")); expect(root.querySelector(".territory-chip.is-focus")).toBeNull();
+    expect(dots().every((dot) => dot.getAttribute("data-mine") === "1")).toBe(true); expect(covered()).toBe(coveredFocused); expect(root.querySelector(".gk-chip.is-focus")).toBeNull();
+    // auch die Kundenliste rechts hebt hervor – ein zweiter Klick nimmt es zurück
+    const listed = root.querySelector<HTMLButtonElement>(".gk-customer-main")!; await click(listed); expect(root.querySelector(".gk-chip.is-focus")).toBeTruthy(); expect(listed.closest("li")!.classList.contains("is-focus")).toBe(true);
+    await click(root.querySelector<HTMLButtonElement>(".gk-customer-main")); expect(root.querySelector(".gk-chip.is-focus")).toBeNull();
   }, 30_000);
 });
 
