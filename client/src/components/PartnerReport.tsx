@@ -1,13 +1,15 @@
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { BadgeCheck, CalendarRange, ChevronDown, Info, KeyRound, RefreshCw, Search, Send, Wallet, X } from "lucide-react";
+import { BadgeCheck, CalendarRange, Check, ChevronDown, Info, KeyRound, PackagePlus, Pencil, RefreshCw, Search, Send, Wallet, X } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { toast } from "sonner";
-import { CONTACT_FILTERS, CONTACT_STATUS, QUICK_RANGES, REPORT_BASES, activeQuickRange, berlinDay, euro, isDay, providerName, quickRange, share, type ContactStatus, type ReportBasis, type ReportCard, type ReportCounts } from "../../../shared/partner-report";
+import { CONTACT_FILTERS, CONTACT_STATUS, QUICK_RANGES, QUOTA_PERIODS, REPORT_BASES, activeQuickRange, berlinDay, euro, isDay, providerName, quickRange, quotaPeriod, quotaSentence, share, type ContactStatus, type QuotaPeriod, type ReportBasis, type ReportCard, type ReportCounts } from "../../../shared/partner-report";
 
 /**
  * Statistik „Integrationen“: je Partnerkonto, was aus den gelieferten Leads wurde – geliefert, abgelehnt, angenommen, dann die Bewertung
  * des Partners (offen, anerkannt, storniert, ausgezahlt) mit Provision. Alle Filter stehen in der Adresse; jede Ansicht lässt sich verlinken.
+ * Seit v378: „Abgelehnt“ heißt „PrePing abgelehnt“ (der Partner hatte den Kontakt schon), und je Konto lässt sich ein Kontingent eintragen
+ * (je Woche, Tag oder Monat) – die Karte zeigt dann, wie viele Leads noch nachzuschieben sind.
  */
 const BRAND: Record<string, string> = { aroundhome: "#f97316", wattfox: "#eab308", leadnodes: "#0ea5e9", enpal: "#22c55e", gohighlevel: "#6366f1" };
 const count = (value: number) => value.toLocaleString("de-DE");
@@ -34,7 +36,7 @@ function Tile({ label, value, tone, children }: { label: string; value: string; 
 }
 /** Der Weg der gelieferten Leads als ein Balken: abgelehnt · ohne Rückmeldung · offen · storniert · anerkannt. */
 function Flow({ counts }: { counts: ReportCounts }) {
-  const parts = [{ key: "rejected", label: "abgelehnt", value: counts.rejected }, { key: "silent", label: "ohne Rückmeldung", value: counts.silent + counts.pending }, { key: "open", label: "offen", value: counts.open }, { key: "cancelled", label: "storniert", value: counts.cancelled }, { key: "confirmed", label: "anerkannt", value: counts.confirmed }].filter((part) => part.value > 0);
+  const parts = [{ key: "rejected", label: "PrePing abgelehnt", value: counts.rejected }, { key: "silent", label: "ohne Rückmeldung", value: counts.silent + counts.pending }, { key: "open", label: "offen", value: counts.open }, { key: "cancelled", label: "storniert", value: counts.cancelled }, { key: "confirmed", label: "anerkannt", value: counts.confirmed }].filter((part) => part.value > 0);
   if (!counts.delivered) return null;
   return <div className="pr-flow" role="img" aria-label={`Von ${count(counts.delivered)} gelieferten Leads: ${parts.map((part) => `${count(part.value)} ${part.label}`).join(", ")}`}>
     <div className="pr-flow-bar">{parts.map((part) => <i key={part.key} className={`is-${part.key}`} style={{ flexGrow: part.value }} title={`${count(part.value)} ${part.label} · ${share(part.value, counts.delivered)}`} />)}</div>
@@ -62,6 +64,44 @@ function Contacts({ accountId, query }: { accountId: number; query: Query }) {
   </div>;
 }
 
+/**
+ * Kontingent eines Kontos (seit v378): „900 Leads je Woche“. Gezählt wird der laufende Zeitraum – unabhängig vom Zeitraum und von der Sparte oben.
+ * Auf das Kontingent zählt nur, was der Partner angenommen hat; was er beim Senden ablehnt („PrePing abgelehnt“), muss nachgeschoben werden.
+ */
+function Quota({ card }: { card: ReportCard }) {
+  const utils = trpc.useUtils(); const quota = card.quota; const accountId = card.account.id;
+  const [editing, setEditing] = useState(false); const [amount, setAmount] = useState(quota ? String(quota.amount) : ""); const [period, setPeriod] = useState<QuotaPeriod>(quota?.period ?? "week");
+  useEffect(() => { if (!editing) { setAmount(quota ? String(quota.amount) : ""); setPeriod(quota?.period ?? "week"); } }, [quota?.amount, quota?.period, editing]);
+  const save = trpc.leadops.setPartnerQuota.useMutation({ onSuccess: (result) => { toast.success(result.amount ? `Kontingent gespeichert: ${count(result.amount)} Leads ${quotaPeriod(result.period).label}.` : "Kontingent entfernt."); setEditing(false); utils.leadops.partnerReport.invalidate(); }, onError: (error) => toast.error(error.message) });
+  const wanted = Math.floor(Number(amount.replace(/\./g, "").replace(",", ".")) || 0);
+  if (editing) return <form className="pr-quota is-edit" aria-label="Kontingent eintragen" onSubmit={(event) => { event.preventDefault(); if (wanted > 0) save.mutate({ accountId, amount: wanted, period }); }}>
+    <div className="pr-quota-form">
+      <label>Bestellte Leads<input className="pr-quota-input" inputMode="numeric" autoFocus aria-label="Bestellte Leads" placeholder="z. B. 900" value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))} /></label>
+      <label>Zeitraum<select className="filter-select" aria-label="Zeitraum des Kontingents" value={period} onChange={(event) => setPeriod(event.target.value as QuotaPeriod)}>{QUOTA_PERIODS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
+      <Button type="submit" className="flux-button" disabled={wanted <= 0 || save.isPending}>{save.isPending ? "Speichert …" : "Speichern"}</Button>
+      <Button type="button" variant="ghost" onClick={() => setEditing(false)}>Abbrechen</Button>
+      {quota && <button type="button" className="pr-quota-remove" disabled={save.isPending} onClick={() => save.mutate({ accountId, amount: null, period })}>Kontingent entfernen</button>}
+    </div>
+    <p className="pr-quota-help">So viele Leads soll der Partner {quotaPeriod(period).each} annehmen. Gezählt wird nur, was er angenommen hat – was er beim Senden ablehnt, weil er den Kontakt schon hat, zählt nicht mit.</p>
+  </form>;
+  if (!quota) return <div className="pr-quota is-empty"><PackagePlus aria-hidden="true" /><span><b>Noch kein Kontingent eingetragen.</b> Trag ein, wie viele Leads dieser Partner je Woche, Tag oder Monat bestellt hat – dann steht hier, wie viele du noch nachschieben musst.</span><Button variant="outline" size="sm" onClick={() => setEditing(true)}>Kontingent eintragen</Button></div>;
+  const word = quotaPeriod(quota.period); const reached = Math.min(100, Math.round((quota.accepted / quota.amount) * 100));
+  return <section className={`pr-quota ${quota.open ? "is-open" : "is-done"}`} aria-label={`Kontingent ${word.now}`}>
+    <header className="pr-quota-head"><h4>Kontingent {word.now}<span>{longDay(quota.from)}{quota.from === quota.to ? "" : ` – ${longDay(quota.to)}`} · {count(quota.amount)} Leads {word.label}</span></h4><button type="button" className="pr-quota-edit" onClick={() => setEditing(true)}><Pencil aria-hidden="true" /> ändern</button></header>
+    <div className="pr-quota-body">
+      <div className="pr-quota-main">{quota.open ? <><strong>{count(quota.open)}</strong><span>noch nachschieben</span></> : <><strong><Check aria-hidden="true" /></strong><span>Kontingent erfüllt</span></>}</div>
+      <dl className="pr-quota-steps">
+        <div><dt>Bestellt</dt><dd>{count(quota.amount)}</dd></div>
+        <div><dt>Gesendet</dt><dd>{count(quota.sent)}</dd></div>
+        <div className={quota.rejected ? "is-rejected" : ""}><dt>PrePing abgelehnt</dt><dd>{count(quota.rejected)}</dd><small>{quota.rejected ? "hatte der Partner schon – zählt nicht" : "der Partner hatte keinen davon schon"}</small></div>
+        <div className={quota.accepted ? "is-accepted" : ""}><dt>Angenommen</dt><dd>{count(quota.accepted)}</dd><small>{reached} % des Kontingents</small></div>
+      </dl>
+    </div>
+    <div className="pr-quota-bar" role="img" aria-label={`${count(quota.accepted)} von ${count(quota.amount)} angenommen`}><i style={{ width: `${Math.max(quota.accepted ? 2 : 0, reached)}%` }} /></div>
+    <p className="pr-quota-text">{quotaSentence(quota)}{quota.pending ? ` ${count(quota.pending)} ${quota.pending === 1 ? "Lead ist" : "Leads sind"} noch ohne Ergebnis.` : ""}</p>
+  </section>;
+}
+
 function PartnerCard({ card, query, onSync, syncing }: { card: ReportCard; query: Query; onSync: () => void; syncing: boolean }) {
   const { account, counts: c } = card; const [contactsOpen, setContactsOpen] = useState(false);
   const rated = account.mode !== "none" && (account.mode === "pull" || c.rated > 0);
@@ -70,10 +110,11 @@ function PartnerCard({ card, query, onSync, syncing }: { card: ReportCard; query
       {account.mode === "pull" && account.hasAccess ? <div className="pr-sync"><span title={account.lastSyncNote ?? undefined}>zuletzt aktualisiert {ago(account.lastSyncAt)}</span><Button variant="outline" size="sm" disabled={syncing} onClick={onSync}><RefreshCw className={syncing ? "animate-spin" : ""} /> {syncing ? "Wird abgeglichen …" : "Aktualisieren"}</Button></div>
         : account.mode === "push" ? <div className="pr-sync is-info"><Info aria-hidden="true" /><span>{providerName(account.provider)} meldet jede Änderung selbst – es gibt nichts abzurufen.</span></div>
         : <div className="pr-sync is-info"><KeyRound aria-hidden="true" /><span>{account.mode === "pull" ? "Noch kein Zugang hinterlegt." : "Für diesen Partner gibt es noch keinen Rückkanal."} <a href="/?page=Einstellungen&setting=Integrationen">Unter Einstellungen → Integrationen einrichten</a></span></div>}</header>
+    <Quota card={card} />
     <Flow counts={c} />
     <section className="pr-block" aria-label="Zustellung"><h4>Zustellung</h4><div className="pr-tiles">
       <Tile label="Geliefert" value={count(c.delivered)}>{c.pending ? `${count(c.pending)} noch ohne Ergebnis` : null}</Tile>
-      <Tile label="Abgelehnt" value={count(c.rejected)} tone="calm">{share(c.rejected, c.delivered)} · sofort beim Senden (meist Dublette)</Tile>
+      <Tile label="PrePing abgelehnt" value={count(c.rejected)} tone="calm">{share(c.rejected, c.delivered)} · hatte der Partner schon – sofort beim Senden abgelehnt (meist Dublette)</Tile>
       <Tile label="Angenommen" value={count(c.accepted)}>{share(c.accepted, c.delivered)} der gelieferten</Tile>
       <Tile label="Gesamtquote" value={share(c.confirmed, c.delivered)} tone="good">{count(c.confirmed)} anerkannt von {count(c.delivered)} gelieferten{c.open ? ` · ${count(c.open)} noch offen` : ""}</Tile>
     </div></section>
@@ -87,7 +128,7 @@ function PartnerCard({ card, query, onSync, syncing }: { card: ReportCard; query
       {c.silent > 0 && rated && <li>{count(c.silent)} angenommene {c.silent === 1 ? "Lead" : "Leads"} ohne Rückmeldung: Sie fehlen beim Partner noch, oder der letzte Abgleich hat sie nicht erfasst.</li>}
       {card.unmatched > 0 && <li>{count(card.unmatched)} {card.unmatched === 1 ? "Transaktion" : "Transaktionen"} des Partners ohne unsere Zustellung – sie zählen in keinem Zähler.{card.unmatchedCommission > 0 ? ` Ihre Provision (${euro(card.unmatchedCommission)}) steckt in der Kachel „Provision“.` : ""}</li>}
     </ul>}
-    {card.buyers.length > 0 && <div className="pr-table-wrap"><table className="pr-table"><thead><tr><th>Käufer</th><th className="num">Geliefert</th><th className="num">Abgelehnt</th><th className="num">Angenommen</th>{rated && <><th className="num">Offen</th><th className="num">Anerkannt</th><th className="num">Storniert</th><th className="num">davon ausgezahlt</th><th className="num">Provision</th></>}</tr></thead>
+    {card.buyers.length > 0 && <div className="pr-table-wrap"><table className="pr-table"><thead><tr><th>Käufer</th><th className="num">Geliefert</th><th className="num">PrePing abgelehnt</th><th className="num">Angenommen</th>{rated && <><th className="num">Offen</th><th className="num">Anerkannt</th><th className="num">Storniert</th><th className="num">davon ausgezahlt</th><th className="num">Provision</th></>}</tr></thead>
       <tbody>{card.buyers.map((row) => <tr key={row.buyerName}><td><b>{row.buyerName}</b></td><td className="num">{count(row.delivered)}</td><td className="num">{count(row.rejected)}</td><td className="num">{count(row.accepted)}</td>{rated && <><td className="num">{count(row.open)}</td><td className="num is-good">{count(row.confirmed)}</td><td className="num is-bad">{count(row.cancelled)}</td><td className="num">{count(row.paid)}</td><td className="num">{euro(row.commission)}</td></>}</tr>)}</tbody></table></div>}
     <div className="pr-folds">
       {card.direct && <Fold title="Direkt beim Partner eingeliefert" counter={card.direct.total}>
@@ -125,6 +166,8 @@ export default function PartnerReport() {
   const sorted = useMemo(() => (categories.data ?? []).slice().sort((a, b) => a.name.localeCompare(b.name, "de")), [categories.data]);
   const cards = report.data?.cards ?? []; const draftChanged = draft.from !== query.from || draft.to !== query.to; const draftValid = isDay(draft.from) && isDay(draft.to);
   const sum = cards.reduce((total, card) => ({ delivered: total.delivered + card.counts.delivered, confirmed: total.confirmed + card.counts.confirmed, open: total.open + card.counts.open, commission: total.commission + card.counts.commission, matched: total.matched + card.counts.commission - card.unmatchedCommission }), { delivered: 0, confirmed: 0, open: 0, commission: 0, matched: 0 });
+  // Kontingente aller Konten zusammen: wie viel noch nachzuschieben ist (nur Konten, bei denen eins eingetragen ist)
+  const quotas = cards.filter((card) => card.quota); const pushLeft = quotas.reduce((total, card) => total + card.quota!.open, 0);
   return <div className="fx-scope pr">
     <section className="pr-filter" aria-label="Filter">
       <div className="pr-filter-row">
@@ -138,11 +181,12 @@ export default function PartnerReport() {
     </section>
     {basis.note && <p className="pr-basis-note"><Info aria-hidden="true" /><span><b>{basis.label}:</b> {basis.note}</span></p>}
     {report.isLoading ? <div className="pr-skeleton" aria-label="Wird geladen"><i /><i /><i /></div> : report.error ? <p className="pr-note is-bad">{report.error.message}</p> : !cards.length ? <section className="pr-empty"><KeyRound aria-hidden="true" /><h3>Noch kein Partnerkonto</h3><p>Lege unter Einstellungen → Integrationen ein Konto bei Aroundhome, WattFox, Leadnodes, Enpal oder GoHighLevel an. Danach steht hier je Konto, was aus den gelieferten Leads wurde.</p><a className="flux-button pr-empty-link" href="/?page=Einstellungen&setting=Integrationen">Partnerkonto anlegen</a></section> : <>
-      <section className="pr-rail" aria-label="Alle Partnerkonten zusammen">
+      <section className={`pr-rail ${quotas.length ? "has-quota" : ""}`} aria-label="Alle Partnerkonten zusammen">
         <div className="pr-stat"><span><KeyRound aria-hidden="true" /> Partnerkonten</span><strong>{count(cards.length)}</strong><small>{longDay(query.from)} – {longDay(query.to)}</small></div>
         <div className="pr-stat"><span><Send aria-hidden="true" /> Geliefert</span><strong>{count(sum.delivered)}</strong><small>an alle Konten zusammen</small></div>
         <div className="pr-stat is-good"><span><BadgeCheck aria-hidden="true" /> Anerkannt</span><strong>{count(sum.confirmed)} <em>{share(sum.confirmed, sum.delivered)}</em></strong><small>{sum.open ? `${count(sum.open)} noch offen` : "Gesamtquote aller Konten"}</small></div>
         <div className="pr-stat"><span><Wallet aria-hidden="true" /> Provision</span><strong>{euro(sum.commission)}</strong><small>{sum.confirmed ? `Ø ${euro(sum.matched / sum.confirmed)} je anerkanntem Lead` : "noch keine anerkannten Leads"}</small></div>
+        {quotas.length > 0 && <div className={`pr-stat is-push ${pushLeft ? "is-open" : "is-good"}`}><span><PackagePlus aria-hidden="true" /> Noch nachschieben</span><strong>{count(pushLeft)}</strong><small>{pushLeft ? `für ${quotas.filter((card) => card.quota!.open > 0).length} von ${quotas.length} ${quotas.length === 1 ? "Kontingent" : "Kontingenten"} – laufender Zeitraum` : `${quotas.length === 1 ? "das Kontingent ist" : `alle ${quotas.length} Kontingente sind`} erfüllt`}</small></div>}
       </section>
       {cards.map((card) => <PartnerCard key={card.account.id} card={card} query={query} syncing={syncingId === card.account.id} onSync={() => { setSyncingId(card.account.id); sync.mutate({ id: card.account.id }); }} />)}
     </>}

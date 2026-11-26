@@ -1,17 +1,40 @@
-import { CALL_PERIODS, DECISION_LABEL, talkTimeText, type CallDecision, type CallOverview, type CallRange, type DecisionFilter } from "../../../shared/call-overview";
+import { CALL_MORE_PERIODS, CALL_OPEN_MODES, CALL_PERIODS, DECISION_LABEL, shiftDay, talkTimeText, type CallDecision, type CallOpenMode, type CallOverview, type CallPeriodKey, type CallRange, type DecisionFilter } from "../../../shared/call-overview";
 import { Face, type Mood } from "@/components/CallMood";
 
-export { CALL_PERIODS, dayKey, dayLabel, DECISION_LABEL, timeText, type CallRange, type DecisionFilter } from "../../../shared/call-overview";
+export { CALL_PERIODS, callRangeInput, dayKey, dayLabel, DECISION_LABEL, hasCallRange, rangeOfSpan, timeText, type CallRange, type DecisionFilter } from "../../../shared/call-overview";
 
 const MOOD_OF_DECISION: Record<CallDecision, Mood> = { freigegeben: "gruen", pruefen: "gelb", zurueckgewiesen: "rot", offen: "offen" };
 const MOOD_WORD: Record<Mood, string> = { gruen: "passt", gelb: "bitte reinhören", rot: "passt nicht", offen: "noch nicht bewertet" };
 
-/** Zeitraum der Gesprächsliste: Heute … Gesamt oder von/bis – klein in der Leiste der Liste. */
-export function CallPeriodControl({ range, onRange }: { range: CallRange; onRange: (range: CallRange) => void }) {
+const isOpenMode = (value: string): value is CallOpenMode => value === "zwischen" || value === "ab" || value === "vor";
+/**
+ * Zeitraum für Gesprächsliste und Bestenliste – überall derselbe: schnelle Knöpfe (Heute … Gesamt), dazu „Weitere Zeiträume“ wie auf der
+ * Leads-Seite: feste (diese Woche, letzte Woche, letzte 2 Wochen, dieser Monat, letzter Monat) und eigene (zwischen zwei Tagen, ab einem
+ * Tag, vor einem Tag). Die Datumsfelder stehen nur da, wenn ein eigener Zeitraum gewählt ist. `resetTo` ist der Zeitraum nach dem Zurücksetzen.
+ */
+export function CallPeriodControl({ range, onRange, resetTo = "alle" }: { range: CallRange; onRange: (range: CallRange) => void; resetTo?: CallPeriodKey }) {
   const custom = Boolean(range.from || range.to);
+  const open: CallOpenMode | "" = range.open || (range.from && range.to ? "zwischen" : range.from ? "ab" : range.to ? "vor" : "");
+  const more = open || (!custom && CALL_MORE_PERIODS.some(([key]) => key === range.period) ? range.period : "");
+  const choose = (value: string) => {
+    if (!value) { onRange({ period: resetTo, from: "", to: "" }); return; }
+    if (isOpenMode(value)) { onRange({ period: "alle", from: value === "vor" ? "" : range.from, to: value === "ab" ? "" : range.to, open: value }); return; } // was schon eingetragen ist, bleibt – soweit es zur Auswahl passt
+    onRange({ period: value as CallPeriodKey, from: "", to: "" });
+  };
+  const quick = (key: CallPeriodKey) => !custom && !open && range.period === key;
   return <div className="gq-period cq-filterbar">
-    <div className="gq-periods" role="group" aria-label="Zeitraum">{CALL_PERIODS.map(([key, label]) => <button key={key} type="button" className={!custom && range.period === key ? "active" : ""} aria-pressed={!custom && range.period === key} onClick={() => onRange({ period: key, from: "", to: "" })}>{label}</button>)}</div>
-    <div className="gq-dates"><label>von<input type="date" aria-label="Datum von" value={range.from} max={range.to || undefined} onChange={(event) => onRange({ ...range, from: event.target.value })} /></label><label>bis<input type="date" aria-label="Datum bis" value={range.to} min={range.from || undefined} onChange={(event) => onRange({ ...range, to: event.target.value })} /></label>{custom && <button type="button" className="gq-reset" onClick={() => onRange({ period: "alle", from: "", to: "" })}>Datum zurücksetzen</button>}</div>
+    <div className="gq-periods" role="group" aria-label="Zeitraum">{CALL_PERIODS.map(([key, label]) => <button key={key} type="button" className={quick(key) ? "active" : ""} aria-pressed={quick(key)} onClick={() => onRange({ period: key, from: "", to: "" })}>{label}</button>)}</div>
+    <select className={`filter-select gq-more-periods ${more ? "is-on" : ""}`} aria-label="Weitere Zeiträume" title="Weitere Zeiträume – wie auf der Leads-Seite" value={more} onChange={(event) => choose(event.target.value)}>
+      <option value="">Weitere Zeiträume</option>
+      <optgroup label="Feste Zeiträume">{CALL_MORE_PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</optgroup>
+      <optgroup label="Eigener Zeitraum">{CALL_OPEN_MODES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</optgroup>
+    </select>
+    {open && <div className="gq-dates">
+      {open === "ab" ? <label>ab<input type="date" aria-label="Datum ab" value={range.from} onChange={(event) => onRange({ ...range, open, from: event.target.value, to: "" })} /></label>
+        : open === "vor" ? <label title="Der gewählte Tag selbst zählt nicht mehr mit">vor<input type="date" aria-label="Datum vor" value={range.to ? shiftDay(range.to, 1) : ""} onChange={(event) => onRange({ ...range, open, from: "", to: event.target.value ? shiftDay(event.target.value, -1) : "" })} /></label>
+        : <><label>von<input type="date" aria-label="Datum von" value={range.from} max={range.to || undefined} onChange={(event) => onRange({ ...range, open, from: event.target.value })} /></label><label>bis<input type="date" aria-label="Datum bis" value={range.to} min={range.from || undefined} onChange={(event) => onRange({ ...range, open, to: event.target.value })} /></label></>}
+      <button type="button" className="gq-reset" onClick={() => onRange({ period: resetTo, from: "", to: "" })}>Datum zurücksetzen</button>
+    </div>}
   </div>;
 }
 

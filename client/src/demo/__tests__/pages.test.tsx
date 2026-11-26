@@ -242,6 +242,9 @@ describe("Gespräche – Prozent neben dem Smiley, Datums- und Kategorie-Filter,
     const heute = Array.from(filterbar.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent === "Heute")!;
     await act(async () => { fireEvent.click(heute); }); await settle(400);
     expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBeLessThanOrEqual(all);
+    // eigener Zeitraum (seit v378 über „Weitere Zeiträume“): Die Datumsfelder stehen erst da, wenn „Zwischen …“ gewählt ist
+    expect(filterbar.querySelector("input[aria-label='Datum von']")).toBeNull();
+    await act(async () => { fireEvent.change(filterbar.querySelector<HTMLSelectElement>("select[aria-label='Weitere Zeiträume']")!, { target: { value: "zwischen" } }); }); await settle(400);
     const from = filterbar.querySelector<HTMLInputElement>("input[aria-label='Datum von']")!;
     fireEvent.change(from, { target: { value: "2031-01-01" } }); await settle(400);
     expect(view.container.querySelectorAll(".flux-table tbody tr.gq-call").length).toBe(0);

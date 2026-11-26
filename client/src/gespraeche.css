@@ -1032,3 +1032,15 @@ html .gq-settings .ga-add input,html .gq-settings .ga-open select{height:38px;wi
 .ga-open small{font-size:12px;color:var(--gl-faint);white-space:nowrap}
 .ga-open .gs-textbtn{justify-self:end}
 @media(max-width:860px){.ga-list li{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto}.ga-facts{grid-column:1/-2;grid-row:2}.ga-add{grid-template-columns:minmax(0,1fr)}.ga-add .ga-arrow{display:none}.ga-open li{grid-template-columns:minmax(0,1fr) auto}.ga-open select,.ga-open .gs-textbtn{grid-column:1/-1;justify-self:stretch}}
+
+/* ── v378: „Weitere Zeiträume“ – Auswahlliste neben den schnellen Knöpfen, in der Gesprächsliste und in der Bestenliste gleich.
+   Feste Zeiträume wie auf der Leads-Seite (diese Woche, letzte Woche, letzte 2 Wochen, dieser Monat, letzter Monat) und eigene
+   (zwischen, ab, vor). Die Datumsfelder stehen nur da, wenn ein eigener Zeitraum gewählt ist. Gewählt = zartrot, wie überall. ── */
+.cq-list-panel .gq-more-periods{flex:none;width:auto;height:36px;min-width:176px;max-width:230px;padding:0 30px 0 12px;border-radius:12px;font-size:12.5px;font-weight:600;cursor:pointer}
+.cq-list-panel .gq-more-periods.is-on{border-color:var(--gl-accent);box-shadow:inset 0 0 0 1px var(--gl-accent);color:var(--gq-ink)}
+html:not(.dark) .cq-list-panel .gq-more-periods.is-on{border-color:#bc001d!important;box-shadow:inset 0 0 0 1px #bc001d;color:#bc001d!important;background-color:#fff5f5!important}
+.gq-more-periods:focus-visible{outline:2px solid var(--gq-focus);outline-offset:2px}
+@media(max-width:640px){
+  .cq-list-panel .gq-more-periods{width:100%;max-width:none}
+}
+

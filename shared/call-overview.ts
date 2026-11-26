@@ -5,6 +5,8 @@
  * wer wie viele Gespräche geführt hat. Der Agent-Filter gilt für Zahlen und Verlauf – die Liste der Agenten zeigt immer alle,
  * damit man zwischen ihnen wechseln kann.
  */
+import { CALL_QUICK_PERIODS, type CallOpenMode, type CallPeriodKey, type CallSpan } from "./call-period";
+export { CALL_MORE_PERIODS, CALL_OPEN_MODES, shiftDay, type CallOpenMode, type CallPeriodKey } from "./call-period";
 export type Mood = "gruen" | "gelb" | "rot" | "offen";
 /** Ampel eines Gesprächs: grün = passt (freigegeben), orange = reinhören (zur Prüfung), rot = passt nicht (zurückgewiesen), grau = noch nicht bewertet. */
 export function moodOf(call: { decision?: string | null; verdict?: string | null; status?: string | null; score?: number | null }): Mood {
@@ -81,8 +83,18 @@ export function barHeight(seconds: number | null | undefined, longest: number): 
 }
 
 /* ───────── Zeitraum, Beschriftung und Anordnung des Verlaufs (ohne Oberfläche – damit es sich prüfen lässt) ───────── */
-export type CallRange = { period: "heute" | "gestern" | "7" | "30" | "alle"; from: string; to: string };
-export const CALL_PERIODS: Array<[CallRange["period"], string]> = [["heute", "Heute"], ["gestern", "Gestern"], ["7", "7 Tage"], ["30", "30 Tage"], ["alle", "Gesamt"]];
+/** Zeitraum, wie ihn die Oberfläche hält: Kurzwahl oder eigener Zeitraum (von/bis, bis einschließlich). `open` merkt, welche Felder dafür offen stehen. */
+export type CallRange = { period: CallPeriodKey; from: string; to: string; open?: CallOpenMode | "" };
+export const CALL_PERIODS: Array<[CallRange["period"], string]> = CALL_QUICK_PERIODS;
+/** Was der Server zum Zeitraum bekommt: von/bis schlägt die Kurzwahl. */
+export const callRangeInput = (range: CallRange): { period: CallPeriodKey | null; from: string | null; to: string | null } => ({ period: range.from || range.to ? null : range.period, from: range.from || null, to: range.to || null });
+/** Zeitraum der Oberfläche aus einer Spanne – so öffnet die Bestenliste die Gesprächsliste mit demselben Zeitraum. */
+export function rangeOfSpan(span: CallSpan): CallRange {
+  if (span.kind === "zwischen" || span.kind === "ab" || span.kind === "vor") return { period: "alle", from: span.fromDay ?? "", to: span.toDay ?? "", open: span.kind };
+  return { period: span.kind, from: "", to: "" };
+}
+/** Ist ein Zeitraum gewählt (alles außer „Gesamt“)? */
+export const hasCallRange = (range: CallRange) => Boolean(range.from || range.to || range.period !== "alle");
 export type DecisionFilter = "" | CallDecision;
 export const DECISION_LABEL: Record<CallDecision, string> = { freigegeben: "Freigegeben", pruefen: "Zur Prüfung", zurueckgewiesen: "Zurückgewiesen", offen: "Offen" };
 
@@ -101,7 +113,7 @@ const shortDate = (value: string) => { const [year, month, day] = value.split("-
 export function periodPhrase(range: CallRange): string {
   if (range.from && range.to) return range.from === range.to ? `am ${shortDate(range.from)}` : `vom ${shortDate(range.from)} bis ${shortDate(range.to)}`;
   if (range.from) return `seit dem ${shortDate(range.from)}`; if (range.to) return `bis zum ${shortDate(range.to)}`;
-  return range.period === "heute" ? "heute" : range.period === "gestern" ? "gestern" : range.period === "7" ? "in den letzten 7 Tagen" : range.period === "30" ? "in den letzten 30 Tagen" : "insgesamt";
+  return range.period === "heute" ? "heute" : range.period === "gestern" ? "gestern" : range.period === "7" ? "in den letzten 7 Tagen" : range.period === "30" ? "in den letzten 30 Tagen" : range.period === "woche" ? "diese Woche" : range.period === "letzte_woche" ? "letzte Woche" : range.period === "letzte_2_wochen" ? "in den letzten 2 Wochen" : range.period === "monat" ? "diesen Monat" : range.period === "letzter_monat" ? "letzten Monat" : "insgesamt";
 }
 
 export type WaveGroup = { key: string; label: string; short: string; entries: TimelineEntry[] };

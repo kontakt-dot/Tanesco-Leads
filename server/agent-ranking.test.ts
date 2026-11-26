@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LEVELS, agentLevel, berlinDay, berlinOffsetMinutes, bestDayOf, compareAgents, countAgentDays, countAgents, countFromDays, daysBetween, emptyBucket, finishAgentReport, isNoAgent, nameKey, NO_AGENT, previousSpan, QUOTE_MIN_CALLS, shiftDay, streakOf, type AgentBucket, type AgentDay } from "../shared/agent-ranking";
+import { AGENT_LEVELS, agentLevel, berlinDay, berlinOffsetMinutes, bestDayOf, compareAgents, COMPARE_MAX_DAYS, countAgentDays, countAgents, countFromDays, daysBetween, dayWindowStart, emptyBucket, finishAgentReport, hiddenAgentKeys, hideAgentIn, isNoAgent, nameKey, NO_AGENT, previousSpan, QUOTE_MIN_CALLS, readHiddenAgents, restoreAgentIn, shiftDay, streakOf, withoutHiddenAgents, type AgentBucket, type AgentDay } from "../shared/agent-ranking";
+import { callPeriodSpan } from "../shared/call-period";
 
 /** Bestenliste der Agenten: Plätze, Auf- und Abstieg, Serie, Stufe, Bestwerte – dieselbe Rechnung für Server und Vorschau. */
 const bucket = (name: string, values: Partial<AgentBucket> = {}, userId: number | null = null): AgentBucket => ({ ...emptyBucket(userId, name), ...values });
@@ -51,6 +52,7 @@ describe("Bestenliste – Serie und bester Tag", () => {
     const days = [day("A", "2026-11-10", 9, 4), day("A", "2026-11-17", 8, 4), day("A", "2026-11-18", 5, 2), day("A", "2026-10-01", 9, 7)];
     expect(bestDayOf(days, "2026-11-01")).toEqual({ day: "2026-11-17", approved: 4 }); expect(bestDayOf(days, null)).toEqual({ day: "2026-10-01", approved: 7 });
     expect(bestDayOf([day("A", "2026-11-18", 5, 0)], null)).toBeNull();
+    expect(bestDayOf(days, "2026-11-01", "2026-11-16")).toEqual({ day: "2026-11-10", approved: 4 }); // ein abgeschlossener Zeitraum: spätere Tage zählen nicht
   });
 });
 
@@ -66,6 +68,33 @@ describe("Bestenliste – womit verglichen wird", () => {
     expect(previousSpan("7", TODAY, days)).toEqual({ fromDay: "2026-11-06", beforeDay: "2026-11-13" }); // Zeitraum selbst: 13.–19.
     expect(previousSpan("30", TODAY, days)).toEqual({ fromDay: "2026-09-21", beforeDay: "2026-10-21" }); // Zeitraum selbst: 21.10.–19.11.
     expect(previousSpan("alle", TODAY, days)).toBeNull();
+  });
+  it("weitere Zeiträume: Woche gegen Woche, Monat gegen Monat – ein einzelner Tag gegen den letzten Tag mit Gesprächen", () => {
+    const span = (input: Parameters<typeof callPeriodSpan>[0], today = TODAY) => callPeriodSpan(input, today);
+    expect(previousSpan(span({ period: "woche" }), TODAY, days)).toEqual({ fromDay: "2026-11-09", beforeDay: "2026-11-13" }); // diese Woche Mo–Do gegen letzte Woche Mo–Do
+    expect(previousSpan(span({ period: "woche" }, "2026-11-16"), "2026-11-16", days)).toEqual({ fromDay: "2026-11-09", beforeDay: "2026-11-10" }); // am Montag: Montag gegen Montag
+    expect(previousSpan(span({ period: "letzte_woche" }), TODAY, days)).toEqual({ fromDay: "2026-11-02", beforeDay: "2026-11-09" });
+    expect(previousSpan(span({ period: "letzte_2_wochen" }), TODAY, days)).toEqual({ fromDay: "2026-10-19", beforeDay: "2026-11-02" });
+    expect(previousSpan(span({ period: "monat" }), TODAY, days)).toEqual({ fromDay: "2026-10-01", beforeDay: "2026-10-20" }); // 1.–19.11. gegen 1.–19.10.
+    expect(previousSpan(span({ period: "monat" }, "2026-03-31"), "2026-03-31", days)).toEqual({ fromDay: "2026-02-01", beforeDay: "2026-03-01" }); // der Februar hat keinen 31. – dann der ganze Monat
+    expect(previousSpan(span({ period: "letzter_monat" }), TODAY, days)).toEqual({ fromDay: "2026-09-01", beforeDay: "2026-10-01" });
+    expect(previousSpan(span({ period: "gestern" }), TODAY, days)).toEqual({ fromDay: "2026-11-13", beforeDay: "2026-11-14" }); // gestern (18.) gegen den letzten Tag mit Gesprächen davor
+    expect(previousSpan(span({ from: "2026-11-19", to: "2026-11-19" }), TODAY, days)).toEqual({ fromDay: "2026-11-18", beforeDay: "2026-11-19" });
+    expect(previousSpan(span({ from: "2026-11-10", to: "2026-11-14" }), TODAY, days)).toEqual({ fromDay: "2026-11-05", beforeDay: "2026-11-10" }); // fünf Tage gegen die fünf davor
+    expect(previousSpan(span({ from: "2026-11-10" }), TODAY, days)).toEqual({ fromDay: "2026-10-31", beforeDay: "2026-11-10" }); // ab dem 10. bis heute sind zehn Tage – verglichen wird mit den zehn davor
+  });
+  it("kein Vergleich bei „vor …“, in der Zukunft, über ein Vierteljahr oder weiter zurück als ein Jahr", () => {
+    const span = (input: Parameters<typeof callPeriodSpan>[0]) => callPeriodSpan(input, TODAY);
+    expect(previousSpan(span({ to: "2026-11-05" }), TODAY, days)).toBeNull(); expect(previousSpan(span({ from: "2026-12-01" }), TODAY, days)).toBeNull();
+    expect(previousSpan(span({ from: shiftDay(TODAY, -(COMPARE_MAX_DAYS - 1)) }), TODAY, days)).not.toBeNull(); expect(previousSpan(span({ from: shiftDay(TODAY, -COMPARE_MAX_DAYS) }), TODAY, days)).toBeNull();
+    expect(previousSpan(span({ from: "2025-09-01", to: "2025-09-30" }), TODAY, days)).toBeNull(); // der Abschnitt davor läge mehr als ein Jahr zurück
+  });
+  it("so weit zurück werden die Tageszeilen gebraucht: 62 Tage, der Zeitraum und der Abschnitt davor – höchstens ein Jahr", () => {
+    const start = (input: Parameters<typeof callPeriodSpan>[0]) => dayWindowStart(callPeriodSpan(input, TODAY), TODAY);
+    expect(start({ period: "heute" })).toBe(shiftDay(TODAY, -61)); expect(start({ period: "30" })).toBe(shiftDay(TODAY, -61)); expect(start({ period: "letzter_monat" })).toBe("2026-09-01"); // der September ist der Abschnitt davor
+    expect(start({ period: "alle" })).toBe(shiftDay(TODAY, -365)); expect(start({ to: "2026-11-05" })).toBe(shiftDay(TODAY, -365));
+    expect(start({ from: "2026-07-01", to: "2026-07-31" })).toBe("2026-05-31"); expect(start({ from: "2020-01-01" })).toBe(shiftDay(TODAY, -365)); // nie mehr als ein Jahr
+    expect(start({ from: "2026-08-03", to: "2026-08-03" })).toBe("2026-07-27"); // ein einzelner Tag: eine Woche davor für den Vergleich
   });
   it("Tageszeilen eines Abschnitts werden je Agent zusammengezählt – „Ohne Agent“ bleibt für die Summe dabei", () => {
     const rows = countFromDays([day("A", "2026-11-06", 3, 1, 2), day("A", "2026-11-12", 2, 1, 2), day("A", "2026-11-13", 9, 9), day(NO_AGENT, "2026-11-10", 4, 1, 3)], { fromDay: "2026-11-06", beforeDay: "2026-11-13" });
@@ -175,4 +204,37 @@ describe("Bestenliste – Bausteine aus einzelnen Gesprächen (Vorschau)", () =>
     expect(countAgentDays(facts)).toEqual(expect.arrayContaining([{ name: "Ada", day: "2026-11-19", calls: 3, approved: 2, evaluated: 2 }, { name: NO_AGENT, day: "2026-11-19", calls: 1, approved: 1, evaluated: 1 }])); expect(countAgentDays(facts).length).toBe(2);
   });
   it("je Agent insgesamt – ohne „Ohne Agent“", () => { expect(countAgents(facts)).toEqual(expect.arrayContaining([{ name: "Ada", calls: 3, approved: 2, evaluated: 2 }, { name: "Ben", calls: 1, approved: 1, evaluated: 1 }])); expect(countAgents(facts).length).toBe(2); });
+});
+
+/** Agenten von Hand löschen: Der Name steht auf einer Liste – überall in der Bestenliste zählt er dann nicht mehr mit, bis er zurückgeholt wird. */
+describe("Bestenliste – gelöschte Agenten (v378)", () => {
+  const now = new Date("2026-11-19T10:00:00Z");
+  it("löschen und zurückholen – Schreibweise, Akzente und Leerzeichen spielen keine Rolle; „Ohne Agent“ lässt sich nicht löschen", () => {
+    const one = hideAgentIn([], "  José Álvarez ", "Taner", now); expect(one).toEqual([{ name: "José Álvarez", at: "2026-11-19T10:00:00.000Z", by: "Taner" }]);
+    expect(hideAgentIn(one, "JOSE ALVAREZ", "Francesco", now)).toBe(one); // steht schon dort – der erste Eintrag bleibt
+    expect(hideAgentIn(one, "Ohne Agent", null, now)).toBe(one); expect(hideAgentIn(one, "   ", null, now)).toBe(one);
+    const two = hideAgentIn(one, "Deniz Kaya", null, now); expect(two.map((item) => item.name)).toEqual(["José Álvarez", "Deniz Kaya"]); expect(two[1].by).toBeNull();
+    expect(Array.from(hiddenAgentKeys(two))).toEqual(["jose alvarez", "deniz kaya"]);
+    expect(restoreAgentIn(two, "jose alvarez").map((item) => item.name)).toEqual(["Deniz Kaya"]); expect(restoreAgentIn(two, "Niemand")).toEqual(two); expect(restoreAgentIn(two, "")).toBe(two);
+  });
+  it("gespeicherte Liste lesen: kaputte Einträge fallen weg, jeder Name steht nur einmal da", () => {
+    expect(readHiddenAgents(null)).toEqual([]); expect(readHiddenAgents("x")).toEqual([]); expect(readHiddenAgents({ name: "A" })).toEqual([]);
+    const list = readHiddenAgents([{ name: " Deniz Kaya ", at: "2026-11-01T08:00:00.000Z", by: " Taner " }, { name: "DENIZ KAYA", at: "2026-11-02T08:00:00.000Z" }, { name: "" }, null, 7, { name: "Ohne Agent" }, { name: "Ali Demir", at: "kaputt", by: 5 }]);
+    expect(list).toEqual([{ name: "Deniz Kaya", at: "2026-11-01T08:00:00.000Z", by: "Taner" }, { name: "Ali Demir", at: "1970-01-01T00:00:00.000Z", by: null }]);
+  });
+  it("gelöschte Agenten fehlen überall: Zahlen im Zeitraum, Tageszeilen, insgesamt, zuletzt erreicht – und stehen mit ihren Zahlen in der Liste der Gelöschten", () => {
+    const hidden = hideAgentIn(hideAgentIn([], "Deniz Kaya", "Taner", now), "Niemand Mehr", null, now);
+    const buckets = [bucket("Ali Demir", { calls: 10, approved: 4, evaluated: 8 }), bucket("deniz kaya", { calls: 6, approved: 3, evaluated: 6 }), bucket("Deniz Kaya", { calls: 2, approved: 1, evaluated: 2 }, 7), bucket(NO_AGENT, { calls: 3, approved: 1, evaluated: 3 })];
+    const days = [day("Ali Demir", "2026-11-19", 4, 2), day("DENIZ KAYA", "2026-11-19", 3, 2), day(NO_AGENT, "2026-11-19", 1, 0)];
+    const kept = withoutHiddenAgents({ hidden, buckets, days, allTime: [{ name: "Ali Demir", approved: 40 }, { name: "Deniz Kaya", approved: 90 }], wins: [{ name: "Deniz Kaya", callId: 1 }, { name: "Ali Demir", callId: 2 }, { name: null, callId: 3 }] });
+    expect(kept.buckets.map((item) => item.name)).toEqual(["Ali Demir", NO_AGENT]); expect(kept.days.map((item) => item.name)).toEqual(["Ali Demir", NO_AGENT]); expect(kept.allTime).toEqual([{ name: "Ali Demir", approved: 40 }]); expect(kept.wins.map((item) => item.callId)).toEqual([2, 3]);
+    expect(kept.hiddenAgents).toEqual([{ name: "Deniz Kaya", at: now.toISOString(), by: "Taner", calls: 8, approved: 4 }, { name: "Niemand Mehr", at: now.toISOString(), by: null, calls: 0, approved: 0 }]); // beide Schreibweisen zusammengezählt
+    // die Bestenliste daraus: Der Gelöschte hat keinen Platz, die Summe der Mannschaft zählt ihn nicht mit
+    const report = finishAgentReport({ buckets: kept.buckets, days: kept.days, allTime: kept.allTime, previous: null, today: TODAY, fromDay: "2026-11-01" });
+    expect(report.agents.map((agent) => [agent.name, agent.rank])).toEqual([["Ali Demir", 1], [NO_AGENT, null]]); expect(report.totals).toMatchObject({ agents: 2, calls: 13, approved: 5, approvedToday: 2, callsToday: 5 });
+  });
+  it("ohne gelöschte Agenten bleibt alles, wie es ist", () => {
+    const buckets = [bucket("Ali Demir", { calls: 1 })]; const kept = withoutHiddenAgents({ hidden: [], buckets, days: [], allTime: [], wins: [] });
+    expect(kept.buckets).toBe(buckets); expect(kept.hiddenAgents).toEqual([]);
+  });
 });

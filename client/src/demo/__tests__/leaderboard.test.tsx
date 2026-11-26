@@ -129,7 +129,7 @@ describe("Gespräche – Bestenliste der Agenten", () => {
 
   it("Zeitraum und Kampagne: die Bestenliste gilt für die Auswahl – die Kampagnen sind die der Gespräche", async () => {
     const { panel } = await openBoard();
-    const periods = Array.from(panel.querySelectorAll<HTMLButtonElement>(".bl-toolbar .gq-periods button")); expect(periods.map((button) => button.textContent)).toEqual(["Heute", "7 Tage", "30 Tage", "Gesamt"]); expect(periods.map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "false", "true", "false"]);
+    const periods = Array.from(panel.querySelectorAll<HTMLButtonElement>(".bl-toolbar .gq-periods button")); expect(periods.map((button) => button.textContent)).toEqual(["Heute", "Gestern", "7 Tage", "30 Tage", "Gesamt"]); expect(periods.map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "false", "false", "true", "false"]); // seit v378 derselbe Zeitraum-Wähler wie in der Gesprächsliste
     const select = panel.querySelector<HTMLSelectElement>(".bl-campaign select")!; const campaigns = (await callProcedure("leadops.listCallQaCampaigns", undefined)) as Array<{ name: string }>;
     expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["Alle Kampagnen", ...campaigns.map((item) => item.name)]); expect(campaigns.map((item) => item.name)).toEqual(expect.arrayContaining(["PV Q4", "Wärmepumpe Herbst"]));
     // Heute: der Vergleich nennt den letzten Tag mit Gesprächen als Zahl
@@ -139,10 +139,10 @@ describe("Gespräche – Bestenliste der Agenten", () => {
     expect(Array.from(panel.querySelectorAll(".bl-team-facts dt")).map((node) => node.textContent)).toEqual(["Gespräche", "Quote", "am Telefon"]); // „heute“ steht dort schon oben
     expect(rowsOf(panel).map(nameOfRow)).toEqual(ranked(today).slice(0, 10).map((agent) => agent.name));
     // Gesamt: kein Vergleich, niemand ist „neu“ oder steigt
-    await click(periods[3], 700); const total = await reportOf({ period: "alle" });
+    await click(periods[4], 700); const total = await reportOf({ period: "alle" });
     expect(panel.querySelector(".bl-team-label")?.textContent).toBe("Team insgesamt"); expect(panel.querySelector(".bl-team-change")).toBeNull(); expect(panel.querySelector(".bl-move")).toBeNull(); expect(total.awards.some((award) => award.key === "aufsteiger")).toBe(false);
     // Kampagne
-    await click(periods[2], 500); await act(async () => { fireEvent.change(select, { target: { value: "Wärmepumpe Herbst" } }); }); await settle(700);
+    await click(periods[3], 500); await act(async () => { fireEvent.change(select, { target: { value: "Wärmepumpe Herbst" } }); }); await settle(700);
     const heat = await reportOf({ period: "30", campaign: "Wärmepumpe Herbst" }); const everything = await reportOf({ period: "30" });
     expect(heat.totals.calls).toBeGreaterThan(0); expect(heat.totals.calls).toBeLessThan(everything.totals.calls);
     expect(panel.querySelector(".bl-stage-head > span")?.textContent).toBe("30 Tage · Wärmepumpe Herbst"); expect(panel.querySelector(".bl-team-score .bl-count")?.textContent).toBe(String(heat.totals.approved));

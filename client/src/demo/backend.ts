@@ -25,8 +25,8 @@ import { matchesCallSearch } from "../../../shared/call-search";
 import { aliasesOf, aliasKey, aliasProblem, learnAliases, mergeAliases, readAliases, resolveAlias, sameSpelling, tidyAgentName, type AgentAlias, type AliasPair } from "../../../shared/agent-alias";
 import { isJunkAgentName } from "../../../shared/agent-names";
 import { aiUsageHistory as buildAiUsageHistory, purposeInfo, type AiUsageRow } from "../../../shared/ai-usage";
-import { callPeriodRange } from "../../../shared/call-period";
-import { berlinDay, countAgentDays, countAgents, emptyBucket, finishAgentReport, isNoAgent, nameKey, NO_AGENT, previousSpan, type AgentBucket, type AgentCallFact, type AgentReportPeriod } from "../../../shared/agent-ranking";
+import { berlinDayStart, callPeriodRange, callPeriodSpan } from "../../../shared/call-period";
+import { berlinDay, countAgentDays, countAgents, dayWindowStart, emptyBucket, finishAgentReport, hideAgentIn, isNoAgent, nameKey, NO_AGENT, previousSpan, readHiddenAgents, restoreAgentIn, withoutHiddenAgents, type AgentBucket, type AgentCallFact, type AgentReportPeriod, type HiddenAgent } from "../../../shared/agent-ranking";
 import { markItems, previewSource, readTimeline, timelineStateOf, type CallSegment, type CallTimeline } from "../../../shared/call-timeline";
 import { demoLocateMarks, demoSegments } from "./call-timeline-demo";
 import { detectTopic } from "../../../shared/call-topic";
@@ -43,7 +43,7 @@ import { offerStatusAfterApprovedClaim } from "../../../server/marketplace";
 import { evaluateOrderEligibility, intervalWindowOpen, orderBlocks } from "../../../server/order-eligibility";
 import { PLACEHOLDERS, buildEndpointBody, endpointNeeds, evaluateResponseRules, leadTemplateValues, selectEndpoints } from "../../../server/outbound-templates";
 import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../../../shared/wattfox";
-import { berlinBound, berlinDay as partnerDay, buildPartnerReport, isDay, listPartnerContacts, quickRange, type ReportBasis } from "../../../shared/partner-report";
+import { berlinBound, berlinDay as partnerDay, buildPartnerReport, isDay, listPartnerContacts, quickRange, type QuotaPeriod, type ReportAccount, type ReportBasis } from "../../../shared/partner-report";
 import { samplePartnerData } from "./partner-sample";
 import { SAVED_SECRET, isPlainCredential } from "../../../shared/credentials";
 import { gluedAddressError, hasGluedAddress } from "../../../shared/endpoint-url";
@@ -1294,6 +1294,11 @@ const demoSession = { loggedOut: false, impersonatedUserId: null as number | nul
 
 const AROUNDHOME_PRESET = [{ value: "2", label: "Ungültige Telefonnummer / Spam", reason: "Falsche Telefonnummer" }, { value: "3", label: "Kontaktdaten fehlen / Land nicht unterstützt", reason: "Kontaktdaten fehlen" }, { value: "4", label: "Kein Partner verfügbar", reason: "Kein Partner" }, { value: "5", label: "Kunde existiert bereits (Duplikat)", reason: "Dublette" }, { value: "6", label: "E-Mail auf Sperrliste", reason: "Sperrliste" }];
 
+/** Kontingente der Vorschau (v378): Was unter „partnerQuotas“ gespeichert ist, gilt vor dem Beispiel-Kontingent des Kontos – auch „entfernt“ (Menge leer). */
+function withPartnerQuotas<Data extends { accounts: ReportAccount[] }>(data: Data): Data {
+  return { ...data, accounts: data.accounts.map((account) => { const saved = T().partnerQuotas.find((row) => row.accountId === account.id); return saved ? { ...account, quotaAmount: (saved.amount ?? null) as number | null, quotaPeriod: saved.period as QuotaPeriod } : account; }) };
+}
+
 /** Zeitraum und Zeitbasis der Statistik „Integrationen“ – wie reportFilter auf dem Server: ohne Angabe die letzten 30 Tage nach Zustelldatum. */
 function partnerRange(query: { from?: string | null; to?: string | null; basis?: ReportBasis | null; categoryId?: number | null }) {
   const today = partnerDay(new Date()); const fallback = quickRange("last30", today);
@@ -1507,6 +1512,8 @@ function sessionView() { const session = T().agentSessions.find((row) => row.use
 /** Übernahme eines Rohdaten-Kontakts als Lead – derselbe Weg wie beim Import (Lead + Verlauf + Automatisierung). */
 // Alias-Namen der Agenten: gespeicherte Zuordnung, Belege aus den Gesprächen, anwenden (Gespräche unter einem Alias bekommen den echten Namen)
 const demoAliases = (): AgentAlias[] => readAliases((callQaConfig() as { agentAliases?: unknown }).agentAliases);
+/** Agenten, die von Hand aus der Bestenliste gelöscht wurden – Spiegel von hiddenAgents (server/agent-hidden.ts). */
+const demoHiddenAgents = (): HiddenAgent[] => readHiddenAgents((callQaConfig() as { hiddenAgents?: unknown }).hiddenAgents);
 const demoSaveAliases = (list: AgentAlias[]) => { const config = callQaConfig(); update(store, "callQaConfigs", (row) => row.id === config.id, { agentAliases: list }); };
 function demoAliasEvidence() {
   const calls = T().callRecords.filter((row) => String(row.agentName ?? "").trim()); const pairMap = new Map<string, AliasPair>(); const nameMap = new Map<string, { name: string; source: string | null; calls: number }>();
@@ -2579,7 +2586,9 @@ const procedures: Record<string, Handler> = {
   // ---- Partner-Statusrückmeldung (Spiegel von server/partner-accounts.ts; Abgleich und Prüfung simuliert)
   "leadops.listPartnerAccounts": () => { const hlr = T().partnerAccounts.find((row) => row.provider === "hlrlookup"); return { aroundhome: T().partnerAccounts.filter((row) => row.provider === "aroundhome").map((row) => ({ id: row.id, label: row.label ?? "", publisherId: row.publisherId ?? "", accessToken: row.accessToken ? `••••••••${String(row.accessToken).slice(-4)}` : "", exportUrl: row.exportUrl ?? "", reclaimOnCancel: row.reclaimOnCancel, reclaimReasonId: row.reclaimReasonId ?? null, enabled: row.enabled, lastSyncAt: row.lastSyncAt ?? null, lastSyncSummary: row.lastSyncSummary ?? null })), wattfox: T().partnerAccounts.filter((row) => row.provider === "wattfox").map((row) => ({ id: row.id, label: row.label ?? "", trackingUrl: `https://leads.tanesco.example/api/partner/wattfox/${row.trackingToken}`, reclaimOnCancel: row.reclaimOnCancel, reclaimReasonId: row.reclaimReasonId ?? null, enabled: row.enabled, lastSyncAt: row.lastSyncAt ?? null, lastSyncSummary: row.lastSyncSummary ?? null })), platforms: T().partnerAccounts.filter((row) => ["leadnodes", "enpal", "gohighlevel"].includes(String(row.provider))).map((row) => ({ id: row.id, provider: row.provider as "leadnodes" | "enpal" | "gohighlevel", label: String(row.label ?? ""), token: row.accessToken ? `••••••••${String(row.accessToken).slice(-4)}` : "", buyerUserId: (row.buyerUserId ?? null) as number | null, enabled: row.enabled !== false, lastSyncAt: (row.lastSyncAt ?? null) as Date | null, lastSyncSummary: (row.lastSyncSummary ?? null) as string | null })), buyerOf: Object.fromEntries(T().partnerAccounts.map((row) => [row.id, (row.buyerUserId ?? null) as number | null])) as Record<number, number | null>, hlrlookup: { id: hlr?.id ?? null, enabled: hlr?.enabled ?? false, apiKey: hlr?.apiKey ? `••••••••${String(hlr.apiKey).slice(-4)}` : "", apiSecret: hlr?.apiSecret ? "••••••••" : "", lastTestAt: hlr?.lastSyncAt ?? null, lastTestSummary: hlr?.lastSyncSummary ?? null }, cancelRules: T().partnerCancelRules.map((row) => ({ id: row.id, provider: row.provider, matchOp: row.matchOp, matchValue: row.matchValue, reasonId: row.reasonId })), reasons: T().reclamationReasons.map((row) => ({ id: row.id, name: row.name, active: row.active })) }; },
   // Statistik „Integrationen“: dieselbe Rechnung wie auf dem Server (shared/partner-report.ts) – in der Vorschau mit Beispielkonten, die an den Leads der Vorschau hängen
-  "leadops.partnerReport": (input) => { const range = partnerRange(input ?? {}); return { from: range.from, to: range.to, today: range.today, basis: range.filter.basis, categoryId: range.filter.categoryId ?? null, cards: buildPartnerReport({ ...samplePartnerData(salesLeads().map((lead) => ({ id: lead.id, categoryId: (lead.categoryId ?? null) as number | null }))), filter: range.filter }) }; },
+  "leadops.partnerReport": (input) => { const range = partnerRange(input ?? {}); return { from: range.from, to: range.to, today: range.today, basis: range.filter.basis, categoryId: range.filter.categoryId ?? null, cards: buildPartnerReport({ ...withPartnerQuotas(samplePartnerData(salesLeads().map((lead) => ({ id: lead.id, categoryId: (lead.categoryId ?? null) as number | null })))), filter: range.filter, today: range.today }) }; },
+  // Kontingent je Partnerkonto (v378, Spiegel von server/partner-report.ts setPartnerQuota): gespeichert in „partnerQuotas“ – die Beispielkonten bringen eins mit, hier lässt es sich ändern oder entfernen
+  "leadops.setPartnerQuota": (input) => { if (!samplePartnerData([]).accounts.some((account) => account.id === input.accountId)) fail("Das Partnerkonto wurde nicht gefunden."); const amount = input.amount && input.amount > 0 ? Math.floor(input.amount) : null; if (!update(store, "partnerQuotas", (row) => row.accountId === input.accountId, { amount, period: input.period })) insert(store, "partnerQuotas", { tenantId: tenant().id, accountId: input.accountId, amount, period: input.period, createdAt: new Date() }); return { success: true, amount, period: input.period as QuotaPeriod }; },
   "leadops.partnerContacts": (input) => { const range = partnerRange(input); const data = samplePartnerData(salesLeads().map((lead) => ({ id: lead.id, categoryId: (lead.categoryId ?? null) as number | null }))); const list = listPartnerContacts({ accountId: input.accountId, ...data, leads: salesLeads().map((lead) => ({ id: lead.id, publicId: String(lead.publicId), name: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || String(lead.company ?? ""), city: (lead.city ?? null) as string | null, categoryId: (lead.categoryId ?? null) as number | null })), filter: range.filter, status: input.status, search: input.search, offset: input.offset, limit: input.limit }); return { total: list.total, rows: list.rows.map((row) => ({ ...row, categoryName: (T().leadCategories.find((category) => category.id === row.categoryId)?.name ?? null) as string | null })) }; },
   "leadops.savePlatformAccount": (input) => { const { id, token, ...values } = input; const existing = id ? T().partnerAccounts.find((row) => row.id === id) : undefined; const accessToken = !token.trim() || token.startsWith("••••") ? existing?.accessToken ?? "" : token.trim(); if (existing) { update(store, "partnerAccounts", (row) => row.id === id, { ...values, accessToken }); return { id }; } return { id: insert(store, "partnerAccounts", { tenantId: tenant().id, ...values, label: values.label || values.provider, accessToken, trackingToken: null, reclaimOnCancel: false, reclaimReasonId: null, enabled: true, lastSyncAt: null, lastSyncSummary: null, createdAt: new Date() }).id }; },
   "leadops.saveAroundhomeAccount": (input) => { const { id, ...values } = input; const existing = id ? T().partnerAccounts.find((row) => row.id === id) : undefined; const accessToken = values.accessToken.startsWith("••••") ? existing?.accessToken ?? "" : values.accessToken; if (existing) { update(store, "partnerAccounts", (row) => row.id === id, { ...values, accessToken }); return { id }; } return { id: insert(store, "partnerAccounts", { tenantId: tenant().id, provider: "aroundhome", ...values, accessToken, trackingToken: null, lastSyncAt: null, lastSyncSummary: null, createdAt: new Date() }).id }; },
@@ -2743,16 +2752,18 @@ const NAMES = ["Wegner", "Albers", "Brandt", "Castell", "Dietz", "Engel", "Frank
   "leadops.dialerAgentReport": (input) => {
     // Spiegel von agentReport: dieselben Bausteine wie am Server (Zahlen je Agent im Zeitraum, je Agent und Tag, insgesamt, zuletzt erreichte Leads) –
     // die Bestenliste selbst (Plätze, Auf- und Abstieg, Serie, Stufe, Bestwerte) entsteht für beide in shared/agent-ranking.ts.
-    const now = new Date(); const period = (input?.period ?? "30") as AgentReportPeriod;
-    const from = callPeriodRange({ period }, now).from; const today = berlinDay(now);
+    // Zeitraum: Kurzwahl oder eigener über von/bis; von Hand gelöschte Agenten zählen nirgends mit und stehen in hiddenAgents.
+    const now = new Date(); const today = berlinDay(now);
+    const chosen = { period: (input?.period ?? "30") as AgentReportPeriod, from: (input?.from ?? null) as string | null, to: (input?.to ?? null) as string | null };
+    const span = callPeriodSpan(chosen, today); const { from, to } = callPeriodRange(chosen, now);
     const campaignRows = T().dialerCampaigns.map((row) => ({ id: row.id, name: String(row.name) })).sort((a, b) => a.name.localeCompare(b.name, "de"));
     // Kampagne: der Name aus den Gesprächen – trägt eine Kampagne des eigenen Dialers denselben Namen, zählen deren Anrufe mit
     const campaign = String(input?.campaign ?? "").trim() || null; const campaignId: number | null = campaign ? null : input?.campaignId ?? null;
     const sameName = campaign ? campaignRows.filter((row) => row.name === campaign).map((row) => row.id) : [];
     const recordById = new Map(T().callRecords.map((row) => [row.id, row] as const));
     const startOf = (record: Row) => (record.startedAt ? new Date(record.startedAt as Date) : null);
-    const inPeriod = (record: Row) => { const at = startOf(record); return !from || Boolean(at && at >= from); };
-    const calls = T().dialerCalls.filter((call) => (!from || new Date(call.startedAt) >= from) && (!campaignId || call.campaignId === campaignId) && (!campaign || sameName.includes(call.campaignId) || recordById.get(call.callRecordId)?.campaign === campaign));
+    const inPeriod = (record: Row) => { const at = startOf(record); return (!from && !to) || Boolean(at && (!from || at >= from) && (!to || at < to)); };
+    const calls = T().dialerCalls.filter((call) => (!from || new Date(call.startedAt) >= from) && (!to || new Date(call.startedAt) < to) && (!campaignId || call.campaignId === campaignId) && (!campaign || sameName.includes(call.campaignId) || recordById.get(call.callRecordId)?.campaign === campaign));
     const linked = new Set(T().dialerCalls.map((call) => call.callRecordId).filter(Boolean));
     const loose = campaignId ? [] : T().callRecords.filter((record) => !linked.has(record.id) && inPeriod(record) && (!campaign || record.campaign === campaign));
     type Bucket = AgentBucket;
@@ -2766,15 +2777,19 @@ const NAMES = ["Wegner", "Albers", "Brandt", "Castell", "Dietz", "Engel", "Frank
     const ownRecords = campaignId ? new Set(T().dialerCalls.filter((call) => call.campaignId === campaignId).map((call) => call.callRecordId)) : null;
     const scoped = T().callRecords.filter((record) => (!campaign || record.campaign === campaign) && (!ownRecords || ownRecords.has(record.id)));
     const fact = (record: Row): AgentCallFact => ({ name: (record.agentName as string | null) ?? null, at: startOf(record), approved: record.decision === "freigegeben", evaluated: typeof record.score === "number" });
-    const todayStart = callPeriodRange({ period: "heute" }, now).from ?? now; const since = new Date(todayStart.getTime() - ((period === "alle" ? 366 : 62) - 1) * 86_400_000);
+    const since = berlinDayStart(dayWindowStart(span, today));
     const days = countAgentDays(scoped.filter((record) => { const at = startOf(record); return Boolean(at && at >= since); }).map(fact));
     const allTime = countAgents(T().callRecords.filter((record) => record.decision === "freigegeben").map(fact)).map((row) => ({ name: row.name, approved: row.approved })); // über alle Kampagnen: die Stufe gehört zum Agenten
-    const previous = previousSpan(period, today, days);
-    const report = finishAgentReport({ buckets: Array.from(buckets.values()), days, allTime, previous, today, fromDay: from ? berlinDay(from) : null });
-    const recentWins = scoped.filter((record) => record.decision === "freigegeben" && startOf(record) && inPeriod(record)).sort((a, b) => startOf(b)!.getTime() - startOf(a)!.getTime() || b.id - a.id).slice(0, 8).map((record) => ({ callId: record.id, name: String(record.agentName ?? "").trim() || null, at: startOf(record), campaign: (record.campaign as string | null) ?? null }));
+    const wins = scoped.filter((record) => record.decision === "freigegeben" && startOf(record) && inPeriod(record)).sort((a, b) => startOf(b)!.getTime() - startOf(a)!.getTime() || b.id - a.id).map((record) => ({ callId: record.id, name: String(record.agentName ?? "").trim() || null, at: startOf(record), campaign: (record.campaign as string | null) ?? null }));
+    const kept = withoutHiddenAgents({ hidden: demoHiddenAgents(), buckets: Array.from(buckets.values()), days, allTime, wins });
+    const previous = previousSpan(span, today, kept.days);
+    const report = finishAgentReport({ buckets: kept.buckets, days: kept.days, allTime: kept.allTime, previous, today, fromDay: span.fromDay, toDay: span.toDay });
     const aliasList = demoAliases(); // unter dem echten Namen steht, wie sich der Agent am Telefon nennt
-    return { period, from, now, today, campaign, previous, ...report, agents: report.agents.map((agent) => ({ ...agent, aliases: aliasesOf(agent.name, aliasList) })), recentWins, campaigns: campaignRows };
+    return { period: span.kind, span, from, to, now, today, campaign, previous, ...report, agents: report.agents.map((agent) => ({ ...agent, aliases: aliasesOf(agent.name, aliasList) })), recentWins: kept.wins.slice(0, 8), hiddenAgents: kept.hiddenAgents, campaigns: campaignRows };
   },
+  // Spiegel von hideAgent / restoreAgent: Agent von Hand aus der Bestenliste löschen und zurückholen – die Gespräche bleiben erhalten
+  "leadops.hideAgent": (input) => { const name = String(input?.name ?? "").trim(); if (isNoAgent(name)) fail("„Ohne Agent“ ist kein Agent – diese Gespräche hat der Dialer ohne Namen gemeldet."); const config = callQaConfig(); const before = demoHiddenAgents(); const list = hideAgentIn(before, name, String(currentUser().name ?? "") || null); if (list !== before) update(store, "callQaConfigs", (row) => row.id === config.id, { hiddenAgents: list }); return { success: true as const, name, hidden: list.length, changed: list !== before }; },
+  "leadops.restoreAgent": (input) => { const name = String(input?.name ?? "").trim(); const before = demoHiddenAgents(); const list = restoreAgentIn(before, name); const changed = list.length !== before.length; if (changed) { const config = callQaConfig(); update(store, "callQaConfigs", (row) => row.id === config.id, { hiddenAgents: list }); } return { success: true as const, name, hidden: list.length, changed }; },
   // Spiegel von agentNames: Namen der Agenten für Vorschläge und Profilbilder (leicht – zählt nichts); aus den Gesprächen die der letzten 90 Tage
   "leadops.callAgentNames": () => { const since = Date.now() - 90 * 86_400_000; const map = new Map<string, { name: string; userId: number | null }>(); for (const call of T().dialerCalls) { const user = call.agentUserId ? T().users.find((row) => row.id === call.agentUserId) : null; const name = String(user?.name ?? "").trim(); if (user && name && !isNoAgent(name)) map.set(name, { name, userId: user.id }); } for (const record of T().callRecords) { const name = String(record.agentName ?? "").trim(); if (name && !isNoAgent(name) && !map.has(name) && record.startedAt && new Date(record.startedAt as Date).getTime() >= since) map.set(name, { name, userId: null }); } return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "de")); },
   "leadops.dialerLiveBoard": () => {

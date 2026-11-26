@@ -8,7 +8,7 @@ import { and, eq, inArray, ne, or, isNull } from "drizzle-orm";
 import { deliveryEndpoints, integrationEvents, leadCategories, leads, memberships, partnerAccounts, partnerTransactions, users, type PartnerAccount } from "../drizzle/schema";
 import { leadDisplayName } from "../shared/lead-fields";
 import { HEALTH_CHECK } from "../shared/api-errors";
-import { berlinBound, berlinDay, buildPartnerReport, isDay, listPartnerContacts, providerMode, quickRange, type ContactStatus, type ReportAccount, type ReportBasis, type ReportDelivery, type ReportFilter, type ReportLead, type ReportTransaction } from "../shared/partner-report";
+import { berlinBound, berlinDay, buildPartnerReport, isDay, listPartnerContacts, providerMode, quickRange, type ContactStatus, type ReportAccount, type ReportBasis, type ReportDelivery, type ReportFilter, type ReportLead, type ReportTransaction, type QuotaPeriod } from "../shared/partner-report";
 import { isWattfoxTemplate } from "../shared/wattfox";
 import type { Db } from "./lead-pipeline";
 
@@ -52,14 +52,26 @@ async function loadReportRows(db: Db, tenantId: number) {
     latest.set(key, { accountId: info.accountId, leadId: event.leadId, buyerName: info.buyerName, categoryId: event.categoryId ?? null, deliveredAt: event.occurredAt, result: event.eventType === "abgelehnt" || event.eventType === "storniert" ? "rejected" : "accepted", at, eventId: event.id });
   }
   const deliveries: ReportDelivery[] = Array.from(latest.values()).map(({ at: _at, eventId: _eventId, ...row }) => row);
-  const accounts: ReportAccount[] = accountRows.map((row) => ({ id: row.id, provider: row.provider, label: row.label, buyerName: row.buyerUserId ? buyerLabel.get(row.buyerUserId) ?? null : deliveries.find((delivery) => delivery.accountId === row.id)?.buyerName ?? null, mode: providerMode(row.provider), hasAccess: row.provider === "wattfox" ? Boolean(row.trackingToken) : Boolean(row.credentialsEncrypted), lastSyncAt: row.lastSyncAt, lastSyncNote: row.lastSyncSummary }));
+  const accounts: ReportAccount[] = accountRows.map((row) => ({ id: row.id, provider: row.provider, label: row.label, buyerName: row.buyerUserId ? buyerLabel.get(row.buyerUserId) ?? null : deliveries.find((delivery) => delivery.accountId === row.id)?.buyerName ?? null, mode: providerMode(row.provider), hasAccess: row.provider === "wattfox" ? Boolean(row.trackingToken) : Boolean(row.credentialsEncrypted), lastSyncAt: row.lastSyncAt, lastSyncNote: row.lastSyncSummary, quotaAmount: row.quotaAmount, quotaPeriod: row.quotaPeriod }));
   const transactions: ReportTransaction[] = txRows.map((row) => ({ id: row.id, accountId: row.accountId, leadId: row.leadId, status: row.status, transactionAt: row.transactionAt ?? row.createdAt, processedAt: row.processedAt, paidAt: row.paidAt, commission: Number(row.commission) || 0, campaignId: row.campaignId, campaignName: row.campaignName, partnerCategory: row.partnerCategory, subId: row.subId, cancelReason: row.cancelReason }));
   return { accounts, deliveries, transactions };
 }
 
 export async function partnerReport(db: Db, tenantId: number, query: ReportQuery) {
   const range = reportFilter(query); const rows = await loadReportRows(db, tenantId);
-  return { from: range.from, to: range.to, today: range.today, basis: range.filter.basis, categoryId: range.filter.categoryId ?? null, cards: buildPartnerReport({ ...rows, filter: range.filter }) };
+  return { from: range.from, to: range.to, today: range.today, basis: range.filter.basis, categoryId: range.filter.categoryId ?? null, cards: buildPartnerReport({ ...rows, filter: range.filter, today: range.today }) };
+}
+
+/**
+ * Kontingent eines Partnerkontos setzen oder entfernen (seit v378): „900 Leads je Woche“. `amount` leer oder 0 = kein Kontingent.
+ * Die Auslieferung ändert sich dadurch nicht – das Kontingent ist die Messlatte der Statistik („noch nachschieben“).
+ */
+export async function setPartnerQuota(db: Db, tenantId: number, input: { accountId: number; amount: number | null; period: QuotaPeriod }) {
+  const account = (await db.select({ id: partnerAccounts.id, provider: partnerAccounts.provider }).from(partnerAccounts).where(and(eq(partnerAccounts.id, input.accountId), eq(partnerAccounts.tenantId, tenantId))).limit(1))[0];
+  if (!account || account.provider === "hlrlookup") throw new Error("Das Partnerkonto wurde nicht gefunden.");
+  const amount = input.amount && input.amount > 0 ? Math.floor(input.amount) : null;
+  await db.update(partnerAccounts).set({ quotaAmount: amount, quotaPeriod: input.period }).where(eq(partnerAccounts.id, account.id));
+  return { success: true, amount, period: input.period };
 }
 
 export async function partnerContacts(db: Db, tenantId: number, query: ReportQuery & { accountId: number; status?: "all" | ContactStatus; search?: string; offset?: number; limit?: number }) {

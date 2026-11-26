@@ -13,9 +13,9 @@ const pick = (seed: number) => { const x = Math.sin(seed * 12.9898) * 43758.5453
 export function samplePartnerData(leads: Array<{ id: number; categoryId: number | null }>, now = new Date()): { accounts: ReportAccount[]; deliveries: ReportDelivery[]; transactions: ReportTransaction[] } {
   const ago = (days: number, hours = 0) => new Date(now.getTime() - days * 86_400_000 - hours * 3_600_000);
   const accounts: ReportAccount[] = [
-    { id: 9001, provider: "aroundhome", label: "Account 1", buyerName: "Aroundhome GmbH", mode: "pull", hasAccess: true, lastSyncAt: ago(0, 0.02), lastSyncNote: "Abgleich abgeschlossen" },
+    { id: 9001, provider: "aroundhome", label: "Account 1", buyerName: "Aroundhome GmbH", mode: "pull", hasAccess: true, lastSyncAt: ago(0, 0.02), lastSyncNote: "Abgleich abgeschlossen", quotaAmount: 25, quotaPeriod: "week" }, // Beispiel-Kontingent (v378) – in der Vorschau änderbar
     { id: 9002, provider: "aroundhome", label: "D2D Account", buyerName: "Aroundhome GmbH", mode: "pull", hasAccess: true, lastSyncAt: ago(0, 0.03), lastSyncNote: "Abgleich abgeschlossen" },
-    { id: 9003, provider: "wattfox", label: null, buyerName: "Nordlicht Energie", mode: "push", hasAccess: true, lastSyncAt: null, lastSyncNote: null },
+    { id: 9003, provider: "wattfox", label: null, buyerName: "Nordlicht Energie", mode: "push", hasAccess: true, lastSyncAt: null, lastSyncNote: null, quotaAmount: 40, quotaPeriod: "month" },
     { id: 9004, provider: "leadnodes", label: null, buyerName: "Helios Solar", mode: "none", hasAccess: false, lastSyncAt: null, lastSyncNote: null },
   ];
   const deliveries: ReportDelivery[] = []; const transactions: ReportTransaction[] = []; let txId = 0;

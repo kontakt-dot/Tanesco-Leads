@@ -3,7 +3,10 @@
  * Server und Vorschau liefern dieselben Bausteine (Zahlen je Agent im Zeitraum, je Agent und Tag, insgesamt, zuletzt erreichte
  * Leads) – hier entsteht daraus die Liste. Ein „Lead“ ist ein freigegebenes (grünes) Gespräch.
  */
-export type AgentReportPeriod = "heute" | "7" | "30" | "alle";
+import { callPeriodSpan, daysBetween, isSingleDaySpan, monthStart, shiftDay, type CallPeriodKey, type CallSpan } from "./call-period";
+export { daysBetween, shiftDay } from "./call-period";
+/** Zeitraum der Bestenliste: dieselben Kurzwahlen wie in der Gesprächsliste (dazu kommt ein eigener Zeitraum über von/bis). */
+export type AgentReportPeriod = CallPeriodKey;
 
 /** Zahlen eines Agenten im Zeitraum (aus Anrufen im eigenen Dialer und aus Gesprächen). */
 export type AgentBucket = { userId: number | null; name: string; calls: number; reached: number; talkSeconds: number; dispositions: Record<string, number>; evaluated: number; scoreSum: number; approved: number; review: number; rejected: number; verkaufbar: number; nachfassen: number; nichtVerkaufbar: number; lastCallAt: Date | string | null };
@@ -25,10 +28,6 @@ export const berlinDay = (value: Date | string | number) => new Date(value).toLo
 /** So viele Minuten liegt die deutsche Zeit gerade vor der Weltzeit (60 im Winter, 120 im Sommer). */
 export function berlinOffsetMinutes(now: Date = new Date()): number { const wall = (zone: string) => new Date(now.toLocaleString("en-US", { timeZone: zone })).getTime(); return Math.round((wall("Europe/Berlin") - wall("UTC")) / 60_000); }
 const dayNumber = (day: string) => { const [y, m, d] = day.split("-").map(Number); return Math.round(Date.UTC(y, m - 1, d) / 86_400_000); };
-/** Tage zwischen zwei Kalendertagen (b − a). */
-export const daysBetween = (a: string, b: string) => dayNumber(b) - dayNumber(a);
-/** Kalendertag um n Tage verschieben. */
-export const shiftDay = (day: string, by: number) => new Date((dayNumber(day) + by) * 86_400_000).toISOString().slice(0, 10);
 
 /* ------------------------------------------------------------------ Stufen: was ein Agent insgesamt erreicht hat */
 export const AGENT_LEVELS = [{ name: "Neuling", from: 0 }, { name: "Talent", from: 10 }, { name: "Profi", from: 25 }, { name: "Experte", from: 50 }, { name: "Meister", from: 100 }, { name: "Champion", from: 250 }, { name: "Legende", from: 500 }] as const;
@@ -53,23 +52,48 @@ export function streakOf(days: AgentDay[], today: string): number {
   return streak;
 }
 /** Bester Tag im Zeitraum: die meisten Leads an einem Tag (bei Gleichstand der jüngere). */
-export function bestDayOf(days: AgentDay[], fromDay: string | null): { day: string; approved: number } | null {
+export function bestDayOf(days: AgentDay[], fromDay: string | null, toDay: string | null = null): { day: string; approved: number } | null {
   let best: { day: string; approved: number } | null = null;
-  for (const item of days) { if (item.approved <= 0 || (fromDay && item.day < fromDay)) continue; if (!best || item.approved > best.approved || (item.approved === best.approved && item.day > best.day)) best = { day: item.day, approved: item.approved }; }
+  for (const item of days) { if (item.approved <= 0 || (fromDay && item.day < fromDay) || (toDay && item.day > toDay)) continue; if (!best || item.approved > best.approved || (item.approved === best.approved && item.day > best.day)) best = { day: item.day, approved: item.approved }; }
   return best;
 }
 
 /* ------------------------------------------------------------------ Der Abschnitt davor (für Auf- und Abstieg) */
 export type AgentSpan = { /** erster Tag */ fromDay: string; /** Tag danach (nicht mehr dabei) */ beforeDay: string };
+/** Längere Zeiträume als ein Vierteljahr werden nicht mehr mit dem Abschnitt davor verglichen – und nichts, was länger als ein Jahr zurückliegt. */
+export const COMPARE_MAX_DAYS = 92; const WINDOW_MAX_DAYS = 366; const WINDOW_MIN_DAYS = 62;
+/** Der Abschnitt davor, soweit er ohne Daten feststeht (alles außer einem einzelnen Tag). */
+function fixedPrevious(span: CallSpan, today: string): AgentSpan | null {
+  if (!span.fromDay) return null;
+  const end = span.toDay && span.toDay < today ? span.toDay : today; if (end < span.fromDay) return null; // reicht der Zeitraum in die Zukunft, zählt er bis heute
+  if (span.kind === "woche") return { fromDay: shiftDay(span.fromDay, -7), beforeDay: shiftDay(end, -6) }; // letzte Woche bis zum selben Wochentag
+  if (span.kind === "monat") { const first = monthStart(span.fromDay, -1); const last = shiftDay(span.fromDay, -1); const same = `${first.slice(0, 8)}${end.slice(8)}`; return { fromDay: first, beforeDay: shiftDay(same > last ? last : same, 1) }; } // letzter Monat bis zum selben Tag
+  if (span.kind === "letzter_monat") return { fromDay: monthStart(span.fromDay, -1), beforeDay: span.fromDay };
+  const length = daysBetween(span.fromDay, end) + 1; if (length > COMPARE_MAX_DAYS) return null;
+  return { fromDay: shiftDay(span.fromDay, -length), beforeDay: span.fromDay }; // genauso viele Tage direkt davor
+}
 /**
- * Womit verglichen wird: bei „Heute“ der letzte Tag mit Gesprächen (höchstens eine Woche zurück – so zählt am Montag der Freitag),
- * bei 7 und 30 Tagen genauso viele Tage davor. „Gesamt“ hat keinen Vergleich.
+ * Womit verglichen wird: bei einem einzelnen Tag (heute, gestern, ein eigener Tag) der letzte Tag mit Gesprächen davor (höchstens eine
+ * Woche zurück – so zählt am Montag der Freitag); bei „Diese Woche“ die letzte Woche bis zum selben Wochentag, bei „Dieser Monat“ der
+ * letzte Monat bis zum selben Tag, bei „Letzter Monat“ der Monat davor – sonst genauso viele Tage direkt davor.
+ * Keinen Vergleich haben „Gesamt“, „vor …“ und Zeiträume über ein Vierteljahr.
  */
-export function previousSpan(period: AgentReportPeriod, today: string, days: AgentDay[]): AgentSpan | null {
-  if (period === "alle") return null;
-  if (period === "heute") { let last: string | null = null; for (const item of days) if (item.calls > 0 && item.day < today && (!last || item.day > last)) last = item.day; return last && daysBetween(last, today) <= 7 ? { fromDay: last, beforeDay: shiftDay(last, 1) } : null; }
-  const length = period === "7" ? 7 : 30; const fromDay = shiftDay(today, -(length - 1));
-  return { fromDay: shiftDay(fromDay, -length), beforeDay: fromDay };
+export function previousSpan(period: AgentReportPeriod | CallSpan, today: string, days: AgentDay[]): AgentSpan | null {
+  const span = typeof period === "string" ? callPeriodSpan({ period }, today) : period; if (!span.fromDay) return null;
+  let result: AgentSpan | null;
+  if (isSingleDaySpan(span, today)) { let last: string | null = null; for (const item of days) if (item.calls > 0 && item.day < span.fromDay && (!last || item.day > last)) last = item.day; result = last && daysBetween(last, span.fromDay) <= 7 ? { fromDay: last, beforeDay: shiftDay(last, 1) } : null; }
+  else result = fixedPrevious(span, today);
+  return result && result.fromDay >= shiftDay(today, -(WINDOW_MAX_DAYS - 1)) ? result : null;
+}
+/**
+ * Ab welchem Tag die Tageszeilen gebraucht werden: 62 Tage für Serie und „neu dabei“, dazu der Zeitraum selbst (bester Tag) und der
+ * Abschnitt davor – höchstens ein Jahr. „Gesamt“ und „vor …“ schauen ein Jahr zurück.
+ */
+export function dayWindowStart(span: CallSpan, today: string): string {
+  const limit = shiftDay(today, -(WINDOW_MAX_DAYS - 1)); if (!span.fromDay) return limit;
+  const before = isSingleDaySpan(span, today) ? shiftDay(span.fromDay, -7) : fixedPrevious(span, today)?.fromDay ?? span.fromDay;
+  const first = [shiftDay(today, -(WINDOW_MIN_DAYS - 1)), span.fromDay, before].sort()[0];
+  return first < limit ? limit : first;
 }
 /** Tageszeilen eines Abschnitts je Agent zusammenzählen („Ohne Agent“ bleibt dabei – für die Summe). */
 export function countFromDays(days: AgentDay[], span: AgentSpan): AgentCount[] {
@@ -122,7 +146,7 @@ export const QUOTE_MIN_CALLS = 5;
  * Aus den Bausteinen die fertige Bestenliste: Reihenfolge und Plätze, Auf- und Abstieg gegenüber dem Zeitraum davor, Serie,
  * bester Tag, Stufe, Abstand zum Platz davor – dazu die Summen und die Bestwerte.
  */
-export function finishAgentReport(input: { buckets: AgentBucket[]; /** je Agent und Tag – reicht weiter zurück als der Zeitraum (für Serie und den Abschnitt davor) */ days: AgentDay[]; allTime: Array<{ name: string; approved: number }>; /** Abschnitt, mit dem verglichen wird – null bei „Gesamt“ */ previous: AgentSpan | null; today: string; fromDay: string | null }): { agents: AgentRow[]; totals: AgentTotals; awards: AgentAward[] } {
+export function finishAgentReport(input: { buckets: AgentBucket[]; /** je Agent und Tag – reicht weiter zurück als der Zeitraum (für Serie und den Abschnitt davor) */ days: AgentDay[]; allTime: Array<{ name: string; approved: number }>; /** Abschnitt, mit dem verglichen wird – null bei „Gesamt“ */ previous: AgentSpan | null; today: string; fromDay: string | null; /** letzter Tag des Zeitraums – null, wenn er noch läuft */ toDay?: string | null }): { agents: AgentRow[]; totals: AgentTotals; awards: AgentAward[] } {
   const allDays = mergeDays(input.days);
   // Zuordnung über den Schlüssel des Namens: Die Datenbank liefert je Abfrage eine der Schreibweisen – sie müssen trotzdem zusammenfinden
   const daysBy = new Map<string, AgentDay[]>(); for (const item of allDays) { const key = nameKey(item.name); if (!key) continue; const list = daysBy.get(key); if (list) list.push(item); else daysBy.set(key, [item]); }
@@ -148,7 +172,7 @@ export function finishAgentReport(input: { buckets: AgentBucket[]; /** je Agent 
       successRate: pct(appointments + interested, bucket.reached), evaluated: bucket.evaluated, averageScore,
       approved: bucket.approved, review: bucket.review, rejected: bucket.rejected, verkaufbar: bucket.verkaufbar, nachfassen: bucket.nachfassen, nichtVerkaufbar: bucket.nichtVerkaufbar, lastCallAt: bucket.lastCallAt,
       rank, previousRank, rankChange: rank && previousRank ? previousRank - rank : null, isNew: Boolean(rank && input.fromDay && !days.some((item) => item.day < input.fromDay! && item.calls > 0)),
-      greenRate: pct(bucket.approved, bucket.evaluated), approvedToday: days.find((item) => item.day === input.today)?.approved ?? 0, streak: none ? 0 : streakOf(days, input.today), bestDay: none ? null : bestDayOf(days, input.fromDay),
+      greenRate: pct(bucket.approved, bucket.evaluated), approvedToday: days.find((item) => item.day === input.today)?.approved ?? 0, streak: none ? 0 : streakOf(days, input.today), bestDay: none ? null : bestDayOf(days, input.fromDay, input.toDay ?? null),
       approvedAllTime: leadsAllTime, level: agentLevel(leadsAllTime),
       gap: ahead && rank ? { rank: rank - 1, name: ahead.name, missing: Math.max(0, ahead.approved - bucket.approved) } : null,
     });
@@ -188,4 +212,43 @@ export function countAgents(facts: AgentCallFact[]): AgentCount[] {
   const map = new Map<string, AgentCount>();
   for (const fact of facts) { const key = nameKey(fact.name); if (!key) continue; const row = map.get(key) ?? { name: fact.name!.trim(), calls: 0, approved: 0, evaluated: 0 }; row.calls += 1; if (fact.approved) row.approved += 1; if (fact.evaluated) row.evaluated += 1; map.set(key, row); }
   return Array.from(map.values());
+}
+
+/* ------------------------------------------------------------------ Von Hand gelöschte Agenten */
+/** Ein Agent, der von Hand aus der Bestenliste genommen wurde – seine Gespräche bleiben erhalten, er lässt sich zurückholen. */
+export type HiddenAgent = { name: string; /** wann gelöscht (ISO) */ at: string; /** von wem */ by: string | null };
+/** Was ein gelöschter Agent im Zeitraum hatte – für den Hinweis unter der Rangliste. */
+export type HiddenAgentRow = HiddenAgent & { calls: number; approved: number };
+export const HIDDEN_AGENT_LIMIT = 500;
+/** Gespeicherte Liste lesen (beliebiges JSON): kaputte Einträge fallen weg, jeder Name steht nur einmal da. */
+export function readHiddenAgents(value: unknown): HiddenAgent[] {
+  if (!Array.isArray(value)) return []; const seen = new Set<string>(); const list: HiddenAgent[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue; const raw = item as Record<string, unknown>; const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 160) : ""; const key = nameKey(name);
+    if (!key || seen.has(key)) continue; seen.add(key);
+    list.push({ name, at: typeof raw.at === "string" && !Number.isNaN(new Date(raw.at).getTime()) ? raw.at : new Date(0).toISOString(), by: typeof raw.by === "string" && raw.by.trim() ? raw.by.trim().slice(0, 160) : null });
+  }
+  return list.slice(0, HIDDEN_AGENT_LIMIT);
+}
+/** Schlüssel aller gelöschten Namen – „José“ und „JOSE“ sind derselbe Agent. */
+export const hiddenAgentKeys = (list: HiddenAgent[]) => new Set(list.map((item) => nameKey(item.name)).filter(Boolean));
+/** Agent auf die Liste setzen (steht er schon dort, bleibt der erste Eintrag). „Ohne Agent“ ist kein Agent. */
+export function hideAgentIn(list: HiddenAgent[], name: string, by: string | null, now: Date = new Date()): HiddenAgent[] {
+  const clean = name.trim().slice(0, 160); const key = nameKey(clean); if (!key || hiddenAgentKeys(list).has(key)) return list;
+  return [...list, { name: clean, at: now.toISOString(), by: by?.trim() || null }].slice(-HIDDEN_AGENT_LIMIT);
+}
+/** Agent wieder von der Liste nehmen. */
+export const restoreAgentIn = (list: HiddenAgent[], name: string): HiddenAgent[] => { const key = nameKey(name); return key ? list.filter((item) => nameKey(item.name) !== key) : list; };
+/**
+ * Gelöschte Agenten aus den Bausteinen der Bestenliste nehmen – überall gleich (Zahlen im Zeitraum, Tageszeilen, insgesamt, zuletzt
+ * erreichte Leads). Zurück kommt, was übrig bleibt, und je gelöschtem Agenten, was er im Zeitraum hatte.
+ */
+export function withoutHiddenAgents<D extends { name: string }, A extends { name: string }, W extends { name: string | null }>(input: { hidden: HiddenAgent[]; buckets: AgentBucket[]; days: D[]; allTime: A[]; wins: W[] }): { buckets: AgentBucket[]; days: D[]; allTime: A[]; wins: W[]; hiddenAgents: HiddenAgentRow[] } {
+  const keys = hiddenAgentKeys(input.hidden); if (!keys.size) return { buckets: input.buckets, days: input.days, allTime: input.allTime, wins: input.wins, hiddenAgents: [] };
+  const gone = (name: string | null | undefined) => keys.has(nameKey(name)); const counts = new Map<string, { calls: number; approved: number }>();
+  for (const bucket of input.buckets) { if (!gone(bucket.name)) continue; const key = nameKey(bucket.name); const row = counts.get(key) ?? { calls: 0, approved: 0 }; row.calls += bucket.calls; row.approved += bucket.approved; counts.set(key, row); }
+  return {
+    buckets: input.buckets.filter((bucket) => !gone(bucket.name)), days: input.days.filter((item) => !gone(item.name)), allTime: input.allTime.filter((item) => !gone(item.name)), wins: input.wins.filter((item) => !gone(item.name)),
+    hiddenAgents: input.hidden.map((item) => ({ ...item, calls: counts.get(nameKey(item.name))?.calls ?? 0, approved: counts.get(nameKey(item.name))?.approved ?? 0 })).sort((a, b) => a.name.localeCompare(b.name, "de")),
+  };
 }

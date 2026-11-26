@@ -2473,3 +2473,61 @@ html:not(.dark) .pipeline-head-quote .pipeline-head-quote-mark{color:#bc001d!imp
 
 /* Auswahlfelder im Testlead-Fenster: lesbare Schriftgröße */
 .ld-field .filter-select,.ld-import>.filter-select{padding:0 12px;font-size:13px}
+
+/* ─────────────────────────── Version 378 ───────────────────────────
+   Integrationen: Kontingent je Partnerkonto – „noch nachschieben“ steht groß vorn, daneben der Weg dorthin (bestellt · gesendet · PrePing abgelehnt · angenommen). */
+.pr-quota{display:grid;gap:12px;padding:14px 16px 15px;border:1px solid var(--lt-line);border-radius:16px;background:var(--lt-tile);box-shadow:inset 3px 0 0 var(--pr-open)}
+.pr-quota.is-done{box-shadow:inset 3px 0 0 var(--pr-good)}
+.pr-quota-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 14px}
+.pr-quota-head h4{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:0;font-size:13.5px;font-weight:700;color:var(--lt-ink)}
+.pr-quota-head h4 span{font-size:12.5px;font-weight:500;color:var(--lt-muted)}
+.pr-quota-edit{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:0;border-radius:8px;background:none;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--lt-ink-2);cursor:pointer}
+.pr-quota-edit:hover{background:var(--lt-chip);color:var(--lt-ink)}
+.pr-quota-edit svg{width:13px;height:13px}
+.pr-quota-body{display:grid;grid-template-columns:minmax(150px,auto) minmax(0,1fr);align-items:center;gap:14px 26px}
+.pr-quota-main{display:grid;gap:2px}
+.pr-quota-main strong{display:flex;align-items:center;font-size:46px;font-weight:780;letter-spacing:-.04em;line-height:1;color:var(--pr-open);font-variant-numeric:tabular-nums}
+.pr-quota-main span{font-size:13px;font-weight:650;color:var(--lt-ink)}
+.pr-quota.is-done .pr-quota-main strong{color:var(--pr-good)}
+.pr-quota-main strong svg{width:42px;height:42px;stroke-width:2.6}
+.pr-quota-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0}
+.pr-quota-steps>div{display:grid;align-content:start;gap:2px;min-width:0;padding:2px 16px}
+.pr-quota-steps>div+div{border-left:1px solid var(--lt-line)}
+.pr-quota-steps dt{font-size:12px;color:var(--lt-muted)}
+.pr-quota-steps dd{margin:0;font-size:22px;font-weight:740;letter-spacing:-.02em;line-height:1.15;color:var(--lt-ink);font-variant-numeric:tabular-nums}
+.pr-quota-steps small{font-size:11.5px;line-height:1.35;color:var(--lt-muted)}
+.pr-quota-steps .is-rejected dd{color:color-mix(in srgb,var(--pr-bad) 78%,var(--lt-ink))}
+.pr-quota-steps .is-accepted dd{color:var(--pr-good)}
+.pr-quota-bar{height:8px;border-radius:999px;background:var(--lt-chip);overflow:hidden}
+.pr-quota-bar i{display:block;height:100%;border-radius:999px;background:var(--pr-good);transition:width .3s}
+.pr-quota-text{margin:0;font-size:13px;line-height:1.5;color:var(--lt-ink-2)}
+.pr-quota.is-empty{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:11px 14px;border-style:dashed;box-shadow:none;font-size:12.5px;line-height:1.45;color:var(--lt-muted)}
+.pr-quota.is-empty>svg{flex:none;width:18px;height:18px;color:var(--lt-muted)}
+.pr-quota.is-empty>span{flex:1 1 320px;min-width:0}
+.pr-quota.is-empty b{font-weight:650;color:var(--lt-ink-2)}
+.pr-quota.is-edit{box-shadow:inset 3px 0 0 var(--lt-ink-2)}
+.pr-quota-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px}
+.pr-quota-form label{display:grid;gap:5px;font-size:12px;font-weight:600;color:var(--lt-ink-2)}
+.pr-quota-input{width:150px;height:40px;padding:0 12px;border:1px solid var(--lt-line-2);border-radius:11px;background:var(--lt-field);font-family:inherit;font-size:15px;font-weight:650;color:var(--lt-ink);font-variant-numeric:tabular-nums}
+.pr-quota-input:focus-visible{outline:2px solid var(--lt-ink-2);outline-offset:1px}
+.pr-quota-form .filter-select{height:40px;min-width:150px;padding:0 12px;font-size:13px}
+.pr-quota-remove{margin-left:auto;padding:8px 6px;border:0;background:none;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--lt-muted);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.pr-quota-remove:hover{color:var(--pr-bad)}
+.pr-quota-help{margin:0;max-width:78ch;font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.pr-quota-edit:focus-visible,.pr-quota-remove:focus-visible{outline:2px solid var(--lt-ink-2);outline-offset:2px}
+/* Leiste über allen Konten: mit Kontingenten kommt „Noch nachschieben“ als fünfte Zahl dazu */
+.pr-rail.has-quota{grid-template-columns:repeat(5,minmax(0,1fr))}
+.pr-stat.is-push.is-open strong{color:var(--pr-open)}
+.pr-stat.is-push>span svg{color:var(--pr-open)}
+.pr-stat.is-push.is-good>span svg{color:var(--pr-good)}
+@media (max-width:1100px){
+  .pr-rail.has-quota{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pr-rail.has-quota .pr-stat:nth-child(5){grid-column:1/-1;border-left:0}
+  .pr-quota-body{grid-template-columns:minmax(0,1fr)}
+  .pr-quota-steps{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 0}
+  .pr-quota-steps>div{padding-left:0}
+  .pr-quota-steps>div:nth-child(even){padding-left:16px}
+  .pr-quota-steps>div:nth-child(odd){border-left:0}
+}
+@media (max-width:640px){.pr-quota-main strong{font-size:38px}.pr-quota-form label,.pr-quota-input,.pr-quota-form .filter-select{width:100%}.pr-quota-form label{flex:1 1 140px}.pr-quota-remove{margin-left:0}}
+@media (prefers-reduced-motion:reduce){.pr-quota-bar i{transition:none}}

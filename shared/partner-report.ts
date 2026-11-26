@@ -30,7 +30,7 @@ export const PARTNER_PROVIDERS: Array<{ key: PartnerProvider; name: string; mode
 export const providerName = (provider: string): string => PARTNER_PROVIDERS.find((item) => item.key === provider)?.name ?? provider;
 export const providerMode = (provider: string): PartnerMode => PARTNER_PROVIDERS.find((item) => item.key === provider)?.mode ?? "none";
 
-export type ReportAccount = { id: number; provider: string; label: string | null; buyerName: string | null; mode: PartnerMode; hasAccess: boolean; lastSyncAt: Date | string | null; lastSyncNote: string | null };
+export type ReportAccount = { id: number; provider: string; label: string | null; buyerName: string | null; mode: PartnerMode; hasAccess: boolean; lastSyncAt: Date | string | null; lastSyncNote: string | null; /** Kontingent (seit v378): so viele angenommene Leads je Tag, Woche oder Monat – leer = keins */ quotaAmount?: number | null; quotaPeriod?: QuotaPeriod | null };
 /** Eine Zustellung: ein Lead an ein Konto (je Lead und Konto zählt die letzte). `pending` = noch kein Ergebnis. */
 export type ReportDelivery = { accountId: number; leadId: number; buyerName: string; categoryId: number | null; deliveredAt: Date | string; result: "accepted" | "rejected" | "pending" };
 export type ReportTransaction = {
@@ -43,12 +43,12 @@ export type ReportFilter = { from: Date; until: Date; basis: ReportBasis; catego
 
 export type ContactStatus = "rejected" | "none" | "open" | "confirmed" | "paid" | "cancelled" | "pending";
 export const CONTACT_STATUS: Record<ContactStatus, { label: string; tone: "good" | "bad" | "calm" }> = {
-  rejected: { label: "Abgelehnt", tone: "bad" }, none: { label: "Ohne Rückmeldung", tone: "calm" }, open: { label: "Offen", tone: "calm" },
+  rejected: { label: "PrePing abgelehnt", tone: "bad" }, none: { label: "Ohne Rückmeldung", tone: "calm" }, open: { label: "Offen", tone: "calm" },
   confirmed: { label: "Bestätigt", tone: "good" }, paid: { label: "Ausgezahlt", tone: "good" }, cancelled: { label: "Storniert", tone: "bad" }, pending: { label: "Ausstehend", tone: "calm" },
 };
 export const CONTACT_FILTERS: Array<{ key: "all" | ContactStatus; label: string }> = [
   { key: "all", label: "Alle" }, { key: "confirmed", label: "Nur bestätigt" }, { key: "paid", label: "Nur ausgezahlt" }, { key: "cancelled", label: "Nur storniert" },
-  { key: "open", label: "Nur offen" }, { key: "none", label: "Ohne Rückmeldung" }, { key: "rejected", label: "Nur abgelehnt" },
+  { key: "open", label: "Nur offen" }, { key: "none", label: "Ohne Rückmeldung" }, { key: "rejected", label: "Nur PrePing abgelehnt" },
 ];
 
 export type ReportCounts = {
@@ -65,6 +65,8 @@ export type ReportDirect = {
 };
 export type ReportCard = {
   account: ReportAccount; title: string; counts: ReportCounts;
+  /** Kontingent des laufenden Tages, der laufenden Woche oder des laufenden Monats – unabhängig vom Zeitraum und von der Sparte der Seite */
+  quota: ReportQuota | null;
   /** Transaktionen ohne Zustellung im Zeitraum – sie zählen in keinem Zähler; ihre Provision steckt in `counts.commission` */
   unmatched: number; unmatchedCommission: number;
   buyers: ReportBuyerRow[]; direct: ReportDirect | null;
@@ -118,9 +120,60 @@ function link(deliveries: ReportDelivery[], transactions: ReportTransaction[]) {
   return { txOf: (delivery: ReportDelivery) => byDelivery.get(key(delivery.accountId, delivery.leadId)), loose };
 }
 
-/** Eine Karte je Partnerkonto – jedes Konto erscheint, auch mit lauter Nullen. */
-export function buildPartnerReport(input: { accounts: ReportAccount[]; deliveries: ReportDelivery[]; transactions: ReportTransaction[]; filter: ReportFilter }): ReportCard[] {
-  const { filter } = input; const { txOf, loose } = link(input.deliveries, input.transactions);
+/* ------------------------------------------------------------------ Kontingent (seit v378) */
+
+/**
+ * Kontingent je Partnerkonto: „900 Leads je Woche“. Gezählt wird der laufende Zeitraum (heute · Montag bis Sonntag · Kalendermonat, deutsche Zeit).
+ * Auf das Kontingent zählt nur, was der Partner ANGENOMMEN hat. Was er beim Senden ablehnt, weil er den Kontakt schon hat („PrePing abgelehnt“),
+ * zählt nicht – genau so viele müssen nachgeschoben werden:  noch nachschieben = Kontingent − angenommen.
+ */
+export type QuotaPeriod = "day" | "week" | "month";
+export const QUOTA_PERIODS: Array<{ key: QuotaPeriod; label: string; now: string; until: string; each: string }> = [
+  { key: "week", label: "je Woche", now: "diese Woche", until: "bis Sonntag", each: "in jeder Woche" },
+  { key: "day", label: "je Tag", now: "heute", until: "heute", each: "an jedem Tag" },
+  { key: "month", label: "je Monat", now: "diesen Monat", until: "bis Monatsende", each: "in jedem Monat" },
+];
+export const quotaPeriod = (key: string | null | undefined) => QUOTA_PERIODS.find((item) => item.key === key) ?? QUOTA_PERIODS[0];
+export type ReportQuota = {
+  amount: number; period: QuotaPeriod;
+  /** der laufende Zeitraum, beide Tage eingeschlossen (JJJJ-MM-TT) */
+  from: string; to: string;
+  /** an den Partner geschickt · davon beim Senden abgelehnt (hatte er schon) · angenommen · noch ohne Ergebnis */
+  sent: number; rejected: number; accepted: number; pending: number;
+  /** noch nachschieben = Kontingent − angenommen (nie unter 0) · darüber hinaus angenommen */
+  open: number; over: number;
+  /** Tage, die im Zeitraum noch bleiben (heute eingeschlossen) – und wie viele Leads je Tag dafür reichen (aufgerundet) */
+  daysLeft: number; perDay: number;
+};
+/** Der laufende Zeitraum eines Kontingents: heute, die Woche von Montag bis Sonntag oder der Kalendermonat. */
+export function quotaWindow(period: QuotaPeriod, today: string): { from: string; to: string } {
+  return quickRange(period === "day" ? "today" : period === "month" ? "month" : "week", today);
+}
+export function buildQuota(input: { accountId: number; amount: number | null | undefined; period: QuotaPeriod | null | undefined; deliveries: ReportDelivery[]; today: string }): ReportQuota | null {
+  const amount = Math.floor(Number(input.amount) || 0); if (amount <= 0) return null;
+  const period = quotaPeriod(input.period).key; const window = quotaWindow(period, input.today);
+  const from = berlinBound(window.from).getTime(); const until = berlinBound(window.to, true).getTime();
+  let sent = 0; let rejected = 0; let accepted = 0; let pending = 0;
+  for (const delivery of input.deliveries) {
+    if (delivery.accountId !== input.accountId) continue; const at = time(delivery.deliveredAt); if (!(at >= from && at <= until)) continue;
+    sent += 1; if (delivery.result === "rejected") rejected += 1; else if (delivery.result === "pending") pending += 1; else accepted += 1;
+  }
+  const open = Math.max(0, amount - accepted); const daysLeft = Math.max(1, Math.round((Date.UTC(...dayParts(window.to)) - Date.UTC(...dayParts(input.today))) / 86_400_000) + 1);
+  return { amount, period, from: window.from, to: window.to, sent, rejected, accepted, pending, open, over: Math.max(0, accepted - amount), daysLeft, perDay: open ? Math.ceil(open / daysLeft) : 0 };
+}
+const dayParts = (day: string): [number, number, number] => { const [y, m, d] = day.split("-").map(Number); return [y, m - 1, d]; };
+/** Der Satz zur Karte: was noch fehlt – in den Worten des Nutzers („noch nachschieben“). */
+export function quotaSentence(quota: ReportQuota): string {
+  const word = quotaPeriod(quota.period); const leads = (count: number) => `${count.toLocaleString("de-DE")} ${count === 1 ? "Lead" : "Leads"}`;
+  if (!quota.open) return quota.over ? `Kontingent erfüllt – ${leads(quota.over)} mehr angenommen als bestellt.` : `Kontingent erfüllt: ${quota.accepted.toLocaleString("de-DE")} von ${quota.amount.toLocaleString("de-DE")} angenommen.`;
+  const pace = quota.period === "day" || quota.daysLeft <= 1 ? "" : ` Das sind ${quota.perDay.toLocaleString("de-DE")} am Tag ${word.until} (noch ${quota.daysLeft} Tage).`;
+  const why = quota.rejected ? ` ${leads(quota.rejected)} hatte der Partner schon – ${quota.rejected === 1 ? "er zählt" : "sie zählen"} nicht.` : "";
+  return `Du musst ${word.now} noch ${leads(quota.open)} nachschieben.${why}${pace}`;
+}
+
+/** Eine Karte je Partnerkonto – jedes Konto erscheint, auch mit lauter Nullen. `today` (deutscher Tag) legt den laufenden Zeitraum der Kontingente fest. */
+export function buildPartnerReport(input: { accounts: ReportAccount[]; deliveries: ReportDelivery[]; transactions: ReportTransaction[]; filter: ReportFilter; today?: string }): ReportCard[] {
+  const { filter } = input; const { txOf, loose } = link(input.deliveries, input.transactions); const today = input.today ?? berlinDay(new Date());
   return input.accounts.map((account) => {
     const total = blank(); const buyers = new Map<string, ReportCounts>();
     const categories = new Map<string, { name: string; accepted: number; confirmed: number; cancelled: number; open: number; commission: number }>();
@@ -150,6 +203,7 @@ export function buildPartnerReport(input: { accounts: ReportAccount[]; deliverie
     const done = finish(total); done.commission = cents(done.commission + direct.commission);
     return {
       account, title: `${providerName(account.provider)}${account.label?.trim() && account.label.trim().toLowerCase() !== providerName(account.provider).toLowerCase() ? ` (${account.label.trim()})` : ""}`, counts: done, unmatched: direct.total, unmatchedCommission: direct.commission,
+      quota: buildQuota({ accountId: account.id, amount: account.quotaAmount, period: account.quotaPeriod, deliveries: input.deliveries, today }),
       buyers: Array.from(buyers, ([buyerName, row]) => ({ buyerName, ...finish(row) })).sort((a, b) => b.delivered - a.delivered || a.buyerName.localeCompare(b.buyerName, "de")),
       direct: direct.total ? direct : null,
       categories: Array.from(categories.values()).map((row) => ({ ...row, commission: cents(row.commission) })).sort((a, b) => b.accepted - a.accepted || a.name.localeCompare(b.name, "de")),

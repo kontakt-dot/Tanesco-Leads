@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll } from "vitest";
+import { afterAll, describe, expect, it, beforeAll, vi } from "vitest";
 import { callProcedure, getStore, resetStore } from "../backend";
 
 const call = (path: string, input?: unknown) => callProcedure(path, input) as Promise<any>;
@@ -1012,8 +1012,9 @@ describe("Trennung Verkaufs-Leads/Vertriebskontakte, Sperrliste mit Unterlisten,
     const visible = (await call("leadops.listInbox", { filter: "alle" })).items; expect(visible.length).toBeGreaterThanOrEqual(before + 1); expect(visible.some((row: any) => row.fromEmail === blocked.fromEmail)).toBe(false); // alle Nachrichten des Beschwerde-Absenders liegen unter „Gesperrt“
     // Seed-Beschwerde (Dachdecker Brandt) steht als automatisch gesperrt in der Sperrliste
     expect((await call("leadops.listEmailSuppressions")).items.some((row: any) => row.email === "info@dachdecker-brandt.example" && row.reason === "beschwerde")).toBe(true);
-    // Zeitraum-Filter: nur heute (die drei neuen Antworten), eigener Zeitraum in der Vergangenheit ohne die neuen
-    const today = new Date(); const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    // Zeitraum-Filter: nur der Tag der neuen Antworten, eigener Zeitraum in der Vergangenheit ohne die neuen.
+    // Der Tag kommt von der Nachricht selbst – kurz nach Mitternacht liegt ihr Eingang noch am Vortag, „heute“ wäre dann leer.
+    const today = new Date(vogel.receivedAt); const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const onlyToday = await call("leadops.listInbox", { filter: "alle", from: start, to: new Date(start.getTime() + 86_400_000) }); expect(onlyToday.items.every((row: any) => new Date(row.receivedAt) >= start)).toBe(true); expect(onlyToday.items.some((row: any) => row.id === vogel.id)).toBe(true);
     const past = await call("leadops.listInbox", { filter: "alle", from: new Date(start.getTime() - 10 * 86_400_000), to: new Date(start.getTime() - 86_400_000) }); expect(past.items.some((row: any) => row.id === vogel.id)).toBe(false); expect(past.items.every((row: any) => new Date(row.receivedAt) < start)).toBe(true);
     // Filter nach KI-Einordnung
@@ -1475,7 +1476,9 @@ describe("Übernahme in die Pipeline „E-Mail-Kampagne“ mit Stufe (Chat-Build
 });
 
 describe("Glocke: Tagesverlauf der Plattform (Chat-Build)", () => {
-  beforeAll(() => resetStore());
+  // Feste Uhr (15 Uhr am heutigen Tag): Die Vorschau-Daten entstehen relativ zur Uhr – kurz nach Mitternacht stünde sonst noch nichts unter „Heute“.
+  beforeAll(() => { const afternoon = new Date(); afternoon.setHours(15, 0, 0, 0); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(afternoon); resetStore(); });
+  afterAll(() => { vi.useRealTimers(); });
 
   it("Zeigt die letzten Tage zusammengefasst, zählt Neues seit dem letzten Öffnen und schreibt bei Aktionen mit", async () => {
     const feed = await call("leadops.activityFeed", { days: 14 });

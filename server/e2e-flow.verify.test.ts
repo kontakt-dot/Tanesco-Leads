@@ -5005,6 +5005,50 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       const tomorrow = await agentReport(db, tenantId, { period: "7", campaign: CAMPAIGN, now: new Date(T0.getTime() + dayMs + 15 * hour) });
       expect(tomorrow.today).toBe(shiftDay(today, 1)); expect([of("BL Ada", tomorrow).streak, of("BL Ben", tomorrow).streak, of("BL Ada", tomorrow).approvedToday]).toEqual([3, 0, 0]);
 
+      // v378 – weitere Zeiträume wie auf der Leads-Seite. „Gestern“ ist ein abgeschlossener Tag: Was heute passiert, zählt nicht mit (auch nicht als bester Tag).
+      const { callPeriodSpan } = await import("../shared/call-period");
+      expect(report.period).toBe("7"); expect(report.span).toEqual({ kind: "7", fromDay: shiftDay(today, -6), toDay: null }); expect(report.to).toBeNull(); expect(report.hiddenAgents).toEqual([]);
+      const yesterday = await owner.leadops.dialerAgentReport({ period: "gestern", campaign: CAMPAIGN });
+      expect(yesterday.period).toBe("gestern"); expect(yesterday.span).toEqual({ kind: "gestern", fromDay: shiftDay(today, -1), toDay: shiftDay(today, -1) }); expect(new Date(yesterday.to!).getTime()).toBe(T0.getTime());
+      expect(yesterday.agents.map((agent) => [agent.name, agent.rank, agent.approved, agent.calls])).toEqual([["BL Ben", 1, 3, 3], ["BL Ada", 2, 1, 1], ["BL Eve", 3, 1, 1]]);
+      expect(of("BL Ada", yesterday).bestDay).toEqual({ day: shiftDay(today, -1), approved: 1 }); expect(yesterday.totals).toMatchObject({ calls: 5, approved: 5, approvedBefore: 1 }); // verglichen mit dem letzten Tag mit Gesprächen davor (vorgestern: ein Lead)
+      expect(yesterday.previous).toEqual({ fromDay: shiftDay(today, -2), beforeDay: shiftDay(today, -1) }); expect(yesterday.recentWins.length).toBe(5); expect(yesterday.recentWins.every((win) => new Date(win.at!).getTime() >= T0.getTime() - dayMs && new Date(win.at!).getTime() < T0.getTime())).toBe(true);
+      // eigener Zeitraum „zwischen“: bis einschließlich des letzten Tages; verglichen wird mit genauso vielen Tagen davor
+      const between = await owner.leadops.dialerAgentReport({ from: shiftDay(today, -10), to: shiftDay(today, -8), campaign: CAMPAIGN });
+      expect(between.period).toBe("zwischen"); expect(between.span).toEqual({ kind: "zwischen", fromDay: shiftDay(today, -10), toDay: shiftDay(today, -8) });
+      expect(between.agents.map((agent) => [agent.name, agent.rank, agent.approved])).toEqual([["BL Dua", 1, 3], ["BL Ada", 2, 2], ["BL Ben", 3, 1]]); expect(between.previous).toEqual({ fromDay: shiftDay(today, -13), beforeDay: shiftDay(today, -10) }); expect(between.totals.approvedBefore).toBe(0);
+      // „ab“ läuft bis jetzt; „vor“ hat keinen Anfang und keinen Vergleich – dort steht auch, wer vor Monaten zuletzt telefoniert hat
+      const since = await owner.leadops.dialerAgentReport({ from: shiftDay(today, -1), campaign: CAMPAIGN }); expect(since.period).toBe("ab"); expect(since.agents.filter((agent) => agent.rank !== null).map((agent) => [agent.name, agent.approved])).toEqual([["BL Ben", 3], ["BL Ada", 3], ["BL Cem", 1], ["BL Eve", 1]]); /* gleich viele Leads, gleiche Quote – Ben hat die besseren Punkte */ expect(since.previous).toEqual({ fromDay: shiftDay(today, -3), beforeDay: shiftDay(today, -1) });
+      const before = await owner.leadops.dialerAgentReport({ to: shiftDay(today, -8), campaign: CAMPAIGN }); expect(before.period).toBe("vor"); expect(before.previous).toBeNull(); expect(before.totals.approvedBefore).toBeNull();
+      expect(before.agents.map((agent) => [agent.name, agent.rank, agent.approved])).toEqual([["BL Dua", 1, 3], ["BL Ada", 2, 2], ["BL Alt", 3, 1], ["BL Ben", 4, 1]]);
+      // die festen Zeiträume zählen dieselben Tage wie von/bis – an jedem Wochentag und Monatstag
+      for (const key of ["woche", "letzte_woche", "letzte_2_wochen", "monat", "letzter_monat"] as const) {
+        const fixed = await owner.leadops.dialerAgentReport({ period: key, campaign: CAMPAIGN }); const span = callPeriodSpan({ period: key }, today); expect(fixed.span, key).toEqual(span); expect(fixed.period, key).toBe(key);
+        const same = await owner.leadops.dialerAgentReport({ from: span.fromDay, to: span.toDay, campaign: CAMPAIGN });
+        expect(fixed.agents.map((agent) => [agent.name, agent.calls, agent.approved]), key).toEqual(same.agents.map((agent) => [agent.name, agent.calls, agent.approved])); expect(fixed.totals.calls, key).toBe(same.totals.calls);
+      }
+      // dieselben Zeiträume kennt die Gesprächsliste
+      const listed = async (input: Parameters<typeof owner.leadops.callStatistics>[0]) => (await owner.leadops.callStatistics({ campaign: CAMPAIGN, ...input })).total;
+      expect(await listed({ period: "gestern" })).toBe(5); expect(await listed({ from: shiftDay(today, -10), to: shiftDay(today, -8) })).toBe(6); expect(await listed({ period: "letzte_2_wochen" })).toBe((await owner.leadops.dialerAgentReport({ period: "letzte_2_wochen", campaign: CAMPAIGN })).totals.calls);
+
+      // v378 – Agent von Hand löschen: Er steht in keiner Zahl der Bestenliste mehr (Plätze, Summen, Abschnitt davor, Bestwerte, „Zuletzt erreicht“) – seine Gespräche bleiben.
+      await expect(invitee.leadops.hideAgent({ name: "BL Ada" })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/); await expect(owner.leadops.hideAgent({ name: " ohne agent " })).rejects.toThrow("kein Agent");
+      try {
+        expect(await owner.leadops.hideAgent({ name: "  bl ada " })).toMatchObject({ success: true, name: "bl ada", hidden: 1, changed: true }); expect(await owner.leadops.hideAgent({ name: "BL ADA" })).toMatchObject({ hidden: 1, changed: false }); // Schreibweise egal, zweimal löschen ändert nichts
+        const without = await owner.leadops.dialerAgentReport({ period: "7", campaign: CAMPAIGN });
+        expect(without.agents.map((agent) => [agent.name, agent.rank, agent.approved])).toEqual([["BL Ben", 1, 3], ["BL Cem", 2, 1], ["BL Eve", 3, 1], ["Ohne Agent", null, 1]]);
+        expect(without.totals).toMatchObject({ agents: 4, calls: 7, approved: 6, review: 1, rejected: 0, approvedToday: 2, callsToday: 3, approvedBefore: 4 });
+        expect([of("BL Ben", without).previousRank, of("BL Ben", without).rankChange, of("BL Ben", without).gap]).toEqual([2, 1, null]); // im Abschnitt davor fehlt Ada ebenso: Ben war dort Zweiter
+        expect(without.recentWins.map((win) => win.name)).toEqual([null, "BL Cem", "BL Eve", "BL Ben", "BL Ben", "BL Ben"]); expect(without.awards.some((item) => item.name === "BL Ada")).toBe(false);
+        expect(without.hiddenAgents).toMatchObject([{ name: "bl ada", calls: 6, approved: 4 }]); expect(new Date(without.hiddenAgents[0].at).getTime()).toBeGreaterThan(Date.now() - 60_000);
+        expect((await owner.leadops.dialerAgentReport({ period: "alle", campaign: OTHER })).agents).toEqual([]); // auch in der anderen Kampagne
+        expect((await db.select({ id: callsTable.id }).from(callsTable).where(and(eq(callsTable.tenantId, tenantId), eq(callsTable.agentName, "BL Ada")))).length).toBe(9); expect(await listed({ period: "7", agentName: "BL Ada" })).toBe(6); // die Gespräche bleiben – in der Datenbank und in der Liste
+        // zurückholen: alles ist wieder da
+        expect(await owner.leadops.restoreAgent({ name: "BL Ada" })).toMatchObject({ success: true, hidden: 0, changed: true }); expect((await owner.leadops.restoreAgent({ name: "BL Ada" })).changed).toBe(false);
+        const back = await owner.leadops.dialerAgentReport({ period: "7", campaign: CAMPAIGN });
+        expect(back.agents.map((agent) => [agent.name, agent.rank, agent.approved, agent.previousRank])).toEqual(report.agents.map((agent) => [agent.name, agent.rank, agent.approved, agent.previousRank])); expect(back.totals).toMatchObject({ agents: 5, calls: 13, approved: 10, approvedBefore: 6 }); expect(back.hiddenAgents).toEqual([]);
+      } finally { await owner.leadops.restoreAgent({ name: "BL Ada" }).catch(() => undefined); }
+
       // Namen der Agenten: leichte Abfrage, sortiert, ohne „Ohne Agent“ und ohne Agenten, die seit über 90 Tagen nicht telefoniert haben – der eigene Dialer bringt den Benutzer mit
       const names = await owner.leadops.callAgentNames();
       expect(names.filter((item) => item.name.startsWith("BL "))).toEqual(["BL Ada", "BL Ben", "BL Cem", "BL Dua", "BL Eve"].map((name) => ({ name, userId: null })));
@@ -6261,6 +6305,20 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await cardNow({ basis: "processed" })).counts).toMatchObject({ delivered: 1, confirmed: 1 }); expect((await cardNow({ basis: "paid" })).counts.delivered).toBe(0); expect((await cardNow({ from: "2020-01-01", to: "2020-01-31" })).counts.delivered).toBe(0);
     await handleWattfoxCallback(db, token, { lead_id: row.publicId, order: "WF-ORDER-1", status: "cancelled", note: "INVALID_OTHER" });
     const cancelled373 = await cardNow(); expect(cancelled373.counts).toMatchObject({ confirmed: 0, cancelled: 1, commission: 0 }); expect(cancelled373.cancelReasons).toEqual([{ reason: "INVALID_OTHER", count: 1 }]);
+    // (i) v378: Kontingent je Partnerkonto – „noch nachschieben“ = bestellt − angenommen. Was der Partner beim Senden ablehnt („PrePing abgelehnt“: er hat den Kontakt schon), zählt nicht.
+    expect(cancelled373.quota).toBeNull(); expect(cancelled373.account).toMatchObject({ quotaAmount: null, quotaPeriod: "week" });
+    await expect(invitee.leadops.setPartnerQuota({ accountId: wfAccount.id, amount: 5, period: "week" })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/); await expect(owner.leadops.setPartnerQuota({ accountId: 999_999_999, amount: 5, period: "week" })).rejects.toThrow("nicht gefunden");
+    const { quotaWindow, quotaSentence, berlinDay: day378 } = await import("../shared/partner-report"); const today378 = day378(new Date());
+    expect(await owner.leadops.setPartnerQuota({ accountId: wfAccount.id, amount: 50, period: "month" })).toEqual({ success: true, amount: 50, period: "month" });
+    const month378 = (await cardNow()).quota!; expect(month378).toMatchObject({ amount: 50, period: "month", ...quotaWindow("month", today378) });
+    expect(month378.sent).toBe(before373.counts.delivered); expect(month378.rejected).toBe(before373.counts.rejected); expect(month378.rejected).toBeGreaterThanOrEqual(1); expect(month378.accepted + month378.rejected + month378.pending).toBe(month378.sent); // heute geliefert – alles liegt im laufenden Monat
+    expect(month378.open).toBe(50 - month378.accepted); expect(month378.over).toBe(0); expect(month378.perDay).toBe(Math.ceil(month378.open / month378.daysLeft)); expect(quotaSentence(month378)).toContain(`noch ${month378.open} Leads nachschieben`); expect(quotaSentence(month378)).toMatch(/hatte der Partner schon/);
+    // das Kontingent zählt immer den laufenden Zeitraum – unabhängig davon, welchen Zeitraum die Seite gerade zeigt
+    expect((await cardNow({ from: "2020-01-01", to: "2020-01-31" })).quota).toEqual(month378); expect((await cardNow({ basis: "paid" })).quota).toEqual(month378);
+    // je Tag und je Woche; erfüllt, sobald so viele angenommen sind wie bestellt; ohne Zahl ist das Kontingent wieder weg
+    await owner.leadops.setPartnerQuota({ accountId: wfAccount.id, amount: month378.accepted, period: "day" }); const day378q = (await cardNow()).quota!; expect(day378q).toMatchObject({ period: "day", from: today378, to: today378, open: 0, over: 0, perDay: 0, daysLeft: 1 }); expect(quotaSentence(day378q)).toMatch(/^Kontingent erfüllt/);
+    await owner.leadops.setPartnerQuota({ accountId: wfAccount.id, amount: 1, period: "week" }); expect((await cardNow()).quota).toMatchObject({ period: "week", ...quotaWindow("week", today378), open: 0, over: month378.accepted - 1 });
+    expect(await owner.leadops.setPartnerQuota({ accountId: wfAccount.id, amount: null, period: "week" })).toEqual({ success: true, amount: null, period: "week" }); expect((await cardNow()).quota).toBeNull(); expect((await db.select().from(accountsTable).where(eq(accountsTable.id, wfAccount.id)))[0]).toMatchObject({ quotaAmount: null, quotaPeriod: "week" });
     await db.delete(txTable).where(eq(txTable.accountId, wfAccount.id)); await owner.leadops.deletePartnerAccount({ id: wfAccount.id });
     // aufräumen: der Käufer soll in späteren Tests keinen Wattfox-Endpoint mehr haben
     await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id });

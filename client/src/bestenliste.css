@@ -140,7 +140,7 @@ html:not(.dark) .bl-stage .bl-stage-head h2{color:#ffffff!important;font-weight:
 .bl-award small{font-size:11.5px;line-height:1.35;color:var(--bl-faint)}
 
 /* ─────────────────────────── Rangliste ─────────────────────────── */
-.bl-list{--bl-cols:62px minmax(180px,1.25fr) minmax(180px,1.3fr) 88px 108px 86px minmax(150px,1fr) 110px}
+.bl-list{--bl-cols:62px minmax(180px,1.25fr) minmax(180px,1.3fr) 88px 108px 86px minmax(150px,1fr) 150px}
 .bl-list-head{display:flex;align-items:center;gap:10px;margin:0 10px 10px}
 .bl-list-head h3{margin:0;font-size:15.5px;font-weight:700;letter-spacing:-.01em;color:var(--bl-ink)}
 .bl-list-count{font-size:12.5px;color:var(--bl-dim)}
@@ -190,7 +190,14 @@ html:not(.dark) .bl-stage .bl-stage-head h2{color:#ffffff!important;font-weight:
 .bl-streak b.is-on{color:var(--bl-flame)}
 .bl-outcome{display:grid;gap:5px;min-width:0}
 .bl-outcome .gq-split{max-width:180px;height:5px}
-.bl-open{justify-self:end}
+/* Am Ende der Zeile: „Gespräche“ und der Papierkorb (Agent aus der Bestenliste löschen – die Gespräche bleiben erhalten) */
+.bl-actions{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px;justify-self:end}
+.bl-remove{flex:none;display:grid;place-items:center;width:34px;height:34px;padding:0;border-radius:10px;border:1px solid var(--bl-edge);background:transparent;color:var(--bl-faint);cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
+.bl-remove svg{width:15px;height:15px}
+.bl-remove:hover:not(:disabled){border-color:#f87171;background:rgba(248,113,113,.12);color:#fca5a5}
+html:not(.dark) .bl-remove:hover:not(:disabled){border-color:rgba(188,0,29,.4);background:#fff5f5;color:#bc001d}
+.bl-remove:disabled{opacity:.45;cursor:default}
+.bl-remove:focus-visible,.bl-restore:focus-visible,.bl-gone summary:focus-visible{outline:2px solid var(--bl-accent);outline-offset:2px}
 .bl-rows>li.is-fresh{animation:bl-flash 3.2s ease-out both}
 .bl-none{margin:0;padding:26px 16px;text-align:center;font-size:13.5px;color:var(--bl-dim);border-top:1px solid var(--bl-line)}
 .bl-more{display:block;width:100%;padding:12px;border:0;border-top:1px solid var(--bl-line);background:none;color:var(--bl-accent);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:background-color .12s}
@@ -198,6 +205,26 @@ html:not(.dark) .bl-stage .bl-stage-head h2{color:#ffffff!important;font-weight:
 .bl-nobody{margin:12px 10px 0;font-size:12.5px;line-height:1.5;color:var(--bl-dim)}
 .bl-nobody b{font-weight:600;color:var(--bl-ink)}
 .bl-note{margin:14px 10px 2px;max-width:940px;font-size:12px;line-height:1.55;color:var(--bl-faint)}
+
+/* ─────────────────────────── Gelöschte Agenten: klappbar unter der Rangliste, mit „Zurückholen“ ─────────────────────────── */
+.bl-gone{margin:16px 10px 2px;border:1px solid var(--bl-line);border-radius:14px;background:var(--bl-tile)}
+.bl-gone summary{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:12px 14px;font-size:12.5px;line-height:1.4;color:var(--bl-dim);cursor:pointer;list-style:none;border-radius:14px}
+.bl-gone summary::-webkit-details-marker{display:none}
+.bl-gone summary svg{flex:none;width:16px;height:16px;color:var(--bl-faint);transition:transform .15s}
+.bl-gone[open] summary svg{transform:rotate(180deg)}
+.bl-gone summary b{font-size:13px;font-weight:600;color:var(--bl-ink)}
+.bl-gone ul{margin:0;padding:0 14px;list-style:none}
+.bl-gone li{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--bl-line)}
+.bl-gone li .gq-who{flex:none;width:32px;height:32px;font-size:11.5px;opacity:.7}
+.bl-gone-text{display:grid;gap:2px;min-width:0;flex:1 1 auto}
+.bl-gone-text b{font-size:13.5px;font-weight:600;color:var(--bl-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bl-gone-text small{font-size:11.5px;line-height:1.4;color:var(--bl-dim)}
+.bl-restore{flex:none;display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:10px;border:1px solid var(--bl-edge);background:transparent;color:var(--bl-ink);font-family:inherit;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:border-color .15s,background-color .15s}
+.bl-restore svg{width:14px;height:14px}
+.bl-restore:hover:not(:disabled){border-color:var(--bl-ink);background:var(--bl-row)}
+html:not(.dark) .bl-restore:hover:not(:disabled){border-color:rgba(188,0,29,.35);background:#fff5f5;color:#bc001d}
+.bl-restore:disabled{opacity:.5;cursor:default}
+.bl-gone>p{margin:0;padding:10px 14px 12px;border-top:1px solid var(--bl-line);font-size:12px;line-height:1.55;color:var(--bl-faint)}
 
 /* ─────────────────────────── Großansicht (Fernseher) ─────────────────────────── */
 html.bl-wide-open{overflow:hidden}
@@ -274,6 +301,7 @@ html.bl-wide-open{overflow:hidden}
   .bl-stage{grid-template-columns:minmax(0,1fr) 268px;gap:4px 22px;padding:18px 20px 0}
   .bl-row.is-head{display:none}
   .bl-row{grid-template-columns:62px minmax(0,1fr) minmax(150px,230px) auto;row-gap:11px}
+  .bl-actions{grid-column:4;grid-row:1} /* fester Platz oben rechts – sonst rutschen die Knöpfe unter die Zahlen und ragen links aus der Zeile */
   .bl-rows>li:first-child{border-top:1px solid var(--bl-line)}
   .bl-stats{display:grid;grid-column:2 / -1;grid-template-columns:88px 150px 100px minmax(0,1fr);gap:8px 16px;padding-top:10px;border-top:1px dashed var(--bl-line)}
   .bl-stats>span::before{content:attr(data-label);display:block;margin-bottom:2px;font-size:11px;font-weight:600;color:var(--bl-faint)}
@@ -312,7 +340,9 @@ html.bl-wide-open{overflow:hidden}
   .bl-leads{grid-column:2 / -1;grid-row:2}
   .bl-leads-top b{font-size:19px}
   .bl-bar{max-width:none}
-  .bl-open{grid-column:3;grid-row:1}
+  .bl-agent{grid-column:2 / -1} /* der Name bekommt die ganze Breite … */
+  .bl-actions{grid-column:2 / -1;grid-row:auto;justify-self:start} /* … „Gespräche“ und der Papierkorb stehen dafür unter den Zahlen */
+  .bl-gone{margin-left:2px;margin-right:2px}
   .bl-stats{grid-column:2 / -1;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px}
   .bl-outcome{display:none}
   .bl-nobody,.bl-note{margin-left:2px;margin-right:2px}

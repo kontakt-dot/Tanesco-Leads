@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeQuickRange, berlinBound, berlinDay, buildPartnerReport, contactStatus, euro, listPartnerContacts, quickRange, share, type ReportAccount, type ReportDelivery, type ReportFilter, type ReportTransaction } from "../shared/partner-report";
+import { activeQuickRange, berlinBound, berlinDay, buildPartnerReport, buildQuota, contactStatus, euro, listPartnerContacts, quickRange, quotaSentence, quotaWindow, share, type ReportAccount, type ReportDelivery, type ReportFilter, type ReportTransaction } from "../shared/partner-report";
 
 /** Statistik „Integrationen“ – die Rechenproben aus dem Blueprint vom 26.11.2026 (Zahlen dort, Datensätze hier erzeugt). */
 const account: ReportAccount = { id: 1, provider: "aroundhome", label: "Account 1", buyerName: "Aroundhome GmbH", mode: "pull", hasAccess: true, lastSyncAt: null, lastSyncNote: null };
@@ -106,5 +106,68 @@ describe("Statistik Integrationen – Transaktionen aus dem Abgleich lesen", () 
     expect(rows.map((row) => [row.reference, transactionStatus(row), row.commission])).toEqual([["T-1", "confirmed", 93.06], ["T-2", "cancelled", 0], ["T-3", "open", 1234.5]]);
     expect(rows[0]).toMatchObject({ leadPublicId: "L-100", campaignId: "20418", campaignName: "Solar Herbst", category: "solaranlagen", subId: "rep-3", paidAt: "2026-11-20T08:00:00Z" }); expect(rows[1].reason).toBe("Falsche Kontaktdaten");
     expect(transactionStatus({ status: "ausgezahlt", paidAt: "" })).toBe("confirmed"); expect(transactionStatus({ status: "pending", paidAt: "2026-11-20" })).toBe("confirmed"); expect(transactionStatus({ status: "in Prüfung", paidAt: "" })).toBe("open");
+  });
+});
+
+/** Kontingent je Partnerkonto (v378): „noch nachschieben = Kontingent − angenommen“ für den laufenden Tag, die laufende Woche oder den laufenden Monat. */
+describe("Statistik Integrationen – Kontingent", () => {
+  // Mittwoch, 25.11.2026 – die Woche läuft von Montag, 23.11., bis Sonntag, 29.11.
+  const today = "2026-11-25";
+  const delivery = (leadId: number, day: string, result: ReportDelivery["result"], accountId = 1, hour = 12): ReportDelivery => ({ accountId, leadId, buyerName: "Aroundhome GmbH", categoryId: 1, deliveredAt: at(day, hour), result });
+  const many = (count: number, day: string, result: ReportDelivery["result"], start: number, accountId = 1) => Array.from({ length: count }, (_, index) => delivery(start + index, day, result, accountId));
+
+  it("Zeitraum: heute, Montag bis Sonntag, Kalendermonat – in deutscher Zeit", () => {
+    expect(quotaWindow("day", today)).toEqual({ from: "2026-11-25", to: "2026-11-25" });
+    expect(quotaWindow("week", today)).toEqual({ from: "2026-11-23", to: "2026-11-29" });
+    expect(quotaWindow("month", today)).toEqual({ from: "2026-11-01", to: "2026-11-30" });
+    expect(quotaWindow("week", "2026-11-29")).toEqual({ from: "2026-11-23", to: "2026-11-29" }); // Sonntag gehört zur selben Woche
+    expect(quotaWindow("week", "2026-11-30")).toEqual({ from: "2026-11-30", to: "2026-12-06" }); // Montag beginnt die neue
+  });
+
+  it("Beispiel des Nutzers: 900 bestellt, 900 gesendet, 80 hatte der Partner schon – 820 angenommen, 80 nachschieben", () => {
+    const deliveries = [...many(820, "2026-11-24", "accepted", 1), ...many(80, "2026-11-24", "rejected", 1000)];
+    const quota = buildQuota({ accountId: 1, amount: 900, period: "week", deliveries, today })!;
+    expect(quota).toEqual({ amount: 900, period: "week", from: "2026-11-23", to: "2026-11-29", sent: 900, rejected: 80, accepted: 820, pending: 0, open: 80, over: 0, daysLeft: 5, perDay: 16 });
+    expect(quotaSentence(quota)).toBe("Du musst diese Woche noch 80 Leads nachschieben. 80 Leads hatte der Partner schon – sie zählen nicht. Das sind 16 am Tag bis Sonntag (noch 5 Tage).");
+  });
+
+  it("zählt nur den laufenden Zeitraum und nur dieses Konto – die Woche davor, die nächste Woche und andere Konten bleiben draußen", () => {
+    const deliveries = [
+      delivery(1, "2026-11-22", "accepted", 1, 23), // Sonntag davor, 23 Uhr
+      delivery(2, "2026-11-23", "accepted", 1, 0), // Montag, 0 Uhr – zählt
+      delivery(3, "2026-11-29", "accepted", 1, 23), // Sonntag, 23 Uhr – zählt
+      delivery(4, "2026-11-30", "accepted", 1, 0), // Montag danach
+      delivery(5, "2026-11-25", "accepted", 2), // anderes Konto
+      delivery(6, "2026-11-25", "rejected"), delivery(7, "2026-11-25", "pending"),
+    ];
+    const week = buildQuota({ accountId: 1, amount: 10, period: "week", deliveries, today })!;
+    expect(week).toMatchObject({ sent: 4, accepted: 2, rejected: 1, pending: 1, open: 8, over: 0 });
+    const day = buildQuota({ accountId: 1, amount: 10, period: "day", deliveries, today })!;
+    expect(day).toMatchObject({ from: today, to: today, sent: 2, accepted: 0, rejected: 1, pending: 1, open: 10, daysLeft: 1, perDay: 10 });
+    const month = buildQuota({ accountId: 1, amount: 10, period: "month", deliveries, today })!;
+    expect(month).toMatchObject({ from: "2026-11-01", to: "2026-11-30", sent: 6, accepted: 4, open: 6, daysLeft: 6, perDay: 1 });
+    expect(buildQuota({ accountId: 2, amount: 10, period: "week", deliveries, today })).toMatchObject({ sent: 1, accepted: 1, open: 9 });
+  });
+
+  it("erfüllt und übererfüllt; ohne Menge gibt es kein Kontingent; unbekannter Zeitraum gilt als Woche", () => {
+    const exact = buildQuota({ accountId: 1, amount: 5, period: "week", deliveries: many(5, "2026-11-24", "accepted", 1), today })!;
+    expect(exact).toMatchObject({ open: 0, over: 0, perDay: 0 }); expect(quotaSentence(exact)).toBe("Kontingent erfüllt: 5 von 5 angenommen.");
+    const more = buildQuota({ accountId: 1, amount: 5, period: "week", deliveries: many(8, "2026-11-24", "accepted", 1), today })!;
+    expect(more).toMatchObject({ open: 0, over: 3 }); expect(quotaSentence(more)).toBe("Kontingent erfüllt – 3 Leads mehr angenommen als bestellt.");
+    for (const amount of [null, undefined, 0, -4]) expect(buildQuota({ accountId: 1, amount, period: "week", deliveries: [], today })).toBeNull();
+    expect(buildQuota({ accountId: 1, amount: 3.9, period: null, deliveries: [], today })).toMatchObject({ amount: 3, period: "week", open: 3 });
+    // Tageskontingent und letzter Tag der Woche: kein „am Tag“-Satz
+    const single = buildQuota({ accountId: 1, amount: 4, period: "day", deliveries: [delivery(1, today, "rejected")], today })!;
+    expect(quotaSentence(single)).toBe("Du musst heute noch 4 Leads nachschieben. 1 Lead hatte der Partner schon – er zählt nicht.");
+    expect(quotaSentence(buildQuota({ accountId: 1, amount: 1, period: "week", deliveries: [], today: "2026-11-29" })!)).toBe("Du musst diese Woche noch 1 Lead nachschieben.");
+  });
+
+  it("die Karte trägt das Kontingent – unabhängig vom Zeitraum und von der Sparte der Seite", () => {
+    const withQuota: ReportAccount = { ...account, quotaAmount: 10, quotaPeriod: "week" };
+    const deliveries = [...many(6, "2026-11-24", "accepted", 1), ...many(2, "2026-11-24", "rejected", 100)];
+    const old = filter("2026-10-01", "2026-10-31", "delivery", 999); // anderer Monat, andere Sparte: die Zähler der Karte sind leer
+    const [card] = buildPartnerReport({ accounts: [withQuota], deliveries, transactions: [], filter: old, today });
+    expect(card.counts.delivered).toBe(0); expect(card.quota).toMatchObject({ amount: 10, sent: 8, rejected: 2, accepted: 6, open: 4 });
+    const [none] = buildPartnerReport({ accounts: [account], deliveries, transactions: [], filter: old, today }); expect(none.quota).toBeNull();
   });
 });

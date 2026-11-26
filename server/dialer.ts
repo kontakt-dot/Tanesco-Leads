@@ -4,9 +4,9 @@
  * Anrufbeantworter, Aufzeichnung) kommen als Webhooks zurück und werden hier verarbeitet.
  */
 import { aliasesOf } from "../shared/agent-alias";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
-import { berlinDay, berlinOffsetMinutes, emptyBucket, finishAgentReport, isNoAgent, nameKey, NO_AGENT, previousSpan, type AgentBucket, type AgentReportPeriod, type AgentWin } from "../shared/agent-ranking";
-import { callPeriodRange } from "../shared/call-period";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { berlinDay, berlinOffsetMinutes, dayWindowStart, emptyBucket, finishAgentReport, isNoAgent, nameKey, NO_AGENT, previousSpan, withoutHiddenAgents, type AgentBucket, type AgentReportPeriod, type AgentWin } from "../shared/agent-ranking";
+import { berlinDayStart, callPeriodRange, callPeriodSpan } from "../shared/call-period";
 import { nanoid } from "nanoid";
 import { agentSessions, callRecords, dialerCalls, dialerCampaigns, dialerQueueItems, leadStatusEvents, leadTagAssignments, leads, phoneNumbers, rawBatches, rawContacts, telephonySettings, users, type AgentSession, type DialerCall, type DialerCampaign, type TelephonySettings } from "../drizzle/schema";
 import { batchCategoryIds, convertRawContact } from "./raw-data";
@@ -717,13 +717,15 @@ export async function liveBoard(db: Db, tenantId: number, now = new Date()) {
  * und die zuletzt erreichten Leads. Grundlage sind die Anrufe im eigenen Dialer und die Gespräche, die ein anderer Dialer meldet;
  * Letztere werden in der Datenbank gezählt – so stimmt es auch bei sehr vielen Gesprächen und vielen Agenten.
  * `campaign` filtert nach der Kampagne der Gespräche (Name), `campaignId` nach einer Kampagne des eigenen Dialers.
+ * Der Zeitraum ist eine Kurzwahl (heute, diese Woche, letzter Monat …) oder ein eigener über `from`/`to` (deutsche Tage, bis einschließlich).
+ * Agenten, die von Hand gelöscht wurden, zählen nirgends mit – sie stehen mit ihren Zahlen in `hiddenAgents`.
  */
 export type { AgentReportPeriod } from "../shared/agent-ranking";
-export async function agentReport(db: Db, tenantId: number, input: { period?: AgentReportPeriod; campaignId?: number | null; campaign?: string | null; now?: Date } = {}) {
+export async function agentReport(db: Db, tenantId: number, input: { period?: AgentReportPeriod | null; from?: string | null; to?: string | null; campaignId?: number | null; campaign?: string | null; now?: Date } = {}) {
   const now = input.now ?? new Date();
-  const period: AgentReportPeriod = input.period ?? "30";
-  const from = callPeriodRange({ period }, now).from;
   const today = berlinDay(now); const offset = berlinOffsetMinutes(now);
+  const chosen = { period: input.period ?? "30", from: input.from ?? null, to: input.to ?? null };
+  const span = callPeriodSpan(chosen, today); const { from, to } = callPeriodRange(chosen, now);
   const campaignRows = await db.select({ id: dialerCampaigns.id, name: dialerCampaigns.name }).from(dialerCampaigns).where(eq(dialerCampaigns.tenantId, tenantId)).orderBy(asc(dialerCampaigns.name));
   // Kampagne: der Name aus den Gesprächen – trägt eine Kampagne des eigenen Dialers denselben Namen, zählen deren Anrufe mit
   const campaign = input.campaign?.trim() || null; const campaignId = campaign ? null : input.campaignId ?? null;
@@ -733,7 +735,7 @@ export async function agentReport(db: Db, tenantId: number, input: { period?: Ag
 
   // 1) Anrufe im eigenen Dialer – einzeln, dort stehen Ergebnis (Termin, Interesse …) und Gesprächszeit
   const where: SQL[] = [eq(dialerCalls.tenantId, tenantId)];
-  if (from) where.push(gte(dialerCalls.startedAt, from));
+  if (from) where.push(gte(dialerCalls.startedAt, from)); if (to) where.push(lt(dialerCalls.startedAt, to));
   if (campaignId) where.push(eq(dialerCalls.campaignId, campaignId));
   if (campaign) where.push(sameName.length ? or(eq(callRecords.campaign, campaign), inArray(dialerCalls.campaignId, sameName))! : eq(callRecords.campaign, campaign));
   const rows = await db.select({ call: dialerCalls, score: callRecords.score, verdict: callRecords.verdict, decision: callRecords.decision, agent: users.name })
@@ -741,7 +743,7 @@ export async function agentReport(db: Db, tenantId: number, input: { period?: Ag
     .where(and(...where)).orderBy(desc(dialerCalls.startedAt)).limit(20_000);
   // 2) Gespräche ohne Anruf im eigenen Dialer (vom Dialer gemeldet, hochgeladen, Test): je Agent gezählt, nur über den Namen zuordenbar
   const looseWhere: SQL[] = [eq(callRecords.tenantId, tenantId), isNull(dialerCalls.id)];
-  if (from) looseWhere.push(gte(callRecords.startedAt, from));
+  if (from) looseWhere.push(gte(callRecords.startedAt, from)); if (to) looseWhere.push(lt(callRecords.startedAt, to));
   if (campaign) looseWhere.push(eq(callRecords.campaign, campaign));
   const loose = campaignId ? [] : await db.select({
     name: callRecords.agentName, calls: sql<number>`count(*)`, talkSeconds: sql<number>`coalesce(sum(${callRecords.durationSeconds}), 0)`, evaluated: count(isScored), scoreSum: sql<number>`coalesce(sum(${callRecords.score}), 0)`,
@@ -780,20 +782,25 @@ export async function agentReport(db: Db, tenantId: number, input: { period?: Ag
   if (campaign) scope.push(eq(callRecords.campaign, campaign));
   if (campaignId) scope.push(inArray(callRecords.id, db.select({ id: dialerCalls.callRecordId }).from(dialerCalls).where(and(eq(dialerCalls.tenantId, tenantId), eq(dialerCalls.campaignId, campaignId)))));
   // je Agent und Tag (deutsche Zeit): für Serie, „heute“, den besten Tag und den Abschnitt davor. Das Fenster reicht weiter zurück als der Zeitraum.
-  const todayStart = callPeriodRange({ period: "heute" }, now).from ?? now; const since = new Date(todayStart.getTime() - ((period === "alle" ? 366 : 62) - 1) * 86_400_000);
+  const since = berlinDayStart(dayWindowStart(span, today));
   const day = sql<string>`date_format(date_add(${callRecords.startedAt}, interval ${sql.raw(String(offset))} minute), '%Y-%m-%d')`.as("tag");
   const dayRows = await db.select({ name: callRecords.agentName, day, calls: sql<number>`count(*)`, approved: count(isLead), evaluated: count(isScored) }).from(callRecords).where(and(...scope, gte(callRecords.startedAt, since))).groupBy(callRecords.agentName, day);
   const days = dayRows.map((row) => ({ name: nameOf(row.name), day: String(row.day), calls: Number(row.calls) || 0, approved: Number(row.approved) || 0, evaluated: Number(row.evaluated) || 0 }));
   // Leads insgesamt je Agent – daraus die Stufe (über alle Kampagnen: die Stufe gehört zum Agenten, nicht zur Kampagne)
   const allTime = await db.select({ name: callRecords.agentName, approved: sql<number>`count(*)` }).from(callRecords).where(and(eq(callRecords.tenantId, tenantId), eq(callRecords.decision, "freigegeben"))).groupBy(callRecords.agentName);
-  const wins = await db.select({ callId: callRecords.id, name: callRecords.agentName, at: callRecords.startedAt, campaign: callRecords.campaign }).from(callRecords).where(and(...scope, eq(callRecords.decision, "freigegeben"), ...(from ? [gte(callRecords.startedAt, from)] : []))).orderBy(desc(callRecords.startedAt), desc(callRecords.id)).limit(8);
+  // von Hand gelöschte Agenten: ihre Leads stehen auch nicht unter „Zuletzt erreicht“ – die Datenbank lässt sie gleich weg
+  const hidden = await import("./agent-hidden").then(({ hiddenAgents }) => hiddenAgents(db, tenantId)).catch(() => []);
+  const winWhere: SQL[] = [...scope, eq(callRecords.decision, "freigegeben")]; if (from) winWhere.push(gte(callRecords.startedAt, from)); if (to) winWhere.push(lt(callRecords.startedAt, to));
+  if (hidden.length) winWhere.push(or(isNull(callRecords.agentName), notInArray(callRecords.agentName, hidden.map((item) => item.name)))!);
+  const wins = await db.select({ callId: callRecords.id, name: callRecords.agentName, at: callRecords.startedAt, campaign: callRecords.campaign }).from(callRecords).where(and(...winWhere)).orderBy(desc(callRecords.startedAt), desc(callRecords.id)).limit(hidden.length ? 40 : 8);
 
-  const previous = previousSpan(period, today, days);
-  const report = finishAgentReport({ buckets: Array.from(buckets.values()), days, allTime: allTime.map((row) => ({ name: nameOf(row.name), approved: Number(row.approved) || 0 })), previous, today, fromDay: from ? berlinDay(from) : null });
-  const recentWins: AgentWin[] = wins.map((row) => ({ callId: row.callId, name: row.name?.trim() || null, at: row.at ?? null, campaign: row.campaign ?? null }));
+  const kept = withoutHiddenAgents({ hidden, buckets: Array.from(buckets.values()), days, allTime: allTime.map((row) => ({ name: nameOf(row.name), approved: Number(row.approved) || 0 })), wins });
+  const previous = previousSpan(span, today, kept.days);
+  const report = finishAgentReport({ buckets: kept.buckets, days: kept.days, allTime: kept.allTime, previous, today, fromDay: span.fromDay, toDay: span.toDay });
+  const recentWins: AgentWin[] = kept.wins.slice(0, 8).map((row) => ({ callId: row.callId, name: row.name?.trim() || null, at: row.at ?? null, campaign: row.campaign ?? null }));
   // Alias-Namen: Unter dem echten Namen steht, wie sich der Agent am Telefon nennt – so findet man ihn auch über den Alias
   const aliasList = await import("./agent-alias").then(({ agentAliases }) => agentAliases(db, tenantId)).catch(() => []);
-  return { period, from, now, today, campaign, previous, ...report, agents: report.agents.map((agent) => ({ ...agent, aliases: aliasesOf(agent.name, aliasList) })), recentWins, campaigns: campaignRows };
+  return { period: span.kind, span, from, to, now, today, campaign, previous, ...report, agents: report.agents.map((agent) => ({ ...agent, aliases: aliasesOf(agent.name, aliasList) })), recentWins, hiddenAgents: kept.hiddenAgents, campaigns: campaignRows };
 }
 
 /**
