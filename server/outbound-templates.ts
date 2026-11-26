@@ -3,7 +3,7 @@
  * damit Server und Browser-Demo dieselben Regeln nutzen.
  */
 import { outboundMeta } from "../shared/lead-fields";
-import { wattfoxLeadId, wattfoxPayload, wattfoxTemplateOptions } from "../shared/wattfox";
+import { isWattfoxTemplate, wattfoxLeadId, wattfoxPayload, wattfoxTemplateOptions } from "../shared/wattfox";
 import { normalizePostcode } from "../shared/postcode";
 
 export type TemplateLead = { id: number; publicId: string; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; postcode: string | null; city: string | null; country: string | null; metadata: unknown; createdAt: Date | string };
@@ -57,6 +57,22 @@ export function buildEndpointBody(endpoint: Pick<EndpointLike, "bodyTemplate" | 
 }
 
 /* ------------------------------------------------------------------ Filter & Auswahl */
+
+export type NeedEndpoint = Pick<EndpointLike, "enabled" | "bodyTemplate" | "omitAutoFields" | "valueMappings" | "sourceFilterMode" | "sourceSupplierIds" | "fieldFilters"> & { categoryId: number; buyerName: string };
+/**
+ * Vor dem Ausliefern: Welche Pflichtangaben fehlen einem Lead für die Schnittstellen seiner Kategorie? Gerechnet wird wie beim Senden –
+ * heute kennt nur die Wattfox-Vorlage Pflichtangaben (Anrede bei PV, Name, Anschrift, Telefon, E-Mail). Für die Seite „API-Fehler“.
+ */
+export function endpointNeeds(lead: TemplateLead & { categoryId: number; supplierId?: number | null }, endpoints: NeedEndpoint[], category?: { name: string; shortcode: string } | null): Array<{ buyer: string; missing: string[] }> {
+  const relevant = endpoints.filter((endpoint) => endpoint.enabled && endpoint.categoryId === lead.categoryId && isWattfoxTemplate(endpoint.bodyTemplate)); if (!relevant.length) return [];
+  const values = leadTemplateValues(lead, category); const out: Array<{ buyer: string; missing: string[] }> = [];
+  for (const endpoint of relevant) {
+    if (!matchesSourceFilter(endpoint, lead.supplierId ?? null) || !matchesFieldFilters(endpoint.fieldFilters as FieldFilter[] | null, values)) continue;
+    const missing = buildEndpointBody(endpoint, values).missing ?? [];
+    if (missing.length && !out.some((need) => need.buyer === endpoint.buyerName)) out.push({ buyer: endpoint.buyerName, missing });
+  }
+  return out;
+}
 
 export function matchesFieldFilters(filters: FieldFilter[] | null | undefined, values: Record<string, unknown>) {
   if (!Array.isArray(filters) || !filters.length) return true;

@@ -14,7 +14,7 @@ import { berlinDay as intakeDay } from "../../../shared/agent-ranking";
 import { isListTag, LIST_TAG_RESERVED } from "../../../shared/list-tags";
 import { deliversByItself, emptyLeadCounts, leadsOverview, overviewHints, PULSE_LIMIT, type LeadStatusKey, type OverviewHint } from "../../../shared/lead-overview";
 import { leadExportTable } from "../../../shared/lead-export";
-import { callAnswerList, cleanFieldValues, extraMetaFields, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, realText, type LeadFieldDef } from "../../../shared/lead-fields";
+import { callAnswerList, cleanFieldValues, extraMetaFields, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, realText, tidySalutation, type LeadFieldDef } from "../../../shared/lead-fields";
 import { matchesCallSearch } from "../../../shared/call-search";
 import { aliasesOf, aliasKey, aliasProblem, learnAliases, mergeAliases, readAliases, resolveAlias, sameSpelling, tidyAgentName, type AgentAlias, type AliasPair } from "../../../shared/agent-alias";
 import { isJunkAgentName } from "../../../shared/agent-names";
@@ -35,7 +35,7 @@ import { buildLeadAuditLog } from "../../../server/lead-audit-assembly";
 import { computeDashboardKpis, makeCsv } from "../../../server/leadops";
 import { offerStatusAfterApprovedClaim } from "../../../server/marketplace";
 import { evaluateOrderEligibility, intervalWindowOpen } from "../../../server/order-eligibility";
-import { PLACEHOLDERS, buildEndpointBody, evaluateResponseRules, leadTemplateValues, selectEndpoints } from "../../../server/outbound-templates";
+import { PLACEHOLDERS, buildEndpointBody, endpointNeeds, evaluateResponseRules, leadTemplateValues, selectEndpoints } from "../../../server/outbound-templates";
 import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../../../shared/wattfox";
 import { SAVED_SECRET, isPlainCredential } from "../../../shared/credentials";
 import { gluedAddressError, hasGluedAddress } from "../../../shared/endpoint-url";
@@ -1281,8 +1281,11 @@ function apiErrorOverviewNow(daysInput: number) {
     const note = open ? `${NOT_POSSIBLE_PREFIX}${open.trim()}` : /^(?:Keine aktive Lieferkette|Die zugeordnete (?:Lieferkette|Bestellung))/.test(summary) ? `${NOT_POSSIBLE_PREFIX}${summary.trim()}` : null;
     if (note && !notes.some((other) => other.leadId === row.sourceLeadId && other.note === note && Math.abs(new Date(other.occurredAt).getTime() - new Date(row.occurredAt).getTime()) < 120_000)) notes.push({ leadId: row.sourceLeadId as number, note, occurredAt: row.occurredAt as Date });
   }
+  // Pflichtangaben der Schnittstellen (Wattfox-Vorlage), die einem noch nicht ausgelieferten Lead fehlen – wie auf dem Server
+  const needEndpoints = T().deliveryEndpoints.map((row) => { const membership = T().memberships.find((item) => item.id === row.membershipId); const user = membership ? T().users.find((item) => item.id === membership.userId) : undefined; return { enabled: row.enabled !== false, categoryId: row.categoryId as number, bodyTemplate: (row.bodyTemplate ?? null) as string | null, omitAutoFields: Boolean(row.omitAutoFields), valueMappings: row.valueMappings, sourceFilterMode: (row.sourceFilterMode ?? "alle") as "alle" | "nur" | "ausser", sourceSupplierIds: row.sourceSupplierIds, fieldFilters: row.fieldFilters, buyerName: String(user?.company ?? user?.name ?? "Käufer") }; });
+  const needs = salesLeads().filter((lead) => ["neu", "genehmigt", "hängend"].includes(String(lead.status))).flatMap((lead) => { const category = T().leadCategories.find((row) => row.id === lead.categoryId); return endpointNeeds({ id: lead.id, publicId: String(lead.publicId), firstName: lead.firstName ?? null, lastName: lead.lastName ?? null, email: lead.email ?? null, phone: lead.phone ?? null, postcode: lead.postcode ?? null, city: lead.city ?? null, country: lead.country ?? "DE", metadata: lead.metadata, createdAt: lead.createdAt as Date, categoryId: lead.categoryId as number, supplierId: (lead.supplierId ?? null) as number | null }, needEndpoints, category ? { name: String(category.name), shortcode: String(category.shortcode) } : null).map((need) => ({ ...need, leadId: lead.id })); });
   return buildApiErrorOverview({
-    now, days, notes,
+    now, days, notes, needs,
     leads: salesLeads().map((lead) => ({ id: lead.id, publicId: String(lead.publicId), firstName: lead.firstName ?? null, lastName: lead.lastName ?? null, email: lead.email ?? null, phone: lead.phone ?? null, postcode: lead.postcode ?? null, city: lead.city ?? null, country: lead.country ?? "DE", status: String(lead.status), categoryId: lead.categoryId as number, supplierName: lead.supplierName ?? (lead.supplierId ? (T().suppliers.find((row) => row.id === lead.supplierId)?.name as string | undefined) ?? null : null), metadata: lead.metadata, createdAt: lead.createdAt as Date })),
     events: T().integrationEvents.filter(inWindow).map((row) => ({ id: row.id, leadId: (row.leadId ?? null) as number | null, integrationId: (row.integrationId ?? null) as number | null, endpointId: (row.endpointId ?? null) as number | null, eventType: String(row.eventType), responseStatus: (row.responseStatus ?? null) as number | null, responseBody: (row.responseBody ?? null) as string | null, externalReference: (row.externalReference ?? null) as string | null, occurredAt: row.occurredAt as Date })),
     deliveries: T().leadDeliveries.map((row) => ({ leadId: row.leadId as number, buyerName: String(row.buyerName), result: String(row.result), occurredAt: row.occurredAt as Date })),
@@ -1293,13 +1296,15 @@ function apiErrorOverviewNow(daysInput: number) {
 }
 /** Lead von Hand korrigieren – geprüft wie auf dem Server; jede Änderung steht mit altem und neuem Wert im Lead-Log. */
 function correctLeadNow(lead: Row, input: Partial<Record<LeadContactField, string>> & { fields?: Record<string, string> }): string[] {
-  const keys: LeadContactField[] = ["firstName", "lastName", "email", "phone", "street", "postcode", "city"]; const max: Record<LeadContactField, number> = { firstName: 120, lastName: 120, email: 320, phone: 48, street: 200, postcode: 24, city: 120 };
+  const keys: LeadContactField[] = ["salutation", "firstName", "lastName", "email", "phone", "street", "postcode", "city"]; const max: Record<LeadContactField, number> = { salutation: 10, firstName: 120, lastName: 120, email: 320, phone: 48, street: 200, postcode: 24, city: 120 };
   const tidy = (value: string) => value.replace(/\s+/g, " ").trim(); const meta = metadataOf(lead); const nextMeta: Record<string, unknown> = { ...meta }; const patch: Record<string, unknown> = {}; const changed: string[] = []; const log: string[] = [];
-  const current: Record<LeadContactField, string> = { firstName: lead.firstName ?? "", lastName: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street: typeof meta.street === "string" ? meta.street : "", postcode: lead.postcode ?? "", city: lead.city ?? "" };
+  const current: Record<LeadContactField, string> = { salutation: tidySalutation(meta.salutation) ?? tidySalutation(meta.anrede) ?? "", firstName: lead.firstName ?? "", lastName: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street: typeof meta.street === "string" ? meta.street : "", postcode: lead.postcode ?? "", city: lead.city ?? "" };
   for (const key of keys) {
     const raw = input[key]; if (raw === undefined) continue;
     let value = tidy(String(raw)).slice(0, max[key]); if (key === "email") value = value.replace(/\s+/g, "").toLowerCase();
+    if (key === "salutation") { const fixed = tidySalutation(value); if (value && !fixed) fail("Anrede: Bitte Herr oder Frau wählen."); value = fixed ?? ""; }
     if (value === tidy(current[key])) continue;
+    if (key === "salutation") { delete nextMeta.salutation; if (value) nextMeta.anrede = value; else delete nextMeta.anrede; changed.push(LEAD_FIELD_LABEL[key]); log.push(`${LEAD_FIELD_LABEL[key]}: ${current[key] ? `„${current[key]}“` : "leer"} → ${value ? `„${value}“` : "leer"}`); continue; }
     if (key === "email" && value) { const problem = emailProblem(value); if (problem) fail(`E-Mail-Adresse: ${problem}`); }
     if (key === "phone" && value) { const problem = phoneProblem(value); if (problem) fail(`Rufnummer: ${problem}`); }
     if (key === "postcode" && value) { const problem = postcodeProblem(value, lead.country); if (problem) fail(`PLZ: ${problem}`); }

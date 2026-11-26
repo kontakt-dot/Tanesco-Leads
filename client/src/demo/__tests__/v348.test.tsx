@@ -66,7 +66,7 @@ describe("Version 348", () => {
     const entry = Array.from(group.querySelectorAll<HTMLElement>(".nav-item")).find((node) => node.querySelector("span")?.textContent === "API-Fehler")!;
     expect(entry.className).toContain("active"); await until(() => Boolean(entry.querySelector(".nav-badge"))); expect(entry.querySelector(".nav-badge")!.textContent).toBe(String(data.counts.open)); expect(entry.querySelector(".nav-badge")!.getAttribute("aria-label")).toBe(`${data.counts.open} offene Probleme`);
     // Kacheln
-    expect(texts(root, ".af-tile strong")).toEqual([data.counts.open, data.counts.daten, data.counts.empfaenger, data.counts.keinAbnehmer].map(String)); expect(texts(root, ".af-tile span")).toEqual(["Offene Probleme", "Angaben falsch", "Beim Empfänger gescheitert", "Kein Abnehmer"]);
+    expect(texts(root, ".af-tile strong")).toEqual([data.counts.open, data.counts.daten, data.counts.empfaenger, data.counts.keinAbnehmer].map(String)); expect(texts(root, ".af-tile span")).toEqual(["Offene Probleme", "Angaben fehlen oder falsch", "Beim Empfänger gescheitert", "Kein Abnehmer"]);
     // API-Gesundheit: jede Schnittstelle mit Zustand; Absagen wegen der Angaben stehen getrennt von echten Fehlern
     const apis = Array.from(root.querySelectorAll<HTMLElement>(".af-api")); expect(apis.map((node) => node.querySelector("strong")!.textContent)).toEqual(data.health.map((row) => row.name));
     data.health.forEach((row, index) => expect(apis[index].className).toContain(`is-${row.state}`));
@@ -85,7 +85,7 @@ describe("Version 348", () => {
     await click(button(hansen, "Antwort und Verlauf"), 200); expect(hansen.querySelector(".af-detail pre")!.textContent).toBe('{"errors":{"email":["is invalid"]}}'); expect(hansen.querySelectorAll(".af-detail ol > li").length).toBe(3); // zwei Antworten, ein Vermerk „ohne Abnehmer“
     // Kachel filtert, noch ein Klick zeigt wieder alle; die Suche findet Name und Ort
     const tile = (label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>(".af-tile")).find((node) => node.querySelector("span")?.textContent === label)!;
-    await click(tile("Angaben falsch"), 300); expect(names(root)).toEqual(data.problems.filter((problem) => problem.kind === "daten").map((problem) => problem.name)); expect(tile("Angaben falsch").getAttribute("aria-pressed")).toBe("true");
+    await click(tile("Angaben fehlen oder falsch"), 300); expect(names(root)).toEqual(data.problems.filter((problem) => problem.kind === "daten").map((problem) => problem.name)); expect(tile("Angaben fehlen oder falsch").getAttribute("aria-pressed")).toBe("true");
     await click(tile("Kein Abnehmer"), 300); expect(names(root)).toEqual(data.problems.filter((problem) => ["kein_abnehmer", "einrichtung"].includes(problem.kind)).map((problem) => problem.name));
     await click(tile("Kein Abnehmer"), 300); expect(names(root)).toHaveLength(data.problems.length);
     await type(root.querySelector('input[aria-label="Probleme durchsuchen"]'), "hansen kiel", 300); expect(names(root)).toEqual(["Peter Hansen"]);
@@ -103,7 +103,7 @@ describe("Version 348", () => {
     await click(button(rowOf(root, "Peter Hansen")!, "Korrigieren"), 300);
     const form = () => root.querySelector<HTMLFormElement>("form.af-edit")!; const input = (key: string) => form().querySelector<HTMLInputElement>(`.af-field.is-${key} input`)!; const alertOf = (key: string) => form().querySelector(`.af-field.is-${key} [role="alert"]`)?.textContent ?? null;
     const save = () => button(form(), "Speichern und ausliefern")!;
-    expect(form().getAttribute("aria-label")).toBe("Peter Hansen korrigieren"); expect(texts(form(), ".af-field > span")).toEqual(["Vorname", "Nachname", "E-Mail-Adresse", "Rufnummer", "Straße", "PLZ", "Ort"]);
+    expect(form().getAttribute("aria-label")).toBe("Peter Hansen korrigieren"); expect(texts(form(), ".af-field > span")).toEqual(["Anrede", "Vorname", "Nachname", "Rufnummer", "E-Mail-Adresse", "Straße", "PLZ", "Ort"]); // seit v371 mit Anrede (Wattfox braucht sie bei PV)
     expect([input("firstName").value, input("email").value, input("street").value, input("postcode").value]).toEqual(["Peter", "peter.hansen@.de", "Hafenstraße 8", "24103"]);
     // die falsche Adresse ist markiert und erklärt; speichern geht erst, wenn sie stimmt
     expect(input("email").getAttribute("aria-invalid")).toBe("true"); expect(alertOf("email")).toBeTruthy(); expect(save().disabled).toBe(true); expect(button(form(), "Nur speichern")!.disabled).toBe(true);
@@ -135,8 +135,8 @@ describe("Version 348", () => {
     const row = rowOf(root, "Ilse Brenner")!; expect(row.querySelector(".af-title")!.textContent).toBe("Die Rufnummer ist nicht brauchbar."); expect(row.querySelector(".af-data code")!.textContent).toBe("0151 12");
     await click(button(row, "Korrigieren"), 300); const form = () => root.querySelector<HTMLFormElement>("form.af-edit")!; const input = (key: string) => form().querySelector<HTMLInputElement>(`.af-field.is-${key} input`)!;
     expect(input("phone").getAttribute("aria-invalid")).toBe("true"); expect(form().querySelector(".af-field.is-phone")!.className).toContain("is-wrong");
-    await click(button(form(), "Felder der Kategorie „Photovoltaik“ bearbeiten"), 600); await until(() => form().querySelectorAll("select").length > 0);
-    const select = form().querySelector<HTMLSelectElement>("select")!; const label = select.closest("label")!.querySelector("span")!.textContent!; const option = Array.from(select.options).map((item) => item.value).find((value) => value)!;
+    await click(button(form(), "Felder der Kategorie „Photovoltaik“ bearbeiten"), 600); await until(() => form().querySelectorAll(".af-more + .af-edit-grid select").length > 0);
+    const select = form().querySelector<HTMLSelectElement>(".af-more + .af-edit-grid select")!; /* das erste Auswahlfeld oben ist seit v371 die Anrede */ const label = select.closest("label")!.querySelector("span")!.textContent!; const option = Array.from(select.options).map((item) => item.value).find((value) => value)!;
     await type(select, option); await type(input("phone"), "+49 151 23480055"); await type(input("city"), "Leipzig-Süd");
     expect(button(form(), "Nur speichern")!.disabled).toBe(false); await click(button(form(), "Nur speichern"), 1000);
     await until(() => !rowOf(root, "Ilse Brenner")); expect(rowOf(root, "Ilse Brenner")).toBeUndefined(); expect(root.querySelector(".af-results")).toBeNull(); // nur gespeichert – kein Versuch, kein Ergebnis

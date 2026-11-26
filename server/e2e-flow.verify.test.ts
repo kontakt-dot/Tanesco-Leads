@@ -6194,6 +6194,25 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(outbound.slice(quiet).some((call) => call.url === WATTFOX.leadsUrl)).toBe(false);
     const heldEvents = await db.select().from(integrationEvents).where(and(eq(integrationEvents.endpointId, endpoint.id), eq(integrationEvents.leadId, incomplete.id)));
     expect(heldEvents).toMatchObject([{ eventType: "abgelehnt", responseStatus: 422, responseBody: "Für Wattfox fehlt: Anrede (Herr/Frau), E-Mail – nicht gesendet" }]);
+    // (e) v371: Was fehlt, steht unter „API-Fehler“, BEVOR der Lead rausgeht – freigegeben, noch kein Versuch: Anrede und E-Mail fehlen für Wattfox
+    await db.insert(leads).values({ tenantId: S.tenantId, publicId: "WF-E2E-003", categoryId: S.pv.id, kind: "verkauf", firstName: "Bernd", lastName: "Mustermann", email: null, phone: "+49 761 0000012", postcode: "79100", city: "Freiburg", country: "DE", status: "genehmigt", cost: "0.00", metadata: { street: "Musterweg 5" } });
+    const waiting = (await owner.leadops.apiErrorOverview({ days: 30 })).problems.find((problem) => problem.publicId === "WF-E2E-003")!;
+    expect(waiting).toMatchObject({ kind: "daten", fix: "lead", field: "salutation", title: "Die Anrede fehlt (Herr oder Frau).", attempts: 0 });
+    expect(waiting.dataProblems.map((item) => [item.field, item.title, item.missing])).toEqual([["salutation", "Die Anrede fehlt (Herr oder Frau).", true], ["email", "Die E-Mail-Adresse fehlt.", true]]);
+    expect(waiting.dataProblems[0].hint).toMatch(/ nimmt den Lead nur damit an\.$/); expect(waiting.lead).toMatchObject({ salutation: "", email: "" });
+    // Anrede und E-Mail von Hand nachtragen: die Anrede steht bei den Angaben („anrede“), der Eintrag ist weg, und Wattfox bekäme sie mit
+    const fixed = await owner.leadops.correctLead({ publicId: "WF-E2E-003", changes: { salutation: "Herr", email: "bernd.mustermann@example.de" }, deliver: false });
+    expect(fixed.changed).toEqual(["Anrede", "E-Mail-Adresse"]);
+    const corrected = (await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-003")))[0]; expect(corrected.email).toBe("bernd.mustermann@example.de"); expect((corrected.metadata as Record<string, unknown>).anrede).toBe("Herr");
+    expect((await owner.leadops.apiErrorOverview({ days: 30 })).problems.some((problem) => problem.publicId === "WF-E2E-003")).toBe(false);
+    await expect(owner.leadops.correctLead({ publicId: "WF-E2E-003", changes: { salutation: "Divers" }, deliver: false })).rejects.toThrow(/Herr oder Frau/);
+    // (f) v371: E-Mail, die der Dialer unter eigenem Namen geschickt hat, steht bei den Angaben – sie kommt ins Feld E-Mail (mit Vermerk); die Adresse eines Agenten nicht
+    await db.insert(leads).values([{ tenantId: S.tenantId, publicId: "WF-E2E-004", categoryId: S.pv.id, kind: "verkauf", firstName: "Carla", lastName: "Beispiel", email: null, phone: "+49 761 0000013", postcode: "79100", city: "Freiburg", country: "DE", status: "genehmigt", cost: "0.00", metadata: { street: "Musterweg 7", pv_email: "Carla.Beispiel@example.de", pv_dachart: "Satteldach" } }, { tenantId: S.tenantId, publicId: "WF-E2E-005", categoryId: S.pv.id, kind: "verkauf", firstName: "Dora", lastName: "Beispiel", email: null, phone: "+49 761 0000014", postcode: "79100", city: "Freiburg", country: "DE", status: "genehmigt", cost: "0.00", metadata: { agent_email: "agent@dialer.example" } }]);
+    const { emailsFromLeadFields } = await import("./lead-from-call"); expect((await emailsFromLeadFields(db, { tenantId: S.tenantId })).moved).toBe(1); expect((await emailsFromLeadFields(db, { tenantId: S.tenantId })).moved).toBe(0);
+    const carla = (await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-004")))[0]; expect(carla.email).toBe("carla.beispiel@example.de"); expect(carla.metadata).toEqual({ street: "Musterweg 7", pv_dachart: "Satteldach" });
+    expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, carla.id))).map((event) => event.note)).toContain("E-Mail-Adresse vom Dialer übernommen – sie stand bei den Angaben unter „pv_email“");
+    expect((await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-005")))[0].email).toBeNull();
+    await db.update(leads).set({ status: "deaktiviert" }).where(inArray(leads.publicId, ["WF-E2E-003", "WF-E2E-004", "WF-E2E-005"])); // spätere Tests zählen offene Leads
     // aufräumen: der Käufer soll in späteren Tests keinen Wattfox-Endpoint mehr haben
     await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id });
   }, 60000);

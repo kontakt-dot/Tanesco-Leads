@@ -6,7 +6,7 @@
  *  - Übersicht bauen: offene Probleme je Lead, zuletzt Erledigtes und der Zustand jeder Schnittstelle („API-Gesundheit“).
  * Die Rechnung hängt an keiner Datenbank – Server und Vorschau geben dieselben Zeilen hinein.
  */
-import { isPlaceholder, leadDisplayName } from "./lead-fields";
+import { isPlaceholder, leadDisplayName, tidySalutation } from "./lead-fields";
 import { normalizePostcode } from "./postcode";
 
 /* ------------------------------------------------------------------ Arten von Fehlern */
@@ -14,14 +14,14 @@ import { normalizePostcode } from "./postcode";
 export type ApiErrorKind = "daten" | "abgelehnt" | "dublette" | "zugang" | "adresse" | "limit" | "stoerung" | "zeit" | "verbindung" | "einrichtung" | "kein_abnehmer" | "unbekannt";
 /** Wer kann das Problem lösen? lead = Angaben des Leads korrigieren · schnittstelle = Zugang/Adresse beim Käufer prüfen · lieferkette = Lieferkette anpassen · warten = später noch einmal · keine = nichts zu tun */
 export type ApiFix = "lead" | "schnittstelle" | "lieferkette" | "warten" | "keine";
-export type LeadContactField = "firstName" | "lastName" | "email" | "phone" | "street" | "postcode" | "city";
+export type LeadContactField = "salutation" | "firstName" | "lastName" | "email" | "phone" | "street" | "postcode" | "city";
 export type ApiErrorInfo = { kind: ApiErrorKind; title: string; advice: string; fix: ApiFix; field: LeadContactField | null };
 
 export const API_ERROR_KIND_LABEL: Record<ApiErrorKind, string> = {
   daten: "Angaben falsch", abgelehnt: "Abgelehnt", dublette: "Schon bekannt", zugang: "Zugang", adresse: "Adresse falsch", limit: "Zu viele Anfragen",
   stoerung: "Störung beim Empfänger", zeit: "Keine Antwort", verbindung: "Keine Verbindung", einrichtung: "Nicht eingerichtet", kein_abnehmer: "Kein Abnehmer", unbekannt: "Unklar",
 };
-export const LEAD_FIELD_LABEL: Record<LeadContactField, string> = { firstName: "Vorname", lastName: "Nachname", email: "E-Mail-Adresse", phone: "Rufnummer", street: "Straße", postcode: "PLZ", city: "Ort" };
+export const LEAD_FIELD_LABEL: Record<LeadContactField, string> = { salutation: "Anrede", firstName: "Vorname", lastName: "Nachname", email: "E-Mail-Adresse", phone: "Rufnummer", street: "Straße", postcode: "PLZ", city: "Ort" };
 
 /** Welche Angabe des Leads meint der Empfänger? Sucht im Text der Antwort nach den üblichen Feldnamen (deutsch und englisch). */
 export function fieldFromError(body: string | null | undefined): LeadContactField | null {
@@ -249,17 +249,37 @@ export function postcodeProblem(value: string | null | undefined, country: strin
   return null;
 }
 
-export type LeadContact = { firstName?: string | null; lastName?: string | null; email?: string | null; phone?: string | null; postcode?: string | null; city?: string | null; country?: string | null; street?: string | null };
-export type LeadDataProblem = { field: LeadContactField; title: string; hint: string; suggestion?: string | null };
+export type LeadContact = { firstName?: string | null; lastName?: string | null; email?: string | null; phone?: string | null; postcode?: string | null; city?: string | null; country?: string | null; street?: string | null; salutation?: string | null };
+/** `missing`: Die Angabe fehlt ganz (statt falsch zu sein). */
+export type LeadDataProblem = { field: LeadContactField; title: string; hint: string; suggestion?: string | null; missing?: boolean };
+/** Was eine Schnittstelle zwingend braucht und dem Lead fehlt – in den Worten der Schnittstelle („E-Mail“, „Anrede (Herr/Frau)“). */
+export type BuyerNeed = { buyer: string; missing: string[] };
+const NEED_FIELD: Array<[RegExp, LeadContactField]> = [[/^anrede/i, "salutation"], [/^vorname/i, "firstName"], [/^nachname/i, "lastName"], [/^stra/i, "street"], [/^plz/i, "postcode"], [/^ort/i, "city"], [/^(?:telefon|rufnummer)/i, "phone"], [/^e-?mail/i, "email"]];
+const MISSING_TITLE: Record<LeadContactField, string> = { salutation: "Die Anrede fehlt (Herr oder Frau).", firstName: "Der Vorname fehlt.", lastName: "Der Nachname fehlt.", email: "Die E-Mail-Adresse fehlt.", phone: "Die Rufnummer fehlt.", street: "Die Straße fehlt.", postcode: "Die PLZ fehlt.", city: "Der Ort fehlt." };
+const nameList = (names: string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} und ${names[names.length - 1]}`);
 
 /** Was an den Angaben eines Leads würde ein Empfänger sehr wahrscheinlich ablehnen? */
-export function leadDataProblems(lead: LeadContact): LeadDataProblem[] {
+/**
+ * `options.missing`: auch melden, was ganz fehlt – die Pflichtangaben der Schnittstellen (`needs`, zum Beispiel Wattfox: Anrede, Anschrift, E-Mail)
+ * und eine fehlende E-Mail-Adresse. Ohne die Option wird nur geprüft, ob vorhandene Angaben stimmen.
+ */
+export function leadDataProblems(lead: LeadContact, options: { missing?: boolean; needs?: BuyerNeed[] } = {}): LeadDataProblem[] {
   const out: LeadDataProblem[] = [];
   const email = isPlaceholder(lead.email) ? "" : String(lead.email ?? "").trim(); const phone = isPlaceholder(lead.phone) ? "" : String(lead.phone ?? "").trim();
   const mail = emailProblem(email); if (mail) out.push({ field: "email", title: "Die E-Mail-Adresse ist nicht gültig.", hint: mail, suggestion: suggestEmail(email) });
   const tel = phoneProblem(phone); if (tel) out.push({ field: "phone", title: "Die Rufnummer ist nicht brauchbar.", hint: tel });
   if (!email && !phone) out.push({ field: "phone", title: "Weder Rufnummer noch E-Mail-Adresse.", hint: "Ohne Kontaktweg kann kein Käufer den Kunden erreichen." });
   const plz = postcodeProblem(isPlaceholder(lead.postcode) ? "" : lead.postcode, lead.country); if (plz) out.push({ field: "postcode", title: "Die PLZ passt nicht.", suggestion: postcodeSuggestion(lead.postcode, lead.country), hint: plz });
+  if (!options.missing) return out;
+  const blank = (value: string | null | undefined) => isPlaceholder(value) || !String(value ?? "").trim();
+  const empty: Record<LeadContactField, boolean> = { salutation: !tidySalutation(lead.salutation), firstName: blank(lead.firstName), lastName: blank(lead.lastName), email: !email, phone: !phone, street: blank(lead.street), postcode: blank(lead.postcode), city: blank(lead.city) };
+  const wanted = new Map<LeadContactField, string[]>();
+  for (const need of options.needs ?? []) for (const label of need.missing) {
+    const field = NEED_FIELD.find(([pattern]) => pattern.test(label.trim()))?.[1]; if (!field || !empty[field] || out.some((problem) => problem.field === field)) continue;
+    const buyers = wanted.get(field) ?? []; if (!buyers.includes(need.buyer)) buyers.push(need.buyer); wanted.set(field, buyers);
+  }
+  for (const [field, buyers] of Array.from(wanted)) out.push({ field, missing: true, title: MISSING_TITLE[field], hint: `${nameList(buyers)} ${buyers.length === 1 ? "nimmt" : "nehmen"} den Lead nur damit an.` });
+  if (empty.email && phone && !wanted.has("email")) out.push({ field: "email", missing: true, title: MISSING_TITLE.email, hint: "Ohne E-Mail-Adresse nehmen viele Käufer den Lead nicht an." });
   return out;
 }
 
@@ -283,7 +303,7 @@ export type ApiProblem = {
   /** Grund je Käufer oder Kette aus dem letzten Vermerk „ohne Abnehmer“ (leer, wenn es keinen gibt) */
   parts: Array<{ who: string; why: string }>;
   reasons: ApiProblemReason[]; dataProblems: LeadDataProblem[];
-  lead: { firstName: string; lastName: string; email: string; phone: string; street: string; postcode: string; city: string; country: string };
+  lead: { salutation: string; firstName: string; lastName: string; email: string; phone: string; street: string; postcode: string; city: string; country: string };
 };
 export type ApiResolved = { leadId: number; publicId: string; name: string; categoryName: string; title: string; failedAt: string; solvedAt: string; buyerName: string | null };
 export type ApiHealthState = "gut" | "warnung" | "gestoert" | "unbekannt";
@@ -356,6 +376,8 @@ function healthState(counts: { sent: number; faults: number; refused: number; ar
 export function buildApiErrorOverview(input: {
   now: Date; days: number; leads: ApiLeadRow[]; events: ApiEventRow[]; deliveries: ApiDeliveryRow[]; notes: ApiNoteRow[];
   endpoints: ApiEndpointRow[]; integrations: ApiIntegrationRow[]; categories: Array<{ id: number; name: string }>;
+  /** Pflichtangaben der Schnittstellen, die einem Lead fehlen (vorab geprüft, siehe endpointNeeds) */
+  needs?: Array<BuyerNeed & { leadId: number }>;
 }): ApiErrorOverview {
   const { now } = input; const since = now.getTime() - input.days * 86_400_000;
   const categoryName = new Map(input.categories.map((row) => [row.id, row.name]));
@@ -371,6 +393,7 @@ export function buildApiErrorOverview(input: {
   for (const event of input.events) if (event.leadId && !isHealthCheck(event) && !isSupplierReturn(event)) eventsByLead.set(event.leadId, [...(eventsByLead.get(event.leadId) ?? []), event]);
   for (const note of input.notes) notesByLead.set(note.leadId, [...(notesByLead.get(note.leadId) ?? []), note]);
   for (const delivery of input.deliveries) deliveriesByLead.set(delivery.leadId, [...(deliveriesByLead.get(delivery.leadId) ?? []), delivery]);
+  const needsByLead = new Map<number, BuyerNeed[]>(); for (const need of input.needs ?? []) needsByLead.set(need.leadId, [...(needsByLead.get(need.leadId) ?? []), need]);
 
   const problems: ApiProblem[] = []; const resolved: ApiResolved[] = [];
   for (const lead of input.leads) {
@@ -396,7 +419,9 @@ export function buildApiErrorOverview(input: {
     // Erkennbar an einer späteren angekommenen Übergabe – oder an einer Zustellung, deren Durchlauf die Absage umfasst (oder die später kam).
     const passedOn = (event: ApiEventRow) => okEvents.some((ok) => later(ok, event)) || (!openNotes.some((note) => inRun(event, note)) && handedOver.some((row) => time(row.occurredAt) >= time(event.occurredAt) - RUN_SPAN));
     const openFailures = failures.filter((event) => time(event.occurredAt) > dismissedAt && !passedOn(event));
-    const dataProblems = open ? leadDataProblems({ ...lead, street: text(meta.street) }) : [];
+    // Was ganz fehlt (E-Mail-Adresse, Pflichtangaben einer Schnittstelle), wird bei frischen Leads gemeldet und bei allen, deren Auslieferung schon hakt – alte Bestände füllen die Liste nicht
+    const salutation = tidySalutation(meta.salutation) ?? tidySalutation(meta.anrede) ?? "";
+    const dataProblems = open ? leadDataProblems({ ...lead, street: text(meta.street), salutation }, { missing: time(lead.createdAt) >= since || openFailures.length > 0 || openNotes.length > 0, needs: needsByLead.get(lead.id) }) : [];
 
     if (!open || (!openFailures.length && !openNotes.length)) {
       // Früher gescheitert, inzwischen angekommen → „gelöst“ (zeigt, dass die Korrektur gewirkt hat). Gemeint ist ein eigener, gescheiterter
@@ -421,7 +446,7 @@ export function buildApiErrorOverview(input: {
     let info: ApiErrorInfo; let occurredAt: string; let target: ReturnType<typeof targetOf> = { name: null, link: null }; let httpStatus: number | null = null; let detail: string | null = null;
     if (lastFailure) { info = explainApiError({ status: lastFailure.responseStatus, body: lastFailure.responseBody }); occurredAt = iso(lastFailure.occurredAt); target = targetOf(lastFailure); httpStatus = lastFailure.responseStatus ?? null; detail = short(lastFailure.responseBody); }
     else if (lastNote) { info = explainNoBuyer(lastNote.note); occurredAt = iso(lastNote.occurredAt); }
-    else { const first = dataProblems[0]; info = { kind: "daten", title: first.title, advice: "Vor dem Ausliefern korrigieren – sonst lehnt der Empfänger den Lead sehr wahrscheinlich ab.", fix: "lead", field: first.field }; occurredAt = iso(lead.createdAt); }
+    else { const first = dataProblems[0]; info = { kind: "daten", title: first.title, advice: first.missing ? "Vor dem Ausliefern nachtragen (zum Beispiel nach einem Rückruf beim Kunden) – sonst nimmt der Käufer den Lead nicht an." : "Vor dem Ausliefern korrigieren – sonst lehnt der Empfänger den Lead sehr wahrscheinlich ab.", fix: "lead", field: first.field }; occurredAt = iso(lead.createdAt); }
     // Stimmen die Angaben nicht, ist das fast immer der eigentliche Grund – dann zeigt die Zeile auf das Feld
     if (dataProblems.length && info.fix !== "schnittstelle" && info.kind !== "daten") info = { ...info, fix: "lead", field: info.field ?? dataProblems[0].field };
     if (info.kind === "daten" && !info.field && dataProblems.length) info = { ...info, field: dataProblems[0].field };
@@ -429,7 +454,7 @@ export function buildApiErrorOverview(input: {
       leadId: lead.id, publicId: lead.publicId, name, categoryName: category, status: lead.status, supplierName: lead.supplierName ?? null,
       kind: info.kind, title: info.title, advice: info.advice, fix: info.fix, field: info.field,
       target: target.name, targetLink: target.link, httpStatus, detail, occurredAt, attempts: openFailures.length || openNotes.length, parts: lastNote ? noBuyerReasons(lastNote.note) : [], reasons: reasons.slice(0, 8), dataProblems,
-      lead: { firstName: text(lead.firstName), lastName: text(lead.lastName), email: String(lead.email ?? "").trim(), phone: String(lead.phone ?? "").trim(), street: text(meta.street), postcode: String(lead.postcode ?? "").trim(), city: text(lead.city), country: String(lead.country ?? "DE") },
+      lead: { salutation, firstName: text(lead.firstName), lastName: text(lead.lastName), email: String(lead.email ?? "").trim(), phone: String(lead.phone ?? "").trim(), street: text(meta.street), postcode: String(lead.postcode ?? "").trim(), city: text(lead.city), country: String(lead.country ?? "DE") },
     });
   }
   problems.sort((a, b) => time(b.occurredAt) - time(a.occurredAt)); resolved.sort((a, b) => time(b.solvedAt) - time(a.solvedAt));
@@ -479,7 +504,7 @@ export function buildApiErrorOverview(input: {
 
 /** Alle Arten von Fehlern mit Erklärung – das Nachschlage-Fenster auf der Seite. */
 export const API_ERROR_GUIDE: Array<{ kind: ApiErrorKind; codes: string; what: string; todo: string }> = [
-  { kind: "daten", codes: "400 · 422", what: "Eine Angabe des Leads passt dem Empfänger nicht – zum Beispiel eine falsche E-Mail-Adresse, eine zu kurze Rufnummer oder eine PLZ, die es nicht gibt.", todo: "Lead korrigieren und noch einmal ausliefern." },
+  { kind: "daten", codes: "400 · 422", what: "Eine Angabe des Leads fehlt oder passt dem Empfänger nicht – zum Beispiel keine E-Mail-Adresse, keine Anrede, eine zu kurze Rufnummer oder eine PLZ, die es nicht gibt. Fehlende Angaben stehen hier schon, bevor der Lead rausgeht.", todo: "Lead korrigieren oder Fehlendes nachtragen und noch einmal ausliefern." },
   { kind: "abgelehnt", codes: "400 · 413 · 422", what: "Der Empfänger nimmt den Lead nicht an: Die PLZ liegt nicht in seinem Gebiet, der Kontakt steht auf seiner Sperrliste, sein Kontingent ist voll – oder er nennt kein bestimmtes Feld. Der Grund steht in seiner Antwort.", todo: "Antwort lesen. Liegt es am Gebiet oder am Kontingent: noch einmal ausliefern, dann geht der Lead an den nächsten Käufer." },
   { kind: "dublette", codes: "409", what: "Der Empfänger kennt den Kontakt schon.", todo: "An einen anderen Käufer ausliefern oder abhaken." },
   { kind: "zugang", codes: "401 · 402 · 403", what: "Schlüssel oder Passwort der Schnittstelle stimmen nicht (mehr) – oder das Konto beim Empfänger ist gesperrt.", todo: "Zugang beim Käufer unter „Integration“ neu eintragen." },

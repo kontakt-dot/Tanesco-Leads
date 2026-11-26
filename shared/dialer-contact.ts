@@ -59,15 +59,45 @@ const AMBIGUOUS_AT_TOP: Partial<Record<AliasKey, string[]>> = { firstName: ["ad"
 const TOP_PREFIXES = ["contact", "kontakt", "customer", "kunde", "musteri", "müsteri"];
 const CONTAINER_KEYS = ["contact", "kontakt", "customer", "kunde", "lead", "person", "musteri", "müsteri", "kisi"];
 
+/** Vorsilbe der Leadsparte zählt nicht: „pv_email“ = „email“, „wp_plz“ = „plz“ – OnDialer schreibt seine Felder so. */
+const withoutSparte = (name: string) => name.replace(/^(?:pvwp|pv|wp)(?=[a-zäöü])/, "");
 const findIn = (source: Record<string, unknown> | null, key: AliasKey, top: boolean): { key: string; value: unknown } | null => {
   if (!source) return null; const names = ALIASES[key] as readonly string[]; const blocked = top ? AMBIGUOUS_AT_TOP[key] ?? [] : [];
   for (const [raw, value] of Object.entries(source)) {
-    if (value === null || value === undefined || value === "") continue; const name = norm(raw);
-    if (names.includes(name) && !blocked.includes(name)) return { key: raw, value };
-    if (top && TOP_PREFIXES.some((prefix) => name.startsWith(prefix) && names.includes(name.slice(prefix.length)))) return { key: raw, value };
+    if (value === null || value === undefined || value === "") continue; const full = norm(raw); const bare = withoutSparte(full);
+    for (const name of bare === full ? [full] : [full, bare]) {
+      if (names.includes(name) && !blocked.includes(name)) return { key: raw, value };
+      if (top && TOP_PREFIXES.some((prefix) => name.startsWith(prefix) && names.includes(name.slice(prefix.length)))) return { key: raw, value };
+    }
   }
   return null;
 };
+
+const EMAIL_VALUE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** Namen, unter denen die Adresse des Agenten oder des Absenders steht – nie die des Kunden. */
+const NOT_CUSTOMER = /agent|user|operator|mitarbeiter|temsilci|personel|owner|sender|absender|admin|creator|createdby|noreply|support|kampagne|campaign/;
+/**
+ * E-Mail des Kunden unter einem eigenen Feldnamen („pv_email“, „E-Mail-Adresse“, „eposta“): Der Name enthält „mail“ oder „eposta“,
+ * der Wert ist eine Adresse. Für die weiteren Felder einer Meldung und für die Angaben eines Leads, die schon gespeichert sind.
+ */
+export function emailFromFields(fields: Record<string, unknown> | null | undefined): { key: string; email: string } | null {
+  if (!fields) return null;
+  for (const [key, value] of Object.entries(fields)) {
+    const name = norm(key); if (!/mail|eposta/.test(name) || NOT_CUSTOMER.test(name)) continue;
+    const text = typeof value === "string" ? value.replace(/\s+/g, "").toLowerCase() : "";
+    if (EMAIL_VALUE.test(text) && text.length <= 320) return { key, email: text };
+  }
+  return null;
+}
+/** Letzter Versuch: genau EINE Adresse irgendwo im Kontakt oder in der Meldung, deren Name nicht nach dem Agenten aussieht. */
+function emailByValue(sources: Array<Record<string, unknown> | null>): string | null {
+  const seen = new Set<string>();
+  for (const source of sources) for (const [key, value] of Object.entries(source ?? {})) {
+    if (typeof value !== "string" || NOT_CUSTOMER.test(norm(key))) continue; const text = value.trim().toLowerCase();
+    if (EMAIL_VALUE.test(text) && text.length <= 320) seen.add(text);
+  }
+  return seen.size === 1 ? Array.from(seen)[0] : null;
+}
 const COUNTRY: Record<string, "DE" | "AT" | "CH"> = { de: "DE", deu: "DE", deutschland: "DE", germany: "DE", at: "AT", aut: "AT", österreich: "AT", oesterreich: "AT", austria: "AT", ch: "CH", che: "CH", schweiz: "CH", switzerland: "CH" };
 const flatFields = (value: unknown): Record<string, string> => {
   const out: Record<string, string> = {}; if (!isObject(value)) return out;
@@ -113,14 +143,19 @@ export function extractDialerContact(payload: unknown, mapping: Partial<Record<s
   // PLZ: in Deutschland 5 Ziffern – kommt sie als Zahl oder aus einer Excel-Liste ohne führende Null („9633“), bekommt sie die Null zurück
   const postcode = normalizePostcode(pick("postcode", "postcode", "contact.postcode", 24), country); const city = pick("city", "city", "contact.city", 120);
   if (countryRaw) found.push("contact.country");
-  const emailRaw = pick("email", "email", "contact.email", 320); const email = emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw.toLowerCase() : null; if (emailRaw && !email) found.pop();
+  const emailRaw = pick("email", "email", "contact.email", 320); let email = emailRaw && EMAIL_VALUE.test(emailRaw.replace(/\s+/g, "")) ? emailRaw.replace(/\s+/g, "").toLowerCase() : null; if (emailRaw && !email) found.pop();
   const phone = clean(findIn(container, "phone", false)?.value, 48);
   const externalId = pick("contactId", "id", "contact.id", 120);
   let category = clean(readPath(top, path("category")), 160) ?? clean(findIn(container, "category", false)?.value, 160) ?? clean(findIn(top, "category", true)?.value, 160); if (category) found.push("category");
   // weitere Felder: das Feld `fields` – und alles im Kontakt, was kein bekanntes Feld ist
   const mappedFields = readPath(top, path("contactFields")); const fieldsSource = isObject(mappedFields) ? mappedFields : findIn(container, "fields", false)?.value ?? findIn(top, "fields", true)?.value;
   const fields = flatFields(fieldsSource);
-  if (container) { const known = new Set<string>(Object.values(ALIASES).flat()); for (const [raw, value] of Object.entries(container)) { if (known.has(norm(raw)) || isObject(value) || Object.keys(fields).length >= 60) continue; const name = raw.replace(/\s+/g, " ").trim().slice(0, 80); const text = Array.isArray(value) ? null : clean(value, 500); if (name && text && !(name in fields)) fields[name] = text; } }
+  // Felder des Kontakts, die schon als Name, Anschrift oder E-Mail gelesen wurden (auch mit Vorsilbe wie „pv_email“), stehen nicht noch einmal als Zusatzfeld da
+  const usedInContainer = new Set<string>(); if (container) for (const alias of ["firstName", "lastName", "fullName", "company", "street", "houseNumber", "postcode", "city", "country", "email", "phone", "id", "category"] as AliasKey[]) { const hit = findIn(container, alias, false); if (hit) usedInContainer.add(hit.key); }
+  if (container) { const known = new Set<string>(Object.values(ALIASES).flat()); for (const [raw, value] of Object.entries(container)) { if (known.has(norm(raw)) || usedInContainer.has(raw) || isObject(value) || Object.keys(fields).length >= 60) continue; const name = raw.replace(/\s+/g, " ").trim().slice(0, 80); const text = Array.isArray(value) ? null : clean(value, 500); if (name && text && !(name in fields)) fields[name] = text; } }
+  // E-Mail unter eigenem Namen bei den weiteren Feldern („pv_email“: „…@…“) – sie ist die E-Mail des Kontakts, kein Zusatzfeld
+  if (!email) { const hit = emailFromFields(fields); if (hit) { email = hit.email; delete fields[hit.key]; found.push("contact.email (aus den Feldern)"); } }
+  if (!email) { const hit = emailByValue([container, top]); if (hit) { email = hit; found.push("contact.email (aus dem Wert)"); } }
   // Aufnahme-Links unter den Feldern („pv_recording_1“, „wp_record_file“, „wp_sprachaufzeichung“): gelten als Aufnahme, wenn recording_url fehlt. Als Angabe bleiben sie nur, wenn die Kategorie ein Feld dafür hat (z. B. „Recording“) – das regelt die Zuordnung (shared/lead-fields.ts)
   let recordingUrl: string | null = null;
   for (const key of Object.keys(fields)) { if (!RECORDING_FIELD.test(key)) continue; const value = fields[key]; if (!recordingUrl && /^https?:\/\/\S+$/i.test(value)) recordingUrl = value; }

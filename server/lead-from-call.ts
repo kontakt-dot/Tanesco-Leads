@@ -16,6 +16,7 @@ import { invokeLLM } from "./_core/llm";
 import { fieldNames } from "./llm-shape";
 import type { Db } from "./lead-pipeline";
 import { cleanSpokenContact, type SpokenContact } from "../shared/dialer-intake";
+import { emailFromFields } from "../shared/dialer-contact";
 import { callAnswerList, cleanFieldValues, dialerFieldMatches, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, isSalutation, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
 
 type ContactKey = Exclude<keyof SpokenContact, "salutation">;
@@ -87,6 +88,8 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
   let salutation: "Herr" | "Frau" | null = null;
   if (lead.firstName && isSalutation(lead.firstName)) { salutation = tidySalutation(lead.firstName); patch.firstName = null; cleaned.push("Anrede"); }
   const current = { firstName: patch.firstName === null ? null : realText(lead.firstName, 120), lastName: patch.lastName === null ? null : realText(lead.lastName, 120), email: patch.email === null ? null : realText(lead.email, 320), postcode: patch.postcode === null ? null : realText(lead.postcode, 24), city: patch.city === null ? null : realText(lead.city, 120), street: realText(meta.street, 200) };
+  // E-Mail, die der Dialer unter eigenem Namen geschickt hat („pv_email“): Sie steht dann bei den Angaben statt im Feld E-Mail – von dort übernehmen
+  if (!current.email) { const moved = await takeEmailFromFields(db, lead); if (moved) { current.email = moved.email; delete meta[moved.key]; } }
   const transcript = call?.transcript?.trim() ?? "";
   if (!transcript) {
     // ohne Text gibt es nichts zu lesen (z. B. nach Ablauf der Aufbewahrung) – vermerken, damit der Lead nicht immer wieder geprüft wird
@@ -132,6 +135,27 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
     await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: options.actorUserId ?? null, note: `Aus dem Gespräch übernommen: ${parts}`.slice(0, 500) });
   }
   return { leadId, fields, contact, cleaned };
+}
+
+/** Steht die E-Mail-Adresse bei den Angaben des Leads (unter einem Namen des Dialers), kommt sie ins Feld E-Mail – mit Vermerk im Lead-Log. */
+async function takeEmailFromFields(db: Db, lead: { id: number; tenantId: number; status: typeof leads.$inferSelect["status"] }): Promise<{ key: string; email: string } | null> {
+  const fresh = (await db.select({ email: leads.email, metadata: leads.metadata }).from(leads).where(eq(leads.id, lead.id)).limit(1))[0];
+  if (!fresh || realText(fresh.email, 320)) return null;
+  const meta = metaOf(fresh.metadata); const hit = emailFromFields(meta); if (!hit) return null;
+  const next = { ...meta }; delete next[hit.key];
+  await db.update(leads).set({ email: hit.email, metadata: next }).where(eq(leads.id, lead.id));
+  const rawContactId = Number(meta.rawContactId) || 0;
+  if (rawContactId) { const raw = (await db.select({ id: rawContacts.id, email: rawContacts.email }).from(rawContacts).where(and(eq(rawContacts.id, rawContactId), eq(rawContacts.tenantId, lead.tenantId))).limit(1))[0]; if (raw && !realText(raw.email, 320)) await db.update(rawContacts).set({ email: hit.email }).where(eq(rawContacts.id, raw.id)); }
+  await db.insert(leadStatusEvents).values({ tenantId: lead.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: `E-Mail-Adresse vom Dialer übernommen – sie stand bei den Angaben unter „${hit.key.slice(0, 60)}“` });
+  return hit;
+}
+/** Vorhandene Leads ohne E-Mail-Adresse, bei denen sie bei den Angaben steht: einmal durchgehen und umtragen. */
+export async function emailsFromLeadFields(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ moved: number }> {
+  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, status: leads.status }).from(leads)
+    .where(and(eq(leads.kind, "verkauf"), sql`(${leads.email} IS NULL OR ${leads.email} = '')`, sql`JSON_SEARCH(${leads.metadata}, 'one', ${"%@%"}) IS NOT NULL`, ...(options.tenantId ? [eq(leads.tenantId, options.tenantId)] : [])))
+    .orderBy(desc(leads.id)).limit(options.max ?? 2000);
+  let moved = 0; for (const row of rows) if (await takeEmailFromFields(db, row)) moved += 1;
+  return { moved };
 }
 
 /**

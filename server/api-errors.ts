@@ -9,7 +9,8 @@ import { and, desc, eq, gte, inArray, like, or } from "drizzle-orm";
 import { automationExecutionLogs, categoryFields, deliveryEndpoints, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberships, partnerIntegrations, suppliers, users } from "../drizzle/schema";
 import { normalizePostcode } from "../shared/postcode";
 import { LEAD_FIELD_LABEL, NOT_POSSIBLE_PREFIX, PRECHECK_STATUS, buildApiErrorOverview, emailProblem, phoneProblem, plainReason, postcodeProblem, type ApiErrorOverview, type ApiNoteRow, type LeadContactField } from "../shared/api-errors";
-import { fieldOptions, leadDisplayName } from "../shared/lead-fields";
+import { fieldOptions, leadDisplayName, tidySalutation } from "../shared/lead-fields";
+import { endpointNeeds } from "./outbound-templates";
 import { deliverLeadNow, metadataOf, type Db, type LeadRow } from "./lead-pipeline";
 
 const MAX_EVENTS = 6000; const MAX_NOTES = 3000; const MAX_PRECHECK = 3000;
@@ -44,10 +45,10 @@ export async function apiErrorOverview(db: Db, tenantId: number, options: { days
       .from(automationExecutionLogs).where(and(eq(automationExecutionLogs.tenantId, tenantId), gte(automationExecutionLogs.occurredAt, since), or(like(automationExecutionLogs.summary, "%Auslieferung offen:%"), like(automationExecutionLogs.summary, "Keine aktive Lieferkette%"), like(automationExecutionLogs.summary, "Die zugeordnete %")))).orderBy(desc(automationExecutionLogs.occurredAt)).limit(MAX_NOTES),
     // Noch nicht ausgeliefert: Angaben vorab prüfen (nur Leads für den Verkauf, die neuesten zuerst)
     db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), inArray(leads.status, Array.from(PRECHECK_STATUS) as Array<LeadRow["status"]>))).orderBy(desc(leads.id)).limit(MAX_PRECHECK),
-    db.select({ id: deliveryEndpoints.id, url: deliveryEndpoints.url, enabled: deliveryEndpoints.enabled, membershipId: deliveryEndpoints.membershipId, categoryId: deliveryEndpoints.categoryId, name: users.name, company: users.company })
+    db.select({ id: deliveryEndpoints.id, url: deliveryEndpoints.url, enabled: deliveryEndpoints.enabled, membershipId: deliveryEndpoints.membershipId, categoryId: deliveryEndpoints.categoryId, bodyTemplate: deliveryEndpoints.bodyTemplate, omitAutoFields: deliveryEndpoints.omitAutoFields, valueMappings: deliveryEndpoints.valueMappings, sourceFilterMode: deliveryEndpoints.sourceFilterMode, sourceSupplierIds: deliveryEndpoints.sourceSupplierIds, fieldFilters: deliveryEndpoints.fieldFilters, name: users.name, company: users.company })
       .from(deliveryEndpoints).leftJoin(memberships, eq(memberships.id, deliveryEndpoints.membershipId)).leftJoin(users, eq(users.id, memberships.userId)).where(eq(deliveryEndpoints.tenantId, tenantId)),
     db.select({ id: partnerIntegrations.id, name: partnerIntegrations.name, status: partnerIntegrations.status, callbackUrl: partnerIntegrations.callbackUrl }).from(partnerIntegrations).where(eq(partnerIntegrations.tenantId, tenantId)),
-    db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)),
+    db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)),
     db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).where(eq(suppliers.tenantId, tenantId)),
   ]);
   const fromRules: ApiNoteRow[] = [];
@@ -62,8 +63,11 @@ export async function apiErrorOverview(db: Db, tenantId: number, options: { days
   }
   const categoryName = new Map(categories.map((row) => [row.id, row.name]));
   const supplierName = new Map(supplierRows.map((row) => [row.id, row.name])); // am Lead steht der Name des Lieferanten nicht immer – dann über seine Nummer
+  // Pflichtangaben der Schnittstellen (Wattfox-Vorlage): Was fehlt den noch nicht ausgelieferten Leads? So steht es hier, bevor der Lead losgeht
+  const categoryById = new Map(categories.map((row) => [row.id, row])); const needEndpoints = endpointRows.map((row) => ({ ...row, buyerName: row.company ?? row.name ?? "Käufer" }));
+  const needs = leadRows.filter((lead) => lead.kind === "verkauf" && PRECHECK_STATUS.has(lead.status)).flatMap((lead) => endpointNeeds(lead, needEndpoints, categoryById.get(lead.categoryId) ?? null).map((need) => ({ ...need, leadId: lead.id })));
   return buildApiErrorOverview({
-    now, days, events, notes, deliveries, categories, integrations,
+    now, days, events, notes, deliveries, categories, integrations, needs,
     leads: leadRows.filter((lead) => lead.kind === "verkauf").map((lead) => ({ id: lead.id, publicId: lead.publicId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, status: lead.status, categoryId: lead.categoryId, supplierName: lead.supplierName ?? (lead.supplierId ? supplierName.get(lead.supplierId) ?? null : null), metadata: lead.metadata, createdAt: lead.createdAt })),
     endpoints: endpointRows.map((row) => ({ id: row.id, url: row.url, enabled: row.enabled, membershipId: row.membershipId, buyerName: row.company ?? row.name ?? "Käufer", categoryName: categoryName.get(row.categoryId) ?? null })),
   });
@@ -81,9 +85,9 @@ export async function apiErrorCount(db: Db, tenantId: number): Promise<{ open: n
   return value;
 }
 
-export type LeadCorrection = { firstName?: string; lastName?: string; email?: string; phone?: string; street?: string; postcode?: string; city?: string; fields?: Record<string, string> };
-const CONTACT_KEYS: LeadContactField[] = ["firstName", "lastName", "email", "phone", "street", "postcode", "city"];
-const MAX_LENGTH: Record<LeadContactField, number> = { firstName: 120, lastName: 120, email: 320, phone: 48, street: 200, postcode: 24, city: 120 };
+export type LeadCorrection = { salutation?: string; firstName?: string; lastName?: string; email?: string; phone?: string; street?: string; postcode?: string; city?: string; fields?: Record<string, string> };
+const CONTACT_KEYS: LeadContactField[] = ["salutation", "firstName", "lastName", "email", "phone", "street", "postcode", "city"];
+const MAX_LENGTH: Record<LeadContactField, number> = { salutation: 10, firstName: 120, lastName: 120, email: 320, phone: 48, street: 200, postcode: 24, city: 120 };
 const tidy = (value: string) => value.replace(/\s+/g, " ").trim();
 
 /**
@@ -92,13 +96,16 @@ const tidy = (value: string) => value.replace(/\s+/g, " ").trim();
  */
 export async function correctLead(db: Db, tenantId: number, actorUserId: number | null, lead: LeadRow, input: LeadCorrection) {
   const meta = metadataOf(lead); const patch: Partial<typeof leads.$inferInsert> = {}; const nextMeta: Record<string, unknown> = { ...meta }; const changed: string[] = []; const log: string[] = [];
-  const current: Record<LeadContactField, string> = { firstName: lead.firstName ?? "", lastName: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street: typeof meta.street === "string" ? meta.street : "", postcode: lead.postcode ?? "", city: lead.city ?? "" };
+  const current: Record<LeadContactField, string> = { salutation: tidySalutation(meta.salutation) ?? tidySalutation(meta.anrede) ?? "", firstName: lead.firstName ?? "", lastName: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street: typeof meta.street === "string" ? meta.street : "", postcode: lead.postcode ?? "", city: lead.city ?? "" };
   for (const key of CONTACT_KEYS) {
     const raw = input[key]; if (raw === undefined) continue;
     let value = tidy(raw).slice(0, MAX_LENGTH[key]);
     if (key === "email") value = value.replace(/\s+/g, "").toLowerCase();
     if (key === "postcode") value = normalizePostcode(value, lead.country) ?? ""; // „9633“ → „09633“ (führende Null)
+    if (key === "salutation") { const fixed = tidySalutation(value); if (value && !fixed) throw new Error("Anrede: Bitte Herr oder Frau wählen."); value = fixed ?? ""; }
     if (value === tidy(current[key])) continue;
+    // Die Anrede steht bei den Angaben des Leads („anrede“) – von dort nimmt sie auch die Vorlage der Schnittstelle
+    if (key === "salutation") { delete nextMeta.salutation; if (value) nextMeta.anrede = value; else delete nextMeta.anrede; changed.push(LEAD_FIELD_LABEL[key]); log.push(`${LEAD_FIELD_LABEL[key]}: ${current[key] ? `„${current[key]}“` : "leer"} → ${value ? `„${value}“` : "leer"}`); continue; }
     if (key === "email" && value) { const problem = emailProblem(value); if (problem) throw new Error(`E-Mail-Adresse: ${problem}`); }
     if (key === "phone" && value) { const problem = phoneProblem(value); if (problem) throw new Error(`Rufnummer: ${problem}`); }
     if (key === "postcode" && value) { const problem = postcodeProblem(value, lead.country); if (problem) throw new Error(`PLZ: ${problem}`); }

@@ -17,7 +17,9 @@ const PAGE = 50;
 const groupOf = (kind: ApiErrorKind): Exclude<Filter, "alle"> => (kind === "daten" ? "daten" : NO_BUYER.includes(kind) ? "kein_abnehmer" : "empfaenger");
 const STATUS_LABEL: Record<string, string> = { neu: "Neu", genehmigt: "Freigegeben", zugewiesen: "Zugewiesen", reklamiert: "Reklamiert", fehlerhaft: "Fehlerhaft", deaktiviert: "Deaktiviert", "hängend": "Hängend" };
 const HEALTH_LABEL: Record<ApiHealthRow["state"], string> = { gut: "Läuft", warnung: "Wackelt", gestoert: "Gestört", unbekannt: "Noch keine Daten" };
-const CONTACT_FIELDS: LeadContactField[] = ["firstName", "lastName", "email", "phone", "street", "postcode", "city"];
+const CONTACT_FIELDS: LeadContactField[] = ["salutation", "firstName", "lastName", "phone", "email", "street", "postcode", "city"];
+/** „Angaben fehlen“, wenn nichts falsch ist, sondern nur etwas fehlt (E-Mail-Adresse, Anrede …) – sonst der Name der Art. */
+const kindLabel = (problem: ApiProblem) => problem.kind === "daten" && problem.dataProblems.length > 0 && problem.dataProblems.every((item) => item.missing) ? "Angaben fehlen" : API_ERROR_KIND_LABEL[problem.kind];
 
 const stamp = (value: string) => new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 /** „vor 5 Min“, „vor 3 Std“, „gestern“, sonst das Datum – die genaue Zeit steht im Hinweis beim Darüberfahren. */
@@ -69,7 +71,7 @@ export default function ApiErrorsWorkspace() {
 
     <section className="af-tiles" aria-label="Offene Probleme nach Art">
       {tile("alle", data?.counts.open, "Offene Probleme", "alle anzeigen")}
-      {tile("daten", data?.counts.daten, "Angaben falsch", "E-Mail, Rufnummer, PLZ …")}
+      {tile("daten", data?.counts.daten, "Angaben fehlen oder falsch", "E-Mail, Anrede, Rufnummer, PLZ …")}
       {tile("empfaenger", data?.counts.empfaenger, "Beim Empfänger gescheitert", "abgelehnt, Zugang, Störung")}
       {tile("kein_abnehmer", data?.counts.keinAbnehmer, "Kein Abnehmer", "kein Käufer, keine Kette")}
     </section>
@@ -96,7 +98,7 @@ export default function ApiErrorsWorkspace() {
       {results && <div className="af-results" role="status"><header><strong>Ergebnis des letzten Versuchs</strong><button type="button" aria-label="Ergebnis schließen" onClick={() => setResults(null)}><X /></button></header><ul>{results.map((row) => <li key={row.publicId} className={row.ok ? "is-ok" : "is-bad"}><b>{row.ok ? "Ausgeliefert" : "Nicht ausgeliefert"}</b><span>{row.name}</span><em>{row.message}</em></li>)}</ul></div>}
       {shown.length > 0 && <div className="af-bulk"><label><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? selected.filter((id) => !visible.some((problem) => problem.publicId === id)) : Array.from(new Set([...selected, ...visible.map((problem) => problem.publicId)])))} /> {selected.length ? `${selected.length} ausgewählt` : visible.length < shown.length ? `Alle ${visible.length} angezeigten auswählen` : "Alle auswählen"}</label>
         {selected.length > 0 && <span><Button size="sm" className="flux-button" disabled={retry.isPending || selected.length > 50} onClick={() => retry.mutate({ publicIds: selected })}><Send className="h-4 w-4" /> {retry.isPending ? "Wird ausgeliefert …" : "Erneut ausliefern"}</Button><Button size="sm" variant="outline" disabled={dismiss.isPending} onClick={() => dismiss.mutate({ publicIds: selected })}><Check className="h-4 w-4" /> Als erledigt abhaken</Button>{selected.length > 50 && <small>Höchstens 50 auf einmal ausliefern.</small>}</span>}</div>}
-      {overview.error ? <p className="af-empty is-error">{overview.error.message}</p> : !data ? <p className="af-empty">Wird geladen …</p> : !shown.length ? <div className="af-clear"><Check aria-hidden="true" /><strong>{problems.length ? "Kein Problem passt zu dieser Auswahl." : "Keine offenen Probleme."}</strong><p>{problems.length ? "Filter oder Suche ändern, um die anderen zu sehen." : "Alles, was rausgehen sollte, ist rausgegangen. Leads mit falschen Angaben stehen hier, sobald es welche gibt."}</p>{(filter !== "alle" || search) && <Button variant="outline" size="sm" onClick={() => { setFilter("alle"); setSearch(""); }}>Alle anzeigen</Button>}</div> :
+      {overview.error ? <p className="af-empty is-error">{overview.error.message}</p> : !data ? <p className="af-empty">Wird geladen …</p> : !shown.length ? <div className="af-clear"><Check aria-hidden="true" /><strong>{problems.length ? "Kein Problem passt zu dieser Auswahl." : "Keine offenen Probleme."}</strong><p>{problems.length ? "Filter oder Suche ändern, um die anderen zu sehen." : "Alles, was rausgehen sollte, ist rausgegangen. Leads mit fehlenden oder falschen Angaben stehen hier, sobald es welche gibt."}</p>{(filter !== "alle" || search) && <Button variant="outline" size="sm" onClick={() => { setFilter("alle"); setSearch(""); }}>Alle anzeigen</Button>}</div> :
         <><ul className="af-list">{visible.map((problem) => <ProblemRow key={problem.publicId} problem={problem} selected={selected.includes(problem.publicId)} onToggle={() => toggle(problem.publicId)} expanded={Boolean(open[problem.publicId])} onExpand={() => setOpen({ ...open, [problem.publicId]: !open[problem.publicId] })} editing={editing === problem.publicId} onEdit={() => setEditing(editing === problem.publicId ? null : problem.publicId)}
           busy={retry.isPending || dismiss.isPending} onRetry={() => retry.mutate({ publicIds: [problem.publicId] })} onDismiss={() => dismiss.mutate({ publicIds: [problem.publicId] })} onSaved={(result) => { refresh(); setEditing(null); if (result) setResults([result]); }} />)}</ul>
           {visible.length < shown.length && <div className="af-more-rows"><Button variant="outline" onClick={() => setLimit(limit + PAGE)}>Weitere {Math.min(PAGE, shown.length - visible.length)} anzeigen</Button><small>{visible.length} von {shown.length} angezeigt</small></div>}</>}
@@ -118,7 +120,7 @@ function ProblemRow({ problem, selected, onToggle, expanded, onExpand, editing, 
   return <li className={`af-row is-${group} ${selected ? "is-selected" : ""}`}>
     <label className="af-check"><input type="checkbox" aria-label={`${problem.name} auswählen`} checked={selected} onChange={onToggle} /></label>
     <div className="af-main">
-      <div className="af-line"><span className={`af-kind is-${group}`}>{API_ERROR_KIND_LABEL[problem.kind]}</span><a className="af-name" href={`/?page=Leads&lead=${encodeURIComponent(problem.publicId)}`} title="Lead öffnen">{problem.name}</a><span className="af-meta">{problem.categoryName} · {STATUS_LABEL[problem.status] ?? problem.status}{problem.supplierName ? ` · von ${problem.supplierName}` : ""}</span><span className="af-when" title={stamp(problem.occurredAt)}>{ago(problem.occurredAt)}{problem.attempts > 1 ? ` · ${problem.attempts} Versuche` : ""}</span></div>
+      <div className="af-line"><span className={`af-kind is-${group}`}>{kindLabel(problem)}</span><a className="af-name" href={`/?page=Leads&lead=${encodeURIComponent(problem.publicId)}`} title="Lead öffnen">{problem.name}</a><span className="af-meta">{problem.categoryName} · {STATUS_LABEL[problem.status] ?? problem.status}{problem.supplierName ? ` · von ${problem.supplierName}` : ""}</span><span className="af-when" title={stamp(problem.occurredAt)}>{ago(problem.occurredAt)}{problem.attempts > 1 ? ` · ${problem.attempts} Versuche` : ""}</span></div>
       <p className="af-title">{problem.title}{(problem.target || problem.httpStatus) && <span>{problem.target ? ` Empfänger: ${problem.target}` : ""}{problem.httpStatus ? `${problem.target ? " ·" : ""} Antwort ${problem.httpStatus}` : ""}</span>}</p>
       {problem.dataProblems.length > 0 && <ul className="af-data">{problem.dataProblems.map((item) => <li key={`${item.field}-${item.title}`}><b>{LEAD_FIELD_LABEL[item.field]}</b>{problem.lead[item.field] ? <code>{problem.lead[item.field]}</code> : <code className="is-empty">leer</code>}<span>{item.hint}</span></li>)}</ul>}
       {group === "kein_abnehmer" && problem.parts.length > 0 && <ul className="af-parts">{problem.parts.map((part, index) => <li key={index}>{part.who && <b>{part.who}</b>}<span>{part.why}</span></li>)}</ul>}
@@ -145,7 +147,7 @@ function ProblemRow({ problem, selected, onToggle, expanded, onExpand, editing, 
 
 /** Lead korrigieren: Kontaktangaben und – wenn gewünscht – die Felder der Kategorie. Falsche Angaben werden schon beim Tippen gemeldet. */
 function LeadCorrection({ problem, onSaved, onCancel }: { problem: ApiProblem; onSaved: (result: RetryResult | null) => void; onCancel: () => void }) {
-  const [values, setValues] = useState<Record<LeadContactField, string>>({ firstName: problem.lead.firstName, lastName: problem.lead.lastName, email: problem.lead.email, phone: problem.lead.phone, street: problem.lead.street, postcode: problem.lead.postcode, city: problem.lead.city });
+  const [values, setValues] = useState<Record<LeadContactField, string>>({ salutation: problem.lead.salutation, firstName: problem.lead.firstName, lastName: problem.lead.lastName, email: problem.lead.email, phone: problem.lead.phone, street: problem.lead.street, postcode: problem.lead.postcode, city: problem.lead.city });
   const [extraOpen, setExtraOpen] = useState(false); const [extra, setExtra] = useState<Record<string, string>>({});
   const detail = trpc.leadops.getLeadDetail.useQuery({ publicId: problem.publicId }, { enabled: extraOpen, retry: false });
   const save = trpc.leadops.correctLead.useMutation({
@@ -169,8 +171,9 @@ function LeadCorrection({ problem, onSaved, onCancel }: { problem: ApiProblem; o
     <h4>Angaben korrigieren</h4>
     <div className="af-edit-grid">{CONTACT_FIELDS.map((key) => { const hint = wrong(key); return <label key={key} className={`af-field is-${key} ${hint ? "is-wrong" : marked.has(key) && values[key].trim() === problem.lead[key].trim() ? "is-marked" : ""}`}>
       <span>{LEAD_FIELD_LABEL[key]}</span>
-      <Input value={values[key]} inputMode={key === "phone" ? "tel" : key === "email" ? "email" : key === "postcode" ? "numeric" : undefined} autoComplete="off" spellCheck={false} aria-invalid={Boolean(hint)} onChange={(event) => setValues({ ...values, [key]: event.target.value })} />
-      {hint ? <small role="alert">{hint}</small> : marked.has(key) && values[key].trim() === problem.lead[key].trim() ? <small>Hier hakt es – bitte prüfen.</small> : null}
+      {key === "salutation" ? <select className="filter-select" aria-label="Anrede" value={values.salutation} onChange={(event) => setValues({ ...values, salutation: event.target.value })}><option value="">– leer –</option><option value="Herr">Herr</option><option value="Frau">Frau</option></select>
+        : <Input value={values[key]} inputMode={key === "phone" ? "tel" : key === "email" ? "email" : key === "postcode" ? "numeric" : undefined} autoComplete="off" spellCheck={false} aria-invalid={Boolean(hint)} onChange={(event) => setValues({ ...values, [key]: event.target.value })} />}
+      {hint ? <small role="alert">{hint}</small> : marked.has(key) && values[key].trim() === problem.lead[key].trim() ? <small>{values[key].trim() ? "Hier hakt es – bitte prüfen." : "Fehlt – bitte nachtragen."}</small> : null}
       {key === "email" && suggestion && <button type="button" className="af-suggest" onClick={() => setValues({ ...values, email: suggestion })}>Meintest du <b>{suggestion}</b>? Übernehmen</button>}
       {key === "postcode" && plzSuggestion && <button type="button" className="af-suggest" onClick={() => setValues({ ...values, postcode: plzSuggestion })}>Die führende Null fehlt: <b>{plzSuggestion}</b> übernehmen</button>}
     </label>; })}</div>
