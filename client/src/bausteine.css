@@ -258,11 +258,11 @@ html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
   --lo-bereit:#2a78d6;--lo-raus:#1baf7a;--lo-zurueck:#eb6834;--lo-rest:#d5d9e0;--lo-warn:#b54708;--lo-warn-line:#fedf89;--lo-warn-bg:#fffaeb;--lo-bar-before:#e39aa6;
 }
 
-/* Übersicht (v359, ruhiger): eine Leiste – fünf Zahlen nebeneinander, darunter je eine Zeile; daneben die letzten 14 Tage.
+/* Übersicht (v359, ruhiger; seit v377 ohne „Reklamiert“): eine Leiste – vier Zahlen nebeneinander, darunter je eine Zeile; daneben die letzten 14 Tage.
    Jede Zahl ist ein Filter, mehr steht im Hinweis beim Überfahren. Farbe zeigt nur den Zustand (Punkt, Säule); Schrift bleibt in den Schriftfarben. */
 .lo-wrap{container-type:inline-size;margin:0 0 16px}
 .lo-strip{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,30%);border:1px solid var(--lt-line);border-radius:18px;background:var(--lt-tile);overflow:hidden}
-.lo-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));min-width:0}
+.lo-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));min-width:0}
 .lo-tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;min-width:0;padding:14px 18px 15px;border:0;border-radius:0;background:none;color:var(--lt-ink);font-family:inherit;text-align:left;cursor:pointer;transition:background-color .15s}
 .lo-tile+.lo-tile{box-shadow:inset 1px 0 0 var(--lt-line)}
 .lo-label{display:block;max-width:100%;font-size:12px;font-weight:600;line-height:1.3;color:var(--lt-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -327,15 +327,14 @@ html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
 .lo-hint-close{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:9px;background:none;color:var(--lt-muted);cursor:pointer}
 .lo-hint-close:hover{background:var(--lt-chip);color:var(--lt-ink)}
 .lo-hint-close svg{width:15px;height:15px}
-/* Wird es eng, rückt das Diagramm unter die Kacheln; auf dem Handy stehen die Kacheln zu zweit, „Leads gesamt“ über die ganze Breite */
+/* Wird es eng, rückt das Diagramm unter die Kacheln; auf dem Handy stehen die vier Kacheln zu zweit */
 @container (max-width:1500px){.lo-strip{grid-template-columns:minmax(0,1fr) minmax(270px,27%)}.lo-tile{padding-inline:14px}} /* schmaler: die Zahlen brauchen den Platz für ihre Namen */
 @container (max-width:1040px){.lo-strip{grid-template-columns:minmax(0,1fr)}.lo-chart{border-left:0;border-top:1px solid var(--lt-line)}}
 @container (max-width:620px){
   .lo-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
   .lo-tile{padding:11px 14px 12px}
   .lo-tile,.lo-tile+.lo-tile{box-shadow:inset 0 -1px 0 var(--lt-line)}
-  .lo-tile:nth-child(even){box-shadow:inset 0 -1px 0 var(--lt-line),inset -1px 0 0 var(--lt-line)}
-  .lo-tile.is-all{grid-column:1/-1}
+  .lo-tile:nth-child(odd){box-shadow:inset 0 -1px 0 var(--lt-line),inset -1px 0 0 var(--lt-line)}
   .lo-tile strong{font-size:24px}
   .lo-label,.lo-tile .lo-insight{white-space:normal;text-wrap:balance} /* schmal: lieber zwei Zeilen als abgeschnitten */
   .lo-chart{border-top:0;padding-inline:12px}
@@ -2323,3 +2322,154 @@ html.dark .md{--md-tint:#8278ff;--md-on:rgba(255,255,255,.14)}
   .md-rail>div:nth-child(n+3){border-top:1px solid var(--lt-line)}
 }
 @media (prefers-reduced-motion:reduce){.md-back svg,.md-tabs button{transition:none}}
+
+/* ─────────────────────────── Version 377 ───────────────────────────
+   Glocke, Leads-Seite (Reiter und Filter in einer Zeile, gespeicherte Filter löschen, Import zum Hineinziehen, Testlead-Fenster),
+   Dashboard (Zeitraum „Erstellt ab“ / „Erstellt vor“) und: Köpfe, die rosa hinterlegt waren, sind jetzt kräftig rot mit weißer Schrift. */
+
+/* Glocke: Die Zahl erbte die Breite des kleinen Punkts (6 px) – „99+“ ragte über den roten Kreis hinaus und war nicht zu lesen. */
+.notification.has-new i{width:auto;min-width:18px;height:18px;padding:0 5px;right:-10px;top:-9px;font-size:10px;letter-spacing:0;white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* Leads: Reiter nach Status und die Filter-Knöpfe in einer Zeile – wird es eng, rücken die Knöpfe rechts in die nächste Zeile */
+.live-leads-workspace{--ld-bad:#fda4af;--ld-bad-line:rgba(251,113,133,.5);--ld-bad-bg:rgba(251,113,133,.09)}
+html:not(.dark) .live-leads-workspace{--ld-bad:#b42318;--ld-bad-line:#fecdca;--ld-bad-bg:#fef3f2}
+.lt-tabrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 16px}
+.lt-tabrow .lt-tabs{flex:1 1 auto;min-width:0;justify-content:flex-start;gap:1px;padding:0}
+.lt-tabrow .lt-tabs button{gap:5px;padding:0 8px}
+.lt-tabrow .lt-tabs button span{min-width:20px;padding:1px 6px}
+.lt-tabrow .lt-views{flex:none;justify-content:flex-end;margin-left:auto}
+.lt-subtools{padding-top:0}
+.lt-savedmenu{position:relative}
+.lt-savedmenu>summary{display:inline-flex;align-items:center;gap:7px;list-style:none;user-select:none}
+.lt-savedmenu>summary::-webkit-details-marker{display:none}
+.lt-savedmenu>summary em{min-width:18px;padding:0 6px;border-radius:999px;background:var(--lt-chip);font-style:normal;font-size:11px;font-weight:700;line-height:18px;text-align:center;color:var(--lt-ink-2)}
+.lt-savedmenu>summary svg{width:14px;height:14px;transition:transform .15s}
+.lt-savedmenu[open]>summary{border-color:var(--lt-accent-strong);color:var(--lt-accent)}
+.lt-savedmenu[open]>summary svg{transform:rotate(180deg)}
+.lt-savedmenu-list{position:absolute;right:0;top:calc(100% + 8px);z-index:50;display:grid;gap:1px;width:max-content;min-width:250px;max-width:min(340px,86vw);padding:8px;border:1px solid var(--lt-line-2);border-radius:14px;background:var(--lt-pop);box-shadow:var(--lt-pop-shadow)}
+.lt-saved-row{display:flex;align-items:center;gap:2px;border-radius:9px}
+.lt-saved-row:hover{background:var(--lt-hover)}
+.lt-saved-load{flex:1;min-width:0;padding:8px 9px;border:0;border-radius:9px;background:none;font-family:inherit;font-size:12.5px;font-weight:600;text-align:left;color:var(--lt-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.lt-saved-del{display:grid;place-items:center;flex:none;width:30px;height:30px;border:0;border-radius:8px;background:none;color:var(--lt-muted);cursor:pointer}
+.lt-saved-del:hover{background:var(--ld-bad-bg);color:var(--ld-bad)}
+.lt-saved-del svg{width:15px;height:15px}
+.lt-saved-all{margin-top:6px;padding:10px 9px 4px;border:0;border-top:1px solid var(--lt-line);background:none;font-family:inherit;font-size:12px;font-weight:600;text-align:left;color:var(--lt-muted);cursor:pointer}
+.lt-saved-all:hover{color:var(--ld-bad)}
+.lt-saved-load:focus-visible,.lt-saved-del:focus-visible,.lt-saved-all:focus-visible,.lt-savedmenu>summary:focus-visible,.ld-close:focus-visible{outline:2px solid var(--lt-ink-2);outline-offset:1px}
+
+/* Leads: Fenster über der Tabelle – Testlead senden */
+.ld-panel{margin:0 0 16px;padding:20px 22px;border-radius:18px}
+.ld-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px}
+.ld-head h2{margin:8px 0 0;font-size:18px;font-weight:700;letter-spacing:-.01em;color:var(--lt-ink)}
+.ld-head p{margin:4px 0 0;max-width:66ch;font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.ld-close{display:grid;place-items:center;flex:none;width:34px;height:34px;border:0;border-radius:10px;background:none;color:var(--lt-muted);cursor:pointer}
+.ld-close:hover{background:var(--lt-chip);color:var(--lt-ink)}
+.ld-close svg{width:17px;height:17px}
+.ld-fields{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px}
+.ld-field{display:grid;align-content:start;gap:6px;min-width:0}
+.ld-field>span{font-size:12px;font-weight:600;color:var(--lt-ink-2)}
+.ld-field .filter-select{width:100%;height:42px}
+.ld-fixed{display:flex;flex-direction:column;justify-content:center;min-height:42px;padding:4px 12px;border:1px dashed var(--lt-line-2);border-radius:11px;font-size:13px;font-weight:600;line-height:1.3;color:var(--lt-ink)}
+.ld-fixed small{font-size:11px;font-weight:500;color:var(--lt-muted)}
+.ld-note{display:flex;align-items:flex-start;gap:9px;margin:12px 0 0;padding:10px 12px;border:1px solid var(--lt-line);border-radius:12px;background:var(--lt-head);font-size:12.5px;line-height:1.5;color:var(--lt-ink-2)}
+.ld-note>svg{flex:none;width:16px;height:16px;margin-top:2px;color:var(--lt-muted)}
+.ld-note a{font-weight:600;color:var(--lt-accent);text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+.ld-note.is-live{border-color:var(--lo-warn-line);background:var(--lo-warn-bg)}
+.ld-note.is-live>svg{color:var(--lo-warn)}
+.ld-result{margin-top:12px;padding:12px 14px;border:1px solid var(--lt-line-2);border-radius:12px;font-size:12.5px}
+.ld-result strong{display:block;font-size:13.5px;color:var(--lt-ink)}
+.ld-result.is-ok{border-color:var(--lt-good-line);background:var(--lt-good-bg)}
+.ld-result.is-ok strong{color:var(--lt-good)}
+.ld-result.is-bad{border-color:var(--ld-bad-line);background:var(--ld-bad-bg)}
+.ld-result.is-bad strong{color:var(--ld-bad)}
+.ld-result pre{margin:6px 0 0;max-height:160px;overflow:auto;font-family:inherit;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--lt-ink-2)}
+.ld-result details{margin-top:8px}
+.ld-result summary{font-weight:600;color:var(--lt-ink-2);cursor:pointer}
+.ld-result details pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+.ld-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.ld-empty{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:1px dashed var(--lt-line-2);border-radius:12px;font-size:13px;line-height:1.5;color:var(--lt-ink-2)}
+.ld-empty p{margin:0;max-width:72ch}
+.ld-link{display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.ld-link svg{width:13px;height:13px}
+
+/* Leads: Import – erst die Kategorie, darunter das Feld, in das man die Datei zieht (oder klickt) */
+.ld-import{display:grid;gap:12px}
+.ld-import>.filter-select{width:min(100%,380px);height:42px}
+.ld-drop{display:flex;align-items:center;justify-content:center;gap:14px;min-height:96px;padding:16px 20px;border:1.5px dashed var(--lt-line-2);border-radius:16px;background:var(--lt-head);color:var(--lt-ink-2);cursor:pointer;transition:border-color .15s,background-color .15s}
+.ld-drop>svg{flex:none;width:26px;height:26px;color:var(--lt-muted);transition:color .15s,transform .15s}
+.ld-drop-text{display:grid;gap:2px;min-width:0}
+.ld-drop-text b{font-size:14px;font-weight:600;color:var(--lt-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ld-drop-text small{font-size:12.5px;color:var(--lt-muted)}
+.ld-drop:hover{border-color:var(--lt-accent-strong)}
+.ld-drop:hover>svg{color:var(--lt-accent)}
+.ld-drop.is-over{border-style:solid;border-color:var(--lt-accent-strong);background:var(--lt-hover)}
+.ld-drop.is-over>svg{color:var(--lt-accent);transform:translateY(-2px)}
+.ld-drop.is-off{opacity:.55;cursor:not-allowed}
+.ld-drop:focus-within{outline:2px solid var(--lt-ink-2);outline-offset:2px}
+@media (max-width:760px){
+  .ld-panel{padding:16px}
+  .ld-fields{grid-template-columns:minmax(0,1fr)}
+  .ld-actions{flex-direction:column-reverse}
+  .ld-actions button{width:100%}
+  .ld-note a{white-space:normal}
+  .ld-drop{flex-direction:column;text-align:center}
+  .lt-tabrow{padding:10px 12px}
+  .lt-tabrow .lt-tabs{flex:1 1 100%}
+  .lt-tabrow .lt-views{flex:1 1 100%;justify-content:flex-start;margin-left:0}
+  .lt-savedmenu-list{left:0;right:auto}
+}
+@media (prefers-reduced-motion:reduce){.ld-drop,.ld-drop>svg,.lt-savedmenu>summary svg{transition:none}}
+
+/* ── Köpfe, die rosa hinterlegt waren (v377): kräftiges Rot, Schrift weiß wie auf den Knöpfen ──
+   Regel: Je Fenster gibt es genau EINE rote Fläche – den Kopf mit der Überschrift. Rosa Kästen darunter (mit Feldern oder Text)
+   sind weiß mit rotem Rand; gewählte Dinge (Menüpunkt, Reiter, Kacheln) bleiben zartrot, das hat sich bewährt.
+   Weiß auf diesem Rot: mindestens 5,5 : 1 – der Verlauf bleibt deshalb im dunklen Rot (#a80019 … #cf1028), heller würde kleine Schrift unlesbar. */
+html:not(.dark){--head-red:linear-gradient(120deg,#a80019 0%,#bc001d 46%,#cf1028 100%);--head-ink:#ffffff;--head-ink-2:#ffe9ec;--head-chip:rgba(255,255,255,.16);--head-chip-line:rgba(255,255,255,.4)}
+html:not(.dark) .order-overview-head,
+html:not(.dark) .automation-editor-head,
+html:not(.dark) .category-builder-head,
+html:not(.dark) .lead-overlay-head,
+html:not(.dark) .territory-ai-head{border-color:transparent!important;background:var(--head-red)!important;color:var(--head-ink)!important}
+html:not(.dark) .order-overview-head h2,html:not(.dark) .automation-editor-head h2,html:not(.dark) .category-builder-head h2,html:not(.dark) .lead-overlay-head h2,html:not(.dark) .territory-ai-head strong{color:var(--head-ink)!important}
+html:not(.dark) .order-overview-head p,html:not(.dark) .automation-editor-head p,html:not(.dark) .category-builder-head p,html:not(.dark) .lead-overlay-head p,html:not(.dark) .territory-ai-head span,html:not(.dark) .territory-ai-head small{color:var(--head-ink-2)!important}
+html:not(.dark) .territory-ai-head>svg{color:var(--head-ink)!important}
+/* Schildchen auf Rot: durchscheinend weiß statt rosa mit roter Schrift */
+html:not(.dark) .order-overview-head .eyebrow,html:not(.dark) .automation-editor-head .eyebrow,html:not(.dark) .category-builder-head .eyebrow,html:not(.dark) .lead-overlay-head .eyebrow,
+html:not(.dark) .automation-editor-head [data-slot="badge"]{border-color:var(--head-chip-line)!important;background:var(--head-chip)!important;color:var(--head-ink)!important;box-shadow:none!important}
+html:not(.dark) .order-overview-head .eyebrow svg,html:not(.dark) .automation-editor-head .eyebrow svg,html:not(.dark) .category-builder-head .eyebrow svg,html:not(.dark) .lead-overlay-head .eyebrow svg{color:var(--head-ink)!important}
+/* Knöpfe auf Rot: schlichte Knöpfe weiß beschriftet, der Hauptknopf weiß mit roter Schrift */
+html:not(.dark) .category-builder-head [data-slot="button"],html:not(.dark) .automation-editor-head [data-slot="button"],html:not(.dark) .lead-overlay-head [data-slot="button"]{border-color:var(--head-chip-line)!important;background:transparent!important;color:var(--head-ink)!important;box-shadow:none!important}
+html:not(.dark) .category-builder-head [data-slot="button"]:hover,html:not(.dark) .automation-editor-head [data-slot="button"]:hover,html:not(.dark) .lead-overlay-head [data-slot="button"]:hover{background:var(--head-chip)!important}
+html:not(.dark) .category-builder-head [data-slot="button"] svg,html:not(.dark) .automation-editor-head [data-slot="button"] svg,html:not(.dark) .lead-overlay-head [data-slot="button"] svg{color:var(--head-ink)!important}
+/* Die Zahlen im Kopf der Bestellübersicht stehen auf einem weißen Kästchen – das bleibt, mit etwas Schatten gegen das Rot */
+html:not(.dark) .order-overview-head .order-kpis{border-color:transparent!important;box-shadow:0 10px 26px -12px rgba(70,0,10,.55)}
+
+/* Rosa Kästen mit Feldern oder Text: weiß, roter Rand links – kein zweites Rot unter dem Kopf */
+html:not(.dark) .automation-flow-node.trigger-node,
+html:not(.dark) .automation-action-card,
+html:not(.dark) .ai-section{border:1px solid #e7e9ee!important;background:#ffffff!important}
+html:not(.dark) .automation-flow-node.trigger-node{box-shadow:inset 3px 0 0 #bc001d,0 1px 2px rgba(16,24,40,.05)!important}
+html:not(.dark) .automation-action-card{box-shadow:inset 3px 0 0 #bc001d!important}
+/* Zusammenfassung im eigenen Zeitraum des Dashboards: ruhig grau statt rosa – die Zahl bleibt fett und dunkel */
+html:not(.dark) .dashboard-custom-summary{border-color:#e7e9ee!important;background:#f7f8fa!important;color:#475467!important}
+html:not(.dark) .dashboard-custom-summary strong{color:#17130f!important}
+html:not(.dark) .dashboard-custom-summary.is-invalid{border-color:#fedf89!important;background:#fffaeb!important;color:#93370d!important}
+/* Spruch im Kopf der Vertriebspipeline: weißes Schild mit roter Marke statt rosa Fläche */
+html:not(.dark) .pipeline-head-quote,html:not(.dark) .pipeline-head-quote:hover{border:1px solid #e7e9ee!important;background:#ffffff!important;color:#344054!important}
+html:not(.dark) .pipeline-head-quote:hover{border-color:#d0d5dd!important}
+html:not(.dark) .pipeline-head-quote .pipeline-head-quote-mark{color:#bc001d!important}
+
+/* Lieferkette – Station aufklappen (v377): ein deutlicher Streifen unter jeder Station; vorher zeigte nur ein kleiner Pfeil am Namen, dass sich dort etwas öffnet */
+.lk-stop-toggle{display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:8px 18px;border:0;border-top:1px solid var(--lt-line);border-radius:0 0 18px 18px;background:var(--lt-head);font-family:inherit;font-size:13px;font-weight:600;text-align:left;color:var(--lt-ink);cursor:pointer;transition:background-color .15s}
+.lk-stop.is-open>.lk-stop-toggle{border-radius:0}
+.lk-stop-toggle:hover{background:var(--lt-chip)}
+.lk-stop-toggle>svg{flex:none;box-sizing:border-box;width:24px;height:24px;padding:3px;border:1px solid var(--lt-line-2);border-radius:50%;background:var(--lt-field);color:var(--lt-ink-2);transition:transform .18s}
+.lk-stop.is-open>.lk-stop-toggle>svg{transform:rotate(180deg)}
+.lk-stop-toggle small{min-width:0;overflow:hidden;font-size:12.5px;font-weight:500;color:var(--lt-muted);text-overflow:ellipsis;white-space:nowrap}
+.lk-stop-toggle:focus-visible{outline:2px solid var(--lt-ink-2);outline-offset:-2px}
+.lk-track>.lk-stop.is-off>.lk-stop-toggle{opacity:.75}
+@media (max-width:760px){.lk-stop-toggle{padding-inline:12px}.lk-stop-toggle small{white-space:normal}}
+@media (prefers-reduced-motion:reduce){.lk-stop-toggle,.lk-stop-toggle>svg{transition:none}}
+
+/* Auswahlfelder im Testlead-Fenster: lesbare Schriftgröße */
+.ld-field .filter-select,.ld-import>.filter-select{padding:0 12px;font-size:13px}

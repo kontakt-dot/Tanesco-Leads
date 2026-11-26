@@ -3,7 +3,7 @@
  */
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { categoryFields, deliveryEndpoints, integrationPresets, leadCategories, memberOperationalSettings, partnerResponseRules, reclamationReasons, supplierReturnWebhooks, suppliers, users, type DeliveryEndpoint, type IntegrationPreset } from "../drizzle/schema";
+import { categoryFields, deliveryEndpoints, integrationPresets, leadCategories, memberOperationalSettings, memberships, partnerResponseRules, reclamationReasons, supplierReturnWebhooks, suppliers, users, type DeliveryEndpoint, type IntegrationPreset } from "../drizzle/schema";
 import { decryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
 import { ensureMemberSettings, requireMembership } from "./member-admin";
@@ -11,6 +11,7 @@ import { verifyPassword } from "./_core/auth";
 import { SAVED_SECRET, isPlainCredential } from "../shared/credentials";
 import { isTestAddress, isWattfoxTemplate, wattfoxTestLeads } from "../shared/wattfox";
 import { gluedAddressError, hasGluedAddress } from "../shared/endpoint-url";
+import { endpointTestTargets } from "../shared/endpoint-test";
 import { PLACEHOLDERS, buildEndpointBody, checkEndpointLogin, decryptAuth, decryptHeaders, encryptJson, forgetEndpointToken, leadTemplateValues, sendToEndpoint, type AuthConfig, type FieldFilter, type HeaderPair, type ValueMapping } from "./outbound-endpoints";
 
 export const SECRET_MASK = SAVED_SECRET;
@@ -151,6 +152,20 @@ export async function testDeliveryEndpoint(db: Db, tenantId: number, membershipI
   const preview = buildEndpointBody(endpoint, values);
   const result = await sendToEndpoint(endpoint, values, { fetchImpl });
   return { ok: result.ok, status: result.status ?? 0, loginOnly: false, responseBody: result.error ?? result.body.slice(0, 1500), requestBody: preview.body };
+}
+
+/**
+ * Leads → „Testlead senden“ (seit v377): alle eingeschalteten Schnittstellen der Käufer – wer, welche Kategorie, wohin.
+ * Aufbereitung (ohne Zugangsdaten, ohne die ganze Adresse) in shared/endpoint-test.ts – die Vorschau nutzt dieselbe.
+ */
+export async function listEndpointTestTargets(db: Db, tenantId: number) {
+  const rows = await db.select({ id: deliveryEndpoints.id, membershipId: deliveryEndpoints.membershipId, categoryId: deliveryEndpoints.categoryId, url: deliveryEndpoints.url, bodyTemplate: deliveryEndpoints.bodyTemplate, position: deliveryEndpoints.position, buyerName: users.name, company: users.company, memberStatus: memberships.status, categoryName: leadCategories.name })
+    .from(deliveryEndpoints)
+    .innerJoin(memberships, and(eq(memberships.id, deliveryEndpoints.membershipId), eq(memberships.tenantId, tenantId)))
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .leftJoin(leadCategories, eq(leadCategories.id, deliveryEndpoints.categoryId))
+    .where(and(eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.enabled, true)));
+  return endpointTestTargets(rows);
 }
 
 /**

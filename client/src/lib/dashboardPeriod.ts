@@ -1,12 +1,15 @@
-export type DashboardPeriod = "today" | "yesterday" | "week" | "month" | "last_month" | "last_week" | "last_two_weeks" | "all" | "custom";
+/** „since“ = „Erstellt ab“ (ab einem Tag bis jetzt), „before“ = „Erstellt vor“ (alles vor einem Tag) – seit v377 auch im Dashboard, wie auf der Leads-Seite. */
+export type DashboardPeriod = "today" | "yesterday" | "week" | "month" | "last_month" | "last_week" | "last_two_weeks" | "all" | "custom" | "since" | "before";
 
 export type DashboardRange = {
   from: Date;
   until: Date;
   label: string;
   valid: boolean;
-  /** Nur bei „Eigener Zeitraum“: warum die Auswahl (noch) nicht gültig ist. */
+  /** Nur bei „Eigener Zeitraum“, „Erstellt ab“ und „Erstellt vor“: warum die Auswahl (noch) nicht gültig ist. */
   problem?: "missing" | "order";
+  /** Offener Zeitraum: „since“ reicht bis jetzt, „before“ hat keinen Anfang (wie „Gesamt“ – ohne Schnitt je Tag). */
+  open?: "since" | "before";
 };
 
 /** Schnellwahl im eigenen Zeitraum – füllt Von/Bis, bleibt danach frei änderbar. */
@@ -66,6 +69,18 @@ export function dashboardRange(period: DashboardPeriod, customFrom: string, cust
   if (period === "last_week") { const until = atStartOfDay(now); until.setDate(until.getDate() - ((until.getDay() + 6) % 7) - 1); const from = atStartOfDay(until); from.setDate(from.getDate() - 6); return { from, until: atEndOfDay(until), label: "Letzte Woche", valid: true }; }
   if (period === "last_two_weeks") { const until = atStartOfDay(now); until.setDate(until.getDate() - ((until.getDay() + 6) % 7) - 1); const from = atStartOfDay(until); from.setDate(from.getDate() - 13); return { from, until: atEndOfDay(until), label: "Letzte 2 Wochen", valid: true }; }
   if (period === "all") return { from: new Date(0), until: now, label: "Gesamte Zeitspanne", valid: true };
+  if (period === "since") {
+    // „Erstellt ab“: ab dem gewählten Tag (customFrom) bis jetzt. Liegt der Tag in der Zukunft, ist der Zeitraum gültig, aber leer.
+    const from = fromInput(customFrom);
+    if (!from) return { from: today, until: now, label: "Erstellt ab …", valid: false, problem: "missing", open: "since" };
+    return { from, until: from > now ? atEndOfDay(from) : now, label: `ab ${formatRangeDate(from)}`, valid: true, open: "since" };
+  }
+  if (period === "before") {
+    // „Erstellt vor“: alles vor dem gewählten Tag (customTo) – der Tag selbst zählt nicht mit.
+    const day = fromInput(customTo);
+    if (!day) return { from: today, until: now, label: "Erstellt vor …", valid: false, problem: "missing", open: "before" };
+    return { from: new Date(0), until: new Date(day.getTime() - 1), label: `vor ${formatRangeDate(day)}`, valid: true, open: "before" };
+  }
   const from = fromInput(customFrom);
   const until = fromInput(customTo, true);
   if (!from || !until) return { from: today, until: now, label: "Eigener Zeitraum", valid: false, problem: "missing" };

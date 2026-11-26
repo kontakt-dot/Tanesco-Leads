@@ -1,4 +1,5 @@
 import AgentAliasSettings from "@/components/AgentAliasSettings";
+import { leadUrl, openInApp } from "@/lib/navigate";
 import CallAiChip from "@/components/CallAiChip";
 import CallRecheckNotice from "@/components/CallRecheckNotice";
 import DialerIntake from "@/components/DialerIntake";
@@ -604,7 +605,7 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
     </section>
     <section className="surface-panel operations-panel gq-panel gq-decide" aria-label="Entscheidung">
       <div className="gq-panel-head"><div><h2>Entscheidung</h2><p>{data.autoDeliver ? "Freigeben setzt den Lead auf „genehmigt“, startet die Auslieferung über die Regeln und legt den Opt-in-Nachweis aus der Einwilligungsstelle der Abschrift an." : "Freigeben setzt den Lead auf „genehmigt“ und legt den Opt-in-Nachweis aus der Einwilligungsstelle der Abschrift an. Weitergeleitet wird nichts – Leads werden gerade nur empfangen."} Zurückweisen markiert ihn als fehlerhaft.</p></div>
-        <p className="gq-lead-line">{data.rawContact && !data.leadPublicId && <span className="gq-raw">Rohdaten-Kontakt {data.rawContact.name} ({data.rawContact.status}) – wird bei Freigabe zum Lead.</span>}{data.leadPublicId ? <><span>Lead</span><span className="gq-lead-id">{data.leadPublicId}</span><b>{data.leadName}</b><span className="gq-chip">{data.leadStatus}</span><button type="button" className="gq-link" onClick={() => window.location.assign(`/?page=Leads&leadId=${data.leadPublicId}`)}>Lead öffnen</button></> : <span>Noch keinem Lead zugeordnet</span>}</p></div>
+        <p className="gq-lead-line">{data.rawContact && !data.leadPublicId && <span className="gq-raw">Rohdaten-Kontakt {data.rawContact.name} ({data.rawContact.status}) – wird bei Freigabe zum Lead.</span>}{data.leadPublicId ? <><span>Lead</span><span className="gq-lead-id">{data.leadPublicId}</span><b>{data.leadName}</b><span className="gq-chip">{data.leadStatus}</span><button type="button" className="gq-link" title={`Lead ${data.leadPublicId} auf der Lead-Seite öffnen`} onClick={() => openInApp(leadUrl(data.leadPublicId!))}>Lead öffnen</button></> : <span>Noch keinem Lead zugeordnet</span>}</p></div>
       <div className="gq-decide-row"><Input value={note} placeholder="Notiz zur Entscheidung (optional)" aria-label="Notiz zur Entscheidung" onChange={(event) => setNote(event.target.value)} />
         <div className="gq-choices" role="group" aria-label="Entscheidung treffen">{([["freigegeben", "gruen", data.autoDeliver ? "Freigeben & verkaufen" : "Freigeben"], ["pruefen", "gelb", "Zur Prüfung"], ["zurueckgewiesen", "rot", "Zurückweisen"]] as const).map(([key, mood, label]) => <button key={key} type="button" className={`gq-choice is-${mood} ${data.decision === key ? "is-on" : ""}`} aria-pressed={data.decision === key} disabled={review.isPending} onClick={() => review.mutate({ callId, decision: key, note })}><i aria-hidden="true" />{label}</button>)}</div></div>
       {data.reviewNote && <p className="gq-decide-note">Notiz: {data.reviewNote}</p>}
@@ -630,18 +631,18 @@ function CallDetail({ callId, onBack }: { callId: number; onBack: () => void }) 
         </li>; })}</ul>
         {!data.criteriaUnscored && data.status === "bewertet" && data.criteria.some((criterion) => criterion.score === null) ? <p className="cq-unscored gq-c-later">Für {data.criteria.filter((criterion) => criterion.score === null).map((criterion) => `„${criterion.label}“`).join(", ")} gibt es bei diesem Gespräch noch keine Punkte – der Punkt kam später dazu. „Neu bewerten“ holt sie nach.</p> : null}
       </section>
-      <section className="surface-panel operations-panel gq-panel is-wide" aria-label="Transkript">
-        <div className="gq-panel-head"><div><h2>Transkript</h2>{segments.length > 0 && <p>{canPlay ? "Ein Klick auf eine Zeile spielt die Aufnahme ab dieser Stelle. Die Zeile, die gerade läuft, ist hervorgehoben." : "Links steht, wann im Gespräch der Satz fällt."}</p>}</div></div>
-        {segments.length > 0 ? <TimedTranscript segments={segments} onJump={canPlay ? jump : null} subscribe={subscribeTime} /> : <Transcript text={data.transcript ?? null} fallback={data.status === "ohne_einwilligung" ? "Ohne dokumentierte Einwilligung wird das Gespräch nicht transkribiert." : "Noch kein Transkript."} />}
-      </section>
     </div>
-    {/* Seit v375 ganz unten, unter dem Transkript: erst die Bewertung (Prüffragen, Kriterien, Transkript), dann die Rohangaben des Dialers und die Opt-in-Nachweise */}
+    {/* Seit v377 unter Prüffragen und Kriterien in dieser Reihenfolge: Opt-in-Nachweise → was der Dialer gemeldet hat → Transkript (das Längste steht am Ende) */}
+    {data.leadPublicId && <section className="surface-panel operations-panel gq-panel"><OptInPanel publicId={data.leadPublicId} onChanged={refresh} /></section>}
     {dialer && (dialerFacts.length > 0 || dialer.fields.length > 0 || dialer.note) && <section className="surface-panel operations-panel gq-panel gq-dialer" aria-label="Vom Dialer gemeldet">
       <div className="gq-panel-head"><div><h2>Vom Dialer gemeldet</h2><p>Diese Angaben hat der Dialer mit dem Gespräch geschickt. {data.leadPublicId ? "Sie stehen im Lead; vorhandene Angaben wurden nicht überschrieben." : "Bei einer Freigabe wird daraus der Lead."}</p></div></div>
       {(dialerFacts.length > 0 || dialer.fields.length > 0) && <dl className="gq-dialer-facts">{dialerFacts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}{dialer.fields.map((field) => <div key={field.label} className="is-extra"><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>}
       {dialer.note && <p className="gq-dialer-note"><b>Notiz des Agenten</b>{dialer.note}</p>}
     </section>}
-    {data.leadPublicId && <section className="surface-panel operations-panel gq-panel"><OptInPanel publicId={data.leadPublicId} onChanged={refresh} /></section>}
+    <section className="surface-panel operations-panel gq-panel is-wide" aria-label="Transkript">
+      <div className="gq-panel-head"><div><h2>Transkript</h2>{segments.length > 0 && <p>{canPlay ? "Ein Klick auf eine Zeile spielt die Aufnahme ab dieser Stelle. Die Zeile, die gerade läuft, ist hervorgehoben." : "Links steht, wann im Gespräch der Satz fällt."}</p>}</div></div>
+      {segments.length > 0 ? <TimedTranscript segments={segments} onJump={canPlay ? jump : null} subscribe={subscribeTime} /> : <Transcript text={data.transcript ?? null} fallback={data.status === "ohne_einwilligung" ? "Ohne dokumentierte Einwilligung wird das Gespräch nicht transkribiert." : "Noch kein Transkript."} />}
+    </section>
   </div>;
 }
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Check, Clock, Equal, Flag, X } from "lucide-react";
 import { trpc } from "@/lib/trpc";
-import { claimRate, hintText, statusSplit, todayComparison, waitingAge, weekComparison, type OverviewHint, type OverviewTone } from "../../../shared/lead-overview";
+import { hintText, statusSplit, todayComparison, waitingAge, weekComparison, type OverviewHint, type OverviewTone } from "../../../shared/lead-overview";
 import { periodComparison, periodSplit, type TilePeriod } from "../../../shared/lead-period";
 
 const number = (value: number | undefined) => (typeof value === "number" ? value.toLocaleString("de-DE") : "–");
@@ -14,7 +14,7 @@ const leads = (count: number) => `${count.toLocaleString("de-DE")} ${count === 1
 const parts = (text: string): React.ReactNode => { const list = text.split(" · "); return list.length < 2 ? text : list.flatMap((part, index) => [index ? " " : null, <span key={index} className="lo-part">{part}{index < list.length - 1 ? " ·" : ""}</span>]); };
 const toneIcon = (arrow: "↑" | "↓" | "=") => (arrow === "↑" ? <ArrowUp aria-hidden="true" /> : arrow === "↓" ? <ArrowDown aria-hidden="true" /> : <Equal aria-hidden="true" />);
 
-export type OverviewFilter = "all" | "today" | "week" | "ready" | "delivered" | "claimed" | "day" | null;
+export type OverviewFilter = "all" | "today" | "week" | "ready" | "delivered" | "day" | null;
 
 /** Ausgeblendete Hinweise: bleiben drei Tage weg (nur in diesem Browser). Ändert sich der Hinweis – andere Kategorie –, kommt er wieder. */
 const HIDDEN_KEY = "tanesco-lead-hints-hidden"; const HIDE_MS = 3 * 86_400_000;
@@ -31,15 +31,16 @@ function openPage(event: React.MouseEvent<HTMLAnchorElement>, page: string) {
 /**
  * Über der Leads-Tabelle: der Weg der Leads auf einen Blick – eine ruhige Leiste, von links nach rechts.
  *  Alle Leads → heute neu (gegen gestern um dieselbe Zeit) → bereit zum Ausliefern (wie alt der älteste ist)
- *  → ausgeliefert (7 Tage, heute) → reklamiert (Anteil). Daneben die letzten 14 Tage: die letzten 7 gegen die 7 davor.
- * Je Zahl eine Zeile; der Rest (wo alle Leads stehen, gestern, was noch wartet, Wert, offene Reklamationen) steht im Hinweis beim Überfahren.
+ *  → ausgeliefert (7 Tage, heute). Daneben die letzten 14 Tage: die letzten 7 gegen die 7 davor.
+ * Seit v377 ohne „Reklamiert“ – auf dieser Seite wird nicht mit Reklamationen gearbeitet (die stehen unter „Reklamationen“).
+ * Je Zahl eine Zeile; der Rest (wo alle Leads stehen, gestern, was noch wartet, Wert) steht im Hinweis beim Überfahren.
  * Jede Zahl und jede Säule ist ein Filter. Darunter steht nur dann ein Hinweis, wenn etwas zu tun ist.
  */
-export default function LeadsOverviewStrip({ active, activeDay, period, onPeriod, onAll, onToday, onWeek, onReady, onDelivered, onClaimed, onDay, onWaiting }: {
+export default function LeadsOverviewStrip({ active, activeDay, period, onPeriod, onAll, onToday, onWeek, onReady, onDelivered, onDay, onWaiting }: {
   active: OverviewFilter; activeDay: string | null;
-  /** Gewählter Zeitraum der Tabelle (seit v366): Die zweite Kachel heißt dann wie der Zeitraum, Bereit/Ausgeliefert/Reklamiert zählen nur seine Leads */
+  /** Gewählter Zeitraum der Tabelle (seit v366): Die zweite Kachel heißt dann wie der Zeitraum, Bereit/Ausgeliefert zählen nur seine Leads */
   period: TilePeriod | null; onPeriod: () => void;
-  onAll: () => void; onToday: () => void; onWeek: () => void; onReady: () => void; onDelivered: () => void; onClaimed: () => void; onDay: (day: string) => void;
+  onAll: () => void; onToday: () => void; onWeek: () => void; onReady: () => void; onDelivered: () => void; onDay: (day: string) => void;
   /** Die freigegebenen Leads zeigen – bei einer einzelnen Kategorie nur die dieser Kategorie */
   onWaiting: (categoryId: number | null) => void;
 }) {
@@ -48,7 +49,6 @@ export default function LeadsOverviewStrip({ active, activeDay, period, onPeriod
   const periodData = trpc.leadops.leadsPeriod.useQuery(periodInput, { enabled: Boolean(period), retry: false, refetchInterval: 60_000 });
   const scoped = period && periodData.data ? periodSplit(periodData.data.statuses) : null;
   const periodCompare = period && periodData.data ? periodComparison(periodData.data.total, periodData.data.previous, period.versus) : null;
-  const periodRate = scoped ? claimRate(scoped.delivered, scoped.claimed) : null;
   const [hover, setHover] = useState<number | null>(null); const [hidden, setHidden] = useState<Record<string, number>>({});
   useEffect(() => { setHidden(readHidden()); }, []);
   const data = overview.data; const days = data?.days ?? []; const max = Math.max(1, ...days.map((day) => day.count));
@@ -59,7 +59,6 @@ export default function LeadsOverviewStrip({ active, activeDay, period, onPeriod
   const weekCompare = data ? weekComparison(data.week, data.previousWeek ?? 0) : null;
   const age = data ? waitingAge(data.oldestReadyAt ?? null) : null;
   const waitingElse = data?.status ? [data.status.neu ? `${number(data.status.neu)} neu` : "", data.status.hängend ? `${number(data.status.hängend)} hängend` : ""].filter(Boolean).join(" · ") : "";
-  const rate = data?.status ? claimRate(data.status.zugewiesen, data.status.reklamiert) : null;
   const hints = (data?.hints ?? []).filter((hint) => !hidden[hintKey(hint)]).slice(0, 2);
   const hide = (hint: OverviewHint) => { const next = { ...readHidden(), [hintKey(hint)]: Date.now() + HIDE_MS }; setHidden(next); try { window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(next)); } catch { /* ohne Speicher bleibt der Hinweis bis zum Neuladen weg */ } };
 
@@ -103,13 +102,6 @@ export default function LeadsOverviewStrip({ active, activeDay, period, onPeriod
           !data ? insight("ruhig", null, " ") : data.delivered || data.deliveredWeek ? insight("ruhig", null, `${number(data.deliveredWeek ?? 0)} in 7 Tagen · heute ${number(data.deliveredToday ?? 0)}`) : insight("ruhig", null, "noch keiner"),
           data ? ((data.valueWeek ?? 0) > 0 ? `${euro(data.valueWeek)} in 7 Tagen` : data.total && data.delivered ? `${Math.round((data.delivered / data.total) * 100)} % aller Leads` : "") : "",
           "Leads, die an einen Käufer gegangen sind. Der Betrag ist die Summe ihrer Preise – ohne Abgelehnte und Reklamierte.")}
-        {period ? tile("claimed", "Reklamiert", "reklamiert", scoped?.claimed, onClaimed,
-          !scoped ? insight("ruhig", null, " ") : periodRate === null ? insight("ruhig", null, "noch nichts ausgeliefert") : insight(periodRate >= 20 ? "achtung" : "ruhig", null, `${number(periodRate)} % der ausgelieferten`),
-          "", `Anteil der reklamierten Leads ${period.scope} an denen, die ausgeliefert wurden`)
-        : tile("claimed", "Reklamiert", "reklamiert", data?.status?.reklamiert, onClaimed,
-          !data ? insight("ruhig", null, " ") : rate === null ? insight("ruhig", null, "noch nichts ausgeliefert") : insight(rate >= 20 ? "achtung" : "ruhig", null, `${number(rate)} % der ausgelieferten`),
-          data ? ((data.claimsOpen ?? 0) > 0 ? `${number(data.claimsOpen)} ${data.claimsOpen === 1 ? "wartet" : "warten"} auf Entscheidung` : data.status?.reklamiert ? "alle entschieden" : "") : "",
-          "Anteil der reklamierten Leads an allen, die je ausgeliefert wurden")}
       </div>
       <div className="lo-chart">
         <header>

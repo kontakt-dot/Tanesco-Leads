@@ -5,11 +5,11 @@ import PartnerReport from "@/components/PartnerReport";
  * (geliefert, abgelehnt, angenommen – dann die Bewertung des Partners: offen, anerkannt, storniert, ausgezahlt, Provision).
  * Die früheren Reiter Käufer, Lieferanten, Bestellungen und Lieferketten stehen hier nicht mehr; ihre Zahlen liefert das Dashboard
  * (Übersicht) und die jeweilige Seite. Filter (Sparte, Zeitraum, Zeitbasis) bringt die Auswertung selbst mit – sie stehen in der Adresse.
- * `embedded`: im Dashboard-Reiter „Statistik“ steht die Überschrift schon darüber.
+ * `embedded`: im Dashboard-Reiter „Integrationen“ (hieß bis v376 „Statistik“) steht die Überschrift schon darüber.
  */
 export default function StatisticsWorkspace({ embedded = false }: { embedded?: boolean } = {}) {
   return <>
-    {!embedded && <header className="page-intro compact"><div><h1>Statistik</h1><p>Integrationen: was aus den gelieferten Leads bei deinen Partnern wurde – geliefert, angenommen, anerkannt, storniert, ausgezahlt.</p></div></header>}
+    {!embedded && <header className="page-intro compact"><div><h1>Integrationen</h1><p>Was aus den gelieferten Leads bei deinen Partnern wurde – geliefert, angenommen, anerkannt, storniert, ausgezahlt.</p></div></header>}
     <PartnerReport />
   </>;
 }

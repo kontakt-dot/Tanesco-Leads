@@ -37,7 +37,8 @@ describe("Version 375", () => {
     expect(root.querySelector("#dashboard-statistik .pr")).toBeTruthy(); expect(root.querySelectorAll(".pr-card").length).toBeGreaterThan(0);
     expect(root.querySelector("#dashboard-statistik .status-tabs")).toBeNull(); expect(root.querySelector(".pr-views")).toBeNull();
     expect(root.textContent).not.toContain("Käufer, Lieferanten und Bestellungen im Vergleich"); expect(root.textContent).not.toContain("-Perspektive");
-    expect(root.querySelector(".page-intro h1")!.textContent).toBe("Statistik"); expect(root.querySelector(".page-intro .eyebrow")!.textContent).toContain("INTEGRATIONEN");
+    expect(root.querySelector(".page-intro h1")!.textContent).toBe("Integrationen"); expect(root.querySelector(".page-intro .eyebrow")!.textContent).toContain("PARTNER-PLATTFORMEN"); // seit v377 heißt der Reiter „Integrationen“ (vorher „Statistik“)
+    expect(Array.from(root.querySelectorAll(".dashboard-tabs button")).map((node) => node.textContent?.trim())).toEqual(["Übersicht", "Integrationen"]);
     expect(root.querySelector(".page-intro p")!.textContent).toContain("bei deinen Partnern");
     // alte Adresse mit „view“ (Lesezeichen): dieselbe Seite
     cleanup(); const old = await open("page=Statistik&view=Käufer"); await until(() => old.querySelectorAll(".pr-card").length > 0); expect(old.querySelectorAll(".pr-card").length).toBeGreaterThan(0); expect(old.querySelector(".status-tabs")).toBeNull();
@@ -52,16 +53,16 @@ describe("Version 375", () => {
     expect(root.textContent).toContain("Aroundhome"); expect(root.querySelector(".flux-sidebar .sidebar-bottom .nav-item.active")?.textContent).toBe("Einstellungen");
   }, 30000);
 
-  it("Gespräch: erst Prüffragen, Kriterien und Transkript – darunter „Vom Dialer gemeldet“ und die Opt-in-Nachweise", async () => {
+  it("Gespräch: erst Prüffragen und Kriterien – darunter (seit v377) Opt-in-Nachweise, „Vom Dialer gemeldet“ und am Ende das Transkript", async () => {
     const call = table("callRecords").find((item) => item.payload?.contact && item.leadId) ?? table("callRecords").find((item) => item.payload?.contact)!; expect(call).toBeTruthy();
     const root = await open(`page=Gespräche&callId=${call.id}`, 1500); await until(() => Boolean(root.querySelector(".gq-dialer")));
     const transcript = root.querySelector('section[aria-label="Transkript"]')!; const dialer = root.querySelector(".gq-dialer")!; const decide = root.querySelector(".gq-decide")!;
     expect(transcript).toBeTruthy(); expect(dialer.querySelector("h2")!.textContent).toBe("Vom Dialer gemeldet");
-    expect(follows(decide, transcript)).toBe(true); expect(follows(transcript, dialer)).toBe(true); // Entscheidung → Transkript → Dialer
+    expect(follows(decide, dialer)).toBe(true); expect(follows(dialer, transcript)).toBe(true); // Entscheidung → Dialer → Transkript
     expect(follows(root.querySelector('section[aria-label="Prüffragen"]')!, dialer)).toBe(true); expect(follows(root.querySelector('section[aria-label="Kriterien"]')!, dialer)).toBe(true);
     const optIn = root.querySelector(".gq-detail .opt-in-title");
-    if (call.leadId) { expect(optIn).toBeTruthy(); expect(follows(dialer, optIn!)).toBe(true); expect(follows(transcript, optIn!)).toBe(true); }
-    expect(root.querySelector(".gq-detail")!.lastElementChild!.contains(optIn ?? dialer)).toBe(true); // die beiden Abschnitte stehen am Ende der Seite
+    if (call.leadId) { expect(optIn).toBeTruthy(); expect(follows(root.querySelector('section[aria-label="Kriterien"]')!, optIn!)).toBe(true); expect(follows(optIn!, dialer)).toBe(true); expect(follows(optIn!, transcript)).toBe(true); } // Opt-in → Dialer → Transkript
+    expect(root.querySelector(".gq-detail")!.lastElementChild).toBe(transcript); // das Transkript steht am Ende der Seite
   }, 30000);
 
   it("Telefonie → Kampagne: Listen-Marker stehen nicht bei den Tags; die Kampagne einer Liste behält sie und nennt die Liste", async () => {

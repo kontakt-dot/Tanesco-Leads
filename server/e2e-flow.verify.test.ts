@@ -6834,4 +6834,39 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await owner.leadops.addDefaultReasons()).added).toBe(0);
     expect(reasonsAfter.find((row) => row.name === "Zustellung fehlgeschlagen (API)")!.forwardToNextStop || reasonsBefore.some((row) => row.name === "Zustellung fehlgeschlagen (API)")).toBe(true);
   }, 120000);
+  it("v377. Testlead senden: Die Schnittstellen der Käufer stehen als Ziele bereit – ohne Adresse und Zugangsdaten; Wattfox-Live prüft nur die Anmeldung; nur für Administratoren", async () => {
+    const { WATTFOX, WATTFOX_TEMPLATE } = await import("../shared/wattfox");
+    const stamp = Date.now().toString(36);
+    const created = await owner.leadops.createMember({ firstName: "Tina", lastName: "Test", company: "V377 Käufer GmbH", email: `v377-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" });
+    const membershipId = created.membershipId;
+    const base = { membershipId, categoryId: S.pv.id, enabled: true, method: "POST" as const, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [{ name: "Authorization", value: "Bearer v377-geheim" }], authEnabled: false, auth: null, bodyTemplate: "", omitAutoFields: false, rotate: false, valueMappings: [] };
+    const plain = await owner.leadops.saveDeliveryEndpoint({ ...base, url: "https://v377-crm.example/api/leads?token=v377-im-pfad" });
+    const live = await owner.leadops.saveDeliveryEndpoint({ ...base, categoryId: S.wp.id, headers: [], url: WATTFOX.liveLeadsUrl, authEnabled: true, auth: { loginUrl: WATTFOX.liveLoginUrl, credentials: [{ name: "user", value: "livefirma" }, { name: "pass", value: "live-geheim" }], tokenPath: WATTFOX.tokenPath, headerName: WATTFOX.tokenHeader, prefix: "", ttlMinutes: WATTFOX.tokenMinutes }, bodyTemplate: WATTFOX_TEMPLATE, omitAutoFields: true });
+    const off = await owner.leadops.saveDeliveryEndpoint({ ...base, enabled: false, url: "https://v377-aus.example/leads" });
+    try {
+      // (a) Ziele: die eingeschalteten Schnittstellen aller Käufer – Firma vor der Ansprechperson, nur der Rechnername, keine Zugangsdaten
+      const targets = await owner.leadops.listEndpointTestTargets();
+      const mine = targets.filter((item) => item.membershipId === membershipId);
+      expect(mine.map((item) => item.id).sort()).toEqual([plain.id, live.id].sort()); expect(targets.some((item) => item.id === off.id)).toBe(false);
+      const first = mine.find((item) => item.id === plain.id)!; const second = mine.find((item) => item.id === live.id)!;
+      expect(first).toEqual({ id: plain.id, membershipId, buyerName: "V377 Käufer GmbH (Tina Test)", categoryId: S.pv.id, categoryName: S.pv.name, host: "v377-crm.example", kind: "standard" });
+      expect(second).toMatchObject({ kind: "wattfox-live", host: "api-v1.photovoltaik-angebotsvergleich.de", categoryId: S.wp.id, buyerName: "V377 Käufer GmbH (Tina Test)" });
+      const text = JSON.stringify(targets); for (const secret of ["v377-geheim", "v377-im-pfad", "live-geheim", "livefirma", "/api/leads", "/v1/leads"]) expect(text).not.toContain(secret);
+      expect(targets.map((item) => item.buyerName)).toEqual([...targets.map((item) => item.buyerName)].sort((a, b) => a.localeCompare(b, "de"))); // nach Käufer sortiert
+      // (b) der Test über ein solches Ziel: Wattfox-Live meldet sich nur an – kein Lead; die gewöhnliche Schnittstelle bekommt den erfundenen Lead
+      let start = outbound.length;
+      const check = await owner.leadops.testDeliveryEndpoint({ membershipId: second.membershipId, id: second.id });
+      expect(check).toMatchObject({ ok: true, loginOnly: true, requestBody: "" }); expect(outbound.slice(start).map((call) => call.url)).toEqual([WATTFOX.liveLoginUrl]);
+      start = outbound.length;
+      const sent = await owner.leadops.testDeliveryEndpoint({ membershipId: first.membershipId, id: first.id });
+      expect(sent.loginOnly).toBe(false); expect(outbound.slice(start).some((call) => call.url.startsWith("https://v377-crm.example/api/leads"))).toBe(true);
+      // (c) nur Administratoren sehen die Liste (sie nennt Käufer und Ziele) – wie beim Test selbst
+      await expect(invitee.leadops.listEndpointTestTargets()).rejects.toThrow();
+      // (d) deaktivierter Käufer: seine Schnittstellen stehen nicht mehr zur Auswahl
+      await db.update(memberships).set({ status: "deaktiviert" }).where(eq(memberships.id, membershipId));
+      expect((await owner.leadops.listEndpointTestTargets()).some((item) => item.membershipId === membershipId)).toBe(false);
+    } finally {
+      for (const endpoint of [plain, live, off]) await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id }).catch(() => undefined);
+    }
+  }, 60000);
 });

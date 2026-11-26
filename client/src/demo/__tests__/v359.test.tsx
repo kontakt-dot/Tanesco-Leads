@@ -32,7 +32,7 @@ describe("Version 359", () => {
 
   it("Leiste über der Tabelle: je Zahl Name, Zahl und eine Zeile – der Rest im Hinweis; die Hinweise darunter bleiben", async () => {
     const root = await open("page=Leads");
-    const tiles = Array.from(root.querySelectorAll<HTMLElement>(".lo-tile")); expect(tiles).toHaveLength(5);
+    const tiles = Array.from(root.querySelectorAll<HTMLElement>(".lo-tile")); expect(tiles).toHaveLength(4); // seit v377 ohne „Reklamiert“
     for (const tile of tiles) { expect(Array.from(tile.children).map((child) => child.tagName.toLowerCase() + (child.className ? `.${String(child.className).split(" ")[0]}` : ""))).toEqual(["span.lo-label", "strong", "span.lo-insight"]); expect(tile.getAttribute("title")).toBeTruthy(); }
     expect(root.querySelector(".lo-split")).toBeNull(); expect(root.querySelector(".lo-tile small")).toBeNull();
     expect(root.querySelectorAll(".lo-bar")).toHaveLength(14);

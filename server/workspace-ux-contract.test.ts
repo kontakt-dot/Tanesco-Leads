@@ -30,10 +30,13 @@ describe("Tanesco Leads UX-Verträge", () => {
   });
 
   it("kennzeichnet aktive Steuerungen und speichert häufige Filterkombinationen", () => {
-    const source = component("LiveLeads.tsx");
+    const source = component("LiveLeads.tsx") + component("LeadTools.tsx"); // die gespeicherten Filter (laden und löschen) stehen seit v377 in LeadTools.tsx
     const styles = readFileSync(resolve(process.cwd(), "client/src/bausteine.css"), "utf8");
     expect(source).toContain("Filter speichern");
     expect(source).toContain("Gespeicherte Filter");
+    expect(source).toContain("Alle gespeicherten Filter löschen");
+    expect(source).toContain('className="lt-tabrow"'); // Reiter und Filter-Knöpfe in einer Zeile
+    expect(styles).toContain(".lt-tabrow{");
     expect(source).toContain("tanesco-lead-saved-views");
     expect(source).toContain('className="lt-subtools"');
     expect(styles).toContain(".lt-subtools{");
@@ -189,5 +192,32 @@ describe("Tanesco Leads UX-Verträge", () => {
     expect(builderSource).toContain("Als Vorlage speichern");
     expect(builderSource).toContain("saveAsTemplate");
     expect(builderSource).toContain("Kategorie mit ${draft.fields.length} Feldern anlegen");
+  });
+
+  it("Version 377: Glocke zeigt „99+“ ganz, rosa Köpfe sind kräftig rot mit weißer Schrift, Stationen haben einen deutlichen Streifen zum Aufklappen", () => {
+    const styles = readFileSync(resolve(process.cwd(), "client/src/bausteine.css"), "utf8");
+    // Glocke: Die Zahl darf nicht die Breite des kleinen Punkts (6 px) erben
+    expect(styles).toContain(".notification.has-new i{width:auto;");
+    // Köpfe: ein Rot für alle, Weiß darauf – nur im hellen Design (im dunklen gab es kein Rosa)
+    expect(styles).toContain("--head-red:linear-gradient(120deg,#a80019 0%,#bc001d 46%,#cf1028 100%)");
+    for (const head of [".order-overview-head", ".automation-editor-head", ".category-builder-head", ".territory-ai-head"]) expect(styles).toContain(`html:not(.dark) ${head}`);
+    expect(styles).toMatch(/html:not\(\.dark\) \.order-overview-head h2[^{]*\{color:var\(--head-ink\)!important\}/);
+    // Weiß auf dem hellsten Rot des Verlaufs: mindestens 4,5 : 1 (kleine Schrift)
+    const luminance = (hex: string) => { const channel = (index: number) => { const value = parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16) / 255; return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; }; return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2); };
+    const contrast = (front: string, back: string) => { const [light, dark] = [luminance(front), luminance(back)].sort((a, b) => b - a); return (light + 0.05) / (dark + 0.05); };
+    for (const red of ["#a80019", "#bc001d", "#cf1028"]) { expect(contrast("#ffffff", red)).toBeGreaterThan(5.5); expect(contrast("#ffe9ec", red)).toBeGreaterThan(4.5); }
+    // rosa Kästen unter dem Kopf sind weiß – kein zweites Rot
+    expect(styles).toContain("html:not(.dark) .automation-flow-node.trigger-node");
+    // Lieferkette: Streifen zum Auf- und Zuklappen
+    expect(component("ChainWorkspace.tsx")).toContain('className="lk-stop-toggle"');
+    expect(styles).toContain(".lk-stop-toggle{");
+  });
+
+  it("Version 377: Menü – „Bestellungen“ heißt „Auslieferung“, „Haustür-Erfassung“ steht nicht mehr im Menü (die Seite bleibt erreichbar)", () => {
+    const shell = component("FluxoraWorkspace.tsx");
+    expect(shell).toContain('PAGE_LABELS: Partial<Record<Page, string>> = { Bestellungen: "Auslieferung" }');
+    expect(shell).toContain('{ label: "VERTRIEB", pages: ["Vertriebspipeline", "E-Mail-Kampagnen", "Verträge"] }');
+    expect(shell).toContain('page === "Haustür-Erfassung" ? <D2dWorkspace />'); // alte Links gehen weiter
+    expect(component("OrderWorkspace.tsx")).toContain("<h1>Auslieferung</h1>");
   });
 });

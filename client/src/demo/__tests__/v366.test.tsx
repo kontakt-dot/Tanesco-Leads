@@ -75,7 +75,7 @@ describe("Version 366", () => {
     const now = new Date(); const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); const before = new Date(now); before.setDate(now.getDate() - 2);
     const ofDay = (day: Date) => salesLeads().filter((lead) => localDay(lead.createdAt) === localDay(day));
     const tiles = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".lo-tile"));
-    expect(texts(root, ".lo-tile .lo-label")).toEqual(["Leads gesamt", "Gestern", "Bereit zum Ausliefern", "Ausgeliefert", "Reklamiert"]);
+    expect(texts(root, ".lo-tile .lo-label")).toEqual(["Leads gesamt", "Gestern", "Bereit zum Ausliefern", "Ausgeliefert"]); // seit v377 ohne „Reklamiert“
     expect(tiles()[0].querySelector("strong")!.textContent).toBe(String(salesLeads().length)); // „Leads gesamt“ bleibt alle
     expect(tiles()[1].querySelector("strong")!.textContent).toBe(String(ofDay(yesterday).length)); expect(tiles()[1].classList.contains("is-active")).toBe(true);
     const diff = ofDay(yesterday).length - ofDay(before).length;

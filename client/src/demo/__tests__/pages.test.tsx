@@ -52,7 +52,7 @@ describe("Seiten des Chat-Builds", () => {
       expect(html.length).toBeGreaterThan(500);
       // Jede Seite zeigt ihre eigene Überschrift (nicht die einer anderen Seite)
       const page = new URLSearchParams(route).get("page") ?? "Dashboard";
-      const expectedHeading: Record<string, RegExp> = { Benutzer: /Benutzer|Personen/, Teams: /Teams/, Tags: /Tags/, Leads: /Leads|Lead/, Lieferkette: /Lieferkette/, Bestellungen: /Bestellungen/, Statistik: /Statistik/, Reklamationen: /Reklamationen/, Automatisierung: /Automatisierung/ };
+      const expectedHeading: Record<string, RegExp> = { Benutzer: /Benutzer|Personen/, Teams: /Teams/, Tags: /Tags/, Leads: /Leads|Lead/, Lieferkette: /Lieferkette/, Bestellungen: /Auslieferung/, Statistik: /Integrationen/, Reklamationen: /Reklamationen/, Automatisierung: /Automatisierung/ };
       const heading = view.container.querySelector("h1")?.textContent ?? "";
       if (page === "Statistik") expect(view.container.querySelector("#dashboard-statistik"), `Statistik-Abschnitt im Dashboard bei ${route}`).not.toBeNull(); // Statistik ist ein Abschnitt des Dashboards
       else if (expectedHeading[page] && !route.includes("&")) expect(heading, `Überschrift bei ${route}`).toMatch(expectedHeading[page]); // Unterseiten (z. B. eine Kette) tragen eigene Titel
@@ -167,11 +167,13 @@ describe("Kampagnen-Übersicht: Sortierung und Archiv", () => {
 });
 
 describe("Seitenleiste", () => {
-  it("führt jede Navigationsseite in einer Gruppe, damit sie sichtbar ist", async () => {
+  it("führt jede Navigationsseite in einer Gruppe, damit sie sichtbar ist – außer denen, die bewusst nicht mehr im Menü stehen", async () => {
     const source = (await import("fs")).readFileSync((await import("path")).resolve(process.cwd(), "client/src/components/FluxoraWorkspace.tsx"), "utf8");
     const pages = Array.from(source.matchAll(/\{ page: "([^"]+)", icon:/g)).map((match) => match[1]);
     const groups = source.match(/const navigationGroups[^\n]*/)?.[0] ?? "";
-    for (const page of pages) expect(groups.includes(`"${page}"`), `Seite ${page} fehlt in navigationGroups`).toBe(true);
+    const withoutMenu = ["Haustür-Erfassung"]; // seit v377 nicht mehr im Menü – die Seite bleibt über ihre Adresse erreichbar
+    for (const page of pages) expect(groups.includes(`"${page}"`), `Seite ${page} ${withoutMenu.includes(page) ? "steht noch" : "fehlt"} in navigationGroups`).toBe(!withoutMenu.includes(page));
+    for (const page of withoutMenu) expect(pages).toContain(page);
   });
 });
 

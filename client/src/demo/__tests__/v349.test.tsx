@@ -43,7 +43,7 @@ describe("Version 349", () => {
   beforeEach(() => { cleanup(); resetStore(); try { localStorage.removeItem(HIDDEN_KEY); localStorage.removeItem("tanesco-lead-hidden-columns"); localStorage.removeItem("tanesco-lead-saved-views"); } catch { /* egal */ } });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); resetStore(); try { localStorage.removeItem(HIDDEN_KEY); } catch { /* egal */ } });
 
-  it("Kacheln: der Weg der Leads – Zahlen aus allen Leads, wo sie stehen, fairer Vergleich mit gestern, Alter des ältesten wartenden Leads, Betrag der Auslieferungen, Anteil der Reklamationen", async () => {
+  it("Kacheln: der Weg der Leads – Zahlen aus allen Leads, wo sie stehen, fairer Vergleich mit gestern, Alter des ältesten wartenden Leads, Betrag der Auslieferungen; seit v377 ohne „Reklamiert“", async () => {
     const root = await open("page=Leads"); const all = salesLeads(); const now = await overview(); const store = getStore().tables;
     // die Rechnung stimmt mit dem Speicher überein
     const statusOf = (status: string) => withStatus(status).length;
@@ -56,9 +56,10 @@ describe("Version 349", () => {
     expect(now.valueWeek).toBeCloseTo(handed.reduce((sum, row) => sum + Number(row.unitPrice ?? 0), 0), 2); expect(now.valueWeek).toBeGreaterThan(0);
     expect(now.claimsOpen).toBe((store.claims as Row[]).filter((row) => row.status === "offen" || row.status === "in_prüfung").length);
 
-    // fünf Kacheln in der Reihenfolge des Wegs; „Leads gesamt“ ist gewählt, solange nichts gefiltert ist
-    expect(texts(root, ".lo-tile .lo-label")).toEqual(["Leads gesamt", "Heute neu", "Bereit zum Ausliefern", "Ausgeliefert", "Reklamiert"]);
-    expect(texts(root, ".lo-tile strong")).toEqual([de(now.total), de(now.today), de(now.ready), de(now.delivered), de(now.status.reklamiert)]);
+    // vier Kacheln in der Reihenfolge des Wegs (seit v377 ohne „Reklamiert“ – auf dieser Seite wird nicht mit Reklamationen gearbeitet); „Leads gesamt“ ist gewählt, solange nichts gefiltert ist
+    expect(texts(root, ".lo-tile .lo-label")).toEqual(["Leads gesamt", "Heute neu", "Bereit zum Ausliefern", "Ausgeliefert"]);
+    expect(texts(root, ".lo-tile strong")).toEqual([de(now.total), de(now.today), de(now.ready), de(now.delivered)]);
+    expect(root.querySelector(".lo-tile.is-claimed")).toBeNull(); expect(root.querySelector(".lo-strip")!.textContent).not.toContain("Reklamiert");
     expect(tile(root, "all").classList.contains("is-active")).toBe(true); expect(root.querySelectorAll(".lo-tile.is-active")).toHaveLength(1); expect(tile(root, "all").getAttribute("aria-pressed")).toBe("true");
     // wo alle Leads stehen: seit Version 359 nur noch im Hinweis beim Überfahren (ruhigere Leiste: je Zahl eine Zeile)
     const split = statusSplit(now.status).filter((part) => part.count > 0); expect(split.reduce((sum, part) => sum + part.count, 0)).toBe(now.total);
@@ -73,11 +74,10 @@ describe("Version 349", () => {
     expect(tile(root, "ready").getAttribute("title")).toContain(`dazu ${[now.status.neu ? `${de(now.status.neu)} neu` : "", now.status.hängend ? `${de(now.status.hängend)} hängend` : ""].filter(Boolean).join(" · ")}`);
     // ausgeliefert: 7 Tage, heute – und was das wert ist
     expect(insight("delivered").textContent).toBe(`${de(now.deliveredWeek)} in 7 Tagen · heute ${de(now.deliveredToday)}`); expect(tile(root, "delivered").getAttribute("title")).toContain(`${now.valueWeek.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })} in 7 Tagen`);
-    // reklamiert: Anteil an allem, was je ausgeliefert wurde; darunter die offenen Entscheidungen
-    const rate = claimRate(now.status.zugewiesen, now.status.reklamiert)!; expect(rate).toBe(Math.round((now.status.reklamiert / (now.status.zugewiesen + now.status.reklamiert)) * 100)); expect(insight("claimed").textContent).toBe(`${rate} % der ausgelieferten`);
-    expect(tile(root, "claimed").getAttribute("title")).toContain(`${now.claimsOpen} ${now.claimsOpen === 1 ? "wartet" : "warten"} auf Entscheidung`);
-    // Farbpunkte nur an den drei Kacheln, die auch in der Verteilung vorkommen
-    expect(Array.from(root.querySelectorAll(".lo-tile .lo-dot")).map((dot) => dot.className)).toEqual(["lo-dot is-bereit", "lo-dot is-ausgeliefert", "lo-dot is-reklamiert"]);
+    // der Anteil der Reklamationen wird weiter gerechnet (Dashboard, Reklamationen) – nur die Kachel hier gibt es nicht mehr
+    const rate = claimRate(now.status.zugewiesen, now.status.reklamiert)!; expect(rate).toBe(Math.round((now.status.reklamiert / (now.status.zugewiesen + now.status.reklamiert)) * 100));
+    // Farbpunkte nur an den zwei Kacheln, die einen Zustand zeigen
+    expect(Array.from(root.querySelectorAll(".lo-tile .lo-dot")).map((dot) => dot.className)).toEqual(["lo-dot is-bereit", "lo-dot is-ausgeliefert"]);
   }, 60_000);
 
   it("Jede Kachel zeigt genau ihre Leads: Suche und andere Filter werden geleert, die Kachel ist nur gewählt, wenn die Tabelle genau das zeigt", async () => {
@@ -87,7 +87,8 @@ describe("Version 349", () => {
     await type(search(), "Martin Albrecht", 900); expect(found(root)).toBe("1"); expect(active()).toEqual([]);
     await click(tile(root, "delivered")); expect(search().value).toBe(""); expect(activeTab(root)).toBe("Zugewiesen"); expect(found(root)).toBe(de(withStatus("zugewiesen").length)); expect(active()).toEqual(["lo-tile is-delivered is-active"]);
     expect(texts(root, ".lt-row .lt-pill-status").every((text) => text === "Zugewiesen")).toBe(true);
-    await click(tile(root, "claimed")); expect(activeTab(root)).toBe("Reklamiert"); expect(found(root)).toBe(de(withStatus("reklamiert").length)); expect(active()).toEqual(["lo-tile is-claimed is-active"]);
+    // „Reklamiert“ gibt es weiter als Reiter der Tabelle – dann ist keine Kachel gewählt (seit v377 hat der Reiter keine Kachel mehr)
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".lt-tabs button")).find((button) => button.firstChild?.textContent === "Reklamiert")); expect(activeTab(root)).toBe("Reklamiert"); expect(found(root)).toBe(de(withStatus("reklamiert").length)); expect(active()).toEqual([]);
     // ein Tag ist gewählt (gestern): Seit v366 folgen die Kacheln ihm – die zweite heißt „Gestern“, „Bereit zum Ausliefern“ zählt nur die wartenden dieses Tages
     const dayLeads = all.filter((lead) => localDay(lead.createdAt) === now.days[12].day);
     await click(bars(root)[12], 1200); expect(bars(root)[12].getAttribute("aria-pressed")).toBe("true"); expect(found(root)).toBe(de(dayLeads.length)); expect(active()).toEqual(["lo-tile is-today is-active"]);

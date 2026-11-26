@@ -21,6 +21,24 @@ describe("dashboard Zeitraumlogik", () => {
     expect(monday.from.toISOString()).toBe("2026-08-31T00:00:00.000Z");
   });
 
+  it("Erstellt ab: ab dem gewählten Tag bis jetzt – ein Tag in der Zukunft ist gültig, aber leer (v377)", () => {
+    const range = dashboardRange("since", "2026-08-10", "", now);
+    expect(range.from.toISOString()).toBe("2026-08-10T00:00:00.000Z"); expect(range.until.toISOString()).toBe(now.toISOString()); expect(range.label).toBe("ab 10.08.2026"); expect(range.valid).toBe(true); expect(range.open).toBe("since");
+    expect(rangeDayCount(range.from, range.until)).toBe(9); // 10. bis 18. August
+    const today = dashboardRange("since", "2026-08-18", "", now); expect(rangeDayCount(today.from, today.until)).toBe(1);
+    const future = dashboardRange("since", "2026-09-01", "", now); expect(future.valid).toBe(true); expect(future.from.toISOString()).toBe("2026-09-01T00:00:00.000Z"); expect(future.until.toISOString()).toBe("2026-09-01T23:59:59.999Z"); expect(future.from.getTime()).toBeGreaterThan(now.getTime());
+    const missing = dashboardRange("since", "", "2026-08-10", now); expect(missing.valid).toBe(false); expect(missing.problem).toBe("missing"); expect(missing.open).toBe("since"); // das Bis-Feld zählt hier nicht
+    expect(dashboardRange("since", "10.08.2026", "", now).valid).toBe(false);
+  });
+
+  it("Erstellt vor: alles vor dem gewählten Tag – der Tag selbst zählt nicht mit, einen Anfang gibt es nicht (v377)", () => {
+    const range = dashboardRange("before", "", "2026-08-10", now);
+    expect(range.from.getTime()).toBe(0); expect(range.until.toISOString()).toBe("2026-08-09T23:59:59.999Z"); expect(range.label).toBe("vor 10.08.2026"); expect(range.valid).toBe(true); expect(range.open).toBe("before");
+    const missing = dashboardRange("before", "2026-08-10", "", now); expect(missing.valid).toBe(false); expect(missing.problem).toBe("missing"); // das Von-Feld zählt hier nicht
+    // die festen Zeiträume und der eigene Zeitraum sind nicht „offen“
+    expect(dashboardRange("all", "", "", now).open).toBeUndefined(); expect(dashboardRange("custom", "2026-08-01", "2026-08-10", now).open).toBeUndefined();
+  });
+
   it("Letzter Monat: der ganze Vormonat (v364)", () => {
     const range = dashboardRange("last_month", "", "", now);
     expect(range.from.toISOString()).toBe("2026-07-01T00:00:00.000Z"); expect(range.until.toISOString()).toBe("2026-07-31T23:59:59.999Z"); expect(range.label).toBe("Letzter Monat"); expect(range.valid).toBe(true);

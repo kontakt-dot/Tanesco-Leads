@@ -63,9 +63,9 @@ describe("Version 347", () => {
     expect(head()).not.toContain("Telefon"); // Telefon ist anfangs ausgeblendet
     await click(root.querySelector(".lt-columns summary"), 200); const box = (label: string) => Array.from(root.querySelectorAll<HTMLLabelElement>(".lt-columns-menu label")).find((item) => item.textContent === label)!.querySelector("input")!;
     await click(box("Telefon"), 300); expect(head()).toContain("Telefon"); await click(box("E-Mail"), 300); expect(head()).not.toContain("E-Mail"); expect(JSON.parse(localStorage.getItem("tanesco-lead-hidden-columns")!)).toEqual(["assigned", "email"]);
-    // Kacheln: Zahlen aus allen Leads; „Heute neu“ und „Bereit zum Ausliefern“ setzen den Filter (seit Version 349 fünf Kacheln – jede zeigt genau ihre Leads)
+    // Kacheln: Zahlen aus allen Leads; „Heute neu“ und „Bereit zum Ausliefern“ setzen den Filter (seit Version 377 vier Kacheln, ohne „Reklamiert“ – jede zeigt genau ihre Leads)
     const all = salesLeads(); const today = new Date().toDateString(); const tiles = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".lo-tile"));
-    expect(texts(root, ".lo-tile .lo-label")).toEqual(["Leads gesamt", "Heute neu", "Bereit zum Ausliefern", "Ausgeliefert", "Reklamiert"]); expect(tiles()[0].querySelector("strong")!.textContent).toBe(String(all.length)); expect(tiles()[0].classList.contains("is-active")).toBe(true);
+    expect(texts(root, ".lo-tile .lo-label")).toEqual(["Leads gesamt", "Heute neu", "Bereit zum Ausliefern", "Ausgeliefert"]); expect(tiles()[0].querySelector("strong")!.textContent).toBe(String(all.length)); expect(tiles()[0].classList.contains("is-active")).toBe(true);
     const todayCount = all.filter((lead) => new Date(lead.createdAt).toDateString() === today).length; expect(tiles()[1].querySelector("strong")!.textContent).toBe(String(todayCount));
     await click(tiles()[1], 900); expect(tiles()[1].classList.contains("is-active")).toBe(true); expect(root.querySelector(".lt-foot-count")!.textContent).toBe(`${todayCount} ${todayCount === 1 ? "Lead" : "Leads"} gefunden`);
     // seit v366 folgen die Kacheln dem Zeitraum: Bei „Heute“ zählt „Bereit zum Ausliefern“ nur die freigegebenen von heute – ein Klick zeigt genau diese
