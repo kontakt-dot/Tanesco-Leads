@@ -80,3 +80,9 @@ export function ruleSentence(categories: string[], suppliers: string, buyers: st
   const rest = buyers.slice(1).map((buyer, index) => (index === 0 ? `Nimmt ${buyers[0]} einen Lead nicht, geht er an ${buyer}` : `danach an ${buyer}`)).join(", ");
   return `${first} ${rest}.`;
 }
+
+/** Preis aus einem Eingabefeld lesen (seit v370): „44,50“ und „44.50“ geben 44,5; steht ein Komma drin, gilt der Punkt als Tausender („1.250,00“ → 1250). Nie negativ, Unlesbares wird 0. */
+export function parsePrice(value: string): number {
+  const text = String(value ?? "").trim(); const normalized = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : text;
+  return Math.max(0, Number(normalized) || 0);
+}

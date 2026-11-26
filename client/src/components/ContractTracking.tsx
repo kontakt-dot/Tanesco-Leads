@@ -31,16 +31,23 @@ export function ContractStand({ rows, onOpen }: { rows: StandRow[]; onOpen: (id:
   const funnel = contractFunnel(rows); const waiting = rows.filter((row) => row.status === "gesendet" || row.status === "angesehen");
   const hot = hottestOpen(rows); const hint = hot ? trackingHint(hot.tracking ?? EMPTY_TRACKING, hot.status) : null;
   const headline = waiting.length === 0 ? (funnel.sent ? "Kein Vertrag wartet gerade auf Unterschrift" : "Noch kein Vertrag verschickt") : waiting.length === 1 ? "1 Vertrag wartet auf Unterschrift" : `${waiting.length} Verträge warten auf Unterschrift`;
-  return <section className="surface-panel vt-stand" aria-label="Stand der Verträge">
+  // Abschluss: wie viele der gesendeten Verträge unterschrieben sind – als Ring rechts oben
+  const signed = funnel.stations[funnel.stations.length - 1]?.count ?? 0; const rate = funnel.sent ? Math.round((signed / funnel.sent) * 100) : null;
+  const HeadIcon = waiting.length ? PenLine : funnel.sent ? Check : FilePlus2;
+  return <section className={`surface-panel vt-stand ${waiting.length ? "is-waiting" : ""}`} aria-label="Stand der Verträge">
     <div className="vt-stand-head">
-      <div><h2>{headline}</h2><p>{hot && hint ? <><b>{hot.customer || hot.title}:</b> {hint}</> : funnel.sent ? "Hier siehst du, wie weit deine gesendeten Verträge gekommen sind." : "Sobald du einen Vertrag sendest, siehst du hier, ob er geöffnet, gelesen und unterschrieben wurde."}</p></div>
-      {hot && hint && <button type="button" className="vt-stand-open" onClick={() => onOpen(hot.id)}><Phone aria-hidden="true" /> Vertrag ansehen</button>}
+      <span className="vt-stand-icon" aria-hidden="true"><HeadIcon /></span>
+      <div className="vt-stand-text"><h2>{headline}</h2><p>{hot && hint ? <><b>{hot.customer || hot.title}:</b> {hint}</> : funnel.sent ? "Hier siehst du, wie weit deine gesendeten Verträge gekommen sind." : "Sobald du einen Vertrag sendest, siehst du hier, ob er geöffnet, gelesen und unterschrieben wurde."}</p></div>
+      <div className="vt-stand-aside">
+        {rate !== null && <span className="vt-stand-rate" style={{ ["--rate" as string]: `${rate}%` } as CSSProperties} title={`${signed} von ${funnel.sent} gesendeten Verträgen unterschrieben`}><b>{rate} %</b><small>unterschrieben</small></span>}
+        {hot && hint && <button type="button" className="vt-stand-open" onClick={() => onOpen(hot.id)}><Phone aria-hidden="true" /> Vertrag ansehen</button>}
+      </div>
     </div>
-    <ol className="vt-stations">{funnel.stations.map((station, index) => <li key={station.key} className={`vt-station is-${station.key} ${station.count ? "" : "is-empty"}`} style={{ ["--share" as string]: `${station.share ?? 0}%` } as CSSProperties}>
-      <span>{station.label}</span>
+    <ol className="vt-stations">{funnel.stations.map((station, index) => { const Icon = STEP_ICON[station.key as TrackingStepKey] ?? Send; return <li key={station.key} className={`vt-station is-${station.key} ${station.count ? "" : "is-empty"}`} style={{ ["--share" as string]: `${station.share ?? 0}%` } as CSSProperties}>
+      <span><Icon className="vt-station-icon" aria-hidden="true" />{station.label}</span>
       <p><strong>{station.count}</strong>{index > 0 && station.share !== null && <small>{station.share} %</small>}</p>
       <i aria-hidden="true"><b /></i>
-    </li>)}</ol>
+    </li>; })}</ol>
   </section>;
 }
 

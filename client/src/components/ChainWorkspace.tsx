@@ -5,11 +5,13 @@ import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, ChevronRight, GripVertical, Plus, Trash2, UserRoundCog, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, GitBranch, GripVertical, Plus, Send, Trash2, UserRoundCog, Users, X } from "lucide-react";
+import { categoryColor } from "@/lib/colors";
+import { categoryEmoji } from "../../../shared/category-emoji";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
-import { ruleSentence, suggestChainName, supplierText } from "../../../shared/chain-rules";
+import { parsePrice, ruleSentence, suggestChainName, supplierText } from "../../../shared/chain-rules";
 
 type Range = "heute" | "gestern" | "7_tage" | "14_tage" | "30_tage" | "maximal";
 type Overview = inferRouterOutputs<AppRouter>["leadops"]["chainOverview"];
@@ -68,13 +70,28 @@ function ChainOverviewPage({ range, setRange, onOpen }: { range: Range; setRange
   }, [chains]);
   const move = (group: { categoryId: number; chains: OverviewChain[] }, chainId: number, direction: -1 | 1) => { const ids = group.chains.map((chain) => chain.id); const index = ids.indexOf(chainId); const target = index + direction; if (target < 0 || target >= ids.length) return; [ids[index], ids[target]] = [ids[target], ids[index]]; reorder.mutate({ categoryId: group.categoryId, chainIds: ids }); };
   const nameOf = (id: number) => chains.find((chain) => chain.id === id)?.name ?? `Kette #${id}`;
+  // Farbe und Emoji je Kategorie (wie in der Leads-Tabelle) – für den Kopf jeder Gruppe
+  const categoryList = trpc.leadops.listCategories.useQuery(undefined, { retry: false });
+  const look = (id: number, name: string) => { const category = (categoryList.data ?? []).find((row) => row.id === id); return { color: categoryColor(category ?? { id, color: null } as never), emoji: categoryEmoji(category ?? { name }) }; };
+  // Kennzahlen für die Leiste oben (im gewählten Zeitraum)
+  const sums = chains.reduce((total, chain) => ({ sent: total.sent + chain.stats.total, accepted: total.accepted + chain.stats.accepted, rejected: total.rejected + chain.stats.rejected }), { sent: 0, accepted: 0, rejected: 0 });
+  const activeCount = chains.filter((chain) => chain.status === "aktiv").length;
+  const buyerCount = new Set(chains.filter((chain) => chain.status === "aktiv").flatMap((chain) => chain.buyers.filter((buyer) => buyer.active).map((buyer) => buyer.name.trim().toLowerCase()))).size;
+  const decided = sums.accepted + sums.rejected; const rate = decided ? Math.round((sums.accepted / decided) * 100) : null;
+  const rangeLabel = RANGES.find((item) => item.value === range)?.label ?? "";
   return <div className="fx-scope lk">
     <header className="page-intro compact"><div><span className="eyebrow">ROUTING ENGINE</span><h1>Lieferkette</h1><p>Feste Verteilung: Du legst fest, welche Kategorie von welchen Lieferanten an welche Kunden geht. Die Kunden kommen in fester Reihenfolge dran – es wird nicht abgewechselt.</p></div>
       <div className="flex flex-wrap items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Button className="flux-button" onClick={() => setBuilding(true)} disabled={building}><Plus className="h-4 w-4" /> Neue Lieferkette</Button></div></header>
+    {groups.length > 0 && <section className="lk-rail" aria-label="Kennzahlen der Lieferketten">
+      <div className="lk-stat"><span className="lk-stat-label"><GitBranch aria-hidden="true" />Ketten</span><strong>{activeCount}<em>von {chains.length} aktiv</em></strong><small>in {groups.length} {groups.length === 1 ? "Kategorie" : "Kategorien"}</small></div>
+      <div className="lk-stat"><span className="lk-stat-label"><Users aria-hidden="true" />Kunden in Ketten</span><strong>{buyerCount}</strong><small>bekommen Leads in fester Reihenfolge</small></div>
+      <div className="lk-stat"><span className="lk-stat-label"><Send aria-hidden="true" />Geschickt</span><strong>{sums.sent.toLocaleString("de-DE")}<em>Leads</em></strong><small>Zeitraum: {rangeLabel}</small></div>
+      <div className="lk-stat"><span className="lk-stat-label"><CheckCircle2 aria-hidden="true" />Angenommen</span><strong className="is-good">{sums.accepted.toLocaleString("de-DE")}<em>{rate === null ? "noch keine Entscheidung" : `${rate} % Annahme`}</em></strong>{decided > 0 && <span className="lk-split" aria-hidden="true">{sums.accepted > 0 && <i className="is-good" style={{ flexGrow: sums.accepted }} />}{sums.rejected > 0 && <i className="is-bad" style={{ flexGrow: sums.rejected }} />}</span>}<small>{sums.rejected.toLocaleString("de-DE")} abgelehnt</small></div>
+    </section>}
     {building && <ChainBuilder pickers={pickers.data} pending={createRule.isPending} onCancel={() => setBuilding(false)} onCreate={(values) => createRule.mutate(values)} />}
-    {overview.isLoading ? <section className="lk-panel"><p className="lk-empty">Ketten werden geladen …</p></section> : overview.error ? <section className="lk-panel"><p className="lk-empty is-error">{overview.error.message}</p></section> : !groups.length ? <section className="lk-panel"><p className="lk-empty">Noch keine Lieferkette. Lege mit „Neue Lieferkette“ fest, welche Kategorie von welchen Lieferanten an welche Kunden geht.</p></section> :
-      groups.map((group) => { const active = group.chains.filter((chain) => chain.status === "aktiv"); const shared = active.some((chain) => chain.before.length > 0); return <section key={group.categoryId} className="lk-panel" aria-label={`Lieferketten für ${group.categoryName}`}>
-        <header className="lk-group"><h2>{group.categoryName}</h2><span>{group.chains.length === 1 ? "1 Kette" : `${group.chains.length} Ketten`}{active.length !== group.chains.length ? ` · ${active.length} aktiv` : ""}</span></header>
+    {overview.isLoading ? <section className="lk-panel"><p className="lk-empty">Ketten werden geladen …</p></section> : overview.error ? <section className="lk-panel"><p className="lk-empty is-error">{overview.error.message}</p></section> : !groups.length ? (building ? null : <ChainWelcome onStart={() => setBuilding(true)} />) :
+      groups.map((group) => { const active = group.chains.filter((chain) => chain.status === "aktiv"); const shared = active.some((chain) => chain.before.length > 0); const { color, emoji } = look(group.categoryId, group.categoryName); return <section key={group.categoryId} className="lk-panel" aria-label={`Lieferketten für ${group.categoryName}`} style={{ ["--cat" as string]: color }}>
+        <header className="lk-group"><span className="lk-group-badge" aria-hidden="true">{emoji}</span><h2>{group.categoryName}</h2><span>{group.chains.length === 1 ? "1 Kette" : `${group.chains.length} Ketten`}{active.length !== group.chains.length ? ` · ${active.length} aktiv` : ""}</span></header>
         {shared && <p className="lk-order-note">Zu manchen Leads passen hier mehrere Ketten. Dann gilt immer die Reihenfolge von oben nach unten: Erst wenn in der oberen Kette kein Kunde zugreift, kommt die nächste.</p>}
         <ol className="lk-list">{group.chains.map((chain, index) => <li key={chain.id} className={`lk-chain ${chain.status === "aktiv" ? "" : "is-off"}`}>
           <div className="lk-place"><strong title="Platz in der festen Reihenfolge dieser Kategorie">{chain.place}</strong>{group.chains.length > 1 && <span><button type="button" aria-label={`„${chain.name}“ nach oben`} title="Früher drankommen" disabled={index === 0 || reorder.isPending} onClick={() => move(group, chain.id, -1)}><ArrowUp /></button><button type="button" aria-label={`„${chain.name}“ nach unten`} title="Später drankommen" disabled={index === group.chains.length - 1 || reorder.isPending} onClick={() => move(group, chain.id, 1)}><ArrowDown /></button></span>}</div>
@@ -88,12 +105,43 @@ function ChainOverviewPage({ range, setRange, onOpen }: { range: Range; setRange
             {chain.before.length > 0 && <p className="lk-after">Kommt erst nach: {chain.before.map(nameOf).join(", ")}</p>}
           </div>
           <div className="lk-side">
-            <span className="lk-stats" title="Geschickt / angenommen / abgelehnt im gewählten Zeitraum"><b>{chain.stats.total}</b> geschickt · <b className="is-good">{chain.stats.accepted}</b> angenommen · <b className="is-bad">{chain.stats.rejected}</b> abgelehnt</span>
+            <span className="lk-stats" title="Geschickt / angenommen / abgelehnt im gewählten Zeitraum"><span className="lk-stats-line"><b>{chain.stats.total}</b> geschickt · <b className="is-good">{chain.stats.accepted}</b> angenommen · <b className="is-bad">{chain.stats.rejected}</b> abgelehnt</span><span className="lk-meter" aria-hidden="true">{chain.stats.total > 0 ? <>{chain.stats.accepted > 0 && <i className="is-good" style={{ flexGrow: chain.stats.accepted }} />}{chain.stats.rejected > 0 && <i className="is-bad" style={{ flexGrow: chain.stats.rejected }} />}{chain.stats.total - chain.stats.accepted - chain.stats.rejected > 0 && <i style={{ flexGrow: chain.stats.total - chain.stats.accepted - chain.stats.rejected }} />}</> : <i className="is-none" />}</span></span>
             <span className="lk-actions"><Button size="sm" variant="outline" disabled={updateChain.isPending} onClick={() => updateChain.mutate({ id: chain.id, status: chain.status === "aktiv" ? "inaktiv" : "aktiv" })}>{chain.status === "aktiv" ? "Ausschalten" : "Einschalten"}</Button><Button size="sm" variant="outline" onClick={() => onOpen(chain.id)}>Öffnen</Button><Button size="sm" variant="ghost" aria-label={`Kette „${chain.name}“ löschen`} title="Kette löschen" onClick={async () => { if (await confirmAction(`Kette „${chain.name}“ wirklich löschen?`)) deleteChain.mutate({ chainId: chain.id }); }}><Trash2 className="h-4 w-4" /></Button></span>
           </div>
         </li>)}</ol>
       </section>; })}
   </div>;
+}
+
+/**
+ * Noch keine Lieferkette: zeigt an einem Bild, was eine Kette tut (Kategorie → Lieferanten → Kunde 1, 2, 3), in drei Schritten,
+ * und führt direkt zur ersten Kette.
+ */
+function ChainWelcome({ onStart }: { onStart: () => void }) {
+  return <section className="lk-welcome" aria-label="Noch keine Lieferkette">
+    <div className="lk-welcome-lane" aria-hidden="true">
+      <span className="lk-node is-cat"><small>Kategorie</small><b>☀️ Photovoltaik</b></span>
+      <span className="lk-wire" />
+      <span className="lk-node"><small>Von</small><b>Alle Lieferanten</b></span>
+      <span className="lk-wire" />
+      <span className="lk-node is-buyer"><em>1</em><b>Kunde A</b></span>
+      <span className="lk-wire is-short" />
+      <span className="lk-node is-buyer"><em>2</em><b>Kunde B</b></span>
+      <span className="lk-wire is-short" />
+      <span className="lk-node is-buyer"><em>3</em><b>Kunde C</b></span>
+      <span className="lk-pulse" />
+    </div>
+    <div className="lk-welcome-text">
+      <h2>Noch keine Lieferkette</h2>
+      <p>Eine Lieferkette legt fest, wohin die Leads einer Kategorie gehen – immer in derselben Reihenfolge. Kunde 1 bekommt jeden passenden Lead zuerst; nimmt er ihn nicht, geht er an Kunde 2 und so weiter.</p>
+      <ol className="lk-welcome-steps">
+        <li><em>1</em><span><b>Kategorie wählen</b><small>z. B. Photovoltaik oder Wärmepumpe</small></span></li>
+        <li><em>2</em><span><b>Lieferanten festlegen</b><small>alle oder nur bestimmte</small></span></li>
+        <li><em>3</em><span><b>Kunden der Reihe nach</b><small>mit Preis je Lead</small></span></li>
+      </ol>
+      <div className="lk-welcome-actions"><Button className="flux-button" onClick={onStart}><Plus className="h-4 w-4" /> Erste Lieferkette anlegen</Button><small>Ohne eigene Kette legt die Software beim Aktivieren einer Bestellung eine Standard-Kette an.</small></div>
+    </div>
+  </section>;
 }
 
 type BuilderBuyer = { key: number; buyerUserId: number | null; name: string; price: string };
@@ -164,14 +212,15 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
   const [adding, setAdding] = useState<{ buyerUserId: string; buyerName: string; price: string; window: string; max: string } | null>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [dragId, setDragId] = useState<number | null>(null);
-  if (detail.isLoading) return <section className="surface-panel p-6 text-sm text-slate-400">Kette wird geladen …</section>;
-  if (detail.error || !detail.data) return <section className="surface-panel p-6 text-sm text-red-200">{detail.error?.message ?? "Kette nicht gefunden."}<div className="mt-3"><Button variant="outline" onClick={onBack}>Zurück zu den Ketten</Button></div></section>;
+  if (detail.isLoading) return <section className="fx-scope lk-panel"><p className="lk-empty">Kette wird geladen …</p></section>;
+  if (detail.error || !detail.data) return <section className="fx-scope lk-panel"><p className="lk-empty is-error">{detail.error?.message ?? "Kette nicht gefunden."}</p><div className="px-5 pb-5"><Button variant="outline" onClick={onBack}>Zurück zu den Ketten</Button></div></section>;
   const { chain, stops, buyers, suppliers, reasons, activity } = detail.data;
   const fromText = supplierText(chain.supplierFilterMode, chain.supplierIds.map((id) => suppliers.find((supplier) => supplier.id === id)?.label.split(" — ")[0] ?? `Lieferant #${id}`));
   const moveStop = (stopId: number, direction: -1 | 1) => { const ids = stops.map((stop) => stop.id); const index = ids.indexOf(stopId); const target = index + direction; if (target < 0 || target >= ids.length) return; [ids[index], ids[target]] = [ids[target], ids[index]]; reorder.mutate({ chainId, stopIds: ids }); };
   const dropOn = (targetId: number) => { if (dragId === null || dragId === targetId) return; const ids = stops.map((stop) => stop.id); const from = ids.indexOf(dragId); const to = ids.indexOf(targetId); ids.splice(from, 1); ids.splice(to, 0, dragId); setDragId(null); reorder.mutate({ chainId, stopIds: ids }); };
-  return <>
-    {!embedded && <button type="button" className="mb-3 text-sm text-violet-200 hover:underline" onClick={onBack}>← Zurück zu den Ketten</button>}
+  const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join("") || "?";
+  return <div className="fx-scope lk lk-detail">
+    {!embedded && <button type="button" className="lk-back" onClick={onBack}><ArrowLeft aria-hidden="true" />Zurück zu den Ketten</button>}
     {embedded ? <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><span className="eyebrow">LIEFERKETTE DER BESTELLUNG</span><h2 className="text-lg font-semibold text-slate-100">{chain.name}</h2><p className="text-xs text-slate-500">Die Stops werden von oben nach unten abgelaufen – gleiche Einstellungen wie auf der Seite „Lieferkette“.</p></div><div className="flex items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></div></div>
     : <header className="page-intro compact"><div><span className="eyebrow">LIEFERKETTE</span><h1>{chain.name}</h1><p>Feste Reihenfolge: Die Kunden kommen von oben nach unten dran – es wird nicht abgewechselt.</p></div><div className="flex items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></div></header>}
 
@@ -185,8 +234,8 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
       {settingsOpen && <ChainSettingsForm chain={chain} suppliers={suppliers} pending={updateChain.isPending} onSave={(values) => updateChain.mutate({ id: chain.id, ...values })} />}
     </section>
 
-    <section className="surface-panel mb-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-500">Pro Käufer: ges. = geschickt · ang. = angenommen · abg. = abgelehnt · dann Annahmerate (angenommen ÷ entschieden)</p><Button className="flux-button" onClick={() => setAdding({ buyerUserId: String(buyers[0]?.userId ?? ""), buyerName: "", price: "0", window: "24", max: "" })}><Plus className="h-4 w-4" /> Käufer hinzufügen</Button></div>
+    <section className="lk-panel lk-stops">
+      <header className="lk-stops-head"><div><h2>Kunden der Reihe nach</h2><p>Kunde 1 bekommt jeden passenden Lead zuerst. Je Kunde: geschickt, angenommen, abgelehnt und die Annahme (angenommen ÷ entschieden). Ziehen oder Pfeile ändern die Reihenfolge.</p></div><Button className="flux-button" onClick={() => setAdding({ buyerUserId: String(buyers[0]?.userId ?? ""), buyerName: "", price: "0", window: "24", max: "" })}><Plus className="h-4 w-4" /> Käufer hinzufügen</Button></header>
       {adding && <div className="mt-4 grid gap-3 rounded-lg border border-violet-400/25 p-4 md:grid-cols-[1.6fr_1fr_.6fr_.6fr_.6fr_auto]">
         <label className="grid gap-1 text-xs text-slate-400">Käufer-Konto<select className={field} value={adding.buyerUserId} onChange={(event) => setAdding({ ...adding, buyerUserId: event.target.value })}><option value="">Ohne Konto (nur Name)</option>{buyers.map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.label}{buyer.api ? " · API" : ""}</option>)}</select></label>
         <label className="grid gap-1 text-xs text-slate-400">Käufername (optional)<Input value={adding.buyerName} onChange={(event) => setAdding({ ...adding, buyerName: event.target.value })} placeholder="Anzeigename" /></label>
@@ -194,39 +243,40 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
         <label className="grid gap-1 text-xs text-slate-400">Fenster h<Input type="number" min={0} value={adding.window} onChange={(event) => setAdding({ ...adding, window: event.target.value })} /></label>
         <label className="grid gap-1 text-xs text-slate-400">Max. Leads<Input type="number" min={1} value={adding.max} placeholder="max" onChange={(event) => setAdding({ ...adding, max: event.target.value })} /></label>
         <div className="flex items-end gap-2"><Button className="flux-button" disabled={addStop.isPending || (!adding.buyerUserId && adding.buyerName.trim().length < 2)} onClick={() => addStop.mutate({ chainId, buyerUserId: adding.buyerUserId ? Number(adding.buyerUserId) : null, buyerName: adding.buyerName.trim() || null, unitPrice: Number(adding.price) || 0, reclamationWindowHours: Math.max(0, Number(adding.window) || 0), maxLeads: adding.max ? Number(adding.max) : null })}>Hinzufügen</Button><Button variant="outline" onClick={() => setAdding(null)}>Abbrechen</Button></div></div>}
-      {!stops.length ? <p className="mt-4 text-sm text-slate-400">Noch kein Stop. Füge den ersten Käufer hinzu.</p> : <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-2">
-        {stops.map((stop, index) => <div key={stop.id} className={`min-w-0 rounded-lg border ${dragId === stop.id ? "border-violet-400/60" : "border-white/10"} bg-slate-950/30`} draggable onDragStart={() => setDragId(stop.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropOn(stop.id)} onDragEnd={() => setDragId(null)}>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:min-w-[320px] sm:flex-nowrap">
-              <button type="button" className="cursor-grab text-slate-500" title="Verschieben (ziehen oder Pfeile)"><GripVertical className="h-4 w-4" /></button>
-              <span className="flex flex-col"><button type="button" className="text-slate-500 hover:text-slate-200 disabled:opacity-30" disabled={index === 0} aria-label="Nach oben" onClick={() => moveStop(stop.id, -1)}><ArrowUp className="h-3.5 w-3.5" /></button><button type="button" className="text-slate-500 hover:text-slate-200 disabled:opacity-30" disabled={index === stops.length - 1} aria-label="Nach unten" onClick={() => moveStop(stop.id, 1)}><ArrowDown className="h-3.5 w-3.5" /></button></span>
-              <span className="w-5 text-center font-mono text-sm text-slate-400">{stop.position}</span>
-              <button type="button" className="text-slate-400 hover:text-slate-100" aria-label="Stop-Details" aria-expanded={Boolean(expanded[stop.id])} onClick={() => setExpanded({ ...expanded, [stop.id]: !expanded[stop.id] })}>{expanded[stop.id] ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-500/15 text-xs font-semibold text-violet-100">{stop.buyerCompany.slice(0, 2).toUpperCase()}</span>
-              <span className="min-w-[150px] flex-1 truncate text-sm font-medium text-slate-100" title={stop.buyerLabel}>{stop.buyerCompany}{stop.buyerContact && <span className="text-slate-400"> — {stop.buyerContact}</span>}</span>
-              {stop.api && <Badge variant="outline" className="border-sky-400/25 bg-sky-500/10 text-sky-200" title="Liefert per API-Call (extern hinterlegt)">API</Badge>}
-              {stop.membershipId && <a className="text-slate-400 hover:text-slate-100" href={`/?page=Benutzer&member=${stop.membershipId}`} title="Zum Käufer-Account" aria-label="Zum Käufer-Account"><UserRoundCog className="h-4 w-4" /></a>}
-              <Badge variant="outline" className="shrink-0 border-white/15 text-slate-300" title={`Geo-Targeting: ${geoLabel(stop)}`}>{flag(stop.geoCountry)} {geoLabel(stop)}</Badge>
+      {!stops.length ? <p className="lk-empty">Noch kein Kunde in dieser Kette. „Käufer hinzufügen“ trägt den ersten ein.</p> : <ol className="lk-stop-list">
+        {stops.map((stop, index) => { const decided = stop.stats.accepted + stop.stats.rejected; return <li key={stop.id} className={`lk-stop ${stop.active ? "" : "is-off"} ${dragId === stop.id ? "is-drag" : ""} ${expanded[stop.id] ? "is-open" : ""}`} draggable onDragStart={() => setDragId(stop.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropOn(stop.id)} onDragEnd={() => setDragId(null)}>
+          <div className="lk-stop-row">
+            <div className="lk-stop-who">
+              <span className="lk-stop-move"><button type="button" className="lk-grip" title="Verschieben (ziehen oder Pfeile)"><GripVertical /></button><span><button type="button" disabled={index === 0} aria-label="Nach oben" onClick={() => moveStop(stop.id, -1)}><ArrowUp /></button><button type="button" disabled={index === stops.length - 1} aria-label="Nach unten" onClick={() => moveStop(stop.id, 1)}><ArrowDown /></button></span></span>
+              <strong className="lk-stop-pos" title="Platz in der Reihenfolge">{stop.position}</strong>
+              <span className="lk-stop-avatar" aria-hidden="true">{initials(stop.buyerCompany)}</span>
+              <button type="button" className="lk-stop-name" aria-label={`Stop-Details: ${stop.buyerCompany}`} aria-expanded={Boolean(expanded[stop.id])} title={stop.buyerLabel} onClick={() => setExpanded({ ...expanded, [stop.id]: !expanded[stop.id] })}><span><b>{stop.buyerCompany}</b>{stop.buyerContact && <small>{stop.buyerContact}</small>}</span><ChevronDown className="lk-stop-chevron" aria-hidden="true" /></button>
+              <span className="lk-stop-tags">{stop.api && <span className="lk-tag is-api" title="Liefert per API-Call (extern hinterlegt)">API</span>}<span className="lk-tag" title={`Geo-Targeting: ${geoLabel(stop)}`}>{flag(stop.geoCountry)} {geoLabel(stop)}</span>{stop.membershipId && <a className="lk-tag is-link" href={`/?page=Benutzer&member=${stop.membershipId}`} title="Zum Käufer-Account" aria-label="Zum Käufer-Account"><UserRoundCog /></a>}</span>
             </div>
-            <div className="flex basis-full flex-wrap items-center justify-end gap-2 pl-2 sm:flex-nowrap sm:whitespace-nowrap sm:pl-8 2xl:basis-auto 2xl:pl-0">
-              <span className="whitespace-nowrap font-mono text-xs" title={`${stop.stats.total} geschickt · ${stop.stats.accepted} angenommen · ${stop.stats.rejected} abgelehnt · Annahmerate ${stop.stats.acceptanceRate ?? "–"} % (angenommen ÷ entschieden)`}><span className="text-slate-400">{stop.stats.total} GES.</span> <span className="text-emerald-300">{stop.stats.accepted} ANG.</span> <span className="text-red-300">{stop.stats.rejected} ABG.</span> <span className="ml-1 text-slate-100">{stop.stats.acceptanceRate === null ? "–" : `${stop.stats.acceptanceRate} %`}</span></span>
-              <StopNumber label="€" value={stop.unitPrice} step="0.01" width="w-20" onCommit={(value) => updateStop.mutate({ id: stop.id, unitPrice: Number(value) || 0 })} />
-              <StopNumber label="h" value={String(stop.reclamationWindowHours)} width="w-14" title="Reklamationsfenster in Stunden (0 = sofort angenommen)" onCommit={(value) => updateStop.mutate({ id: stop.id, reclamationWindowHours: Math.max(0, Number(value) || 0) })} />
+            <div className="lk-stop-numbers" title={`${stop.stats.total} geschickt · ${stop.stats.accepted} angenommen · ${stop.stats.rejected} abgelehnt · Annahme ${stop.stats.acceptanceRate ?? "–"} % (angenommen ÷ entschieden)`}>
+              <span className="lk-stop-stat"><b>{stop.stats.total}</b><small>geschickt</small></span>
+              <span className="lk-stop-stat is-good"><b>{stop.stats.accepted}</b><small>angenommen</small></span>
+              <span className="lk-stop-stat is-bad"><b>{stop.stats.rejected}</b><small>abgelehnt</small></span>
+              <span className="lk-stop-rate"><b>{stop.stats.acceptanceRate === null ? "–" : `${stop.stats.acceptanceRate} %`}</b><span className="lk-meter" aria-hidden="true">{decided > 0 ? <>{stop.stats.accepted > 0 && <i className="is-good" style={{ flexGrow: stop.stats.accepted }} />}{stop.stats.rejected > 0 && <i className="is-bad" style={{ flexGrow: stop.stats.rejected }} />}</> : <i className="is-none" />}</span></span>
+            </div>
+            <div className="lk-stop-edit">
+              <StopNumber label="€" value={String(stop.unitPrice).replace(".", ",")} step="0.01" width="w-20" title="Preis je Lead" onCommit={(value) => updateStop.mutate({ id: stop.id, unitPrice: parsePrice(value) })} />
+              <StopNumber label="Std." value={String(stop.reclamationWindowHours)} width="w-14" title="Reklamationsfenster in Stunden (0 = sofort angenommen)" onCommit={(value) => updateStop.mutate({ id: stop.id, reclamationWindowHours: Math.max(0, Number(value) || 0) })} />
               <StopNumber label="" value={stop.maxLeads ? String(stop.maxLeads) : ""} width="w-16" placeholder="max" title="Max. Leads für diesen Käufer (leer = unbegrenzt)" onCommit={(value) => updateStop.mutate({ id: stop.id, maxLeads: value ? Number(value) : null })} />
-              <label className="flex items-center gap-1.5 text-xs text-slate-400" title="Stop aktiv – erhält Leads"><Switch checked={stop.active} onCheckedChange={(checked) => updateStop.mutate({ id: stop.id, active: checked })} aria-label="Stop aktiv" />{stop.active ? "An" : "Aus"}</label>
-              <Button size="sm" variant="ghost" aria-label="Stop löschen" title="Stop löschen" onClick={async () => { if (await confirmAction(`Stop „${stop.buyerCompany}“ löschen?`)) deleteStop.mutate({ stopId: stop.id }); }}><Trash2 className="h-4 w-4" /></Button>
+              <label className="lk-stop-switch" title="Stop aktiv – erhält Leads"><Switch checked={stop.active} onCheckedChange={(checked) => updateStop.mutate({ id: stop.id, active: checked })} aria-label="Stop aktiv" />{stop.active ? "An" : "Aus"}</label>
+              <button type="button" className="lk-stop-delete" aria-label="Stop löschen" title="Stop löschen" onClick={async () => { if (await confirmAction(`Stop „${stop.buyerCompany}“ löschen?`)) deleteStop.mutate({ stopId: stop.id }); }}><Trash2 /></button>
             </div>
           </div>
           {expanded[stop.id] && <StopDetails stop={stop} reasons={reasons} suppliers={suppliers} buyers={buyers} onSaved={refresh} />}
-        </div>)}
-      </div>}
+        </li>; })}
+      </ol>}
     </section>
 
-    <section className="surface-panel p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-semibold text-slate-100">Aktivität</h2><span className="text-sm text-slate-400">{activity.delivered} zugestellt · {activity.inTransit} gerade unterwegs</span></div>
-      <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-2">{stops.map((stop) => <StopActivity key={stop.id} stop={stop} range={range} />)}{!stops.length && <p className="text-sm text-slate-500">Noch keine Aktivität.</p>}</div>
+    <section className="lk-panel lk-activity">
+      <header className="lk-stops-head"><div><h2>Aktivität</h2><p>{activity.delivered} zugestellt · {activity.inTransit} gerade unterwegs</p></div></header>
+      <div className="lk-activity-list">{stops.map((stop) => <StopActivity key={stop.id} stop={stop} range={range} />)}{!stops.length && <p className="lk-empty">Noch keine Aktivität.</p>}</div>
     </section>
-  </>;
+  </div>;
 }
 
 function StopNumber({ label, value, onCommit, width, step, placeholder, title }: { label: string; value: string; onCommit: (value: string) => void; width: string; step?: string; placeholder?: string; title?: string }) {

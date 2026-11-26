@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byChainOrder, chainAcceptsSupplier, chainPlaces, chainsOverlap, reorderedPriorities, ruleSentence, suggestChainName, supplierText, type ChainRule } from "../shared/chain-rules";
+import { byChainOrder, chainAcceptsSupplier, chainPlaces, chainsOverlap, parsePrice, reorderedPriorities, ruleSentence, suggestChainName, supplierText, type ChainRule } from "../shared/chain-rules";
 
 const chain = (id: number, values: Partial<ChainRule> = {}): ChainRule => ({ id, name: `Kette ${id}`, categoryId: 1, priority: 1, status: "aktiv", supplierFilterMode: "all", supplierIds: [], ...values });
 
@@ -59,5 +59,12 @@ describe("Lieferketten – feste Verteilung", () => {
   it("nummeriert eine neue Reihenfolge fortlaufend durch – doppelte Nennungen zählen einmal", () => {
     expect(reorderedPriorities([7, 3, 9])).toEqual([{ id: 7, priority: 1 }, { id: 3, priority: 2 }, { id: 9, priority: 3 }]);
     expect(reorderedPriorities([4, 4, 2])).toEqual([{ id: 4, priority: 1 }, { id: 2, priority: 2 }]);
+  });
+});
+
+describe("Preis aus dem Feld (v370)", () => {
+  it("liest Komma und Punkt, Tausenderpunkte mit Komma, nie negativ", () => {
+    expect(parsePrice("44,50")).toBe(44.5); expect(parsePrice("44.50")).toBe(44.5); expect(parsePrice("1.250,00")).toBe(1250); expect(parsePrice(" 39 ")).toBe(39);
+    expect(parsePrice("")).toBe(0); expect(parsePrice("abc")).toBe(0); expect(parsePrice("-5")).toBe(0);
   });
 });

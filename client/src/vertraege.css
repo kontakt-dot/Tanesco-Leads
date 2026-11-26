@@ -338,3 +338,36 @@ html:not(.dark) .vd-sheet{--pick:#bc001d}
 html:not(.dark) .vt-list{padding:0;border-color:transparent;border-radius:0;background:none}
 html:not(.dark) .vt-row{box-shadow:0 1px 2px rgba(16,24,40,.05)}
 html:not(.dark) .vt-row:hover{box-shadow:var(--vt-lift)}
+
+/* ─────────────────────────── v370: Stand als Bühne – Zeichen, Ring „unterschrieben“, Stationen als Strecke; Zeilen mit Statusleiste ─────────────────────────── */
+.vt-stand{position:relative;overflow:hidden;padding:22px 24px;border-radius:22px;background:radial-gradient(70% 160% at 0% 0%,color-mix(in srgb,var(--vt-accent) 13%,transparent),transparent 62%),var(--vt-card)}
+.vt-stand.is-waiting{background:radial-gradient(70% 160% at 0% 0%,color-mix(in srgb,var(--vt-orange) 13%,transparent),transparent 62%),var(--vt-card)}
+.vt-stand-head{align-items:center;gap:16px}
+.vt-stand-icon{display:grid;place-items:center;flex:none;width:48px;height:48px;border-radius:15px;border:1px solid color-mix(in srgb,var(--vt-accent) 38%,transparent);background:color-mix(in srgb,var(--vt-accent) 15%,transparent);color:var(--vt-accent)}
+.vt-stand.is-waiting .vt-stand-icon{border-color:color-mix(in srgb,var(--vt-orange) 42%,transparent);background:color-mix(in srgb,var(--vt-orange) 15%,transparent);color:var(--vt-orange)}
+.vt-stand-icon svg{width:22px;height:22px}
+.vt-stand-text{flex:1;min-width:0}
+.vt-stand-head h2{font-size:21px;letter-spacing:-.02em}
+.vt-stand-aside{display:flex;align-items:center;gap:16px;flex:none}
+.vt-stand-rate{position:relative;display:grid;place-items:center;align-content:center;width:96px;height:96px;border-radius:50%;text-align:center}
+.vt-stand-rate::before{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(var(--vt-green) var(--rate,0%),var(--vt-soft) 0);-webkit-mask:radial-gradient(closest-side,transparent 80%,#000 81%);mask:radial-gradient(closest-side,transparent 80%,#000 81%)}
+.vt-stand-rate b,.vt-stand-rate small{position:relative}
+.vt-stand-rate b{font-size:20px;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--vt-ink);font-variant-numeric:tabular-nums}
+.vt-stand-rate small{margin-top:3px;font-size:9px;font-weight:600;color:var(--vt-dim)}
+.vt-stations{margin-top:22px;padding-top:16px;border-top:1px solid var(--vt-line)}
+.vt-station{position:relative}
+.vt-station+.vt-station{border-left:0}
+.vt-station+.vt-station::before{content:"";position:absolute;left:-6px;top:3px;width:9px;height:9px;border-top:2px solid var(--vt-edge);border-right:2px solid var(--vt-edge);transform:rotate(45deg)}
+.vt-station>span{display:flex;align-items:center;gap:6px}
+.vt-station-icon{flex:none;width:14px;height:14px;color:var(--vt-faint)}
+.vt-station strong{font-size:28px}
+.vt-station>i{height:6px}
+.vt-station>i b{background:linear-gradient(90deg,color-mix(in srgb,var(--vt-ink) 45%,transparent),var(--vt-ink))}
+.vt-station.is-ergebnis strong{color:var(--vt-green)}
+.vt-station.is-ergebnis .vt-station-icon{color:var(--vt-green)}
+.vt-station.is-ergebnis>i b{background:linear-gradient(90deg,color-mix(in srgb,var(--vt-green) 45%,transparent),var(--vt-green))}
+.vt-row{position:relative;overflow:hidden}
+.vt-row::before{content:"";position:absolute;inset:12px auto 12px 0;width:3px;border-radius:0 3px 3px 0;background:var(--vt-edge)}
+.vt-row.is-gesendet::before{background:var(--vt-blue)}.vt-row.is-angesehen::before{background:var(--vt-orange)}.vt-row.is-unterschrieben::before{background:var(--vt-green)}.vt-row.is-abgelehnt::before,.vt-row.is-storniert::before{background:var(--vt-red)}
+@media (max-width:900px){.vt-stand-head{flex-wrap:wrap}.vt-stand-aside{width:100%;justify-content:space-between}.vt-station+.vt-station::before{display:none}}
+@media (max-width:600px){.vt-stand{padding:18px 16px}.vt-stand-rate{width:84px;height:84px}.vt-stand-rate b{font-size:17px}}
