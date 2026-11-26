@@ -15,7 +15,7 @@ import { callRecords, categoryFieldMappings, categoryFields, leadCategories, lea
 import { invokeLLM } from "./_core/llm";
 import { fieldNames } from "./llm-shape";
 import type { Db } from "./lead-pipeline";
-import { cleanSpokenContact, type SpokenContact } from "../shared/dialer-intake";
+import { cleanSpokenContact, salutationFromTranscript, type SpokenContact } from "../shared/dialer-intake";
 import { emailFromFields } from "../shared/dialer-contact";
 import { callAnswerList, cleanFieldValues, dialerFieldMatches, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, isSalutation, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
 
@@ -96,6 +96,8 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
     await db.update(leads).set({ ...patch, metadata: { ...withoutSources(metaOf((await db.select({ metadata: leads.metadata }).from(leads).where(eq(leads.id, lead.id)).limit(1))[0]?.metadata ?? lead.metadata)), ...fromDialer, ...(salutation && !realText(meta.anrede, 20) ? { anrede: salutation } : {}), callFieldsAt: now, ...(call ? { callFieldsCallId: call.id } : {}) } }).where(eq(leads.id, lead.id));
     return { leadId, fields: [], contact: [], cleaned, skipped: "kein Gesprächstext" };
   }
+  // Anrede: Fällt im Gespräch „Herr/Frau <Nachname des Kunden>“, steht sie fest (Wattfox verlangt sie bei Photovoltaik)
+  if (!salutation && !tidySalutation(meta.anrede) && !tidySalutation(meta.salutation)) salutation = salutationFromTranscript(transcript, current.lastName);
   const toRead = fieldsToRead(defs as LeadFieldDef[], meta).slice(0, 45);
   const gaps: ContactKey[] = [];
   if (!current.firstName) gaps.push("firstName"); if (!current.lastName) gaps.push("lastName"); if (!current.email) gaps.push("email"); if (!current.street) gaps.push("street"); if (!current.postcode) gaps.push("postcode"); if (!current.city) gaps.push("city");
@@ -148,6 +150,26 @@ async function takeEmailFromFields(db: Db, lead: { id: number; tenantId: number;
   if (rawContactId) { const raw = (await db.select({ id: rawContacts.id, email: rawContacts.email }).from(rawContacts).where(and(eq(rawContacts.id, rawContactId), eq(rawContacts.tenantId, lead.tenantId))).limit(1))[0]; if (raw && !realText(raw.email, 320)) await db.update(rawContacts).set({ email: hit.email }).where(eq(rawContacts.id, raw.id)); }
   await db.insert(leadStatusEvents).values({ tenantId: lead.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: `E-Mail-Adresse vom Dialer übernommen – sie stand bei den Angaben unter „${hit.key.slice(0, 60)}“` });
   return hit;
+}
+/**
+ * Vorhandene Leads ohne Anrede: aus ihren Gesprächen nachtragen („Herr/Frau <Nachname>“). Nur Leads, die noch rausgehen können –
+ * ein Lauf nach dem Start reicht, neue Leads bekommen die Anrede beim Füllen aus dem Gespräch.
+ */
+export async function salutationsFromCalls(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ checked: number; filled: number }> {
+  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, status: leads.status, lastName: leads.lastName, transcript: callRecords.transcript }).from(leads).innerJoin(callRecords, eq(callRecords.leadId, leads.id))
+    .where(and(eq(leads.kind, "verkauf"), sql`${leads.status} IN ('neu', 'genehmigt', 'hängend')`, sql`${leads.lastName} IS NOT NULL AND ${leads.lastName} <> ''`, sql`${callRecords.transcript} IS NOT NULL`, sql`JSON_EXTRACT(${leads.metadata}, '$.anrede') IS NULL`, sql`JSON_EXTRACT(${leads.metadata}, '$.salutation') IS NULL`, ...(options.tenantId ? [eq(leads.tenantId, options.tenantId)] : [])))
+    .orderBy(desc(leads.id), desc(callRecords.id)).limit(options.max ?? 4000);
+  const done = new Set<number>(); const seen = new Set<number>(); let filled = 0;
+  for (const row of rows) {
+    seen.add(row.id); if (done.has(row.id)) continue;
+    const found = salutationFromTranscript(row.transcript, row.lastName); if (!found) continue;
+    const fresh = (await db.select({ metadata: leads.metadata }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; const meta = metaOf(fresh?.metadata);
+    if (tidySalutation(meta.anrede) || tidySalutation(meta.salutation)) { done.add(row.id); continue; }
+    await db.update(leads).set({ metadata: { ...meta, anrede: found } }).where(eq(leads.id, row.id));
+    await db.insert(leadStatusEvents).values({ tenantId: row.tenantId, leadId: row.id, previousStatus: row.status, nextStatus: row.status, actorUserId: null, note: `Anrede aus dem Gespräch übernommen: ${found}` });
+    done.add(row.id); filled += 1;
+  }
+  return { checked: seen.size, filled };
 }
 /** Vorhandene Leads ohne E-Mail-Adresse, bei denen sie bei den Angaben steht: einmal durchgehen und umtragen. */
 export async function emailsFromLeadFields(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ moved: number }> {

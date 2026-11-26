@@ -34,6 +34,22 @@ export function contactFromTranscript(transcript: string | null | undefined): Sp
   const place = /\b(\d{5})\s+([A-ZÄÖÜ][a-zäöüß]+(?:[ -][A-ZÄÖÜ][a-zäöüß]+)?)/.exec(text); if (place) { out.postcode = place[1]; out.city = place[2]; }
   return out;
 }
+/**
+ * Anrede des Kunden aus dem Gespräch: Wie oft fällt „Herr <Nachname>“ und wie oft „Frau <Nachname>“ – mit dem Nachnamen des Leads?
+ * Die Spracherkennung schreibt Namen oft etwas anders („Meier“/„Meyer“, ein Buchstabe falsch), das gilt als derselbe Name. Bei Doppelnamen
+ * reicht ein Teil. Fällt beides gleich oft oder der Name gar nicht, gibt es keine Antwort – lieber nichts als die falsche Anrede.
+ */
+export function salutationFromTranscript(transcript: string | null | undefined, lastName: string | null | undefined): "Herr" | "Frau" | null {
+  const fold = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/ey|ay|ai/g, "ei").replace(/[^a-z]/g, "");
+  const wanted = String(lastName ?? "").split(/[\s-]+/).map(fold).filter((part) => part.length >= 3); if (!wanted.length) return null;
+  const near = (a: string, b: string) => { if (a === b) return true; if (Math.min(a.length, b.length) < 5 || Math.abs(a.length - b.length) > 1) return false; let i = 0; let j = 0; let edits = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i += 1; j += 1; continue; } edits += 1; if (edits > 1) return false; if (a.length > b.length) i += 1; else if (b.length > a.length) j += 1; else { i += 1; j += 1; } } return edits + (a.length - i) + (b.length - j) <= 1; };
+  let herr = 0; let frau = 0;
+  for (const match of Array.from(String(transcript ?? "").matchAll(/\b(Herrn?|Frau)\s+(?:Dr\.\s+|Prof\.\s+)?([A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?)/g))) {
+    if (!match[2].split("-").map(fold).some((part) => wanted.some((name) => near(part, name)))) continue;
+    if (/^frau$/i.test(match[1])) frau += 1; else herr += 1;
+  }
+  return herr > frau ? "Herr" : frau > herr ? "Frau" : null;
+}
 /** Kontakt des Dialers mit dem aus dem Gespräch ergänzen – was der Dialer nennt, gilt. */
 export function withSpokenContact(contact: DialerContact, spoken: SpokenContact): DialerContact {
   const named = Boolean(contact.firstName || contact.lastName);

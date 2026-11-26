@@ -77,7 +77,7 @@ describe("Version 358", () => {
 
   it("Dashboard: neue Leads ohne Auslieferung erhöhen „Ausgelieferte Leads“ nicht", async () => {
     window.history.replaceState(null, "", "/?page=Dashboard"); let view = mount(); await settle(900);
-    const tile = () => Array.from(view.container.querySelectorAll<HTMLElement>(".metric-card")).find((node) => node.textContent?.includes("Ausgelieferte Leads"))?.querySelector("strong")?.textContent ?? null;
+    const tile = () => Array.from(view.container.querySelectorAll<HTMLElement>(".db-stat")).find((node) => node.textContent?.includes("Ausgelieferte Leads"))?.querySelector("strong")?.textContent ?? null;
     const before = tile(); expect(before).toMatch(/^\d+$/);
     const categoryId = (await callProcedure("leadops.listCategories", undefined) as Array<{ id: number }>)[0].id;
     for (let i = 1; i <= 3; i += 1) await callProcedure("leadops.importLead", { categoryId, firstName: "Nora", lastName: `Neu${i}`, email: `nora.neu${i}@beispiel.example`, city: "Kassel" });

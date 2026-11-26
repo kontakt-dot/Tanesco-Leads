@@ -76,3 +76,16 @@ describe("API-Fehler – was fehlt, steht da, bevor der Lead rausgeht", () => {
     expect(wattfox.problems.find((problem) => problem.leadId === 6)!.lead.salutation).toBe("Frau");
   });
 });
+
+describe("Anrede aus dem Gespräch (v372)", () => {
+  it("zählt „Herr/Frau <Nachname des Leads>“ – andere Namen (Agent) zählen nicht; Schreibweisen der Spracherkennung gelten als derselbe Name", async () => {
+    const { salutationFromTranscript } = await import("../shared/dialer-intake");
+    expect(salutationFromTranscript("Guten Tag, Frau Sommer? Hier ist Herr Kaya. Frau Sommer, es geht um …", "Sommer")).toBe("Frau");
+    expect(salutationFromTranscript("Spreche ich mit Herrn Meyer? Ja. Herr Dr. Meier, kurz zu Ihrem Dach.", "Meier")).toBe("Herr");
+    expect(salutationFromTranscript("Herr Hofmann, guten Tag.", "Hoffmann")).toBe("Herr"); // ein Buchstabe Unterschied
+    expect(salutationFromTranscript("Guten Tag Frau Berg-Lindner.", "Lindner")).toBe("Frau"); expect(salutationFromTranscript("Frau Lindner, hallo.", "Berg-Lindner")).toBe("Frau");
+    expect(salutationFromTranscript("Hier ist Herr Kaya vom Service.", "Sommer")).toBeNull();
+    expect(salutationFromTranscript("Herr Sommer? Nein, hier ist Frau Sommer.", "Sommer")).toBeNull(); // unklar: lieber nichts
+    expect(salutationFromTranscript("Herr Sommer", "")).toBeNull(); expect(salutationFromTranscript(null, "Sommer")).toBeNull(); expect(salutationFromTranscript("Herr Li, hallo", "Li")).toBeNull(); // zu kurz für eine sichere Zuordnung
+  });
+});

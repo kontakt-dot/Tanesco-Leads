@@ -6212,6 +6212,15 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const carla = (await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-004")))[0]; expect(carla.email).toBe("carla.beispiel@example.de"); expect(carla.metadata).toEqual({ street: "Musterweg 7", pv_dachart: "Satteldach" });
     expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, carla.id))).map((event) => event.note)).toContain("E-Mail-Adresse vom Dialer übernommen – sie stand bei den Angaben unter „pv_email“");
     expect((await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-005")))[0].email).toBeNull();
+    // (g) v372: Die Anrede kommt aus dem Gespräch („Frau Beispiel“ mit dem Nachnamen des Leads) – danach fehlt Wattfox bei Carla nur noch nichts mehr; Dora (anderer Name im Gespräch) bleibt ohne
+    const dora = (await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-005")))[0];
+    await db.insert(callRecords).values([{ tenantId: S.tenantId, provider: "ondialer", externalCallId: "wf-e2e-anrede-1", leadId: carla.id, phone: carla.phone ?? "", agentName: "Taner", campaign: "PV Q4", startedAt: new Date(), durationSeconds: 120, consent: true, transcript: "Guten Tag, spreche ich mit Frau Beispiel? Ja. Frau Beispiel, es geht um Ihre Anfrage. Hier ist Herr Kaya vom Service.", status: "bewertet", score: 80, verdict: "verkaufbar", decision: "freigegeben" }, { tenantId: S.tenantId, provider: "ondialer", externalCallId: "wf-e2e-anrede-2", leadId: dora.id, phone: dora.phone ?? "", agentName: "Taner", campaign: "PV Q4", startedAt: new Date(), durationSeconds: 120, consent: true, transcript: "Guten Tag, hier ist Herr Kaya. Es geht um Ihre Anfrage.", status: "bewertet", score: 80, verdict: "verkaufbar", decision: "freigegeben" }]);
+    const { salutationsFromCalls } = await import("./lead-from-call"); const said = await salutationsFromCalls(db, { tenantId: S.tenantId }); expect(said.filled).toBeGreaterThanOrEqual(1);
+    expect(((await db.select().from(leads).where(eq(leads.id, carla.id)))[0].metadata as Record<string, unknown>).anrede).toBe("Frau"); expect(((await db.select().from(leads).where(eq(leads.id, dora.id)))[0].metadata as Record<string, unknown>).anrede).toBeUndefined();
+    expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, carla.id))).map((event) => event.note)).toContain("Anrede aus dem Gespräch übernommen: Frau");
+    expect((await owner.leadops.apiErrorOverview({ days: 30 })).problems.some((problem) => problem.publicId === "WF-E2E-004")).toBe(false); // Anrede, Straße, E-Mail: alles da
+    expect((await salutationsFromCalls(db, { tenantId: S.tenantId })).filled).toBe(0);
+    await db.delete(callRecords).where(inArray(callRecords.externalCallId, ["wf-e2e-anrede-1", "wf-e2e-anrede-2"]));
     await db.update(leads).set({ status: "deaktiviert" }).where(inArray(leads.publicId, ["WF-E2E-003", "WF-E2E-004", "WF-E2E-005"])); // spätere Tests zählen offene Leads
     // aufräumen: der Käufer soll in späteren Tests keinen Wattfox-Endpoint mehr haben
     await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id });
