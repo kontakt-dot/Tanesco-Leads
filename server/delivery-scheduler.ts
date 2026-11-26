@@ -131,6 +131,8 @@ export function startDeliveryScheduler(intervalMinutes = Number(process.env.DELI
       const summaries = await runScheduledDeliveries(db);
       const purged = await purgeExpiredCalls(db).catch(() => ({ purged: 0 })); if (purged.purged) console.log(`[Aufbewahrung] ${purged.purged} Gesprächsaufzeichnungen/-transkripte entfernt`);
       await prunePlaybackCache().catch(() => 0); // Kopien von Aufnahmen zum Anhören: nach einem Tag wieder weg (prüft höchstens einmal je Stunde)
+      // Statistik „Integrationen“: Transaktionen der Partner im Takt abgleichen (Aroundhome wird abgerufen; WattFox meldet selbst)
+      await import("./partner-accounts").then((mod) => mod.syncAllAroundhomeAccounts(db)).then((done) => { if (done.accounts) console.log(`[Partner] ${done.accounts} Aroundhome-Konten abgeglichen${done.failed ? `, ${done.failed} fehlgeschlagen` : ""}`); }).catch((error) => console.error("[Partner] Abgleich:", error instanceof Error ? error.message : error));
       const mails = await processDueEmails(db).catch((error) => { console.error("[E-Mail] Versand fehlgeschlagen:", error); return null; });
       const weekly = await import("./mail-health").then((mod) => mod.runWeeklyReports(db)).catch(() => 0); if (weekly) console.log(`[Wochenbericht] ${weekly} Bericht${weekly === 1 ? "" : "e"} verschickt`); // montags ab 8 Uhr, einmal je Woche
       for (const tenantId of (await db.select({ id: tenants.id }).from(tenants).catch(() => [] as Array<{ id: number }>)).map((row) => row.id)) await processAutomations(db, tenantId, { appUrl: process.env.APP_URL ?? "" }).catch((error) => console.error(`[Pipeline] Automatik Mandant ${tenantId}:`, error instanceof Error ? error.message : error));

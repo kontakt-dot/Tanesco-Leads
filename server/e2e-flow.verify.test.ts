@@ -6222,6 +6222,22 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect((await salutationsFromCalls(db, { tenantId: S.tenantId })).filled).toBe(0);
     await db.delete(callRecords).where(inArray(callRecords.externalCallId, ["wf-e2e-anrede-1", "wf-e2e-anrede-2"]));
     await db.update(leads).set({ status: "deaktiviert" }).where(inArray(leads.publicId, ["WF-E2E-003", "WF-E2E-004", "WF-E2E-005"])); // spätere Tests zählen offene Leads
+    // (h) v373: Statistik „Integrationen“ – das WattFox-Konto zeigt die Zustellungen über die Schnittstelle des Käufers; Aufrufe von WattFox werden Transaktionen (einmal je Bestellnummer)
+    const { partnerTransactions: txTable, partnerAccounts: accountsTable } = await import("../drizzle/schema"); const { handleWattfoxCallback } = await import("./partner-accounts");
+    const wfAccount = await owner.leadops.createWattfoxAccount({ label: "WattFox", reclaimOnCancel: false, reclaimReasonId: null }); await owner.leadops.updatePartnerAccount({ id: wfAccount.id, buyerUserId: inviteeUserId }); /* das Konto gehört zu diesem Käufer – seine Schnittstellen sind die Zustellungen */ const token = (await db.select().from(accountsTable).where(eq(accountsTable.id, wfAccount.id)))[0].trackingToken!;
+    const cardNow = async (input: Parameters<typeof owner.leadops.partnerReport>[0] = {}) => (await owner.leadops.partnerReport(input)).cards.find((card) => card.account.id === wfAccount.id)!;
+    const before373 = await cardNow(); expect(before373.title).toBe("WattFox"); expect(before373.account).toMatchObject({ provider: "wattfox", mode: "push", hasAccess: true });
+    expect(before373.counts.delivered).toBeGreaterThanOrEqual(2); expect(before373.counts.rejected).toBeGreaterThanOrEqual(1); expect(before373.counts.rated).toBe(0); expect(before373.counts.silent).toBe(before373.counts.accepted);
+    const contactsNow = async (status?: "all" | "rejected" | "none" | "confirmed" | "cancelled") => owner.leadops.partnerContacts({ accountId: wfAccount.id, status });
+    expect((await contactsNow("rejected")).rows.map((item) => item.publicId)).toContain("WF-E2E-002"); expect((await contactsNow("none")).rows.find((item) => item.publicId === row.publicId)).toMatchObject({ status: "none", categoryName: S.pv.name, commission: null });
+    expect((await handleWattfoxCallback(db, token, { lead_id: row.publicId, order: "WF-ORDER-1", status: "confirmed", amount: "55,50" })).status).toBe(200);
+    await handleWattfoxCallback(db, token, { lead_id: row.publicId, order: "WF-ORDER-1", status: "confirmed", amount: "55,50" }); // derselbe Aufruf noch einmal: keine zweite Transaktion
+    expect(await db.select().from(txTable).where(eq(txTable.accountId, wfAccount.id))).toMatchObject([{ externalId: "WF-ORDER-1", leadId: row.id, status: "confirmed", commission: "55.50" }]);
+    const rated373 = await cardNow(); expect(rated373.counts).toMatchObject({ confirmed: 1, cancelled: 0, rated: 1, commission: 55.5, silent: before373.counts.accepted - 1 }); expect((await contactsNow("confirmed")).rows).toMatchObject([{ publicId: row.publicId, status: "confirmed", commission: 55.5 }]);
+    expect((await cardNow({ basis: "processed" })).counts).toMatchObject({ delivered: 1, confirmed: 1 }); expect((await cardNow({ basis: "paid" })).counts.delivered).toBe(0); expect((await cardNow({ from: "2020-01-01", to: "2020-01-31" })).counts.delivered).toBe(0);
+    await handleWattfoxCallback(db, token, { lead_id: row.publicId, order: "WF-ORDER-1", status: "cancelled", note: "INVALID_OTHER" });
+    const cancelled373 = await cardNow(); expect(cancelled373.counts).toMatchObject({ confirmed: 0, cancelled: 1, commission: 0 }); expect(cancelled373.cancelReasons).toEqual([{ reason: "INVALID_OTHER", count: 1 }]);
+    await db.delete(txTable).where(eq(txTable.accountId, wfAccount.id)); await owner.leadops.deletePartnerAccount({ id: wfAccount.id });
     // aufräumen: der Käufer soll in späteren Tests keinen Wattfox-Endpoint mehr haben
     await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id });
   }, 60000);

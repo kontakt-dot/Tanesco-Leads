@@ -7,6 +7,7 @@ import type { AppRouter } from "../../../server/routers";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction, promptAction } from "@/lib/confirm";
+import PartnerPlatforms from "@/components/PartnerPlatforms";
 
 type Accounts = inferRouterOutputs<AppRouter>["leadops"]["listPartnerAccounts"];
 const field = "h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100";
@@ -25,6 +26,7 @@ export default function PartnerAccountsPanel() {
     <CancelRules provider="aroundhome" title="STORNOGRÜNDE AROUNDHOME" intro="Ordne die Stornogründe aus dem Aroundhome-Abgleich deinen Reklamationsgründen zu. Ohne Treffer gilt der Standard-Grund des Kontos." data={data} onDone={refresh} />
     <WattfoxSection data={data} onDone={refresh} />
     <CancelRules provider="wattfox" title="STORNOGRÜNDE WATTFOX" intro="Ordne WattFox-Codes deinen Reklamationsgründen zu. Erste passende Regel gewinnt." data={data} onDone={refresh} />
+    <PartnerPlatforms data={data} onDone={refresh} />
     <HlrSection data={data} onDone={refresh} />
     <PresetsSection />
   </div>;

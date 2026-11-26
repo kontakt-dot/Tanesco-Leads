@@ -11,6 +11,8 @@ import { claimEvents, claims, leadDeliveries, leadStatusEvents, leads, partnerAc
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
 import { upsertDailyStats } from "./d2d";
+import { upsertPartnerTransaction } from "./partner-report";
+import { PARTNER_PROVIDERS } from "../shared/partner-report";
 
 export const SECRET_MASK = "••••••••";
 type Credentials = { accessToken?: string; exportUrl?: string; apiKey?: string; apiSecret?: string };
@@ -29,6 +31,9 @@ export async function listPartnerAccounts(db: Db, tenantId: number, appUrl: stri
   return {
     aroundhome: accounts.filter((account) => account.provider === "aroundhome").map((account) => { const credentials = readCredentials(account); return { id: account.id, label: account.label ?? "", publisherId: account.publisherId ?? "", accessToken: mask(credentials.accessToken), exportUrl: credentials.exportUrl ?? "", reclaimOnCancel: account.reclaimOnCancel, reclaimReasonId: account.reclaimReasonId, enabled: account.enabled, lastSyncAt: account.lastSyncAt, lastSyncSummary: account.lastSyncSummary }; }),
     wattfox: accounts.filter((account) => account.provider === "wattfox").map((account) => ({ id: account.id, label: account.label ?? "", trackingUrl: `${appUrl.replace(/\/+$/, "")}/api/partner/wattfox/${account.trackingToken}`, reclaimOnCancel: account.reclaimOnCancel, reclaimReasonId: account.reclaimReasonId, enabled: account.enabled, lastSyncAt: account.lastSyncAt, lastSyncSummary: account.lastSyncSummary })),
+    // Weitere Plattformen (Leadnodes, Enpal, GoHighLevel): Konto mit Bezeichnung und Token – der Token erscheint nur gekürzt
+    platforms: accounts.filter((account) => ["leadnodes", "enpal", "gohighlevel"].includes(account.provider)).map((account) => ({ id: account.id, provider: account.provider as "leadnodes" | "enpal" | "gohighlevel", label: account.label ?? "", token: mask(readCredentials(account).accessToken), buyerUserId: account.buyerUserId, enabled: account.enabled, lastSyncAt: account.lastSyncAt, lastSyncSummary: account.lastSyncSummary })),
+    buyerOf: Object.fromEntries(accounts.map((account) => [account.id, account.buyerUserId])) as Record<number, number | null>,
     hlrlookup: { id: hlr?.id ?? null, enabled: hlr?.enabled ?? false, apiKey: mask(hlrCredentials.apiKey), apiSecret: hlrCredentials.apiSecret ? SECRET_MASK : "", lastTestAt: hlr?.lastSyncAt ?? null, lastTestSummary: hlr?.lastSyncSummary ?? null },
     cancelRules: rules.map((rule) => ({ id: rule.id, provider: rule.provider, matchOp: rule.matchOp, matchValue: rule.matchValue, reasonId: rule.reasonId })),
     reasons,
@@ -52,7 +57,19 @@ export async function createWattfoxAccount(db: Db, tenantId: number, input: { la
   return { id: Number(inserted[0]?.insertId) || 0 };
 }
 
-export async function updatePartnerAccount(db: Db, tenantId: number, input: { id: number; label?: string; reclaimOnCancel?: boolean; reclaimReasonId?: number | null; enabled?: boolean }) {
+/** Konto bei einer weiteren Plattform (Leadnodes, Enpal, GoHighLevel) anlegen oder ändern. Ein leeres oder gekürztes Token-Feld lässt den gespeicherten Wert stehen. */
+export async function savePlatformAccount(db: Db, tenantId: number, input: { id?: number; provider: "leadnodes" | "enpal" | "gohighlevel"; label: string; token: string; buyerUserId: number | null }) {
+  const existing = input.id ? (await db.select().from(partnerAccounts).where(and(eq(partnerAccounts.id, input.id), eq(partnerAccounts.tenantId, tenantId), eq(partnerAccounts.provider, input.provider))).limit(1))[0] : undefined;
+  if (input.id && !existing) throw new Error("Das Konto wurde nicht gefunden.");
+  const previous = existing ? readCredentials(existing) : {}; const typed = input.token.trim();
+  const accessToken = !typed || typed.startsWith(SECRET_MASK) ? previous.accessToken ?? "" : typed;
+  const values = { tenantId, provider: input.provider, label: input.label.trim() || PARTNER_PROVIDERS.find((item) => item.key === input.provider)?.name || input.provider, credentialsEncrypted: accessToken ? encryptIntegrationSecret(JSON.stringify({ accessToken })) : null, buyerUserId: input.buyerUserId, enabled: true };
+  if (existing) { await db.update(partnerAccounts).set(values).where(eq(partnerAccounts.id, existing.id)); return { id: existing.id }; }
+  const inserted = await db.insert(partnerAccounts).values(values);
+  return { id: Number(inserted[0]?.insertId) || 0 };
+}
+
+export async function updatePartnerAccount(db: Db, tenantId: number, input: { id: number; label?: string; reclaimOnCancel?: boolean; reclaimReasonId?: number | null; enabled?: boolean; buyerUserId?: number | null }) {
   const { id, ...values } = input;
   await db.update(partnerAccounts).set(values).where(and(eq(partnerAccounts.id, id), eq(partnerAccounts.tenantId, tenantId)));
   return { success: true as const };
@@ -157,10 +174,19 @@ export async function handleWattfoxCallback(db: Db, token: string, params: Recor
   if (!lead) { await db.insert(partnerCallbacks).values({ tenantId: account.tenantId, provider: "wattfox", accountId: account.id, status: text(params.status).slice(0, 80) || "unbekannt", reasonText: text(params.reason ?? params.code).slice(0, 255) || null, payload: params as never }); return { status: 404, body: { error: "lead not found" } }; }
   const status = text(params.status ?? params.event ?? "");
   const reasonText = text(params.reason ?? params.code ?? params.reason_code ?? "");
-  if (CANCEL_PATTERN.test(status) || CANCEL_PATTERN.test(reasonText) || params.cancelled === true) { const result = await recordPartnerCancellation(db, account.tenantId, account, { lead, status: status || "storniert", reasonText, payload: params }); return { status: 200, body: { ok: true, lead_id: lead.publicId, cancelled: true, reclamation_id: result.claimId } }; }
+  if (CANCEL_PATTERN.test(status) || CANCEL_PATTERN.test(reasonText) || params.cancelled === true) { await saveWattfoxTransaction(db, account, lead, params, "cancelled", reasonText); const result = await recordPartnerCancellation(db, account.tenantId, account, { lead, status: status || "storniert", reasonText, payload: params }); return { status: 200, body: { ok: true, lead_id: lead.publicId, cancelled: true, reclamation_id: result.claimId } }; }
+  await saveWattfoxTransaction(db, account, lead, params, QUALIFIED_PATTERN.test(status) ? "confirmed" : "open", reasonText);
   await db.insert(partnerCallbacks).values({ tenantId: account.tenantId, provider: "wattfox", accountId: account.id, leadId: lead.id, status: status.slice(0, 80) || "info", reasonText: reasonText.slice(0, 255) || null, payload: params as never });
   await db.insert(leadStatusEvents).values({ tenantId: account.tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: null, note: `WattFox-Status: ${status || "Rückmeldung"}${reasonText ? ` (${reasonText})` : ""}` });
   return { status: 200, body: { ok: true, lead_id: lead.publicId, cancelled: false } };
+}
+
+/** Statistik „Integrationen“: Jeder Aufruf von WattFox wird zur Transaktion des Leads (Bestellnummer = Lead bei WattFox) – Status, Betrag und Zeitpunkt, wie gemeldet. */
+async function saveWattfoxTransaction(db: Db, account: PartnerAccount, lead: typeof leads.$inferSelect, params: Record<string, unknown>, status: "open" | "confirmed" | "cancelled", reasonText: string) {
+  const text = (value: unknown) => (typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "");
+  const order = text(params.order ?? params.order_id ?? params.uuid ?? params.id ?? params.reference) || lead.publicId; const amount = Number(String(params.amount ?? params.commission ?? "").replace(",", "."));
+  const stamp = text(params.ts ?? params.timestamp); const when = stamp ? new Date(/^\d{9,11}$/.test(stamp) ? Number(stamp) * 1000 : /^\d{12,14}$/.test(stamp) ? Number(stamp) : stamp) : null; const at = when && !Number.isNaN(when.getTime()) ? when : new Date();
+  await upsertPartnerTransaction(db, account.tenantId, account.id, { externalId: order, reference: order, leadId: lead.id, status, processedAt: status === "open" ? null : at, commission: Number.isFinite(amount) && amount > 0 ? amount : undefined, cancelReason: reasonText || text(params.note) || null, raw: params }).catch((error) => console.error("[WattFox] Transaktion speichern:", error instanceof Error ? error.message : error));
 }
 
 /** Aroundhome-Abgleich: Vorgänge vom Export-Link laden (JSON oder CSV), Stornos zuordnen, Reklamationen anlegen. */
@@ -176,8 +202,12 @@ export async function syncAroundhomeAccount(db: Db, tenantId: number, id: number
   if (!response.ok) { const summary = `Abruf fehlgeschlagen (HTTP ${response.status})`; await db.update(partnerAccounts).set({ lastSyncAt: new Date(), lastSyncSummary: summary }).where(eq(partnerAccounts.id, account.id)); throw new Error(summary); }
   const rows = parseTransactions(text);
   let matched = 0; let cancelled = 0; let claimsCreated = 0;
+  let stored = 0;
   for (const row of rows) {
     const lead = await findLeadForPartner(db, tenantId, { partnerReference: row.reference, leadPublicId: row.leadPublicId });
+    // Statistik „Integrationen“: jede Transaktion speichern oder aktualisieren – auch ohne passenden Lead („direkt beim Partner eingeliefert“)
+    const externalId = row.reference || row.leadPublicId;
+    if (externalId) { const saved = await upsertPartnerTransaction(db, tenantId, account.id, { externalId, reference: row.leadPublicId || row.reference, leadId: lead?.id ?? null, status: transactionStatus(row), transactionAt: toDate(row.date), processedAt: toDate(row.processedAt), paidAt: toDate(row.paidAt), commission: row.commission, campaignId: row.campaignId, campaignName: row.campaignName, partnerCategory: row.category, subId: row.subId, cancelReason: row.reason, raw: row.raw }); if (saved.changed) stored += 1; }
     if (!lead) continue; matched += 1;
     if (!CANCEL_PATTERN.test(row.status)) continue; cancelled += 1;
     const alreadyLogged = (await db.select({ id: partnerCallbacks.id }).from(partnerCallbacks).where(and(eq(partnerCallbacks.tenantId, tenantId), eq(partnerCallbacks.provider, "aroundhome"), eq(partnerCallbacks.leadId, lead.id))).limit(1))[0];
@@ -188,12 +218,24 @@ export async function syncAroundhomeAccount(db: Db, tenantId: number, id: number
   // Haustür-Erfassung: Abgleich je Sub-ID und Tag (Aroundhome liefert keine Kontaktdaten)
   const daily = rows.filter((row) => row.subId).map((row) => { const parsed = row.date ? new Date(row.date) : null; const day = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10); const status = CANCEL_PATTERN.test(row.status) ? "cancelled" as const : QUALIFIED_PATTERN.test(row.status) ? "qualified" as const : "open" as const; return { subId: row.subId.slice(0, 64), day, status }; });
   const dailyResult = daily.length ? await upsertDailyStats(db, tenantId, account.id, daily) : { days: 0 };
-  const summary = `${rows.length} Vorgänge gelesen, ${matched} zugeordnet, ${cancelled} storniert, ${claimsCreated} Reklamationen angelegt${dailyResult.days ? `, ${dailyResult.days} Sub-ID-Tage abgeglichen` : ""}`;
+  const summary = `${rows.length} Vorgänge gelesen, ${matched} zugeordnet, ${stored} neu oder geändert, ${cancelled} storniert, ${claimsCreated} Reklamationen angelegt${dailyResult.days ? `, ${dailyResult.days} Sub-ID-Tage abgeglichen` : ""}`;
   await db.update(partnerAccounts).set({ lastSyncAt: new Date(), lastSyncSummary: summary }).where(eq(partnerAccounts.id, account.id));
   return { rows: rows.length, matched, cancelled, claimsCreated, dailyDays: dailyResult.days, summary };
 }
 
-type Transaction = { reference: string; leadPublicId: string; status: string; reason: string; subId: string; date: string; raw: unknown };
+/** Automatischer Abgleich: alle eingeschalteten Aroundhome-Konten mit Export-Link – ein Fehler bei einem Konto hält die anderen nicht auf. */
+export async function syncAllAroundhomeAccounts(db: Db, fetchImpl: typeof fetch = fetch): Promise<{ accounts: number; failed: number }> {
+  const rows = await db.select().from(partnerAccounts).where(and(eq(partnerAccounts.provider, "aroundhome"), eq(partnerAccounts.enabled, true)));
+  let accounts = 0; let failed = 0;
+  for (const account of rows) { if (!readCredentials(account).exportUrl) continue; accounts += 1; await syncAroundhomeAccount(db, account.tenantId, account.id, fetchImpl).catch((error) => { failed += 1; console.error(`[Aroundhome] Abgleich Konto ${account.id}:`, error instanceof Error ? error.message : error); }); }
+  return { accounts, failed };
+}
+
+type Transaction = { reference: string; leadPublicId: string; status: string; reason: string; subId: string; date: string; processedAt: string; paidAt: string; commission: number | null; campaignId: string; campaignName: string; category: string; raw: unknown };
+const PAID_PATTERN = /paid|ausgezahlt|payout|bezahlt/i;
+const toDate = (value: string): Date | null => { if (!value) return null; const parsed = new Date(/^\d{9,11}$/.test(value) ? Number(value) * 1000 : value); return Number.isNaN(parsed.getTime()) ? null : parsed; };
+/** Status des Partners → offen, anerkannt (bestätigt oder ausgezahlt) oder storniert. */
+export const transactionStatus = (row: Pick<Transaction, "status" | "paidAt">): "open" | "confirmed" | "cancelled" => (CANCEL_PATTERN.test(row.status) ? "cancelled" : QUALIFIED_PATTERN.test(row.status) || PAID_PATTERN.test(row.status) || Boolean(row.paidAt) ? "confirmed" : "open");
 
 const pick = (row: Record<string, unknown>, keys: string[]) => { for (const key of keys) { const hit = Object.keys(row).find((item) => item.toLowerCase() === key.toLowerCase()); if (hit && row[hit] !== undefined && row[hit] !== null && row[hit] !== "") return String(row[hit]); } return ""; };
 
@@ -206,5 +248,8 @@ export function parseTransactions(text: string): Transaction[] {
     const delimiter = lines[0].includes(";") ? ";" : ","; const header = lines[0].split(delimiter).map((cell) => cell.replace(/^"|"$/g, "").trim());
     records = lines.slice(1).map((line) => { const cells = line.split(delimiter).map((cell) => cell.replace(/^"|"$/g, "").trim()); return Object.fromEntries(header.map((key, index) => [key, cells[index] ?? ""])); });
   }
-  return records.map((row) => ({ reference: pick(row, ["uuid", "inquiry_id", "inquiryId", "vorgangsnummer", "transaction_id", "id"]), leadPublicId: pick(row, ["lead_id", "external_id", "publisher_lead_id", "reference", "external_reference"]), status: pick(row, ["status", "state", "transaction_status"]), reason: pick(row, ["cancellation_reason", "cancel_reason", "storno_grund", "reason", "reason_text", "stornogrund"]), subId: pick(row, ["sub_id", "subid", "sub-id", "publisher_sub_id", "subId", "channel", "tracking_id"]), date: pick(row, ["created_at", "createdAt", "date", "created", "timestamp", "datum", "transaction_date"]), raw: row }));
+  return records.map((row) => ({ reference: pick(row, ["uuid", "inquiry_id", "inquiryId", "vorgangsnummer", "transaction_id", "id"]), leadPublicId: pick(row, ["lead_id", "external_id", "publisher_lead_id", "reference", "external_reference"]), status: pick(row, ["status", "state", "transaction_status"]), reason: pick(row, ["cancellation_reason", "cancel_reason", "storno_grund", "reason", "reason_text", "stornogrund"]), subId: pick(row, ["sub_id", "subid", "sub-id", "publisher_sub_id", "subId", "channel", "tracking_id"]), date: pick(row, ["created_at", "createdAt", "date", "created", "timestamp", "datum", "transaction_date"]),
+    processedAt: pick(row, ["processed_at", "processedAt", "confirmed_at", "cancelled_at", "canceled_at", "updated_at", "bearbeitet_am", "status_date"]), paidAt: pick(row, ["paid_at", "paidAt", "payout_date", "payout_at", "ausgezahlt_am", "paid_date"]),
+    commission: (() => { const value = pick(row, ["commission", "provision", "amount", "payout", "commission_amount", "publisher_commission"]); if (!value) return null; const number = Number(value.replace(/[^\d.,-]/g, "").replace(/\.(?=\d{3}(?:\D|$))/g, "").replace(",", ".")); return Number.isFinite(number) ? number : null; })(),
+    campaignId: pick(row, ["campaign_id", "campaignId", "kampagnen_nr", "program_id"]), campaignName: pick(row, ["campaign_name", "campaign", "campaignName", "kampagne", "program_name"]), category: pick(row, ["category", "product", "kategorie", "sparte", "product_category", "vertical"]), raw: row }));
 }

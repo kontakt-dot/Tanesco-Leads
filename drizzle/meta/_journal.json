@@ -855,6 +855,13 @@
       "when": 1796700000000,
       "tag": "0121_dialer_als_lieferant",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "5",
+      "when": 1796800000000,
+      "tag": "0122_partner_transaktionen",
+      "breakpoints": true
     }
   ]
 }
