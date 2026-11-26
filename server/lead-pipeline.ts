@@ -13,10 +13,12 @@ import { nanoid } from "nanoid";
 import { automationExecutionLogs, automationRules, claimEvents, claims, deliveryChains, deliveryStopReasons, deliveryStops, emailEvents, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leadTagAssignments, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, partnerIntegrations, reclamationReasons, tags, tenantSettings, users } from "../drizzle/schema";
 import { callQaCampaigns, callRecords } from "../drizzle/schema";
 import { campaignDeliverySkip, leadCampaignCall, type LeadCampaignRules } from "../shared/dialer-campaign";
+import { GERMAN_STATES } from "../shared/german-states";
+import { NO_BUYER_REASON, deliversForOrder, orderChainName, orderGate, orderHasBuyer, planHasWork, planOrderChains } from "../shared/order-chain";
 import type { getDb } from "./db";
 import { decryptIntegrationSecret } from "./integration-secrets";
 import { dispatchLeadExport, type ExportableLead, type IntegrationExportConfig } from "./lead-integration-export";
-import { evaluateOrderEligibility } from "./order-eligibility";
+import { evaluateOrderEligibility, orderBlocks } from "./order-eligibility";
 import { conditionsMatch, selectNextChain, type FieldCondition } from "./routing";
 import { extractPartnerReference, handOverToBuyerEndpoints, notifySupplierReturn } from "./outbound-endpoints";
 import { suppliers } from "../drizzle/schema";
@@ -86,10 +88,9 @@ export type DeliveryAttempt = { chainId: number; chainName: string; stopId: numb
 export type DeliveryResult = { chainId: number; stopId: number; buyerName: string; unitPrice: string; orderId: number | null; result: "angeboten" | "angenommen" | "abgelehnt"; export: { integrationId: number; integrationName: string; eventType: "geliefert" | "abgelehnt"; responseStatus: number | undefined } | null; attempts: DeliveryAttempt[]; claimId?: number };
 
 type StopRow = typeof deliveryStops.$inferSelect;
-type Candidate = { chain: typeof deliveryChains.$inferSelect; stops: StopRow[]; config: OrderConfigRow | undefined; order: typeof orders.$inferSelect | undefined; eligibility: { eligible: boolean; reason?: string } };
+type Candidate = { chain: typeof deliveryChains.$inferSelect; stops: StopRow[]; config: OrderConfigRow | undefined; order: typeof orders.$inferSelect | undefined; eligibility: { eligible: boolean; reason?: string }; /** Station 1 der Bestellung (null: keine Bestell-Kette oder ältere Kette ohne) */ stationId: number | null; /** warum Station 1 den Lead gerade nicht nimmt – die übrigen Stationen bekommen ihn */ stationSkip: string | null };
 const numberList = (value: unknown) => Array.isArray(value) ? (value as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0) : [];
 const stringList = (value: unknown) => Array.isArray(value) ? (value as unknown[]).map(String).map((item) => item.trim()).filter(Boolean) : [];
-const GERMAN_STATES: Record<string, string[]> = { "Schleswig-Holstein": ["22", "23", "24", "25"], Hamburg: ["20", "21", "22"], Niedersachsen: ["19", "21", "26", "27", "28", "29", "30", "31", "34", "37", "38", "48", "49"], Bremen: ["27", "28"], "Nordrhein-Westfalen": ["32", "33", "34", "40", "41", "42", "44", "45", "46", "47", "48", "50", "51", "52", "53", "57", "58", "59"], Hessen: ["34", "35", "36", "37", "55", "60", "61", "63", "64", "65", "68"], "Rheinland-Pfalz": ["54", "55", "56", "57", "66", "67", "76"], "Baden-Württemberg": ["68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "88", "89", "97"], Bayern: ["63", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96", "97"], Saarland: ["66"], Berlin: ["10", "12", "13", "14"], Brandenburg: ["01", "03", "04", "14", "15", "16", "17", "19", "39"], "Mecklenburg-Vorpommern": ["17", "18", "19", "23"], Sachsen: ["01", "02", "04", "07", "08", "09"], "Sachsen-Anhalt": ["06", "29", "38", "39"], Thüringen: ["04", "07", "36", "96", "98", "99"] };
 
 /** Prüft, ob ein Stop den Lead nehmen darf; liefert den Skip-Grund (übersprungen = keine Lieferung, keine Belastung). */
 export function stopSkipReason(stop: StopRow, lead: LeadRow, context: { now: Date; suppliersDelivered: Set<number>; conflictBuyerIds: Set<number>; stopDeliveries: number }): string | null {
@@ -153,25 +154,64 @@ async function buyerMemberBlocks(db: Db, tenantId: number, configs: OrderConfigR
 }
 
 /**
- * Sorgt dafür, dass eine Bestellung ausliefern kann, ohne dass jemand von Hand eine Lieferkette baut:
- * je Kategorie der Bestellung eine Kette „Bestellung <Nr.>“ mit einem Stop für den Käufer (Preis der Bestellung).
+ * Lieferkette aus der Bestellung (v376): je Kategorie der Bestellung eine Kette, deren Station 1 die Bestellung selbst ist – ihr Käufer zu ihrem Preis,
+ * mit den Lieferanten der Bestellung. Darunter lassen sich weitere Stationen anbauen. Was zu tun ist, rechnet shared/order-chain.ts aus (planOrderChains).
+ *
+ * Zwei Arten, sie aufzurufen:
+ *  - `mode: "explicit"` (Standard) – jemand hat die Bestellung gespeichert oder „aus der Bestellung übernehmen“ gewählt: Die Ketten folgen der Bestellung ganz.
+ *    Station 1 steht vorn (eine leere Kette bekommt sie, eine vorhandene Station des Käufers wird dazu), Käufer, Preis und Lieferanten kommen aus der Bestellung,
+ *    Ketten einer abgewählten Kategorie gehen aus.
+ *  - `mode: "background"` – beim Start des Servers, beim Ein-/Ausschalten und beim Ausliefern: Es entstehen nur Ketten für Kategorien, die noch gar keine haben
+ *    (so kann eine Bestellung ausliefern, ohne dass jemand von Hand eine Kette baut – bis v375 nur für die Hauptkategorie). An vorhandenen Ketten ändert sich
+ *    nichts: Wer welchen Lead zu welchem Preis bekommt, wechselt nie von selbst.
  */
-export async function ensureOrderChains(db: Db, tenantId: number, orderId: number) {
+export async function syncOrderChains(db: Db, tenantId: number, orderId: number, options: { mode?: "explicit" | "background"; /** Kategorien, die beim Speichern der Bestellung neu dazugekommen sind */ addedCategoryIds?: number[] } = {}) {
   const order = (await db.select().from(orders).where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId))).limit(1))[0];
-  if (!order) return { created: 0 };
+  if (!order) return { created: 0, changed: false, missingStation: [] as number[] };
   const config = (await db.select().from(orderOperationalConfigs).where(eq(orderOperationalConfigs.orderId, order.id)).limit(1))[0];
-  const categoryIds = Array.from(new Set([order.categoryId, ...((Array.isArray(config?.categoryIds) ? (config!.categoryIds as unknown[]).map(Number) : []).filter((id) => Number.isInteger(id) && id > 0))]));
-  const existing = await db.select({ id: deliveryChains.id, categoryId: deliveryChains.categoryId }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, order.id)));
-  let created = 0;
-  for (const categoryId of categoryIds) {
-    if (existing.some((chain) => chain.categoryId === categoryId)) continue;
-    const inserted = await db.insert(deliveryChains).values({ tenantId, orderId: order.id, categoryId, name: `Bestellung ${order.orderNumber}`, priority: config?.priority ?? 1, sellTarget: 1, status: "aktiv" });
+  const chains = await db.select().from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, order.id)));
+  const stops = chains.length ? await db.select().from(deliveryStops).where(inArray(deliveryStops.chainId, chains.map((chain) => chain.id))) : [];
+  // An welche Stationen sind schon Leads gegangen? Wechselt die Bestellung den Käufer, wird eine solche Station nicht umgeschrieben, sondern ersetzt.
+  const deliveredStopIds = stops.length ? Array.from(new Set((await db.select({ stopId: leadDeliveries.stopId }).from(leadDeliveries).where(and(eq(leadDeliveries.tenantId, tenantId), inArray(leadDeliveries.stopId, stops.map((stop) => stop.id)), inArray(leadDeliveries.result, ["angeboten", "angenommen", "reklamiert"])))).map((row) => row.stopId).filter((id): id is number => typeof id === "number"))) : [];
+  const plan = planOrderChains(order, config, chains, stops, { ...options, deliveredStopIds });
+  const station = { buyerName: plan.station.buyerName, buyerUserId: plan.station.buyerUserId, unitPrice: plan.station.unitPrice };
+  /** Station 1 steht vorn: alle anderen Stationen der Kette rücken dahinter (zwei Schritte wegen der eindeutigen Position je Kette) */
+  const stationFirst = async (chainId: number, stationId: number) => {
+    const own = (await db.select({ id: deliveryStops.id, position: deliveryStops.position }).from(deliveryStops).where(eq(deliveryStops.chainId, chainId))).sort((a, b) => a.position - b.position);
+    const ordered = [stationId, ...own.map((stop) => stop.id).filter((id) => id !== stationId)]; if (own.every((stop, index) => stop.id === ordered[index] && stop.position === index + 1)) return;
+    await db.transaction(async (tx) => { for (let index = 0; index < ordered.length; index += 1) await tx.update(deliveryStops).set({ position: 1000 + index }).where(eq(deliveryStops.id, ordered[index])); for (let index = 0; index < ordered.length; index += 1) await tx.update(deliveryStops).set({ position: index + 1 }).where(eq(deliveryStops.id, ordered[index])); });
+  };
+  for (const categoryId of plan.createChains) {
+    const inserted = await db.insert(deliveryChains).values({ tenantId, orderId: order.id, categoryId, name: orderChainName(order.orderNumber), priority: plan.priority, sellTarget: 1, status: "aktiv", supplierFilterMode: plan.supplier.mode, supplierIds: plan.supplier.ids });
     const chainId = Number(inserted[0]?.insertId) || 0;
-    if (chainId) { await db.insert(deliveryStops).values({ chainId, buyerName: order.buyerName, position: 1, unitPrice: order.unitPrice, active: true }); created += 1; }
+    if (chainId) await db.insert(deliveryStops).values({ chainId, ...station, position: 1, active: true, orderStop: true });
   }
-  // Stop-Preis und Käufername an der Standard-Kette nachziehen, wenn die Bestellung geändert wurde
-  for (const chain of existing) { const stops = await db.select().from(deliveryStops).where(eq(deliveryStops.chainId, chain.id)); if (stops.length === 1 && (stops[0].buyerName !== order.buyerName || stops[0].unitPrice !== order.unitPrice)) await db.update(deliveryStops).set({ buyerName: order.buyerName, unitPrice: order.unitPrice }).where(eq(deliveryStops.id, stops[0].id)); }
-  return { created };
+  for (const chainId of plan.setSuppliers) await db.update(deliveryChains).set({ supplierFilterMode: plan.supplier.mode, supplierIds: plan.supplier.ids }).where(eq(deliveryChains.id, chainId));
+  // Anderer Käufer, und die alte Station hat schon Leads bekommen: Sie bleibt für die Historie (aus, keine Station 1 mehr)
+  for (const stopId of plan.retireStation) await db.update(deliveryStops).set({ orderStop: false, active: false }).where(eq(deliveryStops.id, stopId));
+  for (const chainId of plan.insertStation) {
+    const last = (await db.select({ position: deliveryStops.position }).from(deliveryStops).where(eq(deliveryStops.chainId, chainId))).reduce((highest, row) => Math.max(highest, row.position), 0);
+    const inserted = await db.insert(deliveryStops).values({ chainId, ...station, position: last + 1, active: true, orderStop: true }); const newId = Number(inserted[0]?.insertId) || 0;
+    if (newId) await stationFirst(chainId, newId);
+  }
+  for (const stopId of plan.markStation) { await db.update(deliveryStops).set({ orderStop: true }).where(eq(deliveryStops.id, stopId)); const stop = stops.find((row) => row.id === stopId); if (stop) await stationFirst(stop.chainId, stopId); }
+  for (const stopId of plan.updateStation) await db.update(deliveryStops).set(station).where(eq(deliveryStops.id, stopId));
+  if (plan.deactivate.length) await db.update(deliveryChains).set({ status: "inaktiv" }).where(inArray(deliveryChains.id, plan.deactivate));
+  if (plan.activate.length) await db.update(deliveryChains).set({ status: "aktiv" }).where(inArray(deliveryChains.id, plan.activate));
+  return { created: plan.createChains.length, changed: planHasWork(plan), missingStation: plan.missingStation };
+}
+/** Beim Ausliefern: Fehlt einer offenen Bestellung für eine ihrer Kategorien die Kette, entsteht sie – sonst ändert sich nichts. */
+export const ensureOrderChains = (db: Db, tenantId: number, orderId: number) => syncOrderChains(db, tenantId, orderId, { mode: "background" });
+
+/**
+ * Einmal nach dem Start: Jede offene oder aktive Bestellung bekommt für jede ihrer Kategorien eine Kette (Station 1 = die Bestellung). Vorhandene Ketten
+ * bleiben, wie sie sind – sie folgen der Bestellung erst, wenn jemand die Bestellung speichert oder „aus der Bestellung übernehmen“ wählt.
+ */
+export async function syncAllOrderChains(db: Db, options: { tenantId?: number } = {}): Promise<{ orders: number; changed: number; created: number }> {
+  const rows = await db.select({ id: orders.id, tenantId: orders.tenantId }).from(orders).innerJoin(orderOperationalConfigs, eq(orderOperationalConfigs.orderId, orders.id)).where(and(or(eq(orders.status, "offen"), eq(orders.status, "aktiv")), ...(options.tenantId ? [eq(orders.tenantId, options.tenantId)] : [])));
+  let changed = 0; let created = 0;
+  for (const row of rows) { const result = await syncOrderChains(db, row.tenantId, row.id, { mode: "background" }); if (result.changed) changed += 1; created += result.created; }
+  return { orders: rows.length, changed, created };
 }
 
 /** Letzte erfolgreiche Lieferung eines Leads als reklamiert markieren (Reklamationsfenster/Aktivität der Kette). */
@@ -258,8 +298,11 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
   // Bestellungen ohne eigene Lieferkette bekommen bei Bedarf eine Standard-Kette (ein Stop = Käufer der Bestellung)
   if (preferOrderId) { const forOrder = await db.select({ id: deliveryChains.id }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, preferOrderId), eq(deliveryChains.categoryId, lead.categoryId))); if (!forOrder.length) await ensureOrderChains(db, tenantId, preferOrderId); }
   else if (!preferChainId) {
-    const openOrders = await db.select({ id: orders.id }).from(orders).where(and(eq(orders.tenantId, tenantId), eq(orders.categoryId, lead.categoryId), or(eq(orders.status, "offen"), eq(orders.status, "aktiv"))));
-    if (openOrders.length) { const withChain = new Set((await db.select({ orderId: deliveryChains.orderId }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), inArray(deliveryChains.orderId, openOrders.map((order) => order.id))))).map((row) => row.orderId)); for (const order of openOrders) if (!withChain.has(order.id)) await ensureOrderChains(db, tenantId, order.id); }
+    // Offene Bestellungen, zu denen die Kategorie des Leads gehört (Hauptkategorie ODER eine der weiteren – bis v375 zählte hier nur die Hauptkategorie,
+    // ein Lead der zweiten Kategorie fand dann keine Kette): Fehlt für diese Kategorie die Kette, wird sie aus der Bestellung angelegt.
+    const openRows = await db.select({ id: orders.id, categoryId: orders.categoryId, categoryIds: orderOperationalConfigs.categoryIds }).from(orders).leftJoin(orderOperationalConfigs, eq(orderOperationalConfigs.orderId, orders.id)).where(and(eq(orders.tenantId, tenantId), or(eq(orders.status, "offen"), eq(orders.status, "aktiv"))));
+    const openOrders = openRows.filter((row) => row.categoryId === lead.categoryId || numberList(row.categoryIds).includes(lead.categoryId));
+    if (openOrders.length) { const withChain = new Set((await db.select({ orderId: deliveryChains.orderId }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.categoryId, lead.categoryId), inArray(deliveryChains.orderId, openOrders.map((order) => order.id))))).map((row) => row.orderId)); for (const order of openOrders) if (!withChain.has(order.id)) await ensureOrderChains(db, tenantId, order.id); }
   }
   const chains = (await db.select().from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.categoryId, lead.categoryId), eq(deliveryChains.status, "aktiv")))).filter((chain) => !excluded.has(chain.id));
   const orderIds = Array.from(new Set(chains.map((chain) => chain.orderId).filter((id): id is number => typeof id === "number")));
@@ -279,27 +322,41 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
   const conflictBuyerIds = new Set<number>();
   if (duplicates.buyerNames.size) { const stopRows = await db.select({ buyerName: deliveryStops.buyerName, buyerUserId: deliveryStops.buyerUserId }).from(deliveryStops).innerJoin(deliveryChains, eq(deliveryChains.id, deliveryStops.chainId)).where(eq(deliveryChains.tenantId, tenantId)); for (const row of stopRows) if (row.buyerUserId && duplicates.buyerNames.has(row.buyerName.toLowerCase())) conflictBuyerIds.add(row.buyerUserId); for (const config of configs) if (config.buyerUserId && duplicates.orderIds.has(config.orderId)) conflictBuyerIds.add(config.buyerUserId); }
   const stopBuyerIds = new Set<number>();
-  const candidates: Candidate[] = await Promise.all(chains.map(async (chain) => {
-    const stops = await db.select().from(deliveryStops).where(and(eq(deliveryStops.chainId, chain.id), eq(deliveryStops.active, true))).orderBy(deliveryStops.position);
+  const loaded = await Promise.all(chains.map(async (chain) => {
+    const allStops = await db.select().from(deliveryStops).where(eq(deliveryStops.chainId, chain.id)).orderBy(deliveryStops.position);
+    const stops = allStops.filter((stop) => stop.active);
     for (const stop of stops) if (stop.buyerUserId) stopBuyerIds.add(stop.buyerUserId);
-    const config = chain.orderId ? configs.find((row) => row.orderId === chain.orderId) : undefined;
-    const order = chain.orderId ? orderRows.find((row) => row.id === chain.orderId) : undefined;
-    let eligibility: Candidate["eligibility"];
+    // Station 1 der Bestellung (v376) – auch wenn sie ausgeschaltet ist: Dann liefert keine der übrigen Stationen „für die Bestellung“
+    const stationId = chain.orderId ? allStops.find((stop) => stop.orderStop)?.id ?? null : null;
+    return { chain, stops, stationId, config: chain.orderId ? configs.find((row) => row.orderId === chain.orderId) : undefined, order: chain.orderId ? orderRows.find((row) => row.id === chain.orderId) : undefined };
+  }));
+  const memberBlocks = await buyerMemberBlocks(db, tenantId, [...configs, ...Array.from(stopBuyerIds).map((buyerUserId) => ({ buyerUserId } as OrderConfigRow))], lead.categoryId);
+  const candidates: Candidate[] = loaded.map(({ chain, stops, stationId, config, order }) => {
+    let eligibility: Candidate["eligibility"]; let stationSkip: string | null = null;
     const supplierIds = numberList(chain.supplierIds);
+    // Was die Bestellung selbst betrifft (ausgeschaltet, noch nicht gestartet, beendet, Menge erreicht, Lieferant nicht zugelassen) – und was nur ihren Käufer
+    const blocks = orderBlocks(config, lead, chain.orderId ? deliveredCount.get(chain.orderId) ?? 0 : 0, now);
+    /** Käufer-Konto einer Station: ihr eigenes – das der Bestellung nur bei Station 1 (bis v375 bei jeder Station ohne Konto: Eine weitere Station „nur mit Namen“ wäre so über das Konto des Bestell-Käufers geliefert worden) */
+    const buyerOf = (stop: StopRow) => stop.buyerUserId ?? (deliversForOrder(stop.id, stationId) ? config?.buyerUserId ?? null : null);
     if (!stops.length) eligibility = { eligible: false, reason: "Lieferkette hat keinen aktiven Stop" };
     else if (order && !["offen", "aktiv"].includes(order.status)) eligibility = { eligible: false, reason: `Bestellung ${order.orderNumber} ist ${order.status}` };
+    else if (order && !orderHasBuyer(order, config)) eligibility = { eligible: false, reason: NO_BUYER_REASON }; // „Bestellung anlegen“ ohne gewählten Käufer: nahm bis v375 Leads als „angeboten an Noch nicht gewählt“ an
+    else if (blocks.chain) eligibility = { eligible: false, reason: blocks.chain }; // zuerst die Bestellung: Dort wird es auch geändert (die Lieferanten der Kette kommen von ihr)
     else if (chain.country && lead.country !== chain.country) eligibility = { eligible: false, reason: `Kette nur für Land ${chain.country}` };
     else if (chain.supplierFilterMode === "include" && (!lead.supplierId || !supplierIds.includes(lead.supplierId))) eligibility = { eligible: false, reason: "Lieferant nicht in dieser Kette freigegeben" };
     else if (chain.supplierFilterMode === "exclude" && lead.supplierId && supplierIds.includes(lead.supplierId)) eligibility = { eligible: false, reason: "Lieferant für diese Kette ausgeschlossen" };
     else if (chain.totalCap && (chainTotal.get(chain.id) ?? 0) >= chain.totalCap) eligibility = { eligible: false, reason: "Maximale Leads insgesamt erreicht" };
     else if (chain.dailyCap && (chainToday.get(chain.id) ?? 0) >= chain.dailyCap) eligibility = { eligible: false, reason: "Tageshöchstgrenze erreicht" };
-    else if ((chain.orderId && duplicates.orderIds.has(chain.orderId)) || stops.every((stop) => duplicates.buyerNames.has(stop.buyerName.toLowerCase()))) eligibility = { eligible: false, reason: "Dublettenschutz: Kontakt wurde bereits an diesen Käufer geliefert" };
-    else eligibility = evaluateOrderEligibility(config, lead, chain.orderId ? deliveredCount.get(chain.orderId) ?? 0 : 0, now);
-    if (eligibility.eligible && campaignRules && stops.length && stops.every((stop) => campaignDeliverySkip(campaignRules, stop.buyerUserId ?? config?.buyerUserId ?? null))) eligibility = { eligible: false, reason: campaignDeliverySkip(campaignRules, stops[0].buyerUserId ?? config?.buyerUserId ?? null)! };
-    return { chain, stops, config, order, eligibility };
-  }));
-  const memberBlocks = await buyerMemberBlocks(db, tenantId, [...configs, ...Array.from(stopBuyerIds).map((buyerUserId) => ({ buyerUserId } as OrderConfigRow))], lead.categoryId);
-  for (const candidate of candidates) if (candidate.eligibility.eligible && candidate.config?.buyerUserId && memberBlocks.has(candidate.config.buyerUserId)) candidate.eligibility = { eligible: false, reason: memberBlocks.get(candidate.config.buyerUserId) };
+    else if (stops.every((stop) => duplicates.buyerNames.has(stop.buyerName.toLowerCase()))) eligibility = { eligible: false, reason: "Dublettenschutz: Kontakt wurde bereits an diesen Käufer geliefert" };
+    else {
+      // Die Bestellung: Läuft sie selbst nicht, geht über die Kette nichts raus. Kann nur ihr Käufer nicht (Gebiet, Liefertag, Pause, Dublette, Zugang),
+      // hält das allein Station 1 auf – weitere Stationen bekommen den Lead (shared/order-chain.ts, orderGate).
+      const gate = orderGate({ blocks, duplicate: Boolean(chain.orderId && duplicates.orderIds.has(chain.orderId)), buyerBlock: config?.buyerUserId ? memberBlocks.get(config.buyerUserId) ?? null : null, stationId, activeStopIds: stops.map((stop) => stop.id) });
+      eligibility = gate.eligible ? { eligible: true } : { eligible: false, reason: gate.reason }; stationSkip = gate.stationSkip;
+    }
+    if (eligibility.eligible && campaignRules && stops.length && stops.every((stop) => campaignDeliverySkip(campaignRules, buyerOf(stop)))) eligibility = { eligible: false, reason: campaignDeliverySkip(campaignRules, buyerOf(stops[0]))! };
+    return { chain, stops, config, order, eligibility, stationId, stationSkip };
+  });
   if (!candidates.length) throw new Error("Keine aktive Lieferkette mit Stop für diese Lead-Kategorie verfügbar.");
 
   const explain = (items: Candidate[]) => items.map((item) => `${item.chain.name}: ${item.eligibility.reason ?? "nicht verfügbar"}`).join("; ");
@@ -328,30 +385,34 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
     // Wasserfall: Stops von oben nach unten
     for (const stop of target.stops) {
       const currentLead = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0] ?? lead;
-      const buyerUserId = stop.buyerUserId ?? target.config?.buyerUserId ?? null;
+      // Nur Station 1 liefert „für die Bestellung“ (zählt zu ihrer Menge, läuft über das Konto ihres Käufers, gehört zu ihren Lieferungen).
+      // Weitere Stationen sind eigene Abnehmer – in älteren Ketten ohne gekennzeichnete Station 1 bleibt es, wie es war.
+      const forOrder = deliversForOrder(stop.id, target.stationId); const ownOrder = forOrder ? target.order : undefined; const rowOrderId = forOrder ? target.chain.orderId ?? null : null;
+      const buyerUserId = stop.buyerUserId ?? (forOrder ? target.config?.buyerUserId ?? null : null);
       let skip: string | null = null;
-      if (duplicates.buyerNames.has(stop.buyerName.toLowerCase())) skip = "Dublette: Kontakt liegt bereits bei diesem Käufer";
+      if (target.stationSkip && stop.id === target.stationId) skip = target.stationSkip;
+      else if (duplicates.buyerNames.has(stop.buyerName.toLowerCase())) skip = "Dublette: Kontakt liegt bereits bei diesem Käufer";
       else if (buyerUserId && memberBlocks.has(buyerUserId)) skip = memberBlocks.get(buyerUserId) ?? "Käufer nicht verfügbar";
       else if (campaignDeliverySkip(campaignRules, buyerUserId)) skip = campaignDeliverySkip(campaignRules, buyerUserId);
       else skip = stopSkipReason(stop, currentLead, { now, suppliersDelivered, conflictBuyerIds, stopDeliveries: stopTotal.get(stop.id) ?? 0 });
       if (skip) {
-        await db.insert(leadDeliveries).values({ tenantId, leadId: lead.id, chainId: target.chain.id, stopId: stop.id, orderId: target.chain.orderId ?? null, buyerName: stop.buyerName, unitPrice: stop.unitPrice, result: "übersprungen", skipReason: skip.slice(0, 160), occurredAt: now });
-        attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: target.chain.orderId ?? null, outcome: "übersprungen", responseStatus: undefined, reason: skip });
+        await db.insert(leadDeliveries).values({ tenantId, leadId: lead.id, chainId: target.chain.id, stopId: stop.id, orderId: rowOrderId, buyerName: stop.buyerName, unitPrice: stop.unitPrice, result: "übersprungen", skipReason: skip.slice(0, 160), occurredAt: now });
+        attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: rowOrderId, outcome: "übersprungen", responseStatus: undefined, reason: skip });
         continue;
       }
       const windowEndsAt = new Date(now.getTime() + (stop.reclamationWindowHours ?? 0) * 3_600_000);
       let deliveryId = 0;
       await db.transaction(async (tx) => {
-        const inserted = await tx.insert(leadDeliveries).values({ tenantId, leadId: lead.id, chainId: target.chain.id, stopId: stop.id, orderId: target.chain.orderId ?? null, buyerName: stop.buyerName, unitPrice: stop.unitPrice, result: "angeboten", windowEndsAt, acceptedAt: stop.reclamationWindowHours ? null : now, occurredAt: now });
+        const inserted = await tx.insert(leadDeliveries).values({ tenantId, leadId: lead.id, chainId: target.chain.id, stopId: stop.id, orderId: rowOrderId, buyerName: stop.buyerName, unitPrice: stop.unitPrice, result: "angeboten", windowEndsAt, acceptedAt: stop.reclamationWindowHours ? null : now, occurredAt: now });
         deliveryId = Number(inserted[0]?.insertId) || 0;
         await tx.update(leads).set({ status: "zugewiesen", assignedAt: now }).where(eq(leads.id, lead.id));
         if (currentLead.status !== "zugewiesen") await tx.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: currentLead.status, nextStatus: "zugewiesen", actorUserId: input.actorUserId, note: `Auslieferung an ${stop.buyerName} (${target.chain.name}, Stop ${stop.position})` });
-        if (target.order) { const delivered = target.order.deliveredCount + 1; await tx.update(orders).set({ deliveredCount: delivered, status: target.order.quantity && delivered >= target.order.quantity ? "erfüllt" : target.order.status }).where(eq(orders.id, target.order.id)); }
+        if (ownOrder) { const delivered = ownOrder.deliveredCount + 1; await tx.update(orders).set({ deliveredCount: delivered, status: ownOrder.quantity && delivered >= ownOrder.quantity ? "erfüllt" : ownOrder.status }).where(eq(orders.id, ownOrder.id)); }
       });
       stopTotal.set(stop.id, (stopTotal.get(stop.id) ?? 0) + 1);
       // Opt-in: jede Zustellung ist eine „Verwendung“ der Einwilligung (Frist von 5 Jahren beginnt neu); fehlt für diesen Käufer eine Einwilligung, geht auf Wunsch die SMS-Bestätigung raus
-      try { const { recordOptInUsage } = await import("./opt-in"); await recordOptInUsage(db, tenantId, lead.id, { kind: "zustellung", buyerName: stop.buyerName, buyerUserId: stop.buyerUserId ?? null, orderId: target.chain.orderId ?? null }, process.env.APP_URL ?? null); } catch (error) { console.error("[Opt-in] Verwendung nicht protokolliert:", error instanceof Error ? error.message : error); }
-      await logActivity(db, tenantId, { kind: "lead_verkauft", title: `Lead ${lead.publicId} an ${stop.buyerName} verkauft`, detail: `${Number(stop.unitPrice ?? 0).toFixed(2).replace(".", ",")} € · ${target.chain.name}${target.order ? ` · Bestellung ${target.order.orderNumber}` : ""}`, leadId: lead.id, actorUserId: input.actorUserId ?? null, refType: "leadDelivery", refId: deliveryId || null });
+      try { const { recordOptInUsage } = await import("./opt-in"); await recordOptInUsage(db, tenantId, lead.id, { kind: "zustellung", buyerName: stop.buyerName, buyerUserId: stop.buyerUserId ?? null, orderId: rowOrderId }, process.env.APP_URL ?? null); } catch (error) { console.error("[Opt-in] Verwendung nicht protokolliert:", error instanceof Error ? error.message : error); }
+      await logActivity(db, tenantId, { kind: "lead_verkauft", title: `Lead ${lead.publicId} an ${stop.buyerName} verkauft`, detail: `${Number(stop.unitPrice ?? 0).toFixed(2).replace(".", ",")} € · ${target.chain.name}${ownOrder ? ` · Bestellung ${ownOrder.orderNumber}` : ""}`, leadId: lead.id, actorUserId: input.actorUserId ?? null, refType: "leadDelivery", refId: deliveryId || null });
 
       // Übergabe: API-Calls des Käufer-Kontos des Stops (Benutzer → Integration), sonst dessen Partnerintegration, sonst „angeboten“ (manuell)
       let integration: IntegrationRow | undefined; let outcome: ExportOutcome | undefined; let handOverName = ""; let matchedRule: Awaited<ReturnType<typeof handOverToBuyerEndpoints>>["matchedRule"] = null;
@@ -365,8 +426,8 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
       if (!outcome) {
         integration = await resolveBuyerIntegration(db, tenantId, buyerUserId ? { buyerUserId } : undefined);
         if (!integration) {
-          attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: target.chain.orderId ?? null, outcome: "angeboten", responseStatus: undefined });
-          return { chainId: target.chain.id, stopId: stop.id, buyerName: stop.buyerName, unitPrice: stop.unitPrice, orderId: target.chain.orderId ?? null, result: "angeboten", export: null, attempts };
+          attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: rowOrderId, outcome: "angeboten", responseStatus: undefined });
+          return { chainId: target.chain.id, stopId: stop.id, buyerName: stop.buyerName, unitPrice: stop.unitPrice, orderId: rowOrderId, result: "angeboten", export: null, attempts };
         }
         outcome = await exportLeadToIntegration(db, { tenantId, integration, lead: { ...currentLead, metadata: { ...metadataOf(currentLead), ...optInFields, deliveredOrderNumber: target.order?.orderNumber ?? null, deliveredUnitPrice: stop.unitPrice } }, externalReference: `${target.order?.orderNumber ?? target.chain.name}/${lead.publicId}`, settings });
         handOverName = integration.name;
@@ -376,18 +437,18 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
         if (deliveryId) await db.update(leadDeliveries).set({ result: "angenommen" }).where(eq(leadDeliveries.id, deliveryId));
         if (integration) { const partnerReference = extractPartnerReference(outcome.responseBody ?? ""); if (partnerReference) await db.update(leads).set({ metadata: { ...metadataOf(currentLead), partnerReference, partnerReferenceAt: now.toISOString() } }).where(eq(leads.id, lead.id)); }
         await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: "zugewiesen", nextStatus: "zugewiesen", actorUserId: input.actorUserId, note: `API-Übergabe an ${handOverName}: geliefert (HTTP ${outcome.responseStatus ?? "–"})${stop.reclamationWindowHours ? ` · reklamierbar bis ${windowEndsAt.toLocaleString("de-DE")}` : " · sofort angenommen"}` });
-        attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: target.chain.orderId ?? null, outcome: "angenommen", responseStatus: outcome.responseStatus });
+        attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: rowOrderId, outcome: "angenommen", responseStatus: outcome.responseStatus });
         duplicates.buyerNames.add(stop.buyerName.toLowerCase()); if (buyerUserId) conflictBuyerIds.add(buyerUserId);
-        sold += 1; lastResult = { chainId: target.chain.id, stopId: stop.id, buyerName: stop.buyerName, unitPrice: stop.unitPrice, orderId: target.chain.orderId ?? null, result: "angenommen", export: exported, attempts, claimId };
+        sold += 1; lastResult = { chainId: target.chain.id, stopId: stop.id, buyerName: stop.buyerName, unitPrice: stop.unitPrice, orderId: rowOrderId, result: "angenommen", export: exported, attempts, claimId };
         if (sold >= Math.max(1, target.chain.sellTarget)) return lastResult;
         continue; // Verkaufsziel > 1: weitere Käufer in der Kette
       }
       // Ablehnung: Lieferung als abgelehnt markieren, Bestellzähler zurücknehmen, nächster Stop
       const reason = `${handOverName} hat abgelehnt (HTTP ${outcome.responseStatus ?? "–"}${outcome.responseBody ? `: ${outcome.responseBody.slice(0, 160)}` : ""})`;
       if (deliveryId) await db.update(leadDeliveries).set({ result: "abgelehnt" }).where(eq(leadDeliveries.id, deliveryId));
-      if (target.order) await db.update(orders).set({ deliveredCount: target.order.deliveredCount, status: target.order.status }).where(eq(orders.id, target.order.id));
+      if (ownOrder) await db.update(orders).set({ deliveredCount: ownOrder.deliveredCount, status: ownOrder.status }).where(eq(orders.id, ownOrder.id));
       await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: "zugewiesen", nextStatus: "zugewiesen", actorUserId: input.actorUserId, note: `API-Übergabe an ${handOverName}: abgelehnt (HTTP ${outcome.responseStatus ?? "–"})` });
-      attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: target.chain.orderId ?? null, outcome: "abgelehnt", responseStatus: outcome.responseStatus, reason: matchedRule ? `${reason} → ${matchedRule.reasonName}` : reason });
+      attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: rowOrderId, outcome: "abgelehnt", responseStatus: outcome.responseStatus, reason: matchedRule ? `${reason} → ${matchedRule.reasonName}` : reason });
       if (matchedRule) {
         // Partner-Response-Mapping: Treffer → Reklamation mit dem zugeordneten Grund (sofort genehmigt); weitergeben laut Stop-Regel, sonst laut Grund
         const insertedClaim = await db.insert(claims).values({ tenantId, leadId: lead.id, reason: matchedRule.reasonName, details: `Partner-Antwort: ${reason}`, status: "genehmigt", refundAmount: stop.unitPrice, dueAt: now, resolvedAt: now });

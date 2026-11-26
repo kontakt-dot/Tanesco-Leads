@@ -3,9 +3,15 @@
  * Ein Lead läuft der Reihe nach über die Stops (Käufer + Preis); passt eine Bedingung nicht, wird der Stop übersprungen (keine Lieferung, keine Belastung).
  */
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
-import { deliveryChains, deliveryEndpoints, deliveryStopReasons, deliveryStops, leadCategories, leadDeliveries, leads, memberships, orders, reclamationReasons, suppliers, users } from "../drizzle/schema";
+import { deliveryChains, deliveryEndpoints, deliveryStopReasons, deliveryStops, leadCategories, leadDeliveries, leads, memberships, orderOperationalConfigs, orders, reclamationReasons, suppliers, users } from "../drizzle/schema";
 import { byChainOrder, chainPlaces, reorderedPriorities, suggestChainName, supplierText, type SupplierFilterMode } from "../shared/chain-rules";
+import { describeOrderStation, orderCategoryIds } from "../shared/order-chain";
+import { DEFAULT_REASONS, missingDefaultReasons } from "../shared/default-reasons";
+import { tenants } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
+
+/** Station 1 einer Bestell-Kette kommt aus der Bestellung – Käufer und Preis ändert man dort, löschen und verschieben geht hier nicht. */
+export const ORDER_STATION_LOCKED = "Station 1 kommt aus der Bestellung. Käufer und Preis änderst du in der Bestellung – löschen oder verschieben lässt sie sich hier nicht.";
 
 export type ChainRange = "heute" | "gestern" | "7_tage" | "14_tage" | "30_tage" | "maximal";
 export type FieldFilter = { field: string; op: "gleich" | "ungleich" | "enthaelt" | "gesetzt" | "leer" | "groesser" | "kleiner"; value?: string };
@@ -150,6 +156,17 @@ export async function chainDetail(db: Db, tenantId: number, chainId: number, ran
   const rules = stops.length ? await db.select().from(deliveryStopReasons).where(inArray(deliveryStopReasons.stopId, stops.map((stop) => stop.id))) : [];
   const leadIds = Array.from(new Set(rows.map((row) => row.leadId)));
   const leadRows = leadIds.length ? await db.select({ id: leads.id, publicId: leads.publicId, firstName: leads.firstName, lastName: leads.lastName, city: leads.city, status: leads.status }).from(leads).where(inArray(leads.id, leadIds)) : [];
+  // Kette einer Bestellung: die Bestellung als Station 1 (alles, was von dort gilt), ihre weiteren Ketten (je Kategorie eine) und ob Station 1 fehlt
+  const order = chain.orderId ? (await db.select().from(orders).where(and(eq(orders.id, chain.orderId), eq(orders.tenantId, tenantId))).limit(1))[0] : undefined;
+  const orderConfig = order ? (await db.select().from(orderOperationalConfigs).where(eq(orderOperationalConfigs.orderId, order.id)).limit(1))[0] : undefined;
+  const categoryRows = order ? await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)) : [];
+  const siblings = order ? await db.select({ id: deliveryChains.id, categoryId: deliveryChains.categoryId, status: deliveryChains.status, name: deliveryChains.name, supplierFilterMode: deliveryChains.supplierFilterMode, supplierIds: deliveryChains.supplierIds }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, order.id))) : [];
+  const siblingStops = siblings.length ? await db.select({ id: deliveryStops.id, chainId: deliveryStops.chainId, orderStop: deliveryStops.orderStop }).from(deliveryStops).where(inArray(deliveryStops.chainId, siblings.map((row) => row.id))) : [];
+  const orderCategories = order ? orderCategoryIds(order, orderConfig) : [];
+  const orderInfo = order ? { ...describeOrderStation({ order, config: orderConfig, mainCategoryId: order.categoryId, supplierName: (id) => pickers.suppliers.find((supplier) => supplier.id === id)?.label.split(" — ")[0] ?? `Lieferant #${id}`, categoryName: (id) => categoryRows.find((row) => row.id === id)?.name ?? "" }),
+    /** Diese Kette hat (noch) keine Station 1 aus der Bestellung – sie läuft wie vor v376, bis jemand „aus der Bestellung übernehmen“ wählt oder die Bestellung speichert */
+    missingStation: !stops.some((stop) => stop.orderStop),
+    chains: siblings.filter((row) => orderCategories.includes(row.categoryId)).sort((a, b) => orderCategories.indexOf(a.categoryId) - orderCategories.indexOf(b.categoryId)).map((row) => ({ chainId: row.id, categoryId: row.categoryId, categoryName: categoryRows.find((item) => item.id === row.categoryId)?.name ?? "–", status: row.status, stops: siblingStops.filter((stop) => stop.chainId === row.id).length, missingStation: !siblingStops.some((stop) => stop.chainId === row.id && stop.orderStop) })) } : null;
   const now = new Date();
   const describe = (row: typeof rows[number]) => {
     if (row.result === "übersprungen") return { status: "übersprungen" as const, info: row.skipReason ?? "" };
@@ -160,12 +177,13 @@ export async function chainDetail(db: Db, tenantId: number, chainId: number, ran
     return { status: "angenommen" as const, info: "" };
   };
   return {
+    order: orderInfo,
     chain: { id: chain.id, name: chain.name, categoryId: chain.categoryId, categoryName: category?.name ?? "–", orderId: chain.orderId, priority: chain.priority, sellTarget: chain.sellTarget, dailyCap: chain.dailyCap, totalCap: chain.totalCap, status: chain.status, exhaustedAction: chain.exhaustedAction, exhaustedOverrides: Array.isArray(chain.exhaustedOverrides) ? (chain.exhaustedOverrides as Array<{ supplierId: number; action: "return" | "release" }>) : [], country: chain.country, supplierFilterMode: chain.supplierFilterMode, supplierIds: Array.isArray(chain.supplierIds) ? (chain.supplierIds as unknown[]).map(Number) : [] },
     stops: stops.map((stop) => {
       const buyer = pickers.buyers.find((item) => item.userId === stop.buyerUserId);
       const stopRows = rows.filter((row) => row.stopId === stop.id);
       const stopAll = allRows.filter((row) => row.stopId === stop.id);
-      return { id: stop.id, position: stop.position, buyerName: stop.buyerName, buyerUserId: stop.buyerUserId, buyerLabel: buyer?.label ?? stop.buyerName, buyerCompany: buyer?.company ?? stop.buyerName, buyerContact: buyer?.contact ?? "", api: buyer?.api ?? false, endpoint: buyer?.endpoint ?? null, membershipId: buyer?.membershipId ?? null, unitPrice: stop.unitPrice, reclamationWindowHours: stop.reclamationWindowHours, maxLeads: stop.maxLeads, active: stop.active, geoCountry: stop.geoCountry, geoMode: stop.geoMode, geoValues: Array.isArray(stop.geoValues) ? (stop.geoValues as unknown[]).map(String) : [], fieldFilters: Array.isArray(stop.fieldFilters) ? (stop.fieldFilters as FieldFilter[]) : [], excludedSupplierIds: Array.isArray(stop.excludedSupplierIds) ? (stop.excludedSupplierIds as unknown[]).map(Number) : [], excludedBuyerUserIds: Array.isArray(stop.excludedBuyerUserIds) ? (stop.excludedBuyerUserIds as unknown[]).map(Number) : [], excludeAutomationDuplicates: stop.excludeAutomationDuplicates, phoneFilter: stop.phoneFilter, maxLeadAgeMinutes: stop.maxLeadAgeMinutes, stats: summarize(stopRows, now), lifetime: summarize(stopAll, now), rules: reasons.map((reason) => { const rule = rules.find((item) => item.stopId === stop.id && item.reasonId === reason.id); return { reasonId: reason.id, name: reason.name, allowed: rule?.allowed ?? true, passOn: rule?.passOn ?? reason.forwardToNextStop }; }), activity: { total: stopRows.length, recent: stopRows.slice(0, 10).map((row) => { const lead = leadRows.find((item) => item.id === row.leadId); const state = describe(row); return { deliveryId: row.id, leadId: row.leadId, publicId: lead?.publicId ?? "", name: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() || lead.publicId : `Lead #${row.leadId}`, city: lead?.city ?? "", status: state.status, info: state.info, occurredAt: row.occurredAt }; }) } };
+      return { id: stop.id, position: stop.position, orderStop: Boolean(stop.orderStop) && Boolean(chain.orderId), buyerName: stop.buyerName, buyerUserId: stop.buyerUserId, buyerLabel: buyer?.label ?? stop.buyerName, buyerCompany: buyer?.company ?? stop.buyerName, buyerContact: buyer?.contact ?? "", api: buyer?.api ?? false, endpoint: buyer?.endpoint ?? null, membershipId: buyer?.membershipId ?? null, unitPrice: stop.unitPrice, reclamationWindowHours: stop.reclamationWindowHours, maxLeads: stop.maxLeads, active: stop.active, geoCountry: stop.geoCountry, geoMode: stop.geoMode, geoValues: Array.isArray(stop.geoValues) ? (stop.geoValues as unknown[]).map(String) : [], fieldFilters: Array.isArray(stop.fieldFilters) ? (stop.fieldFilters as FieldFilter[]) : [], excludedSupplierIds: Array.isArray(stop.excludedSupplierIds) ? (stop.excludedSupplierIds as unknown[]).map(Number) : [], excludedBuyerUserIds: Array.isArray(stop.excludedBuyerUserIds) ? (stop.excludedBuyerUserIds as unknown[]).map(Number) : [], excludeAutomationDuplicates: stop.excludeAutomationDuplicates, phoneFilter: stop.phoneFilter, maxLeadAgeMinutes: stop.maxLeadAgeMinutes, stats: summarize(stopRows, now), lifetime: summarize(stopAll, now), rules: reasons.map((reason) => { const rule = rules.find((item) => item.stopId === stop.id && item.reasonId === reason.id); return { reasonId: reason.id, name: reason.name, allowed: rule?.allowed ?? true, passOn: rule?.passOn ?? reason.forwardToNextStop }; }), activity: { total: stopRows.length, recent: stopRows.slice(0, 10).map((row) => { const lead = leadRows.find((item) => item.id === row.leadId); const state = describe(row); return { deliveryId: row.id, leadId: row.leadId, publicId: lead?.publicId ?? "", name: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() || lead.publicId : `Lead #${row.leadId}`, city: lead?.city ?? "", status: state.status, info: state.info, occurredAt: row.occurredAt }; }) } };
     }),
     activity: { delivered: rows.filter((row) => row.result !== "übersprungen").length, inTransit: rows.filter((row) => row.result === "angenommen" && !isAccepted(row, now)).length },
     reasons,
@@ -185,9 +203,13 @@ export async function stopDeliveries(db: Db, tenantId: number, stopId: number, r
   return rows.map((row) => { const lead = leadRows.find((item) => item.id === row.leadId); const status = row.result === "angenommen" && !isAccepted(row, now) ? "im_fenster" : row.result; return { deliveryId: row.id, leadId: row.leadId, publicId: lead?.publicId ?? "", name: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() || lead.publicId : `Lead #${row.leadId}`, city: lead?.city ?? "", status, info: row.result === "übersprungen" ? row.skipReason ?? "" : status === "im_fenster" ? `angenommen ab ${row.windowEndsAt!.toLocaleString("de-DE")}` : "", occurredAt: row.occurredAt }; });
 }
 
-/** Stop hinzufügen: Käufer-Konto (Name = Firma — Ansprechpartner) oder freier Käufername; Position = ans Ende. */
-export async function addStop(db: Db, tenantId: number, input: { chainId: number; buyerUserId?: number | null; buyerName?: string | null; unitPrice: number; reclamationWindowHours?: number; maxLeads?: number | null }) {
-  const chain = (await db.select({ id: deliveryChains.id }).from(deliveryChains).where(and(eq(deliveryChains.id, input.chainId), eq(deliveryChains.tenantId, tenantId))).limit(1))[0];
+/**
+ * Stop hinzufügen: Käufer-Konto (Name = Firma — Ansprechpartner) oder freier Käufername; Position = ans Ende.
+ * `alsoSiblings` (v376): Die Kette gehört zu einer Bestellung mit mehreren Leadsparten – dieselbe Station kommt auch ans Ende der Ketten der anderen Sparten
+ * (einmal bauen statt je Sparte). Wo der Käufer schon steht, bleibt die Kette, wie sie ist.
+ */
+export async function addStop(db: Db, tenantId: number, input: { chainId: number; buyerUserId?: number | null; buyerName?: string | null; unitPrice: number; reclamationWindowHours?: number; maxLeads?: number | null; alsoSiblings?: boolean }) {
+  const chain = (await db.select({ id: deliveryChains.id, orderId: deliveryChains.orderId }).from(deliveryChains).where(and(eq(deliveryChains.id, input.chainId), eq(deliveryChains.tenantId, tenantId))).limit(1))[0];
   if (!chain) throw new Error("Lieferkette wurde nicht gefunden.");
   let buyerName = (input.buyerName ?? "").trim();
   if (input.buyerUserId) { const buyer = (await db.select({ name: users.name, company: users.company }).from(users).innerJoin(memberships, eq(memberships.userId, users.id)).where(and(eq(users.id, input.buyerUserId), eq(memberships.tenantId, tenantId))).limit(1))[0]; if (!buyer) throw new Error("Käufer-Konto wurde nicht gefunden."); buyerName = buyerName || `${buyer.company ?? buyer.name ?? "Käufer"}`; }
@@ -195,14 +217,26 @@ export async function addStop(db: Db, tenantId: number, input: { chainId: number
   const existing = await db.select({ position: deliveryStops.position }).from(deliveryStops).where(eq(deliveryStops.chainId, chain.id));
   const position = existing.length ? Math.max(...existing.map((row) => row.position)) + 1 : 1;
   const inserted = await db.insert(deliveryStops).values({ chainId: chain.id, buyerName, buyerUserId: input.buyerUserId ?? null, position, unitPrice: input.unitPrice.toFixed(2), reclamationWindowHours: input.reclamationWindowHours ?? 24, maxLeads: input.maxLeads ?? null });
-  return { success: true, stopId: Number(inserted[0]?.insertId) || 0, position };
+  let alsoAdded = 0;
+  if (input.alsoSiblings && chain.orderId) {
+    const siblings = await db.select({ id: deliveryChains.id }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, chain.orderId), eq(deliveryChains.status, "aktiv")));
+    for (const sibling of siblings) {
+      if (sibling.id === chain.id) continue;
+      const own = await db.select({ position: deliveryStops.position, buyerName: deliveryStops.buyerName, buyerUserId: deliveryStops.buyerUserId }).from(deliveryStops).where(eq(deliveryStops.chainId, sibling.id));
+      if (own.some((stop) => (input.buyerUserId && stop.buyerUserId ? stop.buyerUserId === input.buyerUserId : stop.buyerName.trim().toLowerCase() === buyerName.toLowerCase()))) continue;
+      await db.insert(deliveryStops).values({ chainId: sibling.id, buyerName, buyerUserId: input.buyerUserId ?? null, position: own.reduce((highest, stop) => Math.max(highest, stop.position), 0) + 1, unitPrice: input.unitPrice.toFixed(2), reclamationWindowHours: input.reclamationWindowHours ?? 24, maxLeads: input.maxLeads ?? null });
+      alsoAdded += 1;
+    }
+  }
+  return { success: true, stopId: Number(inserted[0]?.insertId) || 0, position, alsoAdded };
 }
 
 /** Reihenfolge der Stops neu setzen (Drag & Drop / Pfeile); Positionen werden 1..n durchnummeriert. */
 export async function reorderStops(db: Db, tenantId: number, chainId: number, stopIds: number[]) {
-  const stops = await db.select({ id: deliveryStops.id }).from(deliveryStops).innerJoin(deliveryChains, eq(deliveryChains.id, deliveryStops.chainId)).where(and(eq(deliveryStops.chainId, chainId), eq(deliveryChains.tenantId, tenantId)));
+  const stops = await db.select({ id: deliveryStops.id, orderStop: deliveryStops.orderStop, orderId: deliveryChains.orderId }).from(deliveryStops).innerJoin(deliveryChains, eq(deliveryChains.id, deliveryStops.chainId)).where(and(eq(deliveryStops.chainId, chainId), eq(deliveryChains.tenantId, tenantId)));
   const known = new Set(stops.map((stop) => stop.id));
-  const ordered = stopIds.filter((id) => known.has(id)); for (const stop of stops) if (!ordered.includes(stop.id)) ordered.push(stop.id);
+  let ordered = stopIds.filter((id) => known.has(id)); for (const stop of stops) if (!ordered.includes(stop.id)) ordered.push(stop.id);
+  const station = stops.find((stop) => stop.orderStop && stop.orderId); if (station) ordered = [station.id, ...ordered.filter((id) => id !== station.id)]; // Station 1 der Bestellung bleibt vorn
   await db.transaction(async (tx) => {
     for (let index = 0; index < ordered.length; index += 1) await tx.update(deliveryStops).set({ position: 1000 + index }).where(eq(deliveryStops.id, ordered[index]));
     for (let index = 0; index < ordered.length; index += 1) await tx.update(deliveryStops).set({ position: index + 1 }).where(eq(deliveryStops.id, ordered[index]));
@@ -222,8 +256,9 @@ export async function saveStopRules(db: Db, tenantId: number, stopId: number, ru
 }
 
 export async function deleteStop(db: Db, tenantId: number, stopId: number) {
-  const stop = (await db.select({ id: deliveryStops.id, chainId: deliveryStops.chainId }).from(deliveryStops).innerJoin(deliveryChains, eq(deliveryChains.id, deliveryStops.chainId)).where(and(eq(deliveryStops.id, stopId), eq(deliveryChains.tenantId, tenantId))).limit(1))[0];
+  const stop = (await db.select({ id: deliveryStops.id, chainId: deliveryStops.chainId, orderStop: deliveryStops.orderStop, orderId: deliveryChains.orderId }).from(deliveryStops).innerJoin(deliveryChains, eq(deliveryChains.id, deliveryStops.chainId)).where(and(eq(deliveryStops.id, stopId), eq(deliveryChains.tenantId, tenantId))).limit(1))[0];
   if (!stop) throw new Error("Stop wurde nicht gefunden.");
+  if (stop.orderStop && stop.orderId) throw new Error(ORDER_STATION_LOCKED);
   await db.delete(deliveryStopReasons).where(eq(deliveryStopReasons.stopId, stopId));
   await db.delete(deliveryStops).where(eq(deliveryStops.id, stopId));
   const remaining = await db.select({ id: deliveryStops.id }).from(deliveryStops).where(eq(deliveryStops.chainId, stop.chainId)).orderBy(deliveryStops.position);
@@ -239,4 +274,22 @@ export async function deleteChain(db: Db, tenantId: number, chainId: number) {
   await db.delete(deliveryStops).where(eq(deliveryStops.chainId, chainId));
   await db.delete(deliveryChains).where(eq(deliveryChains.id, chainId));
   return { success: true };
+}
+
+/**
+ * Standard-Gründe anlegen (v376). `onlyIfEmpty`: nur für Mandanten ganz ohne Gründe (so läuft es einmal nach dem Start – eigene Listen bleiben,
+ * wie sie sind). Ohne die Angabe werden die fehlenden Standard-Gründe ergänzt (Knopf in der Lieferkette).
+ */
+export async function ensureDefaultReasons(db: Db, options: { tenantId?: number; onlyIfEmpty?: boolean } = {}): Promise<{ tenants: number; added: number }> {
+  const tenantIds = options.tenantId ? [options.tenantId] : (await db.select({ id: tenants.id }).from(tenants)).map((row) => row.id);
+  let touched = 0; let added = 0;
+  for (const tenantId of tenantIds) {
+    const existing = await db.select({ name: reclamationReasons.name, sortOrder: reclamationReasons.sortOrder }).from(reclamationReasons).where(eq(reclamationReasons.tenantId, tenantId));
+    if (options.onlyIfEmpty && existing.length) continue;
+    const missing = missingDefaultReasons(existing.map((row) => row.name)); if (!missing.length) continue;
+    const base = existing.reduce((highest, row) => Math.max(highest, row.sortOrder), -1) + 1;
+    await db.insert(reclamationReasons).values(missing.map((reason, index) => ({ tenantId, name: reason.name, description: null, systemReason: Boolean(reason.system), active: true, forwardToSupplier: false, forwardToNextStop: reason.forward, sortOrder: base + index })));
+    touched += 1; added += missing.length;
+  }
+  return { tenants: touched, added };
 }

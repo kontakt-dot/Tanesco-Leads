@@ -2,7 +2,7 @@
  * Kundenbereich („MEIN BEREICH“): was ein Käufer- oder Lieferanten-Zugang sieht – auch bei „Als Benutzer einloggen“.
  * Alle Abfragen sind auf den angemeldeten (bzw. übernommenen) Benutzer eingeschränkt.
  */
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { claims, deliveryEndpoints, deliveryStops, leadCategories, leadDeliveries, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, supportTickets, suppliers, tenants, users } from "../drizzle/schema";
 import type { Db } from "./lead-pipeline";
 import { BUYER_AREAS } from "./member-admin";
@@ -34,7 +34,7 @@ export async function customerAccess(db: Db, tenantId: number, userId: number) {
 
 /** Lead-IDs, die dieser Zugang sehen darf: als Käufer beliefert (Bestellung oder Stop) und/oder als Lieferant geliefert. */
 async function ownLeadIds(db: Db, tenantId: number, userId: number, supplierIds: number[]) {
-  const viaOrder = await db.select({ leadId: leadDeliveries.leadId, at: leadDeliveries.occurredAt, price: leadDeliveries.unitPrice, result: leadDeliveries.result }).from(leadDeliveries).innerJoin(orderOperationalConfigs, eq(orderOperationalConfigs.orderId, leadDeliveries.orderId)).where(and(eq(leadDeliveries.tenantId, tenantId), eq(orderOperationalConfigs.buyerUserId, userId), inArray(leadDeliveries.result, ["angeboten", "angenommen", "reklamiert"])));
+  const viaOrder = await db.select({ leadId: leadDeliveries.leadId, at: leadDeliveries.occurredAt, price: leadDeliveries.unitPrice, result: leadDeliveries.result }).from(leadDeliveries).innerJoin(orderOperationalConfigs, eq(orderOperationalConfigs.orderId, leadDeliveries.orderId)).leftJoin(deliveryStops, eq(deliveryStops.id, leadDeliveries.stopId)).where(and(eq(leadDeliveries.tenantId, tenantId), eq(orderOperationalConfigs.buyerUserId, userId), /* nur Lieferungen an den Käufer der Bestellung selbst – nicht an eine weitere Station ihrer Kette mit eigenem Käufer-Konto (v376) */ or(isNull(deliveryStops.buyerUserId), eq(deliveryStops.buyerUserId, userId)), inArray(leadDeliveries.result, ["angeboten", "angenommen", "reklamiert"])));
   const viaStop = await db.select({ leadId: leadDeliveries.leadId, at: leadDeliveries.occurredAt, price: leadDeliveries.unitPrice, result: leadDeliveries.result }).from(leadDeliveries).innerJoin(deliveryStops, eq(deliveryStops.id, leadDeliveries.stopId)).where(and(eq(leadDeliveries.tenantId, tenantId), eq(deliveryStops.buyerUserId, userId), inArray(leadDeliveries.result, ["angeboten", "angenommen", "reklamiert"])));
   const delivered = new Map<number, { at: Date; price: string; result: string }>();
   for (const row of [...viaOrder, ...viaStop]) { const existing = delivered.get(row.leadId); if (!existing || existing.at < row.at) delivered.set(row.leadId, { at: row.at, price: row.price, result: row.result }); }

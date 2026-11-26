@@ -5,13 +5,14 @@ import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, GitBranch, GripVertical, Plus, Send, Trash2, UserRoundCog, Users, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarOff, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, CornerDownRight, Gauge, GitBranch, GripVertical, MapPin, MessageSquareWarning, Plus, Send, Trash2, Unplug, UserRoundCog, Users, X } from "lucide-react";
 import { categoryColor } from "@/lib/colors";
 import { categoryEmoji } from "../../../shared/category-emoji";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import { parsePrice, ruleSentence, suggestChainName, supplierText } from "../../../shared/chain-rules";
+import { missingDefaultReasons } from "../../../shared/default-reasons";
 
 type Range = "heute" | "gestern" | "7_tage" | "14_tage" | "30_tage" | "maximal";
 type Overview = inferRouterOutputs<AppRouter>["leadops"]["chainOverview"];
@@ -28,8 +29,6 @@ const FILTER_OPS: Array<{ value: "gleich" | "ungleich" | "enthaelt" | "gesetzt" 
 const field = "h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100";
 const small = "h-9 max-w-[260px] rounded-md border border-white/10 bg-slate-900 px-2 text-sm text-slate-100";
 const money = (value: string | number) => `${Number(value).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
-const flag = (country: string | null | undefined) => country === "AT" ? "🇦🇹" : country === "CH" ? "🇨🇭" : country === "DE" ? "🇩🇪" : "🌍";
-const geoLabel = (stop: Pick<Stop, "geoMode" | "geoValues">) => stop.geoMode === "landesweit" ? "Landesweit" : stop.geoMode === "bundesland" ? `${stop.geoValues.length} Bundesl.` : `PLZ ${stop.geoValues.slice(0, 3).join(", ")}${stop.geoValues.length > 3 ? " …" : ""}`;
 const stamp = (value: Date | string) => new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 const statusBadge = (status: string) => status === "angenommen" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : status === "reklamiert" || status === "abgelehnt" ? "border-red-400/25 bg-red-500/10 text-red-200" : status === "übersprungen" ? "border-amber-400/25 bg-amber-500/10 text-amber-200" : "border-white/15 text-slate-300";
 const statusLabel: Record<string, string> = { angenommen: "angenommen", reklamiert: "reklamiert", abgelehnt: "abgelehnt", übersprungen: "übersprungen", im_fenster: "im Reklamationsfenster", angeboten: "angeboten" };
@@ -38,7 +37,7 @@ export default function ChainWorkspace() {
   const [chainId, setChainId] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get("chain")) || null);
   const [range, setRange] = useState<Range>("maximal");
   const open = (id: number | null) => { setChainId(id); const params = new URLSearchParams(window.location.search); params.set("page", "Lieferkette"); if (id) params.set("chain", String(id)); else params.delete("chain"); window.history.replaceState(null, "", `/?${params.toString()}`); };
-  if (chainId) return <ChainDetailPage chainId={chainId} range={range} setRange={setRange} onBack={() => open(null)} />;
+  if (chainId) return <ChainDetailPage chainId={chainId} range={range} setRange={setRange} onBack={() => open(null)} onOpenChain={open} />;
   return <ChainOverviewPage range={range} setRange={setRange} onOpen={open} />;
 }
 
@@ -139,7 +138,7 @@ function ChainWelcome({ onStart }: { onStart: () => void }) {
         <li><em>2</em><span><b>Lieferanten festlegen</b><small>alle oder nur bestimmte</small></span></li>
         <li><em>3</em><span><b>Kunden der Reihe nach</b><small>mit Preis je Lead</small></span></li>
       </ol>
-      <div className="lk-welcome-actions"><Button className="flux-button" onClick={onStart}><Plus className="h-4 w-4" /> Erste Lieferkette anlegen</Button><small>Ohne eigene Kette legt die Software beim Aktivieren einer Bestellung eine Standard-Kette an.</small></div>
+      <div className="lk-welcome-actions"><Button className="flux-button" onClick={onStart}><Plus className="h-4 w-4" /> Erste Lieferkette anlegen</Button><small>Aus jeder Bestellung entsteht ihre Lieferkette von selbst – die Bestellung ist dort Station 1.</small></div>
     </div>
   </section>;
 }
@@ -197,61 +196,70 @@ function ChainBuilder({ pickers, pending, onCancel, onCreate }: { pickers: Picke
 }
 
 /* ------------------------------------------------------------------ Detailseite */
-/** Detailseite einer Kette – auch eingebettet in den Bestellungen (Schritt „Lieferkette“), dann ohne Rücksprung und mit kompaktem Kopf. */
-export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = false }: { chainId: number; range: Range; setRange: (value: Range) => void; onBack: () => void; embedded?: boolean }) {
+const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join("") || "?";
+/** Gebiet einer Station in Worten: „Landesweit“, „Bayern, Hessen“, „PLZ 10, 12 …“ */
+const areaText = (stop: Pick<Stop, "geoMode" | "geoValues">) => stop.geoMode === "landesweit" || !stop.geoValues.length ? "Landesweit" : stop.geoMode === "bundesland" ? (stop.geoValues.length > 3 ? `${stop.geoValues.length} Bundesländer` : stop.geoValues.join(", ")) : `PLZ ${stop.geoValues.slice(0, 4).join(", ")}${stop.geoValues.length > 4 ? " …" : ""}`;
+
+/**
+ * Detailseite einer Kette (v376, einfacher): die Stationen der Reihe nach als Karten. Bei jeder steht, wann der Lead zur nächsten weitergeht
+ * (Gebiet passt nicht, Dublette, Höchstmenge, Ablehnung, Reklamation). In der Kette einer Bestellung ist Station 1 die Bestellung selbst –
+ * mit allem, was von dort gilt. Auch eingebettet in den Bestellungen (Schritt „Lieferkette“), dann ohne Rücksprung und mit kompaktem Kopf.
+ */
+export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = false, onOpenChain }: { chainId: number; range: Range; setRange: (value: Range) => void; onBack: () => void; embedded?: boolean; /** zur Kette einer anderen Leadsparte derselben Bestellung wechseln */ onOpenChain?: (chainId: number) => void }) {
   const utils = trpc.useUtils();
   const detail = trpc.leadops.chainDetail.useQuery({ chainId, range }, { retry: false });
-  const refresh = () => { utils.leadops.chainDetail.invalidate({ chainId, range }); utils.leadops.chainOverview.invalidate(); utils.leadops.listDeliveryChains.invalidate(); };
+  const refresh = () => { utils.leadops.chainDetail.invalidate(); utils.leadops.chainOverview.invalidate(); utils.leadops.listDeliveryChains.invalidate(); };
   const onError = (error: { message: string }) => toast.error(error.message);
   const updateChain = trpc.leadops.updateDeliveryChain.useMutation({ onSuccess: () => { refresh(); toast.success("Ketten-Einstellungen gespeichert."); }, onError });
-  const addStop = trpc.leadops.addChainStop.useMutation({ onSuccess: () => { refresh(); setAdding(null); toast.success("Käufer hinzugefügt."); }, onError });
+  const addStop = trpc.leadops.addChainStop.useMutation({ onSuccess: (result) => { refresh(); setAdding(null); toast.success(result.alsoAdded ? `Station hinzugefügt – auch in ${result.alsoAdded === 1 ? "der Kette der anderen Sparte" : `den Ketten der ${result.alsoAdded} anderen Sparten`}.` : "Station hinzugefügt."); }, onError });
   const updateStop = trpc.leadops.updateChainStop.useMutation({ onSuccess: refresh, onError });
   const reorder = trpc.leadops.reorderChainStops.useMutation({ onSuccess: refresh, onError });
-  const deleteStop = trpc.leadops.deleteChainStop.useMutation({ onSuccess: () => { refresh(); toast.success("Stop gelöscht."); }, onError });
+  const deleteStop = trpc.leadops.deleteChainStop.useMutation({ onSuccess: () => { refresh(); toast.success("Station gelöscht."); }, onError });
+  const adopt = trpc.leadops.insertOrderStation.useMutation({ onSuccess: () => { refresh(); toast.success("Übernommen: Station 1 ist jetzt die Bestellung."); }, onError });
+  const addReasons = trpc.leadops.addDefaultReasons.useMutation({ onSuccess: (result) => { refresh(); toast.success(result.added ? `${result.added} Gründe angelegt.` : "Die Standard-Gründe sind schon da."); }, onError });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [adding, setAdding] = useState<{ buyerUserId: string; buyerName: string; price: string; window: string; max: string } | null>(null);
+  const [adding, setAdding] = useState<{ buyerUserId: string; buyerName: string; price: string; siblings: boolean } | null>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [dragId, setDragId] = useState<number | null>(null);
   if (detail.isLoading) return <section className="fx-scope lk-panel"><p className="lk-empty">Kette wird geladen …</p></section>;
-  if (detail.error || !detail.data) return <section className="fx-scope lk-panel"><p className="lk-empty is-error">{detail.error?.message ?? "Kette nicht gefunden."}</p><div className="px-5 pb-5"><Button variant="outline" onClick={onBack}>Zurück zu den Ketten</Button></div></section>;
-  const { chain, stops, buyers, suppliers, reasons, activity } = detail.data;
+  if (detail.error || !detail.data) return <section className="fx-scope lk-panel"><p className="lk-empty is-error">{detail.error?.message ?? "Kette nicht gefunden."}</p>{!embedded && <div className="px-5 pb-5"><Button variant="outline" onClick={onBack}>Zurück zu den Ketten</Button></div>}</section>;
+  const { chain, stops, buyers, suppliers, activity, order } = detail.data;
   const fromText = supplierText(chain.supplierFilterMode, chain.supplierIds.map((id) => suppliers.find((supplier) => supplier.id === id)?.label.split(" — ")[0] ?? `Lieferant #${id}`));
-  const moveStop = (stopId: number, direction: -1 | 1) => { const ids = stops.map((stop) => stop.id); const index = ids.indexOf(stopId); const target = index + direction; if (target < 0 || target >= ids.length) return; [ids[index], ids[target]] = [ids[target], ids[index]]; reorder.mutate({ chainId, stopIds: ids }); };
+  // Station 1 einer Bestellung bleibt vorn: Sie lässt sich nicht verschieben, und nichts kommt vor sie
+  const moveStop = (stopId: number, direction: -1 | 1) => { const ids = stops.map((stop) => stop.id); const index = ids.indexOf(stopId); const target = index + direction; if (target < 0 || target >= ids.length || stops[target].orderStop) return; [ids[index], ids[target]] = [ids[target], ids[index]]; reorder.mutate({ chainId, stopIds: ids }); };
   const dropOn = (targetId: number) => { if (dragId === null || dragId === targetId) return; const ids = stops.map((stop) => stop.id); const from = ids.indexOf(dragId); const to = ids.indexOf(targetId); ids.splice(from, 1); ids.splice(to, 0, dragId); setDragId(null); reorder.mutate({ chainId, stopIds: ids }); };
-  const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join("") || "?";
-  return <div className="fx-scope lk lk-detail">
+  const siblings = order ? order.chains.filter((item) => item.chainId !== chain.id && item.status === "aktiv") : [];
+  const freeBuyers = buyers.filter((buyer) => !stops.some((stop) => stop.buyerUserId === buyer.userId));
+  const openSettings = () => { setSettingsOpen(true); window.setTimeout(() => document.getElementById(`lk-settings-${chain.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); };
+  const status = <span className={`lk-status ${chain.status === "aktiv" ? "is-on" : ""}`}>{chain.status === "aktiv" ? "Aktiv" : "Aus"}</span>;
+  return <div className="fx-scope lk lk-detail lk-v2">
     {!embedded && <button type="button" className="lk-back" onClick={onBack}><ArrowLeft aria-hidden="true" />Zurück zu den Ketten</button>}
-    {embedded ? <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><span className="eyebrow">LIEFERKETTE DER BESTELLUNG</span><h2 className="text-lg font-semibold text-slate-100">{chain.name}</h2><p className="text-xs text-slate-500">Die Stops werden von oben nach unten abgelaufen – gleiche Einstellungen wie auf der Seite „Lieferkette“.</p></div><div className="flex items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></div></div>
-    : <header className="page-intro compact"><div><span className="eyebrow">LIEFERKETTE</span><h1>{chain.name}</h1><p>Feste Reihenfolge: Die Kunden kommen von oben nach unten dran – es wird nicht abgewechselt.</p></div><div className="flex items-center gap-3"><RangeSelect range={range} setRange={setRange} /><Badge variant="outline" className={chain.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{chain.status === "aktiv" ? "Aktiv" : "Inaktiv"}</Badge></div></header>}
+    {embedded ? <div className="lk-embed-head"><div><h2>{order ? "Lieferkette der Bestellung" : chain.name}</h2><p>{order ? "Station 1 ist diese Bestellung. Darunter legst du fest, wohin ein Lead geht, wenn Station 1 ihn nicht nimmt." : "Die Stationen kommen von oben nach unten dran."}</p></div><div className="lk-head-tools"><RangeSelect range={range} setRange={setRange} />{status}</div></div>
+    : <header className="page-intro compact"><div><span className="eyebrow">LIEFERKETTE</span><h1>{chain.name}</h1><p>Feste Reihenfolge: Die Kunden kommen von oben nach unten dran – es wird nicht abgewechselt.</p></div><div className="lk-head-tools"><RangeSelect range={range} setRange={setRange} />{status}</div></header>}
+
+    {order && order.chains.length > 1 && <nav className="lk-sparten" aria-label="Leadsparten der Bestellung"><span>Diese Bestellung hat {order.chains.length} Leadsparten. Jede hat ihre eigene Kette:</span><span className="lk-seg">{order.chains.map((item) => <button key={item.chainId} type="button" aria-pressed={item.chainId === chain.id} disabled={!onOpenChain && item.chainId !== chain.id} onClick={() => { if (item.chainId !== chain.id) onOpenChain?.(item.chainId); }}>{item.categoryName}{item.status !== "aktiv" ? " (aus)" : ""}</button>)}</span></nav>}
 
     <section className="fx-scope lk-rule" aria-label="Regel dieser Kette">
       <div className="lk-flow"><span className="lk-from"><small>Kategorie</small><b>{chain.categoryName}</b></span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-from"><small>Von</small><b>{fromText}</b>{chain.country && <i>nur {chain.country}</i>}</span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-to"><small>An</small>{stops.length ? <span className="lk-buyers">{stops.map((stop) => <span key={stop.id} className={`lk-buyer ${stop.active ? "" : "is-off"}`}><em>{stop.position}</em>{stop.buyerCompany}</span>)}</span> : <b className="lk-missing">Noch kein Kunde</b>}</span></div>
       <p className="lk-sentence"><span>So wird verteilt</span>{ruleSentence([chain.categoryName], fromText, stops.filter((stop) => stop.active).map((stop) => stop.buyerCompany))}</p>
     </section>
 
-    <section className="surface-panel mb-4 overflow-hidden">
-      <button type="button" className="flex w-full items-center justify-between px-5 py-4 text-left" onClick={() => setSettingsOpen((value) => !value)} aria-expanded={settingsOpen}><span className="flex items-center gap-2 text-sm font-semibold text-slate-100">{settingsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />} Ketten-Einstellungen</span><Badge variant="outline" className="border-violet-400/30 bg-violet-500/10 text-violet-100">{chain.categoryName}</Badge></button>
-      {settingsOpen && <ChainSettingsForm chain={chain} suppliers={suppliers} pending={updateChain.isPending} onSave={(values) => updateChain.mutate({ id: chain.id, ...values })} />}
-    </section>
+    {order?.buyerMissing ? <section className="lk-adopt" role="status"><AlertTriangle aria-hidden="true" /><div><strong>In der Bestellung ist noch kein Käufer gewählt</strong><p>So lange geht über diese Kette kein Lead raus. Wähle in der Bestellung den Käufer und speichere sie – dann steht er hier als Station 1.</p></div>{!embedded && <a className="lk-adopt-link" href={`/?page=Bestellungen&orderId=${order.orderId}`}>Bestellung öffnen</a>}</section>
+    : order?.missingStation ? <section className="lk-adopt" role="status"><AlertTriangle aria-hidden="true" /><div><strong>Diese Kette folgt ihrer Bestellung noch nicht</strong><p>{stops.length ? "Station 1 – der Käufer der Bestellung zu ihrem Preis – ist hier noch nicht festgelegt. Bis dahin läuft die Kette wie bisher." : "Die Kette hat noch keine Station und nimmt deshalb keinen Lead an."} Mit „Übernehmen“ wird {order.buyerName} Station 1; Preis und Lieferanten kommen dann aus der Bestellung.</p></div><Button variant="outline" disabled={adopt.isPending} onClick={async () => { if (await confirmAction(`${order.buyerName} wird Station 1 dieser Bestellung (${money(order.unitPrice)} je Lead) und bekommt ab dann jeden passenden Lead zuerst. Übernehmen?`)) adopt.mutate({ chainId }); }}>Aus der Bestellung übernehmen</Button></section> : null}
 
     <section className="lk-panel lk-stops">
-      <header className="lk-stops-head"><div><h2>Kunden der Reihe nach</h2><p>Kunde 1 bekommt jeden passenden Lead zuerst. Je Kunde: geschickt, angenommen, abgelehnt und die Annahme (angenommen ÷ entschieden). Ziehen oder Pfeile ändern die Reihenfolge.</p></div><Button className="flux-button" onClick={() => setAdding({ buyerUserId: String(buyers[0]?.userId ?? ""), buyerName: "", price: "0", window: "24", max: "" })}><Plus className="h-4 w-4" /> Käufer hinzufügen</Button></header>
-      {adding && <div className="mt-4 grid gap-3 rounded-lg border border-violet-400/25 p-4 md:grid-cols-[1.6fr_1fr_.6fr_.6fr_.6fr_auto]">
-        <label className="grid gap-1 text-xs text-slate-400">Käufer-Konto<select className={field} value={adding.buyerUserId} onChange={(event) => setAdding({ ...adding, buyerUserId: event.target.value })}><option value="">Ohne Konto (nur Name)</option>{buyers.map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.label}{buyer.api ? " · API" : ""}</option>)}</select></label>
-        <label className="grid gap-1 text-xs text-slate-400">Käufername (optional)<Input value={adding.buyerName} onChange={(event) => setAdding({ ...adding, buyerName: event.target.value })} placeholder="Anzeigename" /></label>
-        <label className="grid gap-1 text-xs text-slate-400">Preis €<Input type="number" min={0} step="0.01" value={adding.price} onChange={(event) => setAdding({ ...adding, price: event.target.value })} /></label>
-        <label className="grid gap-1 text-xs text-slate-400">Fenster h<Input type="number" min={0} value={adding.window} onChange={(event) => setAdding({ ...adding, window: event.target.value })} /></label>
-        <label className="grid gap-1 text-xs text-slate-400">Max. Leads<Input type="number" min={1} value={adding.max} placeholder="max" onChange={(event) => setAdding({ ...adding, max: event.target.value })} /></label>
-        <div className="flex items-end gap-2"><Button className="flux-button" disabled={addStop.isPending || (!adding.buyerUserId && adding.buyerName.trim().length < 2)} onClick={() => addStop.mutate({ chainId, buyerUserId: adding.buyerUserId ? Number(adding.buyerUserId) : null, buyerName: adding.buyerName.trim() || null, unitPrice: Number(adding.price) || 0, reclamationWindowHours: Math.max(0, Number(adding.window) || 0), maxLeads: adding.max ? Number(adding.max) : null })}>Hinzufügen</Button><Button variant="outline" onClick={() => setAdding(null)}>Abbrechen</Button></div></div>}
-      {!stops.length ? <p className="lk-empty">Noch kein Kunde in dieser Kette. „Käufer hinzufügen“ trägt den ersten ein.</p> : <ol className="lk-stop-list">
-        {stops.map((stop, index) => { const decided = stop.stats.accepted + stop.stats.rejected; return <li key={stop.id} className={`lk-stop ${stop.active ? "" : "is-off"} ${dragId === stop.id ? "is-drag" : ""} ${expanded[stop.id] ? "is-open" : ""}`} draggable onDragStart={() => setDragId(stop.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropOn(stop.id)} onDragEnd={() => setDragId(null)}>
+      <header className="lk-stops-head"><div><h2>Stationen der Reihe nach</h2><p>Station 1 bekommt jeden passenden Lead zuerst. Kann sie ihn nicht nehmen, geht er zur nächsten Station – bei jeder steht, wann das passiert.</p></div></header>
+      <ol className="lk-stop-list lk-track">
+        {stops.map((stop, index) => { const decided = stop.stats.accepted + stop.stats.rejected; const isOrder = stop.orderStop; const open = Boolean(expanded[stop.id]); const toggle = () => setExpanded({ ...expanded, [stop.id]: !open });
+          const forwarding = stop.rules.filter((rule) => rule.allowed && rule.passOn); const fact = (key: string) => order?.facts.find((item) => item.key === key)?.value ?? "";
+          return <li key={stop.id} className={`lk-stop ${stop.active ? "" : "is-off"} ${isOrder ? "is-order" : ""} ${dragId === stop.id ? "is-drag" : ""} ${open ? "is-open" : ""}`} draggable={!isOrder} onDragStart={() => { if (!isOrder) setDragId(stop.id); }} onDragOver={(event) => event.preventDefault()} onDrop={() => dropOn(stop.id)} onDragEnd={() => setDragId(null)}>
           <div className="lk-stop-row">
             <div className="lk-stop-who">
-              <span className="lk-stop-move"><button type="button" className="lk-grip" title="Verschieben (ziehen oder Pfeile)"><GripVertical /></button><span><button type="button" disabled={index === 0} aria-label="Nach oben" onClick={() => moveStop(stop.id, -1)}><ArrowUp /></button><button type="button" disabled={index === stops.length - 1} aria-label="Nach unten" onClick={() => moveStop(stop.id, 1)}><ArrowDown /></button></span></span>
+              {isOrder ? <span className="lk-stop-move is-fixed" aria-hidden="true" /> : <span className="lk-stop-move"><button type="button" className="lk-grip" title="Verschieben (ziehen oder Pfeile)"><GripVertical /></button><span><button type="button" disabled={index === 0 || stops[index - 1].orderStop} aria-label="Nach oben" onClick={() => moveStop(stop.id, -1)}><ArrowUp /></button><button type="button" disabled={index === stops.length - 1} aria-label="Nach unten" onClick={() => moveStop(stop.id, 1)}><ArrowDown /></button></span></span>}
               <strong className="lk-stop-pos" title="Platz in der Reihenfolge">{stop.position}</strong>
               <span className="lk-stop-avatar" aria-hidden="true">{initials(stop.buyerCompany)}</span>
-              <button type="button" className="lk-stop-name" aria-label={`Stop-Details: ${stop.buyerCompany}`} aria-expanded={Boolean(expanded[stop.id])} title={stop.buyerLabel} onClick={() => setExpanded({ ...expanded, [stop.id]: !expanded[stop.id] })}><span><b>{stop.buyerCompany}</b>{stop.buyerContact && <small>{stop.buyerContact}</small>}</span><ChevronDown className="lk-stop-chevron" aria-hidden="true" /></button>
-              <span className="lk-stop-tags">{stop.api && <span className="lk-tag is-api" title="Liefert per API-Call (extern hinterlegt)">API</span>}<span className="lk-tag" title={`Geo-Targeting: ${geoLabel(stop)}`}>{flag(stop.geoCountry)} {geoLabel(stop)}</span>{stop.membershipId && <a className="lk-tag is-link" href={`/?page=Benutzer&member=${stop.membershipId}`} title="Zum Käufer-Account" aria-label="Zum Käufer-Account"><UserRoundCog /></a>}</span>
+              <button type="button" className="lk-stop-name" aria-label={`Station ${stop.position}: ${stop.buyerCompany} – Einstellungen`} aria-expanded={open} title={stop.buyerLabel} onClick={toggle}><span><b>{stop.buyerCompany}</b><small>{isOrder && order ? `Aus der Bestellung ${order.orderNumber}` : stop.buyerContact || (stop.buyerUserId ? "" : "ohne Konto – wird von Hand übergeben")}</small></span><ChevronDown className="lk-stop-chevron" aria-hidden="true" /></button>
+              <span className="lk-stop-tags">{stop.api && <span className="lk-tag is-api" title="Geht automatisch über die Schnittstelle des Kunden raus">API</span>}{stop.membershipId && <a className="lk-tag is-link" href={`/?page=Benutzer&member=${stop.membershipId}`} title="Zum Konto des Kunden" aria-label="Zum Konto des Kunden"><UserRoundCog /></a>}</span>
             </div>
             <div className="lk-stop-numbers" title={`${stop.stats.total} geschickt · ${stop.stats.accepted} angenommen · ${stop.stats.rejected} abgelehnt · Annahme ${stop.stats.acceptanceRate ?? "–"} % (angenommen ÷ entschieden)`}>
               <span className="lk-stop-stat"><b>{stop.stats.total}</b><small>geschickt</small></span>
@@ -260,16 +268,47 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
               <span className="lk-stop-rate"><b>{stop.stats.acceptanceRate === null ? "–" : `${stop.stats.acceptanceRate} %`}</b><span className="lk-meter" aria-hidden="true">{decided > 0 ? <>{stop.stats.accepted > 0 && <i className="is-good" style={{ flexGrow: stop.stats.accepted }} />}{stop.stats.rejected > 0 && <i className="is-bad" style={{ flexGrow: stop.stats.rejected }} />}</> : <i className="is-none" />}</span></span>
             </div>
             <div className="lk-stop-edit">
-              <StopNumber label="€" value={String(stop.unitPrice).replace(".", ",")} step="0.01" width="w-20" title="Preis je Lead" onCommit={(value) => updateStop.mutate({ id: stop.id, unitPrice: parsePrice(value) })} />
-              <StopNumber label="Std." value={String(stop.reclamationWindowHours)} width="w-14" title="Reklamationsfenster in Stunden (0 = sofort angenommen)" onCommit={(value) => updateStop.mutate({ id: stop.id, reclamationWindowHours: Math.max(0, Number(value) || 0) })} />
-              <StopNumber label="" value={stop.maxLeads ? String(stop.maxLeads) : ""} width="w-16" placeholder="max" title="Max. Leads für diesen Käufer (leer = unbegrenzt)" onCommit={(value) => updateStop.mutate({ id: stop.id, maxLeads: value ? Number(value) : null })} />
-              <label className="lk-stop-switch" title="Stop aktiv – erhält Leads"><Switch checked={stop.active} onCheckedChange={(checked) => updateStop.mutate({ id: stop.id, active: checked })} aria-label="Stop aktiv" />{stop.active ? "An" : "Aus"}</label>
-              <button type="button" className="lk-stop-delete" aria-label="Stop löschen" title="Stop löschen" onClick={async () => { if (await confirmAction(`Stop „${stop.buyerCompany}“ löschen?`)) deleteStop.mutate({ stopId: stop.id }); }}><Trash2 /></button>
+              {isOrder ? <span className="lk-stop-fixed" title="Der Preis kommt aus der Bestellung">{money(stop.unitPrice)}</span> : <StopNumber label="€" value={String(stop.unitPrice).replace(".", ",")} step="0.01" width="w-20" title="Preis je Lead" onCommit={(value) => updateStop.mutate({ id: stop.id, unitPrice: parsePrice(value) })} />}
+              <StopNumber label="Std." value={String(stop.reclamationWindowHours)} width="w-14" title="Reklamationsfrist in Stunden (0 = sofort angenommen)" onCommit={(value) => updateStop.mutate({ id: stop.id, reclamationWindowHours: Math.max(0, Number(value) || 0) })} />
+              <StopNumber label="" value={stop.maxLeads ? String(stop.maxLeads) : ""} width="w-16" placeholder="max" title="Höchstmenge für diesen Kunden (leer = keine Grenze)" onCommit={(value) => updateStop.mutate({ id: stop.id, maxLeads: value ? Number(value) : null })} />
+              {(!isOrder || !stop.active) && <label className="lk-stop-switch" title="Station eingeschaltet – bekommt Leads"><Switch checked={stop.active} onCheckedChange={(checked) => updateStop.mutate({ id: stop.id, active: checked })} aria-label="Station eingeschaltet" />{stop.active ? "An" : "Aus"}</label>}
+              {!isOrder && <button type="button" className="lk-stop-delete" aria-label="Station löschen" title="Station löschen" onClick={async () => { if (await confirmAction(`Station „${stop.buyerCompany}“ löschen?`)) deleteStop.mutate({ stopId: stop.id }); }}><Trash2 /></button>}
             </div>
           </div>
-          {expanded[stop.id] && <StopDetails stop={stop} reasons={reasons} suppliers={suppliers} buyers={buyers} onSaved={refresh} />}
+          {isOrder && order && <div className="lk-order-box">
+            <dl className="lk-facts">{order.facts.map((item) => <div key={item.key}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>
+            <p className="lk-order-hint">Das alles kommt aus der Bestellung und wird dort geändert. Vor dem Start, nach dem Ende und wenn die Menge erreicht ist, geht über diese Kette nichts mehr raus.{!embedded && <> <a href={`/?page=Bestellungen&orderId=${order.orderId}`}>Bestellung öffnen</a></>}</p>
+          </div>}
+          <div className="lk-why"><span className="lk-why-lead">{index === stops.length - 1 ? "Der Lead verlässt die Kette, wenn" : "Der Lead geht zur nächsten Station, wenn"}</span>
+            <ul>
+              {isOrder && order ? <li><MapPin aria-hidden="true" />das Gebiet der Bestellung nicht passt <em>{fact("gebiet")}</em></li> : <li className="is-button"><button type="button" onClick={toggle} aria-expanded={open} title="Gebiet dieses Kunden einstellen"><MapPin aria-hidden="true" />das Gebiet nicht passt <em>{areaText(stop)}</em></button></li>}
+              {isOrder && order && <li><CalendarOff aria-hidden="true" />kein Liefertag ist oder eine Lieferpause läuft <em>geliefert wird {fact("tage")}</em></li>}
+              <li><Copy aria-hidden="true" />der Kunde den Kontakt schon hat <em>Dublette</em></li>
+              {stop.maxLeads ? <li><Gauge aria-hidden="true" />seine Höchstmenge erreicht ist <em>max. {stop.maxLeads}</em></li> : null}
+              {stop.api && <li><Unplug aria-hidden="true" />seine Schnittstelle den Lead ablehnt</li>}
+              <li className="is-button"><button type="button" onClick={toggle} aria-expanded={open}><MessageSquareWarning aria-hidden="true" />er reklamiert <em>{!stop.rules.length ? "noch keine Gründe angelegt" : forwarding.length ? `bei ${forwarding.length} von ${stop.rules.length} Gründen` : "bei keinem Grund – der Lead endet hier"}</em></button></li>
+            </ul>
+          </div>
+          {open && <div className="lk-stop-more">
+            <p className="lk-handover">Übergabe: {stop.api ? "automatisch über die Schnittstelle des Kunden" : stop.buyerUserId ? "von Hand – für diesen Kunden ist keine Schnittstelle eingerichtet" : "von Hand – der Kunde hat kein Konto"}. Nach {stop.reclamationWindowHours ? `${stop.reclamationWindowHours} Stunden ohne Reklamation gilt der Lead als angenommen` : "der Übergabe gilt der Lead sofort als angenommen"}.{stop.membershipId && <> <a href={`/?page=Benutzer&member=${stop.membershipId}&tab=tools`}>{stop.api ? "Schnittstelle des Kunden ansehen" : "Schnittstelle für den Kunden einrichten"}</a></>}</p>
+            <StationReasons stop={stop} onSaved={refresh} onAddDefaults={() => addReasons.mutate()} addingDefaults={addReasons.isPending} />
+            <StationSettings stop={stop} isOrder={isOrder} suppliers={suppliers} buyers={buyers} onSaved={refresh} />
+          </div>}
         </li>; })}
-      </ol>}
+        <li className="lk-add-row">{adding ? <form className="lk-add-form" onSubmit={(event) => { event.preventDefault(); addStop.mutate({ chainId, buyerUserId: adding.buyerUserId ? Number(adding.buyerUserId) : null, buyerName: adding.buyerName.trim() || null, unitPrice: parsePrice(adding.price), alsoSiblings: adding.siblings && siblings.length > 0 }); }}>
+          <label>Kunde<select className={field} value={adding.buyerUserId} onChange={(event) => setAdding({ ...adding, buyerUserId: event.target.value })}>{freeBuyers.map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.label}{buyer.api ? " · API" : ""}</option>)}<option value="">Anderer Kunde (nur Name)</option></select></label>
+          {!adding.buyerUserId && <label>Name des Kunden<Input value={adding.buyerName} onChange={(event) => setAdding({ ...adding, buyerName: event.target.value })} placeholder="Name" /></label>}
+          <label>Preis je Lead<span className="lk-add-price"><Input inputMode="decimal" value={adding.price} placeholder="0,00" onChange={(event) => setAdding({ ...adding, price: event.target.value })} /><span>€</span></span></label>
+          {siblings.length > 0 && <label className="lk-add-all"><input type="checkbox" checked={adding.siblings} onChange={(event) => setAdding({ ...adding, siblings: event.target.checked })} /><span>auch für {siblings.length === 1 ? `die Sparte ${siblings[0].categoryName}` : `die ${siblings.length} anderen Sparten`} dieser Bestellung</span></label>}
+          <span className="lk-add-actions"><Button type="submit" variant="outline" disabled={addStop.isPending || (!adding.buyerUserId && adding.buyerName.trim().length < 2)}><Check className="h-4 w-4" /> Station hinzufügen</Button><Button type="button" variant="ghost" onClick={() => setAdding(null)}>Abbrechen</Button></span>
+        </form> : <button type="button" className="lk-add-btn" onClick={() => setAdding({ buyerUserId: String(freeBuyers[0]?.userId ?? ""), buyerName: "", price: "", siblings: true })}><Plus aria-hidden="true" /><span><b>{stops.length ? "Nächste Station hinzufügen" : "Erste Station hinzufügen"}</b><small>{stops.length ? "Wohin der Lead geht, wenn ihn vorher niemand nimmt" : "Wer die Leads dieser Kette bekommt"}</small></span></button>}</li>
+        {stops.length > 0 && <li className="lk-end"><CornerDownRight aria-hidden="true" /><span>Nimmt keine Station den Lead, {chain.exhaustedAction === "return" ? "geht er zurück an die Quelle" : "ist er frei für deine anderen Ketten und Bestellungen"}.</span><button type="button" onClick={openSettings}>ändern</button></li>}
+      </ol>
+    </section>
+
+    <section className="lk-panel lk-settings" id={`lk-settings-${chain.id}`}>
+      <button type="button" className="lk-settings-toggle" onClick={() => setSettingsOpen((value) => !value)} aria-expanded={settingsOpen}><ChevronRight className={settingsOpen ? "is-open" : ""} aria-hidden="true" /><span><b>Ketten-Einstellungen</b><small>Name, Reihenfolge, Grenzen, Lieferanten – und was passiert, wenn keine Station den Lead nimmt</small></span></button>
+      {settingsOpen && <ChainSettingsForm chain={chain} suppliers={suppliers} fromOrder={Boolean(order) && !order?.missingStation} pending={updateChain.isPending} onSave={(values) => updateChain.mutate({ id: chain.id, ...values })} />}
     </section>
 
     <section className="lk-panel lk-activity">
@@ -286,7 +325,7 @@ function StopNumber({ label, value, onCommit, width, step, placeholder, title }:
 }
 
 /* ------------------------------------------------------------------ Ketten-Einstellungen */
-function ChainSettingsForm({ chain, suppliers, pending, onSave }: { chain: Detail["chain"]; suppliers: Detail["suppliers"]; pending: boolean; onSave: (values: { name: string; priority: number; sellTarget: number; dailyCap: number | null; totalCap: number | null; status: "aktiv" | "inaktiv"; exhaustedAction: "return" | "release"; exhaustedOverrides: Array<{ supplierId: number; action: "return" | "release" }>; country: string | null; supplierFilterMode: "all" | "include" | "exclude"; supplierIds: number[] }) => void }) {
+function ChainSettingsForm({ chain, suppliers, pending, onSave, fromOrder = false }: { chain: Detail["chain"]; suppliers: Detail["suppliers"]; pending: boolean; /** Kette einer Bestellung: Die Lieferanten kommen von dort */ fromOrder?: boolean; onSave: (values: { name: string; priority: number; sellTarget: number; dailyCap: number | null; totalCap: number | null; status: "aktiv" | "inaktiv"; exhaustedAction: "return" | "release"; exhaustedOverrides: Array<{ supplierId: number; action: "return" | "release" }>; country: string | null; supplierFilterMode: "all" | "include" | "exclude"; supplierIds: number[] }) => void }) {
   const [form, setForm] = useState({ name: chain.name, priority: String(chain.priority), sellTarget: String(chain.sellTarget), dailyCap: chain.dailyCap ? String(chain.dailyCap) : "", totalCap: chain.totalCap ? String(chain.totalCap) : "", active: chain.status === "aktiv", exhaustedAction: chain.exhaustedAction, overrides: chain.exhaustedOverrides, country: chain.country ?? "", supplierFilterMode: chain.supplierFilterMode, supplierIds: chain.supplierIds });
   const [addSupplier, setAddSupplier] = useState(""); const [addOverride, setAddOverride] = useState<string | null>(null);
   const supplierName = (id: number) => suppliers.find((supplier) => supplier.id === id)?.label ?? `Lieferant #${id}`;
@@ -302,7 +341,7 @@ function ChainSettingsForm({ chain, suppliers, pending, onSave }: { chain: Detai
     </div>
     <div className="mt-5 rounded-lg border border-white/10 bg-slate-950/30 p-4">
       <h3 className="text-sm font-semibold text-slate-100">Welche Leads laufen in diese Kette?</h3>
-      <p className="mt-1 text-xs leading-5 text-slate-500">Die Kategorie steht fest ({chain.categoryName}). Hier legst du fest, von welchen Lieferanten die Leads kommen dürfen – und aus welchem Land.</p>
+      <p className="mt-1 text-xs leading-5 text-slate-500">Die Kategorie steht fest ({chain.categoryName}). Hier legst du fest, von welchen Lieferanten die Leads kommen dürfen – und aus welchem Land.{fromOrder && " Diese Kette gehört zu einer Bestellung: Die Lieferanten kommen von dort und werden beim Speichern der Bestellung wieder übernommen."}</p>
       <div className="mt-3 grid gap-4 md:grid-cols-3">
         <label className="grid gap-1 text-xs text-slate-400">Von welchen Lieferanten?<select className={field} value={form.supplierFilterMode} onChange={(event) => setForm({ ...form, supplierFilterMode: event.target.value as typeof form.supplierFilterMode })}><option value="all">Alle Lieferanten</option><option value="include">Nur diese Lieferanten</option><option value="exclude">Alle außer diese Lieferanten</option></select><span className="text-[11px] text-slate-500">Ein Lead, den keine Kette annimmt, bleibt liegen und steht unter „API-Fehler“.</span></label>
         <label className="grid gap-1 text-xs text-slate-400">Land der Kette (optional)<select className={field} value={form.country} onChange={(event) => setForm({ ...form, country: event.target.value })}>{COUNTRIES.map((country) => <option key={country.value} value={country.value}>{country.label}</option>)}</select><span className="text-[11px] text-slate-500">Nur Leads dieses Landes laufen in die Kette.</span></label>
@@ -324,47 +363,72 @@ function ChainSettingsForm({ chain, suppliers, pending, onSave }: { chain: Detai
   </div>;
 }
 
-/* ------------------------------------------------------------------ Stop-Details: Reklamationsgründe + Geo/Filter */
-function StopDetails({ stop, reasons, suppliers, buyers, onSaved }: { stop: Stop; reasons: Detail["reasons"]; suppliers: Detail["suppliers"]; buyers: Detail["buyers"]; onSaved: () => void }) {
-  const onError = (error: { message: string }) => toast.error(error.message);
-  const saveRules = trpc.leadops.saveStopRules.useMutation({ onSuccess: () => { onSaved(); toast.success("Reklamationsgründe gespeichert."); }, onError });
-  const updateStop = trpc.leadops.updateChainStop.useMutation({ onSuccess: () => { onSaved(); toast.success("Geo-Targeting und Filter gespeichert."); }, onError });
-  const [rules, setRules] = useState(stop.rules);
-  const [geo, setGeo] = useState({ country: stop.geoCountry ?? "DE", mode: stop.geoMode, values: stop.geoValues, filters: stop.fieldFilters, excludedSuppliers: stop.excludedSupplierIds, excludedBuyers: stop.excludedBuyerUserIds, automationDuplicates: stop.excludeAutomationDuplicates, phoneFilter: stop.phoneFilter, ageValue: stop.maxLeadAgeMinutes ? (stop.maxLeadAgeMinutes % 60 === 0 ? String(stop.maxLeadAgeMinutes / 60) : String(stop.maxLeadAgeMinutes)) : "", ageUnit: stop.maxLeadAgeMinutes && stop.maxLeadAgeMinutes % 60 === 0 ? "stunden" : "minuten" });
+/* ------------------------------------------------------------------ Station: Reklamationsgründe, Gebiet, seltenere Filter */
+/**
+ * „Wenn der Kunde reklamiert“: je Grund – darf er ihn nennen, und geht der Lead danach zur nächsten Station oder endet er hier?
+ * Jede Änderung wird sofort gespeichert (kein eigener Knopf).
+ */
+function StationReasons({ stop, onSaved, onAddDefaults, addingDefaults }: { stop: Stop; onSaved: () => void; onAddDefaults: () => void; addingDefaults: boolean }) {
+  const [rules, setRules] = useState(stop.rules); const [saved, setSaved] = useState<"" | "speichert" | "gespeichert">("");
+  const signature = JSON.stringify(stop.rules);
+  useEffect(() => { setRules(stop.rules); }, [signature]); // nach dem Neuladen, z. B. wenn Gründe dazugekommen sind
+  const save = trpc.leadops.saveStopRules.useMutation({ onSuccess: () => { setSaved("gespeichert"); onSaved(); }, onError: (error) => { setSaved(""); setRules(stop.rules); toast.error(error.message); } });
+  const apply = (next: typeof rules) => { setRules(next); setSaved("speichert"); save.mutate({ stopId: stop.id, rules: next.map((rule) => ({ reasonId: rule.reasonId, allowed: rule.allowed, passOn: rule.passOn })) }); };
+  const change = (reasonId: number, patch: Partial<{ allowed: boolean; passOn: boolean }>) => apply(rules.map((rule) => rule.reasonId === reasonId ? { ...rule, ...patch } : rule));
+  const missing = missingDefaultReasons(rules.map((rule) => rule.name)).length;
+  return <section className="lk-reasons" aria-label={`Reklamationsgründe für ${stop.buyerCompany}`}>
+    <header><div><h4>Wenn der Kunde reklamiert</h4><p>Links: Darf er diesen Grund nennen? Rechts: Geht der Lead danach zur nächsten Station – oder endet er hier?</p></div>
+      {rules.length > 1 && <span className="lk-reasons-tools"><button type="button" onClick={() => apply(rules.map((rule) => ({ ...rule, passOn: true })))}>alle weitergeben</button><button type="button" onClick={() => apply(rules.map((rule) => ({ ...rule, passOn: false })))}>alle enden hier</button></span>}</header>
+    {rules.length ? <ul className="lk-reason-list">{rules.map((rule) => <li key={rule.reasonId} className={rule.allowed ? "" : "is-off"}>
+      <span className="lk-reason-name">{rule.name}</span>
+      <label className="lk-reason-allow"><Switch checked={rule.allowed} onCheckedChange={(checked) => change(rule.reasonId, { allowed: checked })} aria-label={`${rule.name} erlaubt`} /><span>{rule.allowed ? "erlaubt" : "nicht erlaubt"}</span></label>
+      <span className="lk-seg is-small" role="group" aria-label={`${rule.name}: danach`}><button type="button" aria-pressed={rule.passOn} onClick={() => { if (!rule.passOn) change(rule.reasonId, { passOn: true }); }}><ArrowRight aria-hidden="true" />weitergeben</button><button type="button" aria-pressed={!rule.passOn} onClick={() => { if (rule.passOn) change(rule.reasonId, { passOn: false }); }}>Lead endet hier</button></span>
+    </li>)}</ul> : <p className="lk-reasons-empty">Es sind noch keine Reklamationsgründe angelegt.</p>}
+    <footer>{missing > 0 && <Button variant="outline" size="sm" disabled={addingDefaults} onClick={onAddDefaults}>{rules.length ? `${missing} Standard-Gründe ergänzen` : "Standard-Gründe anlegen"}</Button>}<a href="/?page=Einstellungen&setting=Reklamationen">Gründe umbenennen oder ergänzen</a><span className="lk-saved" role="status">{saved === "speichert" ? "wird gespeichert …" : saved === "gespeichert" ? "Gespeichert" : ""}</span></footer>
+  </section>;
+}
+
+type GeoForm = { country: string; mode: Stop["geoMode"]; values: string[]; filters: Stop["fieldFilters"]; excludedSuppliers: number[]; excludedBuyers: number[]; automationDuplicates: boolean; phoneFilter: Stop["phoneFilter"]; ageValue: string; ageUnit: string };
+const geoForm = (stop: Stop): GeoForm => ({ country: stop.geoCountry ?? "DE", mode: stop.geoMode, values: stop.geoValues, filters: stop.fieldFilters, excludedSuppliers: stop.excludedSupplierIds, excludedBuyers: stop.excludedBuyerUserIds, automationDuplicates: stop.excludeAutomationDuplicates, phoneFilter: stop.phoneFilter, ageValue: stop.maxLeadAgeMinutes ? (stop.maxLeadAgeMinutes % 60 === 0 ? String(stop.maxLeadAgeMinutes / 60) : String(stop.maxLeadAgeMinutes)) : "", ageUnit: stop.maxLeadAgeMinutes && stop.maxLeadAgeMinutes % 60 === 0 ? "stunden" : "minuten" });
+const GEO_MODES: Array<{ value: Stop["geoMode"]; label: string }> = [{ value: "landesweit", label: "Landesweit" }, { value: "bundesland", label: "Bundesländer" }, { value: "plz", label: "PLZ-Gebiete" }];
+
+/** Gebiet der Station – und eingeklappt die selteneren Filter (Land, Feld-Filter, Ausschlüsse, Telefonnummern, Alter des Leads). */
+function StationSettings({ stop, isOrder, suppliers, buyers, onSaved }: { stop: Stop; isOrder: boolean; suppliers: Detail["suppliers"]; buyers: Detail["buyers"]; onSaved: () => void }) {
+  const updateStop = trpc.leadops.updateChainStop.useMutation({ onSuccess: () => { onSaved(); toast.success("Gespeichert."); }, onError: (error) => toast.error(error.message) });
+  const initial = useMemo(() => geoForm(stop), [stop]);
+  const [geo, setGeo] = useState<GeoForm>(initial); const [moreOpen, setMoreOpen] = useState(false);
   const [pickSupplier, setPickSupplier] = useState(""); const [pickBuyer, setPickBuyer] = useState("");
-  const toggleRule = (reasonId: number, key: "allowed" | "passOn", value: boolean) => setRules(rules.map((rule) => rule.reasonId === reasonId ? { ...rule, [key]: value } : rule));
-  const dirtyRules = useMemo(() => JSON.stringify(rules) !== JSON.stringify(stop.rules), [rules, stop.rules]);
+  const dirty = JSON.stringify(geo) !== JSON.stringify(initial);
   const supplierName = (id: number) => suppliers.find((supplier) => supplier.id === id)?.label ?? `Lieferant #${id}`;
   const buyerName = (id: number) => buyers.find((buyer) => buyer.userId === id)?.label ?? `Käufer #${id}`;
-  return <div className="border-t border-white/8 px-4 py-4">
-    <div className="grid gap-1 text-xs text-slate-400 md:grid-cols-3"><span><strong className="text-slate-200">Liefermodus:</strong> {stop.api ? "API-Call (extern)" : "manuell / Partnerintegration"}</span><span className="truncate" title={stop.endpoint ?? ""}><strong className="text-slate-200">Endpunkt:</strong> {stop.endpoint ?? "— (im Käufer-Account unter Integration hinterlegen)"}</span><span><strong className="text-slate-200">Reklamationsfenster:</strong> {stop.reclamationWindowHours} h → {stop.reclamationWindowHours ? "so lange reklamierbar, danach automatisch angenommen" : "sofort angenommen, keine Reklamation möglich"}</span></div>
-    <div className="mt-4 grid gap-5 2xl:grid-cols-2">
-      <div><h4 className="text-sm font-semibold text-slate-100">Reklamationsgründe für diesen Käufer</h4>
-        <div className="mt-2 max-h-[420px] overflow-auto rounded-lg border border-white/10"><table className="w-full text-sm"><thead className="sticky top-0 bg-slate-950/90"><tr className="text-left text-[10px] uppercase tracking-[.16em] text-slate-500"><th className="px-3 py-2 font-medium">Grund</th><th className="px-3 py-2 font-medium">Erlaubt</th><th className="px-3 py-2 font-medium">Bei Reklamation</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.reasonId} className="border-t border-white/6"><td className="px-3 py-1.5 text-sm text-slate-200">{rule.name}</td><td className="px-3 py-1.5"><Switch checked={rule.allowed} onCheckedChange={(checked) => toggleRule(rule.reasonId, "allowed", checked)} aria-label={`${rule.name} erlaubt`} /></td><td className="px-3 py-1.5"><span className="flex items-center gap-2"><Switch checked={rule.passOn} onCheckedChange={(checked) => toggleRule(rule.reasonId, "passOn", checked)} aria-label={`${rule.name} weitergeben`} /><span className={`text-xs ${rule.passOn ? "text-amber-300" : "text-slate-500"}`}>{rule.passOn ? "→ weitergeben" : "Lead endet hier"}</span></span></td></tr>)}{!reasons.length && <tr><td colSpan={3} className="px-3 py-2 text-sm text-slate-500">Noch keine Reklamationsgründe angelegt.</td></tr>}</tbody></table></div>
-        <p className="mt-2 text-[11px] text-slate-500">Erlaubt: ob der Käufer mit dem Grund reklamieren darf · weitergeben: Lead geht nach der Reklamation an den nächsten Stop, sonst endet er.</p>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs"><a className="text-violet-200 hover:underline" href="/?page=Einstellungen&setting=Reklamationen">Gründe anlegen / umbenennen</a>{stop.membershipId && <a className="text-violet-200 hover:underline" href={`/?page=Benutzer&member=${stop.membershipId}&tab=integration`}>API-Endpunkt dieses Käufers konfigurieren</a>}<Button size="sm" className="flux-button ml-auto" disabled={!dirtyRules || saveRules.isPending} onClick={() => saveRules.mutate({ stopId: stop.id, rules: rules.map((rule) => ({ reasonId: rule.reasonId, allowed: rule.allowed, passOn: rule.passOn })) })}>Gründe speichern</Button></div></div>
-      <div><h4 className="text-sm font-semibold text-slate-100">Geo-Targeting für diesen Stop</h4>
-        <div className="mt-2 grid gap-3 md:grid-cols-2">
-          <label className="grid gap-1 text-xs text-slate-400">Land<select className={field} value={geo.country} onChange={(event) => setGeo({ ...geo, country: event.target.value })}>{COUNTRIES.filter((country) => country.value).map((country) => <option key={country.value} value={country.value}>{country.label}</option>)}</select></label>
-          <label className="grid gap-1 text-xs text-slate-400">Geo-Modus<select className={field} value={geo.mode} onChange={(event) => setGeo({ ...geo, mode: event.target.value as typeof geo.mode, values: [] })}><option value="landesweit">Landesweit</option><option value="bundesland">Bundesländer</option><option value="plz">PLZ-Gebiete (Anfang)</option></select></label>
-        </div>
-        {geo.mode === "bundesland" && <div className="mt-2 flex flex-wrap gap-1.5">{STATES.map((state) => { const active = geo.values.includes(state); return <button key={state} type="button" className={`choice-chip rounded-full border px-2.5 py-1 text-xs ${active ? "selected border-violet-400/40 bg-violet-500/15 text-violet-100" : "border-white/10 text-slate-400 hover:text-slate-100"}`} onClick={() => setGeo({ ...geo, values: active ? geo.values.filter((item) => item !== state) : [...geo.values, state] })}>{state}</button>; })}</div>}
-        {geo.mode === "plz" && <label className="mt-2 grid gap-1 text-xs text-slate-400">PLZ-Anfänge (mit Komma, z. B. 10, 12, 60)<Input value={geo.values.join(", ")} onChange={(event) => setGeo({ ...geo, values: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="10, 12, 60" /></label>}
-        <div className="mt-3"><span className="text-xs text-slate-400">Feld-Filter (optional)</span><p className="text-[11px] text-slate-500">Nur Leads, deren benutzerdefinierte Felder die Bedingungen erfüllen.</p>
-          <div className="mt-1 grid gap-2">{geo.filters.map((filter, index) => <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]"><Input value={filter.field} placeholder="Feld (z. B. heizungsart)" onChange={(event) => setGeo({ ...geo, filters: geo.filters.map((item, i) => i === index ? { ...item, field: event.target.value } : item) })} /><select className={field} value={filter.op} onChange={(event) => setGeo({ ...geo, filters: geo.filters.map((item, i) => i === index ? { ...item, op: event.target.value as typeof filter.op } : item) })}>{FILTER_OPS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}</select><Input value={filter.value ?? ""} placeholder="Wert" disabled={filter.op === "gesetzt" || filter.op === "leer"} onChange={(event) => setGeo({ ...geo, filters: geo.filters.map((item, i) => i === index ? { ...item, value: event.target.value } : item) })} /><Button size="sm" variant="ghost" aria-label="Filter entfernen" onClick={() => setGeo({ ...geo, filters: geo.filters.filter((_, i) => i !== index) })}><X className="h-4 w-4" /></Button></div>)}<div><Button size="sm" variant="outline" onClick={() => setGeo({ ...geo, filters: [...geo.filters, { field: "", op: "gleich", value: "" }] })}>+ Filter hinzufügen</Button></div></div></div>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <div><span className="text-xs text-slate-400">Lieferanten ausschließen</span><p className="text-[11px] text-slate-500">Leads dieser Lieferanten überspringen diesen Stop (keine Lieferung, keine Belastung).</p><div className="mt-1 flex flex-wrap items-center gap-1.5">{geo.excludedSuppliers.map((id) => <span key={id} className="flex items-center gap-1 rounded-full border border-white/15 px-2.5 py-1 text-xs text-slate-200">{supplierName(id)}<button type="button" aria-label="Entfernen" onClick={() => setGeo({ ...geo, excludedSuppliers: geo.excludedSuppliers.filter((item) => item !== id) })}><X className="h-3 w-3" /></button></span>)}<select className={small} value={pickSupplier} onChange={(event) => { const id = Number(event.target.value); if (id) setGeo({ ...geo, excludedSuppliers: [...geo.excludedSuppliers, id] }); setPickSupplier(""); }}><option value="">+ Lieferant</option>{suppliers.filter((supplier) => !geo.excludedSuppliers.includes(supplier.id)).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.label}</option>)}</select></div></div>
-          <div><span className="text-xs text-slate-400">Käufer ausschließen</span><p className="text-[11px] text-slate-500">Überspringt Stop, wenn der Kontakt bereits bei einem der gewählten Käufer liegt (Konflikt-Käufer).</p><div className="mt-1 flex flex-wrap items-center gap-1.5">{geo.excludedBuyers.map((id) => <span key={id} className="flex items-center gap-1 rounded-full border border-white/15 px-2.5 py-1 text-xs text-slate-200">{buyerName(id)}<button type="button" aria-label="Entfernen" onClick={() => setGeo({ ...geo, excludedBuyers: geo.excludedBuyers.filter((item) => item !== id) })}><X className="h-3 w-3" /></button></span>)}<select className={small} value={pickBuyer} onChange={(event) => { const id = Number(event.target.value); if (id) setGeo({ ...geo, excludedBuyers: [...geo.excludedBuyers, id] }); setPickBuyer(""); }}><option value="">+ Käufer</option>{buyers.filter((buyer) => buyer.userId !== stop.buyerUserId && !geo.excludedBuyers.includes(buyer.userId)).map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.label}</option>)}</select></div></div>
-        </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <label className="flex items-start gap-2 text-xs text-slate-400"><Switch checked={geo.automationDuplicates} onCheckedChange={(checked) => setGeo({ ...geo, automationDuplicates: checked })} aria-label="Automation-Duplikate ausschließen" /><span><span className="block text-sm text-slate-200">Automation-Duplikate ausschließen</span>Per Automation duplizierte Leads (geringere Qualität) hier nicht ausliefern.</span></label>
-          <label className="grid gap-1 text-xs text-slate-400">Telefonnummern-Filter<select className={field} value={geo.phoneFilter} onChange={(event) => setGeo({ ...geo, phoneFilter: event.target.value as typeof geo.phoneFilter })}><option value="all">Alle Kontakte (Standard)</option><option value="exclude_invalid">Nur eindeutig ungültige Nummern ausschließen</option><option value="only_valid">Nur bestätigt gültige Nummern — auch ungeprüfte und unbekannte fallen raus</option></select></label>
-          <label className="grid gap-1 text-xs text-slate-400">Max. Lead-Alter (ab Import)<span className="flex gap-2"><Input type="number" min={1} value={geo.ageValue} placeholder="∞" onChange={(event) => setGeo({ ...geo, ageValue: event.target.value })} /><select className={field} value={geo.ageUnit} onChange={(event) => setGeo({ ...geo, ageUnit: event.target.value })}><option value="minuten">Minuten</option><option value="stunden">Stunden</option></select></span><span className="text-[11px] text-slate-500">Zu alt → Stop übersprungen.</span></label>
-        </div>
-        <div className="mt-3 flex items-center gap-3"><Button className="flux-button" disabled={updateStop.isPending} onClick={() => updateStop.mutate({ id: stop.id, geoCountry: geo.country || null, geoMode: geo.mode, geoValues: geo.values, fieldFilters: geo.filters.filter((filter) => filter.field.trim()), excludedSupplierIds: geo.excludedSuppliers, excludedBuyerUserIds: geo.excludedBuyers, excludeAutomationDuplicates: geo.automationDuplicates, phoneFilter: geo.phoneFilter, maxLeadAgeMinutes: geo.ageValue ? Math.max(1, Math.round(Number(geo.ageValue) * (geo.ageUnit === "stunden" ? 60 : 1))) : null })}>Geo speichern</Button><span className="text-[11px] text-slate-500">Passt der Lead nicht, wird dieser Stop übersprungen (keine Lieferung, keine Belastung).</span></div>
-      </div>
-    </div>
+  const save = () => updateStop.mutate({ id: stop.id, geoCountry: geo.country || null, geoMode: geo.mode, geoValues: geo.values, fieldFilters: geo.filters.filter((filter) => filter.field.trim()), excludedSupplierIds: geo.excludedSuppliers, excludedBuyerUserIds: geo.excludedBuyers, excludeAutomationDuplicates: geo.automationDuplicates, phoneFilter: geo.phoneFilter, maxLeadAgeMinutes: geo.ageValue ? Math.max(1, Math.round(Number(geo.ageValue) * (geo.ageUnit === "stunden" ? 60 : 1))) : null });
+  const area = <div className="lk-area">
+    <h4>{isOrder ? "Gebiet dieser Station zusätzlich eingrenzen" : "Gebiet dieses Kunden"}</h4>
+    <p>{isOrder ? "Das Gebiet kommt aus der Bestellung. Nur wenn Station 1 noch enger gefasst sein soll, stellst du es hier ein." : "Passt ein Lead nicht hinein, bekommt ihn dieser Kunde nicht – der Lead geht zur nächsten Station."}</p>
+    <span className="lk-seg" role="group" aria-label="Gebiet">{GEO_MODES.map((item) => <button key={item.value} type="button" aria-pressed={geo.mode === item.value} onClick={() => { if (geo.mode !== item.value) setGeo({ ...geo, mode: item.value, values: [] }); }}>{item.label}</button>)}</span>
+    {geo.mode === "bundesland" && <div className="lk-chips">{STATES.map((state) => { const active = geo.values.includes(state); return <button key={state} type="button" className={`lk-chip ${active ? "is-on" : ""}`} aria-pressed={active} onClick={() => setGeo({ ...geo, values: active ? geo.values.filter((item) => item !== state) : [...geo.values, state] })}>{state}</button>; })}</div>}
+    {geo.mode === "plz" && <label className="lk-area-plz">Anfänge der Postleitzahlen, mit Komma getrennt<Input value={geo.values.join(", ")} onChange={(event) => setGeo({ ...geo, values: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="10, 12, 60" /></label>}
   </div>;
+  return <section className="lk-station-settings">
+    {!isOrder && area}
+    <button type="button" className="lk-more-toggle" aria-expanded={moreOpen} onClick={() => setMoreOpen((value) => !value)}><ChevronRight className={moreOpen ? "is-open" : ""} aria-hidden="true" /><span><b>Mehr Einstellungen</b><small>Land, Feld-Filter, Ausschlüsse, Telefonnummern, Alter des Leads</small></span></button>
+    {moreOpen && <div className="lk-more">
+      {isOrder && area}
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="grid gap-1 text-xs text-slate-400">Land<select className={field} value={geo.country} onChange={(event) => setGeo({ ...geo, country: event.target.value })}>{COUNTRIES.filter((country) => country.value).map((country) => <option key={country.value} value={country.value}>{country.label}</option>)}</select></label>
+        <label className="grid gap-1 text-xs text-slate-400">Telefonnummern<select className={field} value={geo.phoneFilter} onChange={(event) => setGeo({ ...geo, phoneFilter: event.target.value as GeoForm["phoneFilter"] })}><option value="all">Alle Kontakte (Standard)</option><option value="exclude_invalid">Nur eindeutig ungültige Nummern ausschließen</option><option value="only_valid">Nur bestätigt gültige Nummern – ungeprüfte fallen auch raus</option></select></label>
+        <label className="grid gap-1 text-xs text-slate-400">Höchstes Alter des Leads (ab Import)<span className="flex gap-2"><Input type="number" min={1} value={geo.ageValue} placeholder="egal" onChange={(event) => setGeo({ ...geo, ageValue: event.target.value })} /><select className={field} value={geo.ageUnit} onChange={(event) => setGeo({ ...geo, ageUnit: event.target.value })}><option value="minuten">Minuten</option><option value="stunden">Stunden</option></select></span></label>
+        <label className="flex items-start gap-2 text-xs text-slate-400"><Switch checked={geo.automationDuplicates} onCheckedChange={(checked) => setGeo({ ...geo, automationDuplicates: checked })} aria-label="Automation-Duplikate ausschließen" /><span><span className="block text-sm text-slate-200">Automation-Duplikate ausschließen</span>Leads, die eine Automation kopiert hat, gehen nicht an diese Station.</span></label>
+      </div>
+      <div><span className="text-xs text-slate-400">Feld-Filter</span><p className="text-[11px] text-slate-500">Nur Leads, deren Felder diese Bedingungen erfüllen.</p>
+        <div className="mt-1 grid gap-2">{geo.filters.map((filter, index) => <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]"><Input value={filter.field} placeholder="Feld (z. B. heizungsart)" onChange={(event) => setGeo({ ...geo, filters: geo.filters.map((item, i) => i === index ? { ...item, field: event.target.value } : item) })} /><select className={field} value={filter.op} onChange={(event) => setGeo({ ...geo, filters: geo.filters.map((item, i) => i === index ? { ...item, op: event.target.value as typeof filter.op } : item) })}>{FILTER_OPS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}</select><Input value={filter.value ?? ""} placeholder="Wert" disabled={filter.op === "gesetzt" || filter.op === "leer"} onChange={(event) => setGeo({ ...geo, filters: geo.filters.map((item, i) => i === index ? { ...item, value: event.target.value } : item) })} /><Button size="sm" variant="ghost" aria-label="Filter entfernen" onClick={() => setGeo({ ...geo, filters: geo.filters.filter((_, i) => i !== index) })}><X className="h-4 w-4" /></Button></div>)}<div><Button size="sm" variant="outline" onClick={() => setGeo({ ...geo, filters: [...geo.filters, { field: "", op: "gleich", value: "" }] })}>Filter hinzufügen</Button></div></div></div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div><span className="text-xs text-slate-400">Lieferanten ausschließen</span><p className="text-[11px] text-slate-500">Leads dieser Lieferanten gehen nicht an diese Station.</p><div className="mt-1 flex flex-wrap items-center gap-1.5">{geo.excludedSuppliers.map((id) => <span key={id} className="lk-pick">{supplierName(id)}<button type="button" aria-label="Entfernen" onClick={() => setGeo({ ...geo, excludedSuppliers: geo.excludedSuppliers.filter((item) => item !== id) })}><X /></button></span>)}<select className={small} value={pickSupplier} onChange={(event) => { const id = Number(event.target.value); if (id) setGeo({ ...geo, excludedSuppliers: [...geo.excludedSuppliers, id] }); setPickSupplier(""); }}><option value="">+ Lieferant</option>{suppliers.filter((supplier) => !geo.excludedSuppliers.includes(supplier.id)).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.label}</option>)}</select></div></div>
+        <div><span className="text-xs text-slate-400">Nicht, wenn der Kontakt schon bei diesen Kunden liegt</span><p className="text-[11px] text-slate-500">Die Station wird übersprungen, wenn einer dieser Kunden den Kontakt schon bekommen hat.</p><div className="mt-1 flex flex-wrap items-center gap-1.5">{geo.excludedBuyers.map((id) => <span key={id} className="lk-pick">{buyerName(id)}<button type="button" aria-label="Entfernen" onClick={() => setGeo({ ...geo, excludedBuyers: geo.excludedBuyers.filter((item) => item !== id) })}><X /></button></span>)}<select className={small} value={pickBuyer} onChange={(event) => { const id = Number(event.target.value); if (id) setGeo({ ...geo, excludedBuyers: [...geo.excludedBuyers, id] }); setPickBuyer(""); }}><option value="">+ Kunde</option>{buyers.filter((buyer) => buyer.userId !== stop.buyerUserId && !geo.excludedBuyers.includes(buyer.userId)).map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.label}</option>)}</select></div></div>
+      </div>
+    </div>}
+    {(dirty || moreOpen || !isOrder) && <div className="lk-settings-foot"><Button variant="outline" size="sm" disabled={updateStop.isPending || !dirty} onClick={save}>{isOrder ? "Einstellungen speichern" : "Gebiet und Einstellungen speichern"}</Button>{dirty && <span>Noch nicht gespeichert</span>}</div>}
+  </section>;
 }
 
 /* ------------------------------------------------------------------ Aktivität je Stop */

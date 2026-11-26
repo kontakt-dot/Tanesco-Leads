@@ -862,6 +862,13 @@
       "when": 1796800000000,
       "tag": "0122_partner_transaktionen",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "5",
+      "when": 1796900000000,
+      "tag": "0123_bestellung_station",
+      "breakpoints": true
     }
   ]
 }

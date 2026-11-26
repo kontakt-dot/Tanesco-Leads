@@ -1,34 +1,56 @@
 /** Reine Regeln der Bestellkonfiguration – ohne Datenbankabhängigkeiten, damit Server und Browser-Demo dieselbe Logik nutzen. */
+import { readDeliveryArea } from "../shared/german-states";
+
 const WEEKDAYS = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
 
 export type OrderEligibilityConfig = { active: boolean; ongoing: boolean; startsAt: Date | null; endsAt: Date | null; deliveryDays: unknown; pauses: unknown; requestedQuantity: number; advancedFilters: unknown; supplierRestrictions: unknown };
 
-/** Prüft, ob eine Bestellung den Lead jetzt annehmen darf. Reine Funktion (testbar). */
-export function evaluateOrderEligibility(config: OrderEligibilityConfig | undefined, lead: { supplierId: number | null; postcode: string | null; cost: string | number | null }, deliveredCount: number, now = new Date()): { eligible: boolean; reason?: string } {
-  if (!config) return { eligible: true };
-  if (!config.active) return { eligible: false, reason: "Bestellung ist deaktiviert" };
-  if (!config.ongoing) {
-    if (config.startsAt && now < config.startsAt) return { eligible: false, reason: "Bestellzeitraum hat noch nicht begonnen" };
-    if (config.endsAt && now > config.endsAt) return { eligible: false, reason: "Bestellzeitraum ist abgelaufen" };
-  }
+const dayStart = (date: Date) => { const copy = new Date(date); copy.setHours(0, 0, 0, 0); return copy; };
+const dayEnd = (date: Date) => { const copy = new Date(date); copy.setHours(23, 59, 59, 999); return copy; };
+
+/**
+ * Warum eine Bestellung den Lead gerade nicht nimmt – getrennt nach zwei Fragen (v376):
+ *  - `chain`: Die Bestellung selbst läuft nicht (ausgeschaltet, noch nicht gestartet, beendet, Menge erreicht, Lieferant nicht zugelassen).
+ *    Dann geht über ihre ganze Lieferkette nichts raus.
+ *  - `station`: Nur der Käufer der Bestellung kann diesen Lead jetzt nicht nehmen (kein Liefertag, Lieferpause, Preisgrenze, Gebiet).
+ *    Hat die Kette weitere Stationen, bekommen sie den Lead; sonst nimmt die Kette ihn nicht an.
+ * Der Starttag gilt immer (bis v375 nur ohne „fortlaufend“ – eine fortlaufende Bestellung lieferte schon vor ihrem Start). Start und Ende zählen als ganze Tage.
+ */
+export function orderBlocks(config: OrderEligibilityConfig | undefined, lead: { supplierId: number | null; postcode: string | null; cost: string | number | null }, deliveredCount: number, now = new Date()): { chain: string | null; station: string | null } {
+  if (!config) return { chain: null, station: null };
+  const restrictions = (config.supplierRestrictions ?? {}) as { blockUnknownSuppliers?: boolean; allowedSupplierIds?: number[] };
+  const allowedIds = Array.isArray(restrictions.allowedSupplierIds) ? restrictions.allowedSupplierIds : [];
+  const chain = !config.active ? "Bestellung ist deaktiviert"
+    : config.startsAt && now < dayStart(config.startsAt) ? "Bestellzeitraum hat noch nicht begonnen"
+    : !config.ongoing && config.endsAt && now > dayEnd(config.endsAt) ? "Bestellzeitraum ist abgelaufen"
+    : config.requestedQuantity > 0 && deliveredCount >= config.requestedQuantity ? `Bestellmenge erreicht (${deliveredCount}/${config.requestedQuantity})`
+    : restrictions.blockUnknownSuppliers && !(lead.supplierId && allowedIds.includes(lead.supplierId)) ? "Lieferant für diese Bestellung nicht freigegeben"
+    : null;
+  return { chain, station: stationBlock(config, lead, now) };
+}
+function stationBlock(config: OrderEligibilityConfig, lead: { postcode: string | null; cost: string | number | null }, now: Date): string | null {
   const days = Array.isArray(config.deliveryDays) ? (config.deliveryDays as unknown[]).map(String) : [];
-  if (days.length && !days.includes(WEEKDAYS[now.getDay()])) return { eligible: false, reason: `Kein Liefertag (${WEEKDAYS[now.getDay()]})` };
+  if (days.length && !days.includes(WEEKDAYS[now.getDay()])) return `Kein Liefertag (${WEEKDAYS[now.getDay()]})`;
   const pauses = Array.isArray(config.pauses) ? (config.pauses as Array<{ from?: string; until?: string }>) : [];
   for (const pause of pauses) {
     const from = pause.from ? new Date(pause.from) : null; const until = pause.until ? new Date(pause.until) : null;
     if (until && !Number.isNaN(until.getTime())) until.setHours(23, 59, 59, 999);
     const started = !from || Number.isNaN(from.getTime()) || now >= from; const notEnded = !until || Number.isNaN(until.getTime()) || now <= until;
-    if ((from || until) && started && notEnded) return { eligible: false, reason: `Bestellung pausiert${pause.until ? ` bis ${pause.until}` : ""}` };
+    if ((from || until) && started && notEnded) return `Bestellung pausiert${pause.until ? ` bis ${pause.until}` : ""}`;
   }
-  if (config.requestedQuantity > 0 && deliveredCount >= config.requestedQuantity) return { eligible: false, reason: `Bestellmenge erreicht (${deliveredCount}/${config.requestedQuantity})` };
-  const restrictions = (config.supplierRestrictions ?? {}) as { blockUnknownSuppliers?: boolean; allowedSupplierIds?: number[] };
-  const allowedIds = Array.isArray(restrictions.allowedSupplierIds) ? restrictions.allowedSupplierIds : [];
-  if (restrictions.blockUnknownSuppliers && !(lead.supplierId && allowedIds.includes(lead.supplierId))) return { eligible: false, reason: "Lieferant für diese Bestellung nicht freigegeben" };
   const filters = (config.advancedFilters ?? {}) as { maxLeadPrice?: number | null; postcodes?: string | null };
-  if (typeof filters.maxLeadPrice === "number" && Number(lead.cost ?? 0) > filters.maxLeadPrice) return { eligible: false, reason: `Leadpreis über Limit (${filters.maxLeadPrice})` };
-  const prefixes = typeof filters.postcodes === "string" ? filters.postcodes.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean) : [];
-  if (prefixes.length && !prefixes.some((prefix) => (lead.postcode ?? "").startsWith(prefix))) return { eligible: false, reason: "Postleitzahl außerhalb des Liefergebiets" };
-  return { eligible: true };
+  if (typeof filters.maxLeadPrice === "number" && Number(lead.cost ?? 0) > filters.maxLeadPrice) return `Leadpreis über Limit (${filters.maxLeadPrice})`;
+  // Liefergebiet: PLZ-Anfänge („60, 61“) oder Bundesländer („Hessen, Bayern“). Bis v375 galten die Namen der Bundesländer selbst als PLZ-Anfang –
+  // eine Bestellung mit Bundesländern nahm deshalb keinen einzigen Lead an. Jetzt werden sie in ihre PLZ-Anfänge übersetzt.
+  const area = readDeliveryArea(typeof filters.postcodes === "string" ? filters.postcodes : null); const postcode = (lead.postcode ?? "").replace(/\s/g, "");
+  if (area.prefixes.length && !area.prefixes.some((prefix) => postcode.startsWith(prefix))) return area.states.length && !area.postcodes.length ? `Bundesland außerhalb des Liefergebiets (${area.states.join(", ")})`.slice(0, 160) : "Postleitzahl außerhalb des Liefergebiets";
+  return null;
+}
+
+/** Prüft, ob eine Bestellung den Lead jetzt annehmen darf. Reine Funktion (testbar). Erst, was die ganze Bestellung betrifft, dann der Käufer. */
+export function evaluateOrderEligibility(config: OrderEligibilityConfig | undefined, lead: { supplierId: number | null; postcode: string | null; cost: string | number | null }, deliveredCount: number, now = new Date()): { eligible: boolean; reason?: string } {
+  const blocks = orderBlocks(config, lead, deliveredCount, now); const reason = blocks.chain ?? blocks.station;
+  return reason ? { eligible: false, reason } : { eligible: true };
 }
 
 

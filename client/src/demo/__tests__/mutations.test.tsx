@@ -162,9 +162,12 @@ describe("Mutationen des Chat-Builds (minimale Eingaben wie im Client)", () => {
     const allChains = (await call("leadops.listDeliveryChains")) as any[];
     const newChain = allChains.find((row) => row.name === "Kette Süd") ?? allChains[0];
     await call("leadops.updateDeliveryChain", { id: newChain.id, priority: 5 });
-    await call("leadops.addDeliveryStop", { chainId: newChain.id, buyerName: "Stopp 1", position: 1, unitPrice: 40 });
+    // seit v376: Eine Kette für eine Bestellung bekommt Station 1 gleich mit – der eigene Stop kommt dahinter; Station 1 lässt sich hier nicht ausschalten
+    await call("leadops.addDeliveryStop", { chainId: newChain.id, buyerName: "Stopp 2", position: 2, unitPrice: 40 });
     const detailChain = ((await call("leadops.listDeliveryChains")) as any[]).find((row) => row.id === newChain.id);
-    await call("leadops.updateDeliveryStop", { id: detailChain.stops[0].id, active: false });
+    expect(detailChain.stops).toHaveLength(2);
+    await expect(call("leadops.updateDeliveryStop", { id: detailChain.stops[0].id, active: false })).rejects.toThrow("Station 1 kommt aus der Bestellung");
+    await call("leadops.updateDeliveryStop", { id: detailChain.stops[1].id, active: false });
     await call("leadops.getDeliveryChainMetrics", { chainId: newChain.id }).catch(() => undefined);
     void chain;
     await call("leadops.deleteOrder", { orderId: order.orderId });

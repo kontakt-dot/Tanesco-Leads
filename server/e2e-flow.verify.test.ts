@@ -259,11 +259,15 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     await owner.leadops.updatePartnerIntegration({ id: S.integrationId, status: "aktiv" });
     await owner.leadops.updateMembership({ id: S.membership.id, integrationId: S.integrationId });
 
-    await owner.leadops.createDeliveryChain({ orderId: S.orderId, categoryId: S.wp.id, name: "WP → Partner Solar", priority: 1, sellTarget: 1 });
-    const chain = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "WP → Partner Solar")!; S.chainId = chain.id;
-    expect(chain.status).toBe("inaktiv"); // neue Ketten starten inaktiv
-    await owner.leadops.addDeliveryStop({ chainId: S.chainId, buyerName: "Partner Solar GmbH", position: 1, unitPrice: 48 });
-    await owner.leadops.updateDeliveryChain({ id: S.chainId, status: "aktiv" });
+    // seit v376: Mit dem Speichern der Bestellung steht ihre Lieferkette schon – Station 1 ist die Bestellung (Käufer, Preis und Lieferanten von dort)
+    const chain = (await owner.leadops.listDeliveryChains()).find((c) => c.orderId === S.orderId)!; S.chainId = chain.id;
+    expect(chain).toMatchObject({ status: "aktiv", name: `Bestellung ${S.orderNumber}` }); expect(chain.stops).toHaveLength(1);
+    await owner.leadops.updateDeliveryChain({ id: S.chainId, name: "WP → Partner Solar" });
+    // eine von Hand angelegte weitere Kette für dieselbe Bestellung startet inaktiv und bekommt Station 1 gleich mit (eine leere Kette hielte die Leads auf)
+    const extra = await owner.leadops.createDeliveryChain({ orderId: S.orderId, categoryId: S.wp.id, name: "WP → Partner Solar (zweite)", priority: 2, sellTarget: 1 });
+    const second = (await owner.leadops.listDeliveryChains()).find((c) => c.id === extra.chainId)!;
+    expect(second.status).toBe("inaktiv"); expect(second.stops).toHaveLength(1); expect(second.stops[0]).toMatchObject({ buyerName: "Partner Solar GmbH", position: 1 });
+    await owner.leadops.deleteDeliveryChain({ chainId: extra.chainId });
     const withStops = (await owner.leadops.listDeliveryChains()).find((c) => c.id === S.chainId)!;
     expect(withStops.stops).toHaveLength(1); expect(withStops.status).toBe("aktiv");
   });
@@ -486,10 +490,11 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     // Bestellung mit täglichem Intervall (keine Echtzeit), Käufer ohne Integration
     const daily = await owner.leadops.createOrder({ name: "WP täglich", buyerName: "Tages-Käufer", categoryId: S.wp.id, quantity: 10, unitPrice: 40, status: "aktiv" });
     await owner.leadops.saveOrderWorkspace({ orderId: daily.orderId, name: "WP täglich", buyerName: "Tages-Käufer", buyerUserId: null, categoryId: S.wp.id, categoryIds: [S.wp.id], quantity: 10, unitPrice: 40, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "täglich", compensateClaims: false, priority: 1, realtimeDelivery: false, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
-    await owner.leadops.createDeliveryChain({ orderId: daily.orderId, categoryId: S.wp.id, name: "Tageskette", priority: 1, sellTarget: 1 });
-    const dailyChain = (await owner.leadops.listDeliveryChains()).find((c) => c.name === "Tageskette")!;
-    await owner.leadops.addDeliveryStop({ chainId: dailyChain.id, buyerName: "Tages-Käufer", position: 1, unitPrice: 40 });
-    await owner.leadops.updateDeliveryChain({ id: dailyChain.id, status: "aktiv" });
+    // seit v376 steht die Kette mit dem Speichern der Bestellung (Station 1 = „Tages-Käufer“); Platz 1 lässt sich nicht noch einmal vergeben
+    const dailyChain = (await owner.leadops.listDeliveryChains()).find((c) => c.orderId === daily.orderId)!;
+    expect(dailyChain).toMatchObject({ status: "aktiv" }); expect(dailyChain.stops).toHaveLength(1);
+    await owner.leadops.updateDeliveryChain({ id: dailyChain.id, name: "Tageskette" });
+    await expect(owner.leadops.addDeliveryStop({ chainId: dailyChain.id, buyerName: "Tages-Käufer", position: 1, unitPrice: 40 })).rejects.toThrow("Diese Position ist in der Lieferkette bereits belegt.");
     const first = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Tag", lastName: "Eins", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
     const second = await owner.leadops.importLead({ categoryId: S.wp.id, firstName: "Tag", lastName: "Zwei", supplierId: S.supplierId, metadata: { heizungsart: "Strom" } });
     await owner.leadops.assignLeadsToOrder({ publicIds: [first.publicId, second.publicId], orderId: daily.orderId });
@@ -1179,7 +1184,12 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const order = await owner.leadops.createOrder({ name: "Kundin PV 50", buyerName: "Kundin Solar GmbH", categoryId: S.pv.id, quantity: 50, unitPrice: 39, status: "aktiv" });
     await owner.leadops.saveOrderWorkspace({ orderId: order.orderId, name: "Kundin PV 50", buyerName: "Kundin Solar GmbH", buyerUserId: detail.user.id, categoryId: S.pv.id, categoryIds: [S.pv.id], quantity: 50, unitPrice: 39, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "sofort", compensateClaims: true, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
     await owner.leadops.setOrderWorkspaceActive({ orderId: order.orderId, active: true });
-    expect((await owner.leadops.listDeliveryChains()).filter((chain) => chain.orderId === order.orderId)).toHaveLength(0); // keine Lieferkette von Hand nötig
+    { // seit v376: Mit dem Speichern der Bestellung steht ihre Lieferkette – Station 1 ist die Bestellung (keine Lieferkette von Hand nötig)
+      const own = (await owner.leadops.listDeliveryChains()).filter((chain) => chain.orderId === order.orderId); expect(own).toHaveLength(1);
+      const detailOfChain = await owner.leadops.chainDetail({ chainId: own[0].id, range: "maximal" });
+      expect(detailOfChain.stops).toHaveLength(1); expect(detailOfChain.stops[0]).toMatchObject({ orderStop: true, position: 1, buyerName: "Kundin Solar GmbH", buyerUserId: detail.user.id, unitPrice: "39.00" });
+      expect(detailOfChain.order).toMatchObject({ orderId: order.orderId, missingStation: false, buyerMissing: false });
+    }
     // 4) Verteilung: eine Regel „Neuer PV-Lead → automatisch ausliefern“ (ohne feste Bestellung)
     await owner.leadops.createAutomationRule({ name: "PV automatisch ausliefern", triggerType: "lead_erstellt", sourceCategoryId: S.pv.id, targetCategoryId: S.pv.id, conditions: [], actionType: "lead_ausliefern", actionConfig: {}, status: "aktiv" });
     const before = outbound.length;
@@ -6700,4 +6710,128 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const listed = (await owner.leadops.listOrders({})).find((order) => order.id === created.orderId)!;
     expect(new Date(listed.startsAt!).getTime()).toBe(start.getTime()); expect(listed.endsAt).toBeNull();
   }, 60000);
+
+  it("v376. Lieferkette aus der Bestellung: Station 1 ist die Bestellung – weitere Stationen bekommen, was sie nicht nimmt; Menge, Konto und Sicht bleiben beim richtigen Käufer", async () => {
+    const { deliveryChains: chainsTable, deliveryStops: stopsTable, orderOperationalConfigs: configsTable, orders: ordersTable, reclamationReasons: reasonsTable } = await import("../drizzle/schema");
+    const { deliverLeadNow, syncAllOrderChains } = await import("./lead-pipeline");
+    const { ensureDefaultReasons, ORDER_STATION_LOCKED } = await import("./chain-admin");
+    const { DEFAULT_REASONS } = await import("../shared/default-reasons");
+    const stamp = Date.now().toString(36).slice(-6); const tag = stamp.toUpperCase();
+    // zwei eigene Kategorien, damit keine Kette früherer Schritte mitspielt
+    await owner.leadops.createCategory({ shortcode: `K6A${tag}`, name: `V376 Solar ${stamp}`, defaultLeadPrice: "40.00" }); await owner.leadops.createCategory({ shortcode: `K6B${tag}`, name: `V376 Wärme ${stamp}`, defaultLeadPrice: "40.00" });
+    const categories = await owner.leadops.listCategories(); const catA = categories.find((row) => row.shortcode === `K6A${tag}`)!; const catB = categories.find((row) => row.shortcode === `K6B${tag}`)!;
+    // zwei Käufer mit Schnittstelle (für beide Kategorien), ein dritter ohne Konto
+    const buyer = async (first: string, company: string, host: string) => { const made = await owner.leadops.createMember({ firstName: first, lastName: `Käufer${stamp}`, company, email: `${first.toLowerCase()}-${stamp}@v376.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" }); const info = await owner.leadops.getMemberDetail({ membershipId: made.membershipId }); for (const categoryId of [catA.id, catB.id]) await owner.leadops.saveDeliveryEndpoint({ membershipId: made.membershipId, categoryId, enabled: true, method: "POST", url: `https://${host}.example/api/leads`, sourceFilterMode: "alle", sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, bodyTemplate: '{ "name": "{{first_name}} {{last_name}}", "zip": "{{postal_code}}" }', omitAutoFields: false, rotate: false, valueMappings: [] }); return { userId: info.user.id, membershipId: made.membershipId, company, url: `https://${host}.example/api/leads` }; };
+    const erste = await buyer("Erna", `V376 Erste GmbH ${stamp}`, `v376-erste-${stamp}`); const zweite = await buyer("Zora", `V376 Zweite GmbH ${stamp}`, `v376-zweite-${stamp}`);
+    // Bestellung: Käufer „Erste“, beide Kategorien, nur Bayern, 2 Leads, 44 €
+    const order = await owner.leadops.createOrder({ name: `V376 Bayern ${stamp}`, buyerName: erste.company, categoryId: catA.id, quantity: 2, unitPrice: 44, status: "aktiv" });
+    const input = { orderId: order.orderId, name: `V376 Bayern ${stamp}`, buyerName: erste.company, buyerUserId: erste.userId, categoryId: catA.id, categoryIds: [catA.id, catB.id], quantity: 2, unitPrice: 44, supplierId: null, supplierMode: "alle" as const, supplierIds: [], deliveryInterval: "sofort" as const, compensateClaims: false, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "regional" as const, pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: "Bayern" } };
+    const saved = await owner.leadops.saveOrderWorkspace(input); expect(saved).toMatchObject({ success: true, chainsCreated: 2 });
+    await owner.leadops.setOrderWorkspaceActive({ orderId: order.orderId, active: true });
+    // (a) je Kategorie eine Kette, Station 1 = die Bestellung
+    const ownChains = async () => (await db.select().from(chainsTable).where(eq(chainsTable.orderId, order.orderId))).sort((a, b) => a.id - b.id);
+    const stopsOf = async (chainId: number) => (await db.select().from(stopsTable).where(eq(stopsTable.chainId, chainId))).sort((a, b) => a.position - b.position);
+    const chains = await ownChains(); expect(chains.map((chain) => chain.categoryId).sort((a, b) => a - b)).toEqual([catA.id, catB.id].sort((a, b) => a - b));
+    const chainA = chains.find((chain) => chain.categoryId === catA.id)!; const chainB = chains.find((chain) => chain.categoryId === catB.id)!;
+    for (const chain of chains) { const stops = await stopsOf(chain.id); expect(stops).toHaveLength(1); expect(stops[0]).toMatchObject({ orderStop: true, position: 1, buyerName: erste.company, buyerUserId: erste.userId, unitPrice: "44.00", active: true }); expect(chain).toMatchObject({ status: "aktiv", supplierFilterMode: "all" }); }
+    const detailA = await owner.leadops.chainDetail({ chainId: chainA.id, range: "maximal" });
+    expect(detailA.order).toMatchObject({ orderId: order.orderId, buyerName: erste.company, missingStation: false, buyerMissing: false });
+    expect(Object.fromEntries(detailA.order!.facts.map((fact) => [fact.key, fact.value]))).toMatchObject({ lieferant: "Alle Lieferanten", sparten: `${catA.name}, ${catB.name}`, preis: "44,00 € je Lead", menge: "0 von 2 geliefert", gebiet: "Bayern", tage: "jeden Tag" });
+    expect(detailA.order!.chains.map((item) => item.chainId)).toEqual([chainA.id, chainB.id]);
+    // (b) Station 1 lässt sich hier nicht löschen, ausschalten, verschieben oder im Preis ändern – Frist und Höchstmenge schon
+    const stationA = (await stopsOf(chainA.id))[0];
+    await expect(owner.leadops.deleteChainStop({ stopId: stationA.id })).rejects.toThrow(ORDER_STATION_LOCKED);
+    await expect(owner.leadops.updateChainStop({ id: stationA.id, unitPrice: 10 })).rejects.toThrow(ORDER_STATION_LOCKED);
+    await expect(owner.leadops.updateChainStop({ id: stationA.id, active: false })).rejects.toThrow(ORDER_STATION_LOCKED);
+    await owner.leadops.updateChainStop({ id: stationA.id, reclamationWindowHours: 0 });
+    // (c) weitere Station – einmal eintragen, steht in beiden Sparten; dazu eine dritte ohne Konto nur in A
+    const added = await owner.leadops.addChainStop({ chainId: chainA.id, buyerUserId: zweite.userId, unitPrice: 30, reclamationWindowHours: 0, alsoSiblings: true }); expect(added).toMatchObject({ position: 2, alsoAdded: 1 });
+    expect((await stopsOf(chainB.id)).map((stop) => stop.buyerName)).toEqual([erste.company, zweite.company]);
+    expect((await owner.leadops.addChainStop({ chainId: chainA.id, buyerUserId: zweite.userId, unitPrice: 30, alsoSiblings: true })).alsoAdded).toBe(0); // steht dort schon
+    await db.delete(stopsTable).where(and(eq(stopsTable.chainId, chainA.id), eq(stopsTable.position, 3))); // die doppelte in A wieder weg
+    const third = await owner.leadops.addChainStop({ chainId: chainA.id, buyerName: `V376 Dritte ${stamp}`, unitPrice: 20, reclamationWindowHours: 0 });
+    // Station 1 bleibt vorn, auch wenn jemand sie verschieben will
+    await owner.leadops.reorderChainStops({ chainId: chainA.id, stopIds: [third.stopId, added.stopId, stationA.id] });
+    expect((await stopsOf(chainA.id)).map((stop) => stop.id)).toEqual([stationA.id, third.stopId, added.stopId]);
+    await owner.leadops.reorderChainStops({ chainId: chainA.id, stopIds: [stationA.id, added.stopId, third.stopId] });
+    // (d) Auslieferung
+    const makeLead = async (key: string, categoryId: number, postcode: string) => { const inserted = await db.insert(leads).values({ tenantId: S.tenantId, publicId: `K6${key}${tag}`, categoryId, kind: "verkauf", firstName: "Lena", lastName: `V376${key}`, email: `v376-${key.toLowerCase()}-${stamp}@example.de`, phone: `+49 89 55576${key.charCodeAt(0)}${stamp.length}`, postcode, city: "Testort", country: "DE", status: "genehmigt", cost: "0.00", supplierId: null, metadata: {} } as never); return (await db.select().from(leads).where(eq(leads.id, Number(inserted[0].insertId))))[0]; };
+    const deliver = async (lead: Awaited<ReturnType<typeof makeLead>>) => deliverLeadNow(db, { tenantId: S.tenantId, actorUserId: null, lead });
+    const rowsOf = async (leadId: number) => (await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, leadId))).sort((a, b) => a.id - b.id);
+    const delivered = async () => (await db.select().from(ordersTable).where(eq(ordersTable.id, order.orderId)))[0];
+    // München passt: Station 1 – zählt zur Bestellung, geht über das Konto ihres Käufers
+    const toBuyers = (from: number) => outbound.slice(from).map((call) => call.url).filter((url) => url === erste.url || url === zweite.url);
+    const munich = await makeLead("A", catA.id, "80331"); let before = outbound.length;
+    expect(await deliver(munich)).toMatchObject({ result: "angenommen", buyerName: erste.company, orderId: order.orderId, unitPrice: "44.00" });
+    expect(toBuyers(before)).toEqual([erste.url]);
+    expect((await delivered()).deliveredCount).toBe(1);
+    // Berlin liegt außerhalb des Gebiets der Bestellung: Station 1 wird übersprungen, Station 2 bekommt den Lead – ohne dass er zur Bestellung zählt
+    const berlin = await makeLead("B", catA.id, "10115"); before = outbound.length;
+    expect(await deliver(berlin)).toMatchObject({ result: "angenommen", buyerName: zweite.company, orderId: null, unitPrice: "30.00" });
+    expect(toBuyers(before)).toEqual([zweite.url]);
+    const berlinRows = await rowsOf(berlin.id);
+    expect(berlinRows.map((row) => [row.buyerName, row.result, row.orderId, row.skipReason])).toEqual([[erste.company, "übersprungen", order.orderId, "Bundesland außerhalb des Liefergebiets (Bayern)"], [zweite.company, "angenommen", null, null]]);
+    expect((await delivered()).deliveredCount).toBe(1); // Menge der Bestellung unverändert
+    // Sicht: Der Käufer der Bestellung sieht nur seinen Lead, nicht den der zweiten Station – und umgekehrt
+    const asBuyer = (userId: number) => appRouter.createCaller({ user: { id: userId } } as never);
+    expect((await asBuyer(erste.userId).leadops.customerLeads({})).map((row) => row.publicId)).toEqual([munich.publicId]);
+    expect((await asBuyer(zweite.userId).leadops.customerLeads({})).map((row) => row.publicId)).toEqual([berlin.publicId]);
+    // zweite Sparte derselben Bestellung (bis v375 fand so ein Lead keine Kette): Station 1, Menge erreicht → Bestellung erfüllt
+    const second = await makeLead("C", catB.id, "90402");
+    expect(await deliver(second)).toMatchObject({ result: "angenommen", buyerName: erste.company, orderId: order.orderId });
+    expect(await delivered()).toMatchObject({ deliveredCount: 2, status: "erfüllt" });
+    // erfüllt: Über die Kette der Bestellung geht nichts mehr raus – auch nicht an Station 2
+    const late = await makeLead("D", catA.id, "10117");
+    await expect(deliver(late)).rejects.toThrow(/ist erfüllt/);
+    expect(await rowsOf(late.id)).toHaveLength(0);
+    // (e) Station ohne Konto: wird von Hand übergeben – nicht über das Konto des Bestell-Käufers (bis v375 wäre der Lead dorthin gegangen)
+    await db.update(ordersTable).set({ status: "aktiv", quantity: null }).where(eq(ordersTable.id, order.orderId)); await db.update(configsTable).set({ requestedQuantity: 0 }).where(eq(configsTable.orderId, order.orderId));
+    await db.update(stopsTable).set({ active: false }).where(eq(stopsTable.id, added.stopId));
+    const hand = await makeLead("E", catA.id, "20095"); before = outbound.length;
+    expect(await deliver(hand)).toMatchObject({ result: "angeboten", buyerName: `V376 Dritte ${stamp}`, orderId: null });
+    expect(toBuyers(before)).toHaveLength(0);
+    await db.update(stopsTable).set({ active: true }).where(eq(stopsTable.id, added.stopId));
+    // (f) Startdatum gilt auch bei „fortlaufend“: Vor dem Start nimmt die ganze Kette nichts an
+    await db.update(configsTable).set({ startsAt: new Date(Date.now() + 3 * 86_400_000) }).where(eq(configsTable.orderId, order.orderId));
+    const early = await makeLead("F", catA.id, "80333");
+    await expect(deliver(early)).rejects.toThrow(/Bestellzeitraum hat noch nicht begonnen/);
+    await db.update(configsTable).set({ startsAt: null }).where(eq(configsTable.orderId, order.orderId));
+    // (g) Bestellung ohne gewählten Käufer liefert nicht (statt „angeboten an Noch nicht gewählt“)
+    const open = await owner.leadops.createOrder({ name: `V376 Offen ${stamp}`, buyerName: "Noch nicht gewählt", categoryId: catB.id, quantity: null, unitPrice: 10, status: "offen" });
+    expect((await syncAllOrderChains(db, { tenantId: S.tenantId })).created).toBeGreaterThanOrEqual(1); // beim Start: fehlende Ketten entstehen
+    const openChain = (await db.select().from(chainsTable).where(eq(chainsTable.orderId, open.orderId)))[0]; expect(openChain).toMatchObject({ categoryId: catB.id, status: "aktiv" });
+    expect((await owner.leadops.chainDetail({ chainId: openChain.id, range: "maximal" })).order).toMatchObject({ buyerMissing: true, missingStation: false });
+    await db.update(chainsTable).set({ status: "inaktiv" }).where(eq(chainsTable.id, chainB.id));
+    const nobody = await makeLead("G", catB.id, "80335");
+    await expect(deliver(nobody)).rejects.toThrow(/In der Bestellung ist noch kein Käufer gewählt/);
+    await db.update(chainsTable).set({ status: "aktiv" }).where(eq(chainsTable.id, chainB.id)); await db.update(ordersTable).set({ status: "storniert" }).where(eq(ordersTable.id, open.orderId));
+    // (h) Im Hintergrund ändert sich an vorhandenen Ketten nichts: eine von Hand gebaute Kette ohne Station bleibt leer, bis jemand „übernehmen“ wählt
+    const manual = await owner.leadops.createOrder({ name: `V376 Hand ${stamp}`, buyerName: zweite.company, categoryId: catA.id, quantity: null, unitPrice: 25, status: "aktiv" });
+    await db.update(configsTable).set({ buyerUserId: zweite.userId }).where(eq(configsTable.orderId, manual.orderId));
+    const emptyChain = Number((await db.insert(chainsTable).values({ tenantId: S.tenantId, orderId: manual.orderId, categoryId: catA.id, name: `test ${stamp}`, priority: 5, sellTarget: 1, status: "aktiv" }))[0].insertId);
+    await syncAllOrderChains(db, { tenantId: S.tenantId });
+    expect(await stopsOf(emptyChain)).toHaveLength(0);
+    expect((await owner.leadops.chainDetail({ chainId: emptyChain, range: "maximal" })).order).toMatchObject({ missingStation: true });
+    expect(await owner.leadops.insertOrderStation({ chainId: emptyChain })).toEqual({ success: true, changed: true });
+    expect(await stopsOf(emptyChain)).toMatchObject([{ orderStop: true, position: 1, buyerName: zweite.company, buyerUserId: zweite.userId, unitPrice: "25.00" }]);
+    expect(await owner.leadops.insertOrderStation({ chainId: emptyChain })).toEqual({ success: true, changed: false });
+    // (i) anderer Käufer in der Bestellung: Station 1 hat schon Leads bekommen → sie bleibt für die Historie (aus), davor steht die neue
+    await owner.leadops.saveOrderWorkspace({ ...input, quantity: null, buyerName: zweite.company, buyerUserId: zweite.userId, unitPrice: 41 });
+    const afterChange = await stopsOf(chainA.id);
+    expect(afterChange[0]).toMatchObject({ orderStop: true, buyerName: zweite.company, buyerUserId: zweite.userId, unitPrice: "41.00", active: true });
+    expect(afterChange.find((stop) => stop.id === stationA.id)).toMatchObject({ orderStop: false, active: false, buyerName: erste.company, buyerUserId: erste.userId });
+    expect((await asBuyer(zweite.userId).leadops.customerLeads({})).map((row) => row.publicId).sort()).toEqual([berlin.publicId]); // die Leads des früheren Käufers bleiben bei ihm
+    expect((await asBuyer(erste.userId).leadops.customerLeads({})).map((row) => row.publicId).sort()).toEqual([munich.publicId, second.publicId].sort());
+    // Kategorie abgewählt: ihre Kette geht aus
+    await owner.leadops.saveOrderWorkspace({ ...input, quantity: null, buyerName: zweite.company, buyerUserId: zweite.userId, unitPrice: 41, categoryIds: [catA.id] });
+    expect((await ownChains()).find((chain) => chain.id === chainB.id)!.status).toBe("inaktiv");
+    // (j) Standard-Gründe: für einen Mandanten ohne Gründe alle 30; „ergänzen“ füllt nur auf, was fehlt
+    const reasonsBefore = await db.select().from(reasonsTable).where(eq(reasonsTable.tenantId, S.tenantId));
+    expect((await ensureDefaultReasons(db, { tenantId: S.tenantId, onlyIfEmpty: true })).added).toBe(reasonsBefore.length ? 0 : DEFAULT_REASONS.length);
+    const result = await owner.leadops.addDefaultReasons(); const reasonsAfter = await db.select().from(reasonsTable).where(eq(reasonsTable.tenantId, S.tenantId));
+    expect(reasonsAfter.length).toBe(reasonsBefore.length + result.added);
+    for (const reason of DEFAULT_REASONS) expect(reasonsAfter.some((row) => row.name.toLowerCase() === reason.name.toLowerCase())).toBe(true);
+    expect((await owner.leadops.addDefaultReasons()).added).toBe(0);
+    expect(reasonsAfter.find((row) => row.name === "Zustellung fehlgeschlagen (API)")!.forwardToNextStop || reasonsBefore.some((row) => row.name === "Zustellung fehlgeschlagen (API)")).toBe(true);
+  }, 120000);
 });

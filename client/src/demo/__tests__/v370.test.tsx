@@ -56,18 +56,20 @@ describe("Version 370", () => {
     expect(root.querySelector(".lk-builder")).toBeTruthy(); expect(root.querySelector(".lk-welcome")).toBeNull();
   }, 30_000);
 
-  it("Lieferkette, Detail: Kunden der Reihe nach mit Platz, Zahlen und Preis mit Komma – „44,50“ wird 44,5 €", async () => {
+  it("Lieferkette, Detail: Stationen der Reihe nach mit Platz, Zahlen und Preis mit Komma – „44,50“ wird 44,5 €; Station 1 einer Bestellung zeigt ihren Preis fest (v376)", async () => {
     const root = await open("page=Lieferkette&chain=1");
-    const stops = Array.from(root.querySelectorAll<HTMLElement>(".lk-stop")); expect(stops.length).toBeGreaterThan(0);
+    const stops = Array.from(root.querySelectorAll<HTMLElement>(".lk-stop")); expect(stops.length).toBeGreaterThan(1);
     expect(stops.map((node) => node.querySelector(".lk-stop-pos")!.textContent)).toEqual(stops.map((_, index) => String(index + 1)));
     const first = stops[0]; expect(first.querySelectorAll(".lk-stop-stat")).toHaveLength(3);
-    const price = first.querySelector<HTMLInputElement>('.lk-stop-edit input')!; expect(price.value).toMatch(/^\d+,\d{2}$/);
-    const stopRow = table("deliveryStops").filter((row) => row.chainId === 1).sort((a, b) => Number(a.position) - Number(b.position))[0]; expect(stopRow).toBeTruthy(); const stopId = Number(stopRow.id);
+    // Kette 1 gehört zu einer Bestellung: Station 1 ist die Bestellung – ihr Preis steht fest und wird in der Bestellung geändert
+    expect(first.classList.contains("is-order")).toBe(true); expect(first.querySelector(".lk-stop-fixed")!.textContent).toMatch(/^\d+,\d{2} €$/);
+    const second = stops[1]; const price = second.querySelector<HTMLInputElement>('.lk-stop-edit input')!; expect(price.value).toMatch(/^\d+,\d{2}$/);
+    const stopRow = table("deliveryStops").filter((row) => row.chainId === 1).sort((a, b) => Number(a.position) - Number(b.position))[1]; expect(stopRow).toBeTruthy(); const stopId = Number(stopRow.id);
     await act(async () => { fireEvent.focus(price); fireEvent.change(price, { target: { value: "44,50" } }); fireEvent.blur(price); }); await settle(700);
     expect(Number(table("deliveryStops").find((row) => row.id === stopId)!.unitPrice)).toBe(44.5);
-    expect(root.querySelectorAll<HTMLInputElement>(".lk-stop-edit input")[0].value).toBe("44,50");
-    // Details aufklappen: Name ist der Knopf
-    await click(first.querySelector(".lk-stop-name")); expect(first.classList.contains("is-open")).toBe(true);
+    expect(root.querySelectorAll<HTMLElement>(".lk-stop")[1].querySelector<HTMLInputElement>(".lk-stop-edit input")!.value).toBe("44,50");
+    // Einstellungen aufklappen: Name ist der Knopf
+    await click(second.querySelector(".lk-stop-name")); expect(second.classList.contains("is-open")).toBe(true);
   }, 30_000);
 
   it("Verträge: Ring „unterschrieben“ mit Anteil der gesendeten, Zeichen je Station", async () => {

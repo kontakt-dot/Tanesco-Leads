@@ -19,10 +19,11 @@ describe("Lead-Pipeline im Chat-Build", () => {
 
     const order = await call("leadops.createOrder", { name: "Pipeline-Test", buyerName: "Pipeline Käufer", categoryId: cat.id, quantity: 5, unitPrice: 50, status: "aktiv" });
     await call("leadops.saveOrderWorkspace", { orderId: order.orderId, name: "Pipeline-Test", buyerName: "Pipeline Käufer", buyerUserId: buyer.userId, categoryId: cat.id, categoryIds: [cat.id], quantity: 5, unitPrice: 50, supplierId: supplier.id, supplierMode: "ein", supplierIds: [supplier.id], deliveryInterval: "sofort", compensateClaims: false, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
-    await call("leadops.createDeliveryChain", { orderId: order.orderId, categoryId: cat.id, name: "Pipeline-Kette", priority: 1, sellTarget: 1 });
-    const chain = (await call("leadops.listDeliveryChains")).find((c: any) => c.name === "Pipeline-Kette");
-    await call("leadops.addDeliveryStop", { chainId: chain.id, buyerName: "Pipeline Käufer", position: 1, unitPrice: 50 });
-    await call("leadops.updateDeliveryChain", { id: chain.id, status: "aktiv" });
+    // seit v376: Mit dem Speichern der Bestellung steht ihre Lieferkette – Station 1 ist die Bestellung (Käufer und Preis von dort)
+    const chain = (await call("leadops.listDeliveryChains")).find((c: any) => c.orderId === order.orderId);
+    expect(chain.status).toBe("aktiv"); expect(chain.stops).toHaveLength(1); expect(chain.stops[0]).toMatchObject({ buyerName: "Pipeline Käufer", position: 1 });
+    await call("leadops.updateDeliveryChain", { id: chain.id, name: "Pipeline-Kette" });
+    await expect(call("leadops.addDeliveryStop", { chainId: chain.id, buyerName: "Pipeline Käufer", position: 1, unitPrice: 50 })).rejects.toThrow("Diese Position ist in der Lieferkette bereits belegt.");
     await call("leadops.createAutomationRule", { name: "Pipeline-Regel", triggerType: "lead_erstellt", sourceCategoryId: cat.id, targetCategoryId: cat.id, conditions: [{ field: "city", operator: "gleich", value: "Kiel" }], actionType: "lead_bestellung_zuordnen", actionConfig: { orderId: order.orderId }, status: "aktiv" });
 
     const before = getStore().tables.integrationEvents.length;
@@ -66,10 +67,8 @@ describe("Pipeline-Zusätze im Chat-Build", () => {
     // Tägliches Intervall ohne Echtzeit → Zeitplaner
     const order = await call("leadops.createOrder", { name: "Tagesbestellung", buyerName: "Tages Käufer", categoryId: cat.id, quantity: 5, unitPrice: 40, status: "aktiv" });
     await call("leadops.saveOrderWorkspace", { orderId: order.orderId, name: "Tagesbestellung", buyerName: "Tages Käufer", buyerUserId: null, categoryId: cat.id, categoryIds: [cat.id], quantity: 5, unitPrice: 40, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "täglich", compensateClaims: false, priority: 1, realtimeDelivery: false, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
-    await call("leadops.createDeliveryChain", { orderId: order.orderId, categoryId: cat.id, name: "Tageskette", priority: 1, sellTarget: 1 });
-    const daily = (await call("leadops.listDeliveryChains")).find((c: any) => c.name === "Tageskette");
-    await call("leadops.addDeliveryStop", { chainId: daily.id, buyerName: "Tages Käufer", position: 1, unitPrice: 40 });
-    await call("leadops.updateDeliveryChain", { id: daily.id, status: "aktiv" });
+    const daily = (await call("leadops.listDeliveryChains")).find((c: any) => c.orderId === order.orderId); // seit v376 steht die Kette mit dem Speichern
+    expect(daily.stops).toHaveLength(1); await call("leadops.updateDeliveryChain", { id: daily.id, name: "Tageskette" });
     const pendingLead = await call("leadops.importLead", { categoryId: cat.id, firstName: "Warte", lastName: "Schleife", city: "Kiel" });
     await call("leadops.assignLeadsToOrder", { publicIds: [pendingLead.publicId], orderId: order.orderId });
     expect(getStore().tables.leads.find((row) => row.publicId === pendingLead.publicId)!.status).toBe("neu");
@@ -123,10 +122,8 @@ describe("Integration im Chat-Build", () => {
     // Bestellung des Käufers mit Echtzeit → Lead läuft über den Endpoint
     const order = await call("leadops.createOrder", { name: "Endpoint-Test", buyerName: buyer.name, categoryId: cat.id, quantity: 5, unitPrice: 40, status: "aktiv" });
     await call("leadops.saveOrderWorkspace", { orderId: order.orderId, name: "Endpoint-Test", buyerName: buyer.name, buyerUserId: buyer.userId, categoryId: cat.id, categoryIds: [cat.id], quantity: 5, unitPrice: 40, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "sofort", compensateClaims: false, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
-    await call("leadops.createDeliveryChain", { orderId: order.orderId, categoryId: cat.id, name: "Endpoint-Kette", priority: 1, sellTarget: 1 });
-    const chain = (await call("leadops.listDeliveryChains")).find((c: any) => c.name === "Endpoint-Kette");
-    await call("leadops.addDeliveryStop", { chainId: chain.id, buyerName: buyer.name, position: 1, unitPrice: 40 });
-    await call("leadops.updateDeliveryChain", { id: chain.id, status: "aktiv" });
+    const chain = (await call("leadops.listDeliveryChains")).find((c: any) => c.orderId === order.orderId); // seit v376 steht die Kette mit dem Speichern
+    expect(chain.stops).toHaveLength(1); await call("leadops.updateDeliveryChain", { id: chain.id, name: "Endpoint-Kette" });
     const lead = await call("leadops.importLead", { categoryId: cat.id, firstName: "Endpoint", lastName: "Kunde", postcode: "50667", city: "Köln" });
     const delivered = await call("leadops.deliverLead", { publicId: lead.publicId, orderId: order.orderId });
     expect(delivered.result).toBe("angenommen"); expect(delivered.export.integrationName).toContain("API-Call");

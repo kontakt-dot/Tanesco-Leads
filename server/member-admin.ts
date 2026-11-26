@@ -2,11 +2,11 @@
  * Benutzerbereich (Vorbild: Leadfy „Benutzer“): Stammdaten, Passwort, Reklamation, Zahlung, Benachrichtigungen,
  * Ansicht, Lieferant (Provision, Token, eingehende Mappings), Guthaben und Aktivität je Mitglied.
  */
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { avatarUrlOf } from "../shared/avatar";
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
-import { apiTokens, balanceTransactions, claims, impersonationSessions, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, reclamationReasons, supplierInboundMappings, suppliers, users } from "../drizzle/schema";
+import { apiTokens, balanceTransactions, claims, deliveryStops, impersonationSessions, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, reclamationReasons, supplierInboundMappings, suppliers, users } from "../drizzle/schema";
 import { hashPassword } from "./_core/auth";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
@@ -209,7 +209,7 @@ export function impersonationSuffix(sessions: Array<{ startedAt: Date; endedAt: 
 export async function listMemberActivity(db: Db, tenantId: number, membershipId: number, limit = 100) {
   const { user } = await requireMembership(db, tenantId, membershipId);
   const supplier = await linkedSupplier(db, tenantId, user.id);
-  const buyerLeadIds = (await db.select({ leadId: leadDeliveries.leadId }).from(leadDeliveries).innerJoin(orderOperationalConfigs, eq(orderOperationalConfigs.orderId, leadDeliveries.orderId)).where(and(eq(leadDeliveries.tenantId, tenantId), eq(orderOperationalConfigs.buyerUserId, user.id)))).map((row) => row.leadId);
+  const buyerLeadIds = (await db.select({ leadId: leadDeliveries.leadId }).from(leadDeliveries).innerJoin(orderOperationalConfigs, eq(orderOperationalConfigs.orderId, leadDeliveries.orderId)).leftJoin(deliveryStops, eq(deliveryStops.id, leadDeliveries.stopId)).where(and(eq(leadDeliveries.tenantId, tenantId), eq(orderOperationalConfigs.buyerUserId, user.id), /* nur Lieferungen an den Käufer der Bestellung selbst – nicht an eine weitere Station ihrer Kette mit eigenem Käufer-Konto (v376) */ or(isNull(deliveryStops.buyerUserId), eq(deliveryStops.buyerUserId, user.id))))).map((row) => row.leadId);
   const supplierLeadIds = supplier ? (await db.select({ id: leads.id }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.kind, "verkauf"), eq(leads.supplierId, supplier.id))).orderBy(desc(leads.createdAt)).limit(300)).map((row) => row.id) : [];
   const leadIds = Array.from(new Set([...buyerLeadIds, ...supplierLeadIds]));
   const events: Array<{ at: Date; kind: string; title: string; detail: string | null; leadId?: number; leadPublicId?: string }> = [];

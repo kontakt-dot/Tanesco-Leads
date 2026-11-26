@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { Eye, EyeOff, LogIn } from "lucide-react";
+import { Activity, ArrowLeft, Bell, CreditCard, Eye, EyeOff, KeyRound, LayoutPanelLeft, LogIn, Plug, ShieldAlert, ShoppingCart, Truck, UserRound, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { roleLabel } from "@/components/MemberDirectory";
@@ -14,18 +14,20 @@ import { confirmAction } from "@/lib/confirm";
 import { orderStatusLabel } from "../../../shared/order-status";
 
 type Tab = "stammdaten" | "passwort" | "bestellungen" | "lieferant" | "reklamation" | "zahlung" | "benachrichtigungen" | "aktivitaet" | "ansicht" | "tools";
-const TABS: Array<{ key: Tab; label: string; hint: string }> = [
-  { key: "stammdaten", label: "Stammdaten", hint: "Persönliche Daten, Adresse, Verhalten" },
-  { key: "passwort", label: "Passwort zurücksetzen", hint: "Neues Passwort festlegen" },
-  { key: "bestellungen", label: "Bestellungen", hint: "Aktive, pausierte und beendete Bestellungen" },
-  { key: "lieferant", label: "Lieferant", hint: "Lead-Import-Provisionen & Auszahlung" },
-  { key: "reklamation", label: "Reklamation", hint: "Frist, Sperren & Grund-Ausschlüsse" },
-  { key: "zahlung", label: "Zahlung", hint: "Abrechnungsart, Intervall & Steuer" },
-  { key: "benachrichtigungen", label: "Benachrichtigungen", hint: "E-Mail-Benachrichtigungen steuern" },
-  { key: "aktivitaet", label: "Aktivität", hint: "Audit-Log und Lead-Events" },
-  { key: "ansicht", label: "Ansicht", hint: "Welche Sidebar-Einträge dieser Kunde sieht" },
-  { key: "tools", label: "Integration", hint: "Webhook + ausgehende API-Calls" },
+const TABS: Array<{ key: Tab; label: string; hint: string; icon: LucideIcon }> = [
+  { key: "stammdaten", label: "Stammdaten", hint: "Persönliche Daten, Adresse, Verhalten", icon: UserRound },
+  { key: "passwort", label: "Passwort", hint: "Passwort zurücksetzen: ein neues Passwort festlegen", icon: KeyRound },
+  { key: "bestellungen", label: "Bestellungen", hint: "Aktive, pausierte und beendete Bestellungen", icon: ShoppingCart },
+  { key: "lieferant", label: "Lieferant", hint: "Provisionen für gelieferte Leads und Auszahlung", icon: Truck },
+  { key: "reklamation", label: "Reklamation", hint: "Frist, Sperren und ausgeschlossene Gründe", icon: ShieldAlert },
+  { key: "zahlung", label: "Zahlung", hint: "Abrechnungsart, Intervall und Steuer", icon: CreditCard },
+  { key: "benachrichtigungen", label: "Benachrichtigungen", hint: "Welche E-Mails dieser Benutzer bekommt", icon: Bell },
+  { key: "aktivitaet", label: "Aktivität", hint: "Was mit diesem Benutzer und seinen Leads passiert ist", icon: Activity },
+  { key: "ansicht", label: "Ansicht", hint: "Welche Menüpunkte dieser Kunde sieht", icon: LayoutPanelLeft },
+  { key: "tools", label: "Integration", hint: "Webhook und Schnittstellen, über die Leads zu diesem Kunden gehen", icon: Plug },
 ];
+/** Reiter aus der Adresse – unbekannte Angaben (z. B. das frühere „integration“) landen beim passenden oder beim ersten Reiter. */
+const tabFromAddress = (): Tab => { const value = new URLSearchParams(window.location.search).get("tab"); return TABS.some((item) => item.key === value) ? (value as Tab) : value === "integration" ? "tools" : "stammdaten"; };
 const euro = (value: string | number | null | undefined) => `${Number(value ?? 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 const field = "h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100";
 const generatePassword = () => { const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!$%"; const bytes = new Uint8Array(14); crypto.getRandomValues(bytes); return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join(""); };
@@ -35,7 +37,9 @@ export default function MemberDetail({ membershipId, onBack }: { membershipId: n
   const utils = trpc.useUtils();
   const detail = trpc.leadops.getMemberDetail.useQuery({ membershipId }, { retry: false });
   const me = trpc.auth.me.useQuery(undefined, { retry: false });
-  const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(window.location.search).get("tab") as Tab) || "stammdaten");
+  const [tab, setTab] = useState<Tab>(tabFromAddress);
+  /** Reiter wählen – steht auch in der Adresse, damit Neuladen und Links beim selben Reiter landen */
+  const selectTab = (key: Tab) => { setTab(key); const params = new URLSearchParams(window.location.search); params.set("tab", key); window.history.replaceState(null, "", `/?${params.toString()}`); };
   const impersonate = trpc.auth.impersonate.useMutation({ onSuccess: async (result) => { window.sessionStorage.setItem("tanesco.impersonationReturn", String(result.membershipId)); await utils.invalidate(); window.location.assign("/?page=Dashboard"); }, onError: (error) => toast.error(error.message) });
   const refresh = () => { utils.leadops.getMemberDetail.invalidate({ membershipId }); utils.leadops.listMembers.invalidate(); };
   const setAvatar = trpc.leadops.setMemberAvatar.useMutation({ onSuccess: (result) => { toast.success(result.avatarUrl ? "Profilbild gespeichert." : "Profilbild entfernt."); refresh(); utils.auth.me.invalidate(); utils.leadops.avatarDirectory.invalidate(); utils.leadops.pipelineOwners.invalidate(); }, onError: (error) => toast.error(error.message) });
@@ -43,12 +47,29 @@ export default function MemberDetail({ membershipId, onBack }: { membershipId: n
   if (!detail.data) return <section className="surface-panel p-6 text-sm text-slate-400">Benutzer wird geladen…</section>;
   const data = detail.data; const { user, membership, settings } = data;
   const initials = (user.name ?? user.email ?? "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-  return <>
-    <header className="page-intro compact"><div><span className="eyebrow">BENUTZER</span><h1>{user.name ?? user.email}</h1><p>Benutzer bearbeiten.</p></div><div className="people-header-actions"><Button variant="outline" onClick={onBack}>Zurück zur Liste</Button></div></header>
-    <section className="surface-panel operations-panel mb-4 p-5"><div className="flex flex-wrap items-center gap-4"><AvatarUpload compact size={64} initials={initials} avatarUrl={(user as { avatarUrl?: string | null }).avatarUrl ?? null} busy={setAvatar.isPending} onPick={(dataUrl) => setAvatar.mutate({ membershipId, dataUrl })} onRemove={() => setAvatar.mutate({ membershipId, dataUrl: null })} /><div><div className="flex flex-wrap items-center gap-2"><strong className="text-lg text-slate-100">{user.name}</strong><Badge variant="outline" className={membership.status === "aktiv" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-300"}>{membership.status === "aktiv" ? "Aktiv" : membership.status === "eingeladen" ? "Eingeladen" : "Inaktiv"}</Badge><Badge variant="outline" className="border-white/15 text-slate-200">{roleLabel(membership.role, membership.partnerType)}</Badge></div><div className="text-sm text-slate-400">{[user.company, user.email].filter(Boolean).join(" · ")}</div></div>{membership.role !== "inhaber" && user.id !== me.data?.id && <div className="ml-auto text-right"><p className="mb-2 max-w-xs text-xs text-slate-400">Du wirst als dieser Benutzer eingeloggt — siehst die Plattform genauso wie er. Verlassen über das Banner am oberen Rand.</p><Button variant="outline" size="sm" onClick={() => impersonate.mutate({ membershipId })}><LogIn /> Als Benutzer einloggen</Button></div>}</div>
-      <div className="mt-4 grid gap-3 md:grid-cols-5"><InfoCard title="ZAHLUNGSMETHODE" value={paymentLabel(settings.paymentMode)} /><BalanceCard membershipId={membershipId} balance={settings.prepaidBalance} onDone={refresh} /><InfoCard title="WEBHOOK" value={settings.webhookUrl ? "Gesetzt" : "Nicht gesetzt"} hint={settings.webhookUrl ?? "Keine URL konfiguriert"} /><InfoCard title="REKLAMIERFRIST" value={`${settings.reclamationPeriodHours} Std.`} hint="Zeitraum für Lead-Reklamationen" /><InfoCard title="REGISTRIERT AM" value={new Date(membership.createdAt).toLocaleDateString("de-DE")} hint="Konto-Anlagedatum" /></div>
+  const active = TABS.find((item) => item.key === tab) ?? TABS[0];
+  return <div className="fx-scope md">
+    <button type="button" className="md-back" onClick={onBack}><ArrowLeft aria-hidden="true" />Zurück zur Liste</button>
+    <section className="md-hero" aria-label="Benutzer">
+      <div className="md-hero-top">
+        <AvatarUpload compact size={76} initials={initials} avatarUrl={(user as { avatarUrl?: string | null }).avatarUrl ?? null} busy={setAvatar.isPending} onPick={(dataUrl) => setAvatar.mutate({ membershipId, dataUrl })} onRemove={() => setAvatar.mutate({ membershipId, dataUrl: null })} />
+        <div className="md-hero-who">
+          <h1>{user.name ?? user.email}</h1>
+          <p>{[user.company, user.email].filter(Boolean).join(" · ")}</p>
+          <div className="md-chips"><span className={`md-state ${membership.status === "aktiv" ? "is-on" : ""}`}>{membership.status === "aktiv" ? "Aktiv" : membership.status === "eingeladen" ? "Eingeladen" : "Inaktiv"}</span><span className="md-chip">{roleLabel(membership.role, membership.partnerType)}</span></div>
+        </div>
+        {membership.role !== "inhaber" && user.id !== me.data?.id && <div className="md-hero-side"><Button variant="outline" size="sm" onClick={() => impersonate.mutate({ membershipId })}><LogIn /> Als Benutzer einloggen</Button><small>Du siehst die Plattform dann genau wie dieser Benutzer. Zurück geht es über die Leiste am oberen Rand.</small></div>}
+      </div>
+      <dl className="md-rail">
+        <Fact label="Zahlungsart" value={paymentLabel(settings.paymentMode)} />
+        <BalanceCard membershipId={membershipId} balance={settings.prepaidBalance} onDone={refresh} />
+        <Fact label="Webhook" value={settings.webhookUrl ? "Gesetzt" : "Nicht gesetzt"} hint={settings.webhookUrl ?? "Keine Adresse hinterlegt"} />
+        <Fact label="Reklamationsfrist" value={`${settings.reclamationPeriodHours} Std.`} hint="So lange darf reklamiert werden" />
+        <Fact label="Registriert am" value={new Date(membership.createdAt).toLocaleDateString("de-DE")} hint="Konto angelegt" />
+      </dl>
     </section>
-    <nav className="mb-4 flex flex-wrap gap-1 rounded-lg bg-white/[.03] p-1">{TABS.map((item) => <button key={item.key} type="button" title={item.hint} className={`rounded-md px-3 py-2 text-xs ${tab === item.key ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"}`} onClick={() => setTab(item.key)}>{item.label}</button>)}</nav>
+    <nav className="md-tabs" role="tablist" aria-label="Bereiche des Benutzers">{TABS.map((item) => { const Icon = item.icon; const on = tab === item.key; return <button key={item.key} type="button" role="tab" aria-selected={on} title={item.hint} className={on ? "is-on" : ""} onClick={() => selectTab(item.key)}><Icon aria-hidden="true" /><span>{item.label}</span>{item.key === "bestellungen" && data.orders.length > 0 && <em>{data.orders.length}</em>}</button>; })}</nav>
+    <p className="md-tab-hint">{active.hint}</p>
     {tab === "stammdaten" && <ProfileTab data={data} onDone={refresh} />}
     {tab === "passwort" && <PasswordTab membershipId={membershipId} />}
     {tab === "bestellungen" && <OrdersTab orders={data.orders} categories={data.categories} />}
@@ -59,17 +80,18 @@ export default function MemberDetail({ membershipId, onBack }: { membershipId: n
     {tab === "aktivitaet" && <ActivityTab membershipId={membershipId} />}
     {tab === "ansicht" && <VisibilityTab data={data} onDone={refresh} />}
     {tab === "tools" && <IntegrationTab membershipId={membershipId} webhookUrl={settings.webhookUrl} />}
-  </>;
+  </div>;
 }
 
 type Detail = inferRouterOutputs<AppRouter>["leadops"]["getMemberDetail"];
 const paymentLabel = (mode: string) => ({ standard: "Standard", vorkasse: "Guthaben (Vorkasse)", auf_rechnung: "Auf Rechnung", gesperrt: "Gesperrt", karte_pro_lead: "Kreditkarte pro Lead", sepa_pro_lead: "SEPA-Lastschrift pro Lead" } as Record<string, string>)[mode] ?? mode;
-const InfoCard = ({ title, value, hint }: { title: string; value: string; hint?: string }) => <div className="rounded-lg border border-white/8 bg-white/[.02] p-3"><span className="eyebrow">{title}</span><div className="mt-1 truncate text-sm text-slate-100" title={hint}>{value}</div>{hint && <div className="truncate text-[11px] text-slate-500" title={hint}>{hint}</div>}</div>;
+/** Eine Angabe in der Leiste unter dem Kopf: Bezeichnung, Wert, darunter leise der Zusatz. */
+const Fact = ({ label, value, hint }: { label: string; value: string; hint?: string }) => <div><dt>{label}</dt><dd title={hint ?? value}>{value}</dd>{hint && <small title={hint}>{hint}</small>}</div>;
 
 function BalanceCard({ membershipId, balance, onDone }: { membershipId: number; balance: string; onDone: () => void }) {
   const [mode, setMode] = useState<"aufladung" | "abbuchung" | null>(null); const [amount, setAmount] = useState(""); const [description, setDescription] = useState("");
   const adjust = trpc.leadops.adjustMemberBalance.useMutation({ onSuccess: () => { toast.success("Guthaben angepasst."); setMode(null); setAmount(""); setDescription(""); onDone(); }, onError: (error) => toast.error(error.message) });
-  return <div className="rounded-lg border border-white/8 bg-white/[.02] p-3"><span className="eyebrow">VERFÜGBAR</span><div className="mt-1 text-sm text-slate-100">{euro(balance)}</div><div className="mt-1 flex gap-1"><Button size="sm" variant="ghost" onClick={() => setMode("aufladung")}>Aufladen</Button><Button size="sm" variant="ghost" onClick={() => setMode("abbuchung")}>Abbuchen</Button></div>
+  return <div><dt>Guthaben</dt><dd>{euro(balance)}</dd><span className="md-rail-links"><button type="button" onClick={() => setMode("aufladung")}>Aufladen</button><button type="button" onClick={() => setMode("abbuchung")}>Abbuchen</button></span>
     {mode && <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 px-4" onClick={() => setMode(null)}><section className="surface-panel w-full max-w-sm p-6" onClick={(event) => event.stopPropagation()}><span className="eyebrow">GUTHABEN</span><h2 className="mt-1 text-lg text-slate-100">{mode === "aufladung" ? "Aufladen" : "Abbuchen"} — Guthaben anpassen</h2><form className="mt-4 grid gap-3" onSubmit={(event) => { event.preventDefault(); adjust.mutate({ membershipId, kind: mode, amount: Number(amount.replace(",", ".")), description }); }}><label className="text-xs text-slate-300">Betrag<Input value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0,00" required /></label><label className="text-xs text-slate-300">Verwendungszweck<Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="z.B. „Überweisung 26.05.2026, Kundenref. ABC-123“" /></label><div className="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" onClick={() => setMode(null)}>Schließen</Button><Button className="flux-button" size="sm" type="submit" disabled={adjust.isPending}>{mode === "aufladung" ? "Aufladen" : "Abbuchen"}</Button></div></form></section></div>}
   </div>;
 }
