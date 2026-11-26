@@ -37,7 +37,7 @@ describe("Version 346", () => {
     // Farbpalette beim Anlegen: zwölf Farben und „Eigene Farbe“
     expect(root.querySelectorAll(".color-palette .color-dot")).toHaveLength(12); expect(root.querySelector(".color-palette .color-own")).toBeTruthy();
     // meistgenutzter Tag: Punkt und Name in einer Zeile – oder ein Strich, wenn noch kein Tag an einem Lead hängt
-    const top = root.querySelectorAll(".metric-card")[2]!; const used = (await callProcedure("leadops.tagOverview", undefined) as { tags: Array<{ usageCount: number }> }).tags.some((tag) => tag.usageCount > 0);
+    const top = root.querySelectorAll(".tg-stat")[2]!; const used = (await callProcedure("leadops.tagOverview", undefined) as { tags: Array<{ usageCount: number }> }).tags.some((tag) => tag.usageCount > 0);
     if (used) { expect(top.querySelector(".tag-top i")).toBeTruthy(); expect(top.querySelector(".tag-top span")!.textContent!.length).toBeGreaterThan(0); } else expect(top.querySelector("strong")!.textContent).toBe("–");
     // einzeln anhaken → Leiste zeigt die Zahl, „Alle auswählen“ nimmt alle
     const total = rows().length; const boxOf = (name: string) => rows().find((row) => row.querySelector("strong")!.textContent === name)!.querySelector<HTMLInputElement>("input.tag-check")!;
