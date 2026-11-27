@@ -2516,6 +2516,22 @@ const procedures: Record<string, Handler> = {
   "leadops.updateDeliveryChain": (input) => { const { id, ...updates } = input; update(store, "deliveryChains", (row) => row.id === id, updates); return { success: true }; },
   "leadops.addDeliveryStop": (input) => { T().deliveryChains.find((row) => row.id === input.chainId) ?? fail("Lieferkette wurde nicht gefunden."); if (T().deliveryStops.some((row) => row.chainId === input.chainId && row.position === input.position)) fail("Diese Position ist in der Lieferkette bereits belegt."); insert(store, "deliveryStops", { chainId: input.chainId, buyerName: input.buyerName, position: input.position, unitPrice: money(input.unitPrice), active: input.active ?? true }); return { success: true }; },
   "leadops.updateDeliveryStop": (input) => { const { id, unitPrice, ...rest } = input; const owned = T().deliveryStops.find((row) => row.id === id) ?? fail("Stop wurde nicht gefunden."); /* Station 1 einer Bestell-Kette kommt aus der Bestellung (v376) – wie bei updateChainStop */ if (owned.orderStop && T().deliveryChains.find((row) => row.id === owned.chainId)?.orderId && (rest.buyerName !== undefined || rest.position !== undefined || unitPrice !== undefined || rest.active === false)) fail(ORDER_STATION_LOCKED_TEXT); update(store, "deliveryStops", (row) => row.id === id, { ...rest, unitPrice: unitPrice === undefined ? undefined : money(unitPrice) }); return { success: true }; },
+  /* v384: direkt an einen Käufer senden (Spiegel von server/direct-delivery.ts) – in der Vorschau geht nichts ins Netz, die Übergabe gilt als angenommen */
+  "leadops.deliverLeadsToBuyer": (input) => {
+    const buyer = chainPickers().buyers.find((row) => row.userId === input.buyerUserId) ?? fail("Der Käufer wurde nicht gefunden.");
+    const results = (input.publicIds as string[]).map((publicId) => {
+      const lead = requireSalesLead(publicId);
+      const previous = T().leadDeliveries.find((row) => row.leadId === lead.id && (row.result === "angeboten" || row.result === "angenommen"));
+      if (previous && !input.allowRepeat) return { publicId, ok: false, buyerName: buyer.company, message: `Lead wurde bereits an ${previous.buyerName} ausgeliefert.`, partnerReference: null, unitPrice: "0.00" };
+      if (!buyer.api) return { publicId, ok: false, buyerName: buyer.company, message: `Bei ${buyer.company} ist für diese Kategorie keine Schnittstelle eingeschaltet (Benutzer → ${buyer.company} → Reiter „Integration“).`, partnerReference: null, unitPrice: "0.00" };
+      const now = new Date();
+      insert(store, "leadDeliveries", { tenantId: tenant().id, leadId: lead.id, chainId: null, stopId: null, orderId: null, buyerName: buyer.company, unitPrice: "0.00", result: "angenommen", windowEndsAt: null, acceptedAt: now, skipReason: null, claimId: null, occurredAt: now });
+      update(store, "leads", (row) => row.id === lead.id, { status: "zugewiesen", assignedAt: now });
+      statusEvent(lead.id, lead.status, "zugewiesen", `Direkt an ${buyer.company} gesendet (ohne Bestellung): geliefert (Vorschau – nichts gesendet)`);
+      return { publicId, ok: true, buyerName: buyer.company, message: `an ${buyer.company} gesendet (Vorschau – nichts gesendet)`, partnerReference: null, unitPrice: "0.00" };
+    });
+    return { sent: results.filter((item) => item.ok).length, failed: results.filter((item) => !item.ok).length, results };
+  },
   "leadops.deliverLead": (input) => deliverLeadNow(requireSalesLead(input.publicId), { chainId: input.chainId, orderId: input.orderId, allowRepeat: input.allowRepeat }),
   /* ---- API-Fehler (Spiegel von server/api-errors.ts): Übersicht, korrigieren, noch einmal ausliefern, abhaken, Schnittstellen prüfen */
   "leadops.apiErrorOverview": (input) => apiErrorOverviewNow(input?.days ?? 30),
