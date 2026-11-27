@@ -26,6 +26,7 @@ import { logActivity } from "./activity";
 import { NOT_POSSIBLE_PREFIX } from "../shared/api-errors";
 import { normalizePostcode } from "../shared/postcode";
 import { restoredLeadStatus } from "../shared/claim-view";
+import { isPartnerDuplicate } from "../shared/partner-duplicate";
 
 export type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 export type LeadRow = typeof leads.$inferSelect;
@@ -466,6 +467,7 @@ async function deliverLeadCore(db: Db, input: DeliverLeadInput): Promise<Deliver
       if (deliveryId) await db.update(leadDeliveries).set({ result: "abgelehnt" }).where(eq(leadDeliveries.id, deliveryId));
       if (ownOrder) await db.update(orders).set({ deliveredCount: ownOrder.deliveredCount, status: ownOrder.status }).where(eq(orders.id, ownOrder.id));
       await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: "zugewiesen", nextStatus: "zugewiesen", actorUserId: input.actorUserId, note: `API-Übergabe an ${handOverName}: abgelehnt (HTTP ${outcome.responseStatus ?? "–"})` });
+      if (isPartnerDuplicate(outcome.responseStatus ?? null, outcome.responseBody ?? "")) { const { markPartnerDuplicate } = await import("./direct-delivery"); await markPartnerDuplicate(db, { tenantId, lead, buyerName: stop.buyerName, status: outcome.responseStatus ?? null, message: (outcome.responseBody ?? "").slice(0, 300), actorUserId: input.actorUserId }).catch(() => undefined); }
       attempts.push({ chainId: target.chain.id, chainName: target.chain.name, stopId: stop.id, buyerName: stop.buyerName, orderId: rowOrderId, outcome: "abgelehnt", responseStatus: outcome.responseStatus, reason: matchedRule ? `${reason} → ${matchedRule.reasonName}` : reason });
       if (matchedRule) {
         // Partner-Response-Mapping: Treffer → Reklamation mit dem zugeordneten Grund (sofort genehmigt); weitergeben laut Stop-Regel, sonst laut Grund

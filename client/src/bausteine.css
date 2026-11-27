@@ -3430,3 +3430,6 @@ html.dark .ie button.border:hover:not(:disabled){border-color:var(--lt-accent-st
 /* ── Beim Käufer: Überschriften der übrigen Abschnitte im Reiter „Integration“ ── */
 .it-section .fx-h{margin:0}
 .it-intro{max-width:92ch;margin:5px 0 0;font-size:13px;line-height:1.5;color:var(--lt-muted)}
+
+/* ───────── Version 385: Dublette beim Käufer (Lead-Tabelle) ───────── */
+.lt-pill-dup { display: inline-flex; align-items: center; margin-left: 6px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--fx-warn, #92400e); background: var(--fx-warn-bg, #fef3c7); border: 1px solid var(--fx-warn-line, #fcd34d); }

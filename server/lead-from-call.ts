@@ -17,6 +17,7 @@ import { fieldNames } from "./llm-shape";
 import type { Db } from "./lead-pipeline";
 import { cleanSpokenContact, salutationFromTranscript, type SpokenContact } from "../shared/dialer-intake";
 import { emailFromFields } from "../shared/dialer-contact";
+import { salutationFromFirstName } from "../shared/first-names";
 import { callAnswerList, cleanFieldValues, dialerFieldMatches, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, isSalutation, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
 
 type ContactKey = Exclude<keyof SpokenContact, "salutation">;
@@ -102,6 +103,9 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
   const gaps: ContactKey[] = [];
   if (!current.firstName) gaps.push("firstName"); if (!current.lastName) gaps.push("lastName"); if (!current.email) gaps.push("email"); if (!current.street) gaps.push("street"); if (!current.postcode) gaps.push("postcode"); if (!current.city) gaps.push("city");
   const read = await readLeadFromTranscript({ transcript, category: category[0]?.name ?? null, fields: toRead, contactGaps: gaps });
+  // v385: Fällt die Anrede im Gespräch nicht, aus dem Vornamen schließen (Wattfox verlangt sie bei Photovoltaik) – im Lead-Log steht, woher sie kommt
+  let guessedFromName: "Herr" | "Frau" | null = null;
+  if (!salutation && !tidySalutation(meta.anrede) && !tidySalutation(meta.salutation)) { guessedFromName = await salutationForFirstName(current.firstName ?? read.contact.firstName ?? null); if (guessedFromName) salutation = guessedFromName; }
   // Frisch lesen: Während die KI gelesen hat, kann sich der Lead geändert haben (Freigabe, Auslieferung, Eingabe von Hand) – es wird nur ergänzt, nie zurückgedreht
   const latest = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0] ?? lead; const latestMeta = metaOf(latest.metadata);
   const has = (value: unknown, max: number) => Boolean(realText(typeof value === "string" || typeof value === "number" ? value : null, max));
@@ -117,6 +121,7 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
   if (!has(latest.city, 120) && read.contact.city) { patch.city = read.contact.city; contact.push(CONTACT_LABEL.city); }
   if (!has(latestMeta.street, 200) && read.contact.street) { nextMeta.street = read.contact.street; contact.push(CONTACT_LABEL.street); }
   await db.update(leads).set({ ...patch, metadata: nextMeta }).where(eq(leads.id, lead.id));
+  if (guessedFromName && nextMeta.anrede === guessedFromName) await db.insert(leadStatusEvents).values({ tenantId, leadId: lead.id, previousStatus: lead.status, nextStatus: lead.status, actorUserId: options.actorUserId ?? null, note: `Anrede aus dem Vornamen geschlossen: ${guessedFromName} – im Gespräch fiel sie nicht. Stimmt sie nicht: „Korrigieren“.` });
   // Kontakt der Liste (Rohdaten) genauso ergänzen – dort steht derselbe Mensch
   const rawContactId = Number(latestMeta.rawContactId ?? meta.rawContactId) || 0;
   if (rawContactId && (Object.keys(patch).length || nextMeta.street !== latestMeta.street)) {
@@ -170,6 +175,35 @@ export async function salutationsFromCalls(db: Db, options: { tenantId?: number;
     done.add(row.id); filled += 1;
   }
   return { checked: seen.size, filled };
+}
+/** Anrede aus dem Vornamen: erst die Liste eindeutiger Vornamen, sonst die KI (nur „Herr“, „Frau“ oder nichts). */
+export async function salutationForFirstName(firstName: string | null | undefined): Promise<"Herr" | "Frau" | null> {
+  const name = (firstName ?? "").trim(); if (!name || name.length > 60 || isSalutation(name)) return null;
+  const listed = salutationFromFirstName(name); if (listed) return listed;
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    const schema = { name: "anrede", schema: { type: "object", additionalProperties: false, required: ["anrede"], properties: { anrede: { type: "string", enum: ["Herr", "Frau", "unklar"], description: "Anrede zu diesem Vornamen" } } } };
+    const response = await invokeLLM({ model: "fast", maxTokens: 40, messages: [{ role: "system", content: "Du bekommst einen Vornamen einer Person in Deutschland (oft mit türkischer, arabischer, polnischer, russischer, balkanischer oder italienischer Herkunft). Antworte mit „Herr“, wenn der Vorname eindeutig männlich ist, mit „Frau“, wenn er eindeutig weiblich ist – sonst mit „unklar“ (zum Beispiel bei Namen für beide Geschlechter oder wenn es kein Vorname ist)." }, { role: "user", content: `Vorname: ${name}` }], outputSchema: schema, purpose: "anrede_aus_vorname" });
+    const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as { anrede?: string };
+    return parsed.anrede === "Herr" || parsed.anrede === "Frau" ? parsed.anrede : null;
+  } catch (error) { console.error("[Leads] Anrede aus dem Vornamen:", error instanceof Error ? error.message : error); return null; }
+}
+/** v385: Offene Leads ohne Anrede (auch nach dem Blick ins Gespräch) bekommen sie aus dem Vornamen – nach dem Start und im Lead-Log vermerkt. */
+export async function salutationsFromFirstNames(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ checked: number; filled: number }> {
+  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, status: leads.status, firstName: leads.firstName }).from(leads)
+    .where(and(eq(leads.kind, "verkauf"), sql`${leads.status} IN ('neu', 'genehmigt', 'hängend')`, sql`${leads.firstName} IS NOT NULL AND ${leads.firstName} <> ''`, sql`JSON_EXTRACT(${leads.metadata}, '$.anrede') IS NULL`, sql`JSON_EXTRACT(${leads.metadata}, '$.salutation') IS NULL`, ...(options.tenantId ? [eq(leads.tenantId, options.tenantId)] : [])))
+    .orderBy(desc(leads.id)).limit(options.max ?? 600);
+  const cache = new Map<string, "Herr" | "Frau" | null>(); let filled = 0;
+  for (const row of rows) {
+    const key = (row.firstName ?? "").trim().toLowerCase(); if (!cache.has(key)) cache.set(key, await salutationForFirstName(row.firstName));
+    const found = cache.get(key); if (!found) continue;
+    const fresh = (await db.select({ metadata: leads.metadata }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; const meta = metaOf(fresh?.metadata);
+    if (tidySalutation(meta.anrede) || tidySalutation(meta.salutation)) continue;
+    await db.update(leads).set({ metadata: { ...meta, anrede: found } }).where(eq(leads.id, row.id));
+    await db.insert(leadStatusEvents).values({ tenantId: row.tenantId, leadId: row.id, previousStatus: row.status, nextStatus: row.status, actorUserId: null, note: `Anrede aus dem Vornamen geschlossen: ${found} – im Gespräch fiel sie nicht. Stimmt sie nicht: „Korrigieren“.` });
+    filled += 1;
+  }
+  return { checked: rows.length, filled };
 }
 /** Vorhandene Leads ohne E-Mail-Adresse, bei denen sie bei den Angaben steht: einmal durchgehen und umtragen. */
 export async function emailsFromLeadFields(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ moved: number }> {

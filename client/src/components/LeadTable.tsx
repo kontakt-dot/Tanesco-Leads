@@ -1,3 +1,4 @@
+import { partnerDuplicateOf } from "../../../shared/partner-duplicate";
 import React, { useEffect, useState } from "react";
 import { Eye, History, Inbox } from "lucide-react";
 import { currency } from "@/lib/leadOps";
@@ -46,7 +47,7 @@ export default function LeadTable({ rows, visible, wide, loading, selectedIds, a
     if (key === "category") return <span className="lt-cat" title={lead.categoryName}><b className="lt-cat-code" style={tint(lead.categoryColor)}>{lead.categoryCode}</b>{lead.categoryEmoji && <span className="lt-cat-emoji" aria-hidden="true">{lead.categoryEmoji}</span>}<span className="lt-cat-name">{lead.categoryName}</span></span>;
     if (key === "email") return lead.email && lead.email !== DASH ? <a className="lt-link" href={`mailto:${lead.email}`} title={lead.email}>{lead.email}</a> : <span className="lt-none">{DASH}</span>;
     if (key === "phone") return lead.phone && lead.phone !== DASH ? <a className="lt-link lt-num" href={`tel:${lead.phone}`}>{lead.phone}</a> : <span className="lt-none">{DASH}</span>;
-    if (key === "status") { const status = statusStyle(lead.status); return <span className="lt-pill-status" style={tint(status.color)}><i aria-hidden="true" />{status.label}</span>; }
+    if (key === "status") { const status = statusStyle(lead.status); const duplicate = partnerDuplicateOf((lead as { metadata?: unknown }).metadata); return <><span className="lt-pill-status" style={tint(status.color)}><i aria-hidden="true" />{status.label}</span>{duplicate ? <span className="lt-pill-dup" title={`${duplicate.buyerName} kennt den Kontakt schon${duplicate.message ? ` – ${duplicate.message}` : ""}`}>Dublette bei {duplicate.buyerName}</span> : null}</>; }
     if (key === "supplier") return lead.supplier && lead.supplier !== DASH ? <span className="lt-text lt-soft" title={lead.supplier}>{lead.supplier}</span> : <span className="lt-none">{DASH}</span>;
     if (key === "delivered") {
       const arrival = lead.receivedAt ? arrivalLabel(lead.receivedAt, now) : null;
