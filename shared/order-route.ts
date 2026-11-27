@@ -91,6 +91,37 @@ export function planChainCopy(input: { source: RouteStop[]; sourceRules: RouteRu
   return plan;
 }
 
+/* ------------------------------------------------------------------ Gemeinsame Kette mehrerer Leadsparten (v391) */
+type LinkChain = { id: number; /** gespeicherte Gruppe – leer: noch nie gespeichert */ linkGroup?: number | null; /** Fingerabdruck der Stationen (chainSignature) */ signature?: string };
+/** Jede Gruppe bekommt als Zahl ihre kleinste Ketten-Nummer – so ist sie eindeutig, egal wer vorher dazugehörte. */
+function canonicalGroups(labels: Map<number, number>): Map<number, number> {
+  const lowest = new Map<number, number>(); labels.forEach((label, id) => lowest.set(label, Math.min(lowest.get(label) ?? id, id)));
+  const out = new Map<number, number>(); labels.forEach((label, id) => out.set(id, lowest.get(label)!)); return out;
+}
+/**
+ * Welche Sparten einer Bestellung teilen sich gerade eine Kette? Ketten-Nummer → Gruppe. Sobald einmal gespeichert wurde, gilt nur das
+ * Gespeicherte (eine später dazugekommene Sparte steht allein). Davor – wie bis v390 – zählen Ketten mit denselben Stationen als gemeinsam.
+ */
+export function chainLinkGroups(chains: ReadonlyArray<LinkChain>): Map<number, number> {
+  const saved = chains.some((chain) => chain.linkGroup != null); const labels = new Map<number, number>();
+  if (saved) { for (const chain of chains) labels.set(chain.id, chain.linkGroup ?? -chain.id); return canonicalGroups(labels); }
+  const bySignature = new Map<string, number>();
+  for (const chain of [...chains].sort((a, b) => a.id - b.id)) { const key = chain.signature ?? `#${chain.id}`; if (!bySignature.has(key)) bySignature.set(key, chain.id); labels.set(chain.id, bySignature.get(key)!); }
+  return canonicalGroups(labels);
+}
+/** Haben die Sparten dieser Bestellung ihre gemeinsame Kette schon einmal gespeichert? */
+export const chainLinksSaved = (chains: ReadonlyArray<LinkChain>): boolean => chains.some((chain) => chain.linkGroup != null);
+/**
+ * „Speichern“ bei „Für welche Sparten gilt diese Kette?“: Die gezeigte Kette und die angehakten bilden eine Gruppe. Wer vorher mit ihnen
+ * zusammen war und jetzt nicht mehr angehakt ist, bleibt bei seiner bisherigen Gruppe (ohne sie) – alle anderen bleiben, wie sie sind.
+ * Ergebnis: für JEDE Kette der Bestellung die neue Gruppe (danach ist alles gespeichert).
+ */
+export function relinkChains(chains: ReadonlyArray<LinkChain>, chainId: number, linkedIds: ReadonlyArray<number>): Map<number, number> {
+  const current = chainLinkGroups(chains); const group = new Set([chainId, ...linkedIds]); const next = new Map<number, number>();
+  for (const chain of chains) next.set(chain.id, group.has(chain.id) ? 0 : current.get(chain.id) ?? chain.id); // 0 = die neue Gruppe (keine Ketten-Nummer ist 0)
+  return canonicalGroups(next);
+}
+
 /* ------------------------------------------------------------------ Bestellübersicht: wohin die Leads einer Bestellung gehen */
 export type OrderRouteStop = { position: number; buyerName: string; unitPrice: number; active: boolean; orderStop: boolean; maxLeads: number | null };
 export type OrderRoute = { /** Sparten mit diesem Weg – in der Reihenfolge der Bestellung */ categoryIds: number[]; chainIds: number[]; /** die Kette ist eingeschaltet */ active: boolean; /** nimmt keine Station den Lead: frei für andere Ketten – oder zurück an die Quelle */ returns: boolean; stops: OrderRouteStop[] };

@@ -100,8 +100,9 @@ describe("Version 376", () => {
     expect(stopsOf(chain.id).map((row) => [row.position, row.buyerUserId, Number(row.unitPrice), Boolean(row.orderStop)])).toEqual([[1, stopsOf(chain.id)[0].buyerUserId, 35, true], [2, buyerUserId, 29.5, false]]);
     expect(stopsOf(sibling.id).map((row) => [row.position, row.buyerUserId, Number(row.unitPrice)])).toEqual([[1, stopsOf(sibling.id)[0].buyerUserId, 35], [2, buyerUserId, 29.5]]);
     await until(() => cards(root).length === 2); expect(root.querySelector(".lk-add-form")).toBeNull();
-    // zur anderen Sparte wechseln: abwählen – dann steht sie unter den Sparten mit eigener Kette und lässt sich ansehen
-    await click(sparten()[2], 400); await click(root.querySelector(".lk-sparten-apart button"), 900); await until(() => new URLSearchParams(window.location.search).get("chain") === String(sibling.id));
+    // zur anderen Sparte wechseln: abwählen und speichern (seit v391) – dann steht sie unter den Sparten mit eigener Kette und lässt sich ansehen
+    await click(sparten()[2], 400); await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".lk-sparten-save button")).find((node) => node.textContent?.includes("Speichern")) ?? null, 900);
+    await until(() => Boolean(root.querySelector(".lk-sparten-apart button"))); await click(root.querySelector(".lk-sparten-apart button"), 900); await until(() => new URLSearchParams(window.location.search).get("chain") === String(sibling.id));
     expect(new URLSearchParams(window.location.search).get("chain")).toBe(String(sibling.id)); expect(cards(root)).toHaveLength(2);
   }, 50000);
 

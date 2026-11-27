@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarOff, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, CornerDownRight, Gauge, GitBranch, GripVertical, MapPin, MessageSquareWarning, Plus, Send, Trash2, Unplug, UserRoundCog, Users, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarOff, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, CornerDownRight, Gauge, GitBranch, GripVertical, MapPin, MessageSquareWarning, Plus, Save, Send, Trash2, Unplug, UserRoundCog, Users, X } from "lucide-react";
 import { categoryColor } from "@/lib/colors";
 import { categoryEmoji } from "../../../shared/category-emoji";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -211,10 +211,11 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
   const refresh = () => { utils.leadops.chainDetail.invalidate(); utils.leadops.chainOverview.invalidate(); utils.leadops.listDeliveryChains.invalidate(); };
   const onError = (error: { message: string }) => toast.error(error.message);
   // Mehrere Leadsparten (v379): Für welche weiteren Sparten gilt, was hier festgelegt wird? Nach jeder Änderung bekommen sie dieselbe Kette.
-  // null = noch nicht aus den Daten gelesen. Beim Öffnen sind es alle eingeschalteten Sparten mit derselben Kette – gezielt geöffnet nur diese.
-  const [scope, setScope] = useState<number[] | null>(alone ? [] : null); const scopeRef = useRef<number[]>([]); const copyQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const copyChain = trpc.leadops.copyOrderChain.useMutation();
-  useEffect(() => { if (scope === null && detail.data) setScope(detail.data.order ? detail.data.order.chains.filter((item) => item.chainId !== chainId && item.status === "aktiv" && item.same).map((item) => item.chainId) : []); }, [detail.data, scope, chainId]);
+  // Seit v391 gespeichert: `scope` gilt (gespeichert – vor dem ersten Speichern alle eingeschalteten Sparten mit derselben Kette, gezielt
+  // geöffnet nur diese), `draft` ist, was gerade angehakt ist. Erst „Speichern“ übernimmt es. null = noch nicht aus den Daten gelesen.
+  const [scope, setScope] = useState<number[] | null>(null); const [draft, setDraft] = useState<number[] | null>(null); const scopeRef = useRef<number[]>([]); const copyQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const copyChain = trpc.leadops.copyOrderChain.useMutation(); const saveScope = trpc.leadops.saveChainScope.useMutation();
+  useEffect(() => { if (scope !== null || !detail.data) return; const info = detail.data.order; const initial = !info ? [] : info.linksSaved ? info.chains.filter((item) => item.linked).map((item) => item.chainId) : alone ? [] : info.chains.filter((item) => item.chainId !== chainId && item.status === "aktiv" && item.same).map((item) => item.chainId); setScope(initial); setDraft(initial); }, [detail.data, scope, chainId, alone]);
   scopeRef.current = scope ?? [];
   const droppedNote = (dropped: Array<{ categoryName: string; buyerName: string; field: string }>) => { if (dropped.length) toast.message(`Hinweis: ${dropped.length === 1 ? "Ein Feld-Filter geht" : `${dropped.length} Feld-Filter gehen`} nicht mit – ${dropped.slice(0, 3).map((item) => `„${item.field}“ gibt es in ${item.categoryName} nicht`).join("; ")}${dropped.length > 3 ? " …" : ""}.`); };
   /** Kette auf andere Sparten übertragen – der Reihe nach, damit ein älterer Stand nie einen neueren überschreibt. */
@@ -242,23 +243,29 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
   const dropOn = (targetId: number) => { if (dragId === null || dragId === targetId) return; const ids = stops.map((stop) => stop.id); const from = ids.indexOf(dragId); const to = ids.indexOf(targetId); ids.splice(from, 1); ids.splice(to, 0, dragId); setDragId(null); reorder.mutate({ chainId, stopIds: ids }); };
   // Sparten der Bestellung: die angehakten bekommen dieselbe Kette; die anderen haben ihre eigene
   const scopeIds = scope ?? []; const siblings = order ? order.chains.filter((item) => item.chainId !== chain.id) : []; const selectable = siblings.filter((item) => item.status === "aktiv");
-  const inScope = (item: { chainId: number }) => item.chainId === chain.id || scopeIds.includes(item.chainId); const apart = siblings.filter((item) => !scopeIds.includes(item.chainId));
-  const allOn = selectable.length > 0 && selectable.every(inScope); const joinNames = (names: string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} und ${names[names.length - 1]}`);
+  const apart = siblings.filter((item) => !scopeIds.includes(item.chainId));
+  const joinNames = (names: string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} und ${names[names.length - 1]}`);
   const ownRoute = stops.filter((stop) => !stop.orderStop).map((stop) => stop.buyerCompany);
   /** die Sparten, für die diese Kette gilt – die gezeigte zuerst */ const scopeNames = [chain.categoryName, ...siblings.filter((item) => scopeIds.includes(item.chainId)).map((item) => item.categoryName)];
-  /** Sparten dazunehmen: Wer eine andere Kette hat, bekommt nach einer Nachfrage diese hier. */
-  const take = async (items: typeof siblings) => {
-    const differing = items.filter((item) => !item.same);
+  // Angehakt, aber noch nicht gespeichert (v391): Erst „Speichern“ übernimmt die Auswahl – vorher bekommt keine Sparte etwas ab
+  const draftIds = draft ?? scopeIds; const dirty = draftIds.length !== scopeIds.length || draftIds.some((id) => !scopeIds.includes(id));
+  const draftOn = (item: { chainId: number }) => item.chainId === chain.id || draftIds.includes(item.chainId);
+  const draftNames = [chain.categoryName, ...siblings.filter((item) => draftIds.includes(item.chainId)).map((item) => item.categoryName)];
+  const allDraft = selectable.length > 0 && selectable.every(draftOn);
+  const toggleScope = (item: (typeof siblings)[number]) => setDraft(draftIds.includes(item.chainId) ? draftIds.filter((id) => id !== item.chainId) : [...draftIds, item.chainId]);
+  const toggleAll = () => setDraft(allDraft ? draftIds.filter((id) => !selectable.some((item) => item.chainId === id)) : Array.from(new Set([...draftIds, ...selectable.map((item) => item.chainId)])));
+  /** Speichern: Wer neu dazukommt und eine andere Kette hat, bekommt nach einer Nachfrage diese hier. Danach bleibt die Auswahl – auch nach dem Neuladen. */
+  const persistScope = async () => {
+    const next = [...draftIds]; const differing = siblings.filter((item) => next.includes(item.chainId) && !scopeIds.includes(item.chainId) && !item.same);
     if (differing.length) {
       const names = joinNames(differing.map((item) => item.categoryName));
       const losing = differing.filter((item) => item.route.length); // nur wer schon eigene Stationen hat, verliert etwas
-      if (!(await confirmAction(`${names} ${differing.length === 1 ? "bekommt" : "bekommen"} dieselbe Kette wie ${chain.categoryName}${ownRoute.length ? ` (nach Station 1: ${ownRoute.join(" → ")})` : " (keine weitere Station)"}.${losing.length ? ` Die bisherigen Stationen von ${joinNames(losing.map((item) => `${item.categoryName} (${item.route.join(" → ")})`))} werden ersetzt.` : ""} Übernehmen?`, { confirmLabel: "Übernehmen", danger: false }))) return;
-      try { const result = await copyTo(differing.map((item) => item.chainId)); droppedNote(result.dropped); toast.success(`Übernommen: ${names} ${differing.length === 1 ? "hat" : "haben"} jetzt dieselbe Kette wie ${chain.categoryName}.`); refresh(); } catch (error) { toast.error((error as { message?: string })?.message ?? "Die Kette konnte nicht übernommen werden."); refresh(); return; }
+      if (!(await confirmAction(`${names} ${differing.length === 1 ? "bekommt" : "bekommen"} dieselbe Kette wie ${chain.categoryName}${ownRoute.length ? ` (nach Station 1: ${ownRoute.join(" → ")})` : " (keine weitere Station)"}.${losing.length ? ` Die bisherigen Stationen von ${joinNames(losing.map((item) => `${item.categoryName} (${item.route.join(" → ")})`))} werden ersetzt.` : ""} Speichern?`, { confirmLabel: "Speichern", danger: false }))) return;
     }
-    setScope(Array.from(new Set([...scopeIds, ...items.map((item) => item.chainId)])));
+    const run = copyQueue.current.then(() => saveScope.mutateAsync({ chainId, linkedChainIds: next })); copyQueue.current = run.catch(() => undefined); // nach einer laufenden Übertragung
+    try { const result = await run; droppedNote(result.dropped); setScope(next); setDraft(next); toast.success(next.length ? `Gespeichert: Diese Kette gilt jetzt für ${joinNames(draftNames)}.` : `Gespeichert: Diese Kette gilt jetzt nur für ${chain.categoryName}.`); refresh(); }
+    catch (error) { toast.error((error as { message?: string })?.message ?? "Die Auswahl konnte nicht gespeichert werden."); refresh(); }
   };
-  const toggleScope = (item: (typeof siblings)[number]) => { if (scopeIds.includes(item.chainId)) setScope(scopeIds.filter((id) => id !== item.chainId)); else void take([item]); };
-  const toggleAll = () => { if (allOn) setScope([]); else void take(selectable.filter((item) => !scopeIds.includes(item.chainId))); };
   const freeBuyers = buyers.filter((buyer) => !stops.some((stop) => stop.buyerUserId === buyer.userId));
   const openSettings = () => { setSettingsOpen(true); window.setTimeout(() => document.getElementById(`lk-settings-${chain.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); };
   const status = <span className={`lk-status ${chain.status === "aktiv" ? "is-on" : ""}`}>{chain.status === "aktiv" ? "Aktiv" : "Aus"}</span>;
@@ -269,12 +276,18 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
 
     {/* Seit v379: Die Kette gilt für alle angehakten Sparten – alle gemeinsam oder einzelne. Was hier geändert wird, bekommen sie alle. */}
     {order && order.chains.length > 1 && <section className="lk-sparten" aria-label="Leadsparten der Bestellung">
-      <div className="lk-sparten-head"><b>Für welche Sparten gilt diese Kette?</b><span>{scopeIds.length ? `Was du unten festlegst, gilt für ${joinNames(scopeNames)}.` : `Was du unten festlegst, gilt nur für ${chain.categoryName}.`}</span></div>
+      <div className="lk-sparten-head"><b>Für welche Sparten gilt diese Kette?</b><span>{draftIds.length ? `Was du unten festlegst, gilt für ${joinNames(draftNames)}.` : `Was du unten festlegst, gilt nur für ${chain.categoryName}.`}</span></div>
       <div className="lk-sparten-chips" role="group" aria-label="Sparten dieser Kette">
-        {selectable.length > 0 && <button type="button" className={`lk-sparte is-all ${allOn ? "is-on" : ""}`} aria-pressed={allOn} disabled={copyChain.isPending} title={allOn ? "Nur noch für die gezeigte Sparte festlegen" : "Diese Kette für alle Sparten der Bestellung festlegen"} onClick={toggleAll}>{allOn && <Check aria-hidden="true" />}Alle {selectable.length + 1} Sparten</button>}
+        {selectable.length > 0 && <button type="button" className={`lk-sparte is-all ${allDraft ? "is-on" : ""}`} aria-pressed={allDraft} disabled={saveScope.isPending} title={allDraft ? "Nur noch für die gezeigte Sparte festlegen" : "Diese Kette für alle Sparten der Bestellung festlegen"} onClick={toggleAll}>{allDraft && <Check aria-hidden="true" />}Alle {selectable.length + 1} Sparten</button>}
         <button type="button" className="lk-sparte is-on is-own" aria-pressed="true" aria-disabled="true" title="Diese Sparte siehst du gerade – ihre Kette steht unten" onClick={(event) => event.preventDefault()}><Check aria-hidden="true" />{chain.categoryName}</button>
-        {siblings.map((item) => { const on = scopeIds.includes(item.chainId); const off = item.status !== "aktiv";
-          return <button key={item.chainId} type="button" className={`lk-sparte ${on ? "is-on" : ""}`} aria-pressed={on} disabled={off || copyChain.isPending} title={off ? "Diese Kette ist ausgeschaltet" : on ? `${item.categoryName} abwählen – die Sparte behält ihre Kette, folgt aber den Änderungen nicht mehr` : item.same ? `${item.categoryName} dazunehmen – die Kette ist schon dieselbe` : `${item.categoryName} dazunehmen – die Sparte bekommt diese Kette`} onClick={() => toggleScope(item)}>{on && <Check aria-hidden="true" />}{item.categoryName}{off ? " (aus)" : ""}</button>; })}
+        {siblings.map((item) => { const on = draftIds.includes(item.chainId); const off = item.status !== "aktiv";
+          return <button key={item.chainId} type="button" className={`lk-sparte ${on ? "is-on" : ""}`} aria-pressed={on} disabled={off || saveScope.isPending} title={off ? "Diese Kette ist ausgeschaltet" : on ? `${item.categoryName} abwählen – die Sparte behält ihre Kette, folgt nach dem Speichern aber den Änderungen nicht mehr` : item.same ? `${item.categoryName} dazunehmen – die Kette ist schon dieselbe` : `${item.categoryName} dazunehmen – beim Speichern bekommt die Sparte diese Kette`} onClick={() => toggleScope(item)}>{on && <Check aria-hidden="true" />}{item.categoryName}{off ? " (aus)" : ""}</button>; })}
+      </div>
+      {/* v391: Die Auswahl gilt erst mit „Speichern“ – und bleibt dann, auch nach dem Neuladen */}
+      <div className={`lk-sparten-save ${dirty ? "is-dirty" : "is-saved"}`}>
+        <span role="status">{dirty ? <><AlertTriangle aria-hidden="true" />Noch nicht gespeichert – erst mit „Speichern“ gilt die Auswahl.</> : <><Check aria-hidden="true" />Gespeichert</>}</span>
+        {dirty && <button type="button" className="lk-sparten-reset" disabled={saveScope.isPending} onClick={() => setDraft(scopeIds)}>Verwerfen</button>}
+        <Button type="button" className="flux-button" disabled={!dirty || saveScope.isPending} onClick={() => void persistScope()}><Save aria-hidden="true" />{saveScope.isPending ? "Speichert …" : "Speichern"}</Button>
       </div>
       {apart.length > 0 && <ul className="lk-sparten-apart" aria-label="Sparten mit eigener Kette">{apart.map((item) => <li key={item.chainId}><b>{item.categoryName}</b><span>{item.same ? "hat dieselben Stationen, folgt den Änderungen hier aber nicht" : `eigene Kette: ${item.route.length ? `nach Station 1 → ${item.route.join(" → ")}` : "keine weitere Station"}`}</span>{onOpenChain && <button type="button" onClick={() => onOpenChain(item.chainId)}>Kette von {item.categoryName} ansehen</button>}</li>)}</ul>}
     </section>}

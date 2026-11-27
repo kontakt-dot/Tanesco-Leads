@@ -56,7 +56,6 @@ function OrderRouteStrip({ orderId, routes, categoryLabel, several }: { orderId:
 }
 const number = (value: number) => value.toLocaleString("de-DE");
 const shortDate = (value: Date | string) => new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
-const INTERVAL: Record<string, string> = { sofort: "sofort", "täglich": "täglich", "wöchentlich": "wöchentlich", monatlich: "monatlich" };
 const tint = (color: string) => ({ ["--cat" as string]: color }) as React.CSSProperties;
 
 /** Ansicht der Bestellübersicht (v387): „liste“ (eine Zeile je Bestellung) oder „kacheln“ (Karten wie bei den Benutzern). Wird je Browser gemerkt. */
@@ -120,7 +119,7 @@ export function OrderOverview({ categories }: OrderOverviewProps) {
       const routes = orderRoutes((chains.data ?? []).filter((chain) => chain.orderId === order.id), categoryIds); const categoryLabel = (id: number) => categories.find((category) => category.id === id)?.name ?? "Sparte";
       const value = Number(order.unitPrice) * delivered; /* geliefert – daneben der Wert der ganzen Bestellung (bei unbegrenzt gibt es keinen) */ const orderValue = order.quantity ? Number(order.unitPrice) * order.quantity : null;
       const startsLater = order.startsAt && new Date(order.startsAt).getTime() > now; const ended = order.endsAt && new Date(order.endsAt).getTime() < now;
-      const interval = INTERVAL[order.deliveryInterval] ?? order.deliveryInterval;
+      const interval = "in Echtzeit"; // seit v391 liefert jede Bestellung sofort – das alte Lieferintervall zählt nicht mehr
       const statusSelect = <select aria-label={`Status für ${order.orderNumber}`} className={`order-status-select status-${statusChoice}`} value={statusChoice} title={statusChoice === "aktiv" ? "Aktiv: bekommt Leads" : statusChoice === "pausiert" ? "Inaktiv: bekommt keine Leads" : undefined} disabled={updateStatus.isPending} onChange={(event) => updateStatus.mutate({ id: order.id, status: event.target.value as "aktiv" | "pausiert" })}><option value="aktiv">Aktiv</option><option value="pausiert">Inaktiv</option>{statusChoice === "erfüllt" && <option value="erfüllt" disabled>Erfüllt</option>}{statusChoice === "storniert" && <option value="storniert" disabled>Storniert</option>}</select>;
       const remove = async () => { if (await confirmAction(`Bestellung ${order.orderNumber} wirklich löschen? Zugehörige Lieferketten, Auslieferungsdaten und Bestellkonfigurationen werden entfernt. Bereits zugeordnete Leads bleiben erhalten, werden aber von dieser Bestellung gelöst.`)) deleteOrder.mutate({ orderId: order.id }); };
       const flag = startsLater ? <em className="order-flag is-later" title="Bis dahin bekommt die Bestellung keine Leads"><CalendarClock aria-hidden="true" />startet am {shortDate(order.startsAt!)}</em> : ended ? <em className="order-flag is-ended" title="Die Bestellung bekommt keine Leads mehr">endete am {shortDate(order.endsAt!)}</em> : null;

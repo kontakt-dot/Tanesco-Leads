@@ -195,7 +195,7 @@ function OrdersTab({ orders, categories }: { orders: Detail["orders"]; categorie
     return <a key={order.id} className={`md-order is-${tone}`} href={`/?page=Bestellungen&orderId=${order.id}`} aria-label={`Bestellung ${order.name || order.orderNumber} öffnen`}>
       <header><span className="md-order-cat" style={{ ["--cat" as string]: categoryColor(category ? { id: category.id, color: (category as { color?: string | null }).color ?? null } : null) } as React.CSSProperties}>{category?.shortcode ?? `#${order.categoryId}`}</span><span className="md-order-name"><b>{order.name || order.orderNumber}</b><small>{order.orderNumber}</small></span><span className={`md-order-state is-${tone}`}>{label}</span></header>
       <div className="md-order-progress"><div><b>{num(delivered)}</b><span>{quantity ? ` / ${num(quantity)} geliefert` : " geliefert · ohne Obergrenze"}</span>{share !== null ? <em>{share} %</em> : null}</div>{share !== null ? <span className="md-order-bar" aria-hidden="true"><i style={{ width: `${share}%` }} /></span> : null}</div>
-      <dl><div><dt>Preis</dt><dd>{euro(order.unitPrice)} je Lead</dd></div><div><dt>Wert</dt><dd>{euro(delivered * Number(order.unitPrice ?? 0))}</dd></div><div><dt>Auslieferung</dt><dd>{order.realtimeDelivery ? "sofort" : "gesammelt"}</dd></div><div><dt>Angelegt</dt><dd>{new Date(order.createdAt).toLocaleDateString("de-DE")}</dd></div></dl>
+      <dl><div><dt>Preis</dt><dd>{euro(order.unitPrice)} je Lead</dd></div><div><dt>Wert</dt><dd>{euro(delivered * Number(order.unitPrice ?? 0))}</dd></div><div><dt>Auslieferung</dt><dd>in Echtzeit</dd></div><div><dt>Angelegt</dt><dd>{new Date(order.createdAt).toLocaleDateString("de-DE")}</dd></div></dl>
     </a>; })}</section>;
 }
 

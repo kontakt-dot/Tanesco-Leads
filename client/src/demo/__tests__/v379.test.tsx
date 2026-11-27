@@ -31,6 +31,9 @@ const chipsOf = (root: Element) => Array.from(root.querySelectorAll<HTMLButtonEl
 const chip = (root: Element, name: string) => chipsOf(root).find((node) => node.textContent === name)!;
 const pressed = (root: Element) => chipsOf(root).map((node) => `${node.textContent}:${node.getAttribute("aria-pressed") === "true" ? "an" : "aus"}`);
 const confirmOk = async () => { await until(() => Boolean(document.querySelector(".app-confirm-ok"))); await click(document.querySelector(".app-confirm-ok"), 900); };
+/** Seit v391 gilt die Auswahl der Sparten erst mit „Speichern“ */
+const saveBar = (root: Element) => root.querySelector<HTMLElement>(".lk-sparten-save")!;
+const saveSparten = async (root: Element, wait = 900) => { await click(button(saveBar(root), "Speichern"), wait); };
 /** Die Bestellung „Aroundhome“ der Vorschau: zwei Leadsparten (Photovoltaik, Wärmepumpe), jede Kette hat nur Station 1. */
 const aroundhome = () => { const chain = table("deliveryChains").find((row) => row.name === "Aroundhome Haustür")!; const order = table("orders").find((row) => row.id === chain.orderId)!; const sibling = table("deliveryChains").find((row) => row.orderId === order.id && row.id !== chain.id)!; return { chain, order, sibling }; };
 /** Beträge ohne geschütztes Leerzeichen – so lassen sie sich mit getipptem Text vergleichen. */
@@ -99,6 +102,9 @@ describe("Version 379", () => {
     const { order, chain, sibling } = aroundhome(); const root = await open(`page=Bestellungen&orderId=${order.id}&kette=1`); await until(() => cards(root).length > 0);
     await click(chip(root, "Wärmepumpe"), 400);
     expect(pressed(root)).toEqual(["Alle 2 Sparten:aus", "Photovoltaik:an", "Wärmepumpe:aus"]); expect(root.querySelector(".lk-sparten-head span")!.textContent).toBe("Was du unten festlegst, gilt nur für Photovoltaik.");
+    // seit v391: erst „Speichern“ übernimmt die Auswahl
+    expect(saveBar(root).textContent).toContain("Noch nicht gespeichert – erst mit „Speichern“ gilt die Auswahl."); expect(root.querySelector(".lk-sparten-apart")).toBeNull();
+    await saveSparten(root); await until(() => saveBar(root).classList.contains("is-saved")); expect(saveBar(root).textContent).toContain("Gespeichert");
     expect(texts(root, ".lk-sparten-apart li")).toEqual(["Wärmepumpehat dieselben Stationen, folgt den Änderungen hier aber nichtKette von Wärmepumpe ansehen"]); expect(root.querySelector(".lk-from b")!.textContent).toBe("Photovoltaik");
     // neue Station: nur in Photovoltaik
     await click(root.querySelector(".lk-add-btn")); const form = root.querySelector<HTMLFormElement>(".lk-add-form")!; expect(form.querySelector(".lk-add-all")).toBeNull(); const buyerUserId = Number(form.querySelector("select")!.value);
@@ -107,14 +113,18 @@ describe("Version 379", () => {
     expect(root.querySelector(".lk-sparten-apart li span")!.textContent).toBe("eigene Kette: keine weitere Station");
     // wieder dazunehmen: Nachfrage – „Abbrechen“ ändert nichts
     const company = String(table("users").find((row) => row.id === buyerUserId)!.company ?? table("users").find((row) => row.id === buyerUserId)!.name);
-    await click(chip(root, "Wärmepumpe"), 300); expect(document.querySelector(".app-confirm-text")!.textContent).toBe(`Wärmepumpe bekommt dieselbe Kette wie Photovoltaik (nach Station 1: ${company}). Übernehmen?`);
-    await click(document.querySelector(".app-confirm-cancel"), 500); expect(stopsOf(sibling.id)).toHaveLength(1); expect(pressed(root)).toEqual(["Alle 2 Sparten:aus", "Photovoltaik:an", "Wärmepumpe:aus"]);
-    // „Alle 2 Sparten“: nach der Nachfrage hat Wärmepumpe dieselbe Kette
-    await click(chip(root, "Alle 2 Sparten"), 300); await confirmOk(); await until(() => stopsOf(sibling.id).length === 2);
+    await click(chip(root, "Wärmepumpe"), 300); expect(pressed(root)).toEqual(["Alle 2 Sparten:an", "Photovoltaik:an", "Wärmepumpe:an"]); expect(document.querySelector(".app-confirm-text")).toBeNull(); // anhaken allein fragt noch nichts
+    await saveSparten(root, 300); expect(document.querySelector(".app-confirm-text")!.textContent).toBe(`Wärmepumpe bekommt dieselbe Kette wie Photovoltaik (nach Station 1: ${company}). Speichern?`);
+    await click(document.querySelector(".app-confirm-cancel"), 500); expect(stopsOf(sibling.id)).toHaveLength(1); expect(saveBar(root).classList.contains("is-dirty")).toBe(true);
+    await click(button(saveBar(root), "Verwerfen"), 300); expect(pressed(root)).toEqual(["Alle 2 Sparten:aus", "Photovoltaik:an", "Wärmepumpe:aus"]); expect(saveBar(root).classList.contains("is-saved")).toBe(true);
+    // „Alle 2 Sparten“ und Speichern: nach der Nachfrage hat Wärmepumpe dieselbe Kette
+    await click(chip(root, "Alle 2 Sparten"), 300); await saveSparten(root, 300); await confirmOk(); await until(() => stopsOf(sibling.id).length === 2);
     expect(stopsOf(sibling.id).map((row) => [row.position, row.buyerUserId, Number(row.unitPrice)])).toEqual([[1, stopsOf(sibling.id)[0].buyerUserId, 35], [2, buyerUserId, 21.5]]);
-    await until(() => pressed(root).every((item) => item.endsWith(":an"))); expect(pressed(root)).toEqual(["Alle 2 Sparten:an", "Photovoltaik:an", "Wärmepumpe:an"]); expect(root.querySelector(".lk-sparten-apart")).toBeNull();
-    // „Alle“ noch einmal: nur noch die gezeigte Sparte
-    await click(chip(root, "Alle 2 Sparten"), 400); expect(pressed(root)).toEqual(["Alle 2 Sparten:aus", "Photovoltaik:an", "Wärmepumpe:aus"]); expect(stopsOf(sibling.id)).toHaveLength(2); // abwählen ändert an der Kette nichts
+    await until(() => pressed(root).every((item) => item.endsWith(":an"))); expect(pressed(root)).toEqual(["Alle 2 Sparten:an", "Photovoltaik:an", "Wärmepumpe:an"]); await until(() => !root.querySelector(".lk-sparten-apart")); expect(saveBar(root).classList.contains("is-saved")).toBe(true);
+    // „Alle“ noch einmal und Speichern: nur noch die gezeigte Sparte
+    await click(chip(root, "Alle 2 Sparten"), 400); expect(pressed(root)).toEqual(["Alle 2 Sparten:aus", "Photovoltaik:an", "Wärmepumpe:aus"]); await saveSparten(root); expect(document.querySelector(".app-confirm-text")).toBeNull();
+    expect(stopsOf(sibling.id)).toHaveLength(2); // abwählen ändert an der Kette nichts
+    expect(table("deliveryChains").filter((row) => row.orderId === order.id).map((row) => row.linkGroup === chain.id)).toEqual(table("deliveryChains").filter((row) => row.orderId === order.id).map((row) => row.id === chain.id)); // gespeichert: jede Sparte für sich
   }, 60_000);
 
   it("Eine Sparte mit eigener Kette lässt sich ansehen – dort gilt zunächst nur sie; ihre Kette ersetzt die andere erst nach einer Nachfrage", async () => {
@@ -125,7 +135,7 @@ describe("Version 379", () => {
     await click(button(root, "Kette von Wärmepumpe ansehen"), 1200); await until(() => cards(root).length === 2);
     expect(pressed(root)).toEqual(["Alle 2 Sparten:aus", "Wärmepumpe:an", "Photovoltaik:aus"]); expect(root.querySelector(".lk-sparten-head span")!.textContent).toBe("Was du unten festlegst, gilt nur für Wärmepumpe."); expect(root.querySelector(".lk-sparten-apart li span")!.textContent).toBe("eigene Kette: keine weitere Station");
     // Photovoltaik dazunehmen: Die Nachfrage nennt, was ersetzt wird – hier nichts, denn Photovoltaik hat keine weitere Station
-    await click(chip(root, "Photovoltaik"), 300); expect(document.querySelector(".app-confirm-text")!.textContent).toBe("Photovoltaik bekommt dieselbe Kette wie Wärmepumpe (nach Station 1: Eigener Abnehmer GmbH). Übernehmen?");
+    await click(chip(root, "Photovoltaik"), 300); await saveSparten(root, 300); expect(document.querySelector(".app-confirm-text")!.textContent).toBe("Photovoltaik bekommt dieselbe Kette wie Wärmepumpe (nach Station 1: Eigener Abnehmer GmbH). Speichern?");
     await confirmOk(); await until(() => stopsOf(chain.id).length === 2); expect(stopsOf(chain.id).map((row) => [row.position, String(row.buyerName), Number(row.unitPrice)])).toEqual([[1, "Aroundhome GmbH", 35], [2, "Eigener Abnehmer GmbH", 18]]);
   }, 60_000);
 
@@ -135,7 +145,7 @@ describe("Version 379", () => {
     const kept = await callProcedure("leadops.addChainStop", { chainId: sibling.id, buyerName: "gemeinsam gmbh", unitPrice: 9 }) as { stopId: number }; const gone = await callProcedure("leadops.addChainStop", { chainId: sibling.id, buyerName: "Nur Wärme GmbH", unitPrice: 8 }) as { stopId: number };
     const root = await open(`page=Lieferkette&chain=${chain.id}`); await until(() => cards(root).length === 3);
     expect(root.querySelector(".lk-sparten-apart li span")!.textContent).toBe("eigene Kette: nach Station 1 → gemeinsam gmbh → Nur Wärme GmbH");
-    await click(chip(root, "Wärmepumpe"), 300); expect(document.querySelector(".app-confirm-text")!.textContent).toBe("Wärmepumpe bekommt dieselbe Kette wie Photovoltaik (nach Station 1: Gemeinsam GmbH → Nur Solar GmbH). Die bisherigen Stationen von Wärmepumpe (gemeinsam gmbh → Nur Wärme GmbH) werden ersetzt. Übernehmen?");
+    await click(chip(root, "Wärmepumpe"), 300); await saveSparten(root, 300); expect(document.querySelector(".app-confirm-text")!.textContent).toBe("Wärmepumpe bekommt dieselbe Kette wie Photovoltaik (nach Station 1: Gemeinsam GmbH → Nur Solar GmbH). Die bisherigen Stationen von Wärmepumpe (gemeinsam gmbh → Nur Wärme GmbH) werden ersetzt. Speichern?");
     await confirmOk(); await until(() => stopsOf(sibling.id).some((row) => row.buyerName === "Nur Solar GmbH"));
     expect(stopsOf(sibling.id).map((row) => [row.position, String(row.buyerName), Number(row.unitPrice)])).toEqual([[1, "Aroundhome GmbH", 35], [2, "Gemeinsam GmbH", 20], [3, "Nur Solar GmbH", 15]]);
     expect(stopsOf(sibling.id)[1].id).toBe(kept.stopId); expect(table("deliveryStops").some((row) => row.id === gone.stopId)).toBe(false); // derselbe Käufer: dieselbe Station (ihre Zahlen bleiben) – die andere ist weg

@@ -4,7 +4,7 @@
  */
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { categoryFields, deliveryChains, deliveryEndpoints, deliveryStopReasons, deliveryStops, leadCategories, leadDeliveries, leads, memberships, orderOperationalConfigs, orders, reclamationReasons, suppliers, users } from "../drizzle/schema";
-import { chainSignature, extraStops, planChainCopy, stopBuyerKey, type RouteRule, type RouteStop } from "../shared/order-route";
+import { chainLinkGroups, chainLinksSaved, chainSignature, extraStops, planChainCopy, relinkChains, stopBuyerKey, type RouteRule, type RouteStop } from "../shared/order-route";
 import { byChainOrder, chainPlaces, reorderedPriorities, suggestChainName, supplierText, type SupplierFilterMode } from "../shared/chain-rules";
 import { describeOrderStation, orderCategoryIds } from "../shared/order-chain";
 import { DEFAULT_REASONS, missingDefaultReasons } from "../shared/default-reasons";
@@ -161,7 +161,7 @@ export async function chainDetail(db: Db, tenantId: number, chainId: number, ran
   const order = chain.orderId ? (await db.select().from(orders).where(and(eq(orders.id, chain.orderId), eq(orders.tenantId, tenantId))).limit(1))[0] : undefined;
   const orderConfig = order ? (await db.select().from(orderOperationalConfigs).where(eq(orderOperationalConfigs.orderId, order.id)).limit(1))[0] : undefined;
   const categoryRows = order ? await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)) : [];
-  const siblings = order ? await db.select({ id: deliveryChains.id, categoryId: deliveryChains.categoryId, status: deliveryChains.status, name: deliveryChains.name, supplierFilterMode: deliveryChains.supplierFilterMode, supplierIds: deliveryChains.supplierIds }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, order.id))) : [];
+  const siblings = order ? await db.select({ id: deliveryChains.id, categoryId: deliveryChains.categoryId, status: deliveryChains.status, name: deliveryChains.name, supplierFilterMode: deliveryChains.supplierFilterMode, supplierIds: deliveryChains.supplierIds, linkGroup: deliveryChains.linkGroup }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, order.id))) : [];
   const siblingStops = siblings.length ? await db.select().from(deliveryStops).where(inArray(deliveryStops.chainId, siblings.map((row) => row.id))) : [];
   const orderCategories = order ? orderCategoryIds(order, orderConfig) : [];
   // Mehrere Leadsparten (v379): Welche Sparten haben nach Station 1 dieselbe Kette wie diese? Für sie lässt sich die Kette gemeinsam festlegen.
@@ -170,10 +170,13 @@ export async function chainDetail(db: Db, tenantId: number, chainId: number, ran
   const fieldKeys = several ? await categoryFieldKeys(db, tenantId, siblings.map((row) => row.categoryId)) : new Map<number, Set<string>>();
   const stopsOf = (chainId: number) => siblingStops.filter((stop) => stop.chainId === chainId) as RouteStop[];
   const sameAsThis = (row: { id: number; categoryId: number }) => row.id === chain.id || chainSignature({ stops: stopsOf(chain.id), rules: siblingRules, reasons, foreignFields: foreignFieldsOf(fieldKeys, chain.categoryId, row.categoryId) }) === chainSignature({ stops: stopsOf(row.id), rules: siblingRules, reasons });
+  // Gespeichert (v391): Welche Sparten teilen sich diese Kette? Vor dem ersten Speichern entscheidet „same“ (dieselben Stationen) wie bis v390.
+  const orderSiblings = siblings.filter((row) => orderCategories.includes(row.categoryId)); const linksSaved = chainLinksSaved(orderSiblings); const groups = chainLinkGroups(orderSiblings);
   const orderInfo = order ? { ...describeOrderStation({ order, config: orderConfig, mainCategoryId: order.categoryId, supplierName: (id) => pickers.suppliers.find((supplier) => supplier.id === id)?.label.split(" — ")[0] ?? `Lieferant #${id}`, categoryName: (id) => categoryRows.find((row) => row.id === id)?.name ?? "" }),
     /** Diese Kette hat (noch) keine Station 1 aus der Bestellung – sie läuft wie vor v376, bis jemand „aus der Bestellung übernehmen“ wählt oder die Bestellung speichert */
     missingStation: !stops.some((stop) => stop.orderStop),
-    chains: siblings.filter((row) => orderCategories.includes(row.categoryId)).sort((a, b) => orderCategories.indexOf(a.categoryId) - orderCategories.indexOf(b.categoryId)).map((row) => ({ chainId: row.id, categoryId: row.categoryId, categoryName: categoryRows.find((item) => item.id === row.categoryId)?.name ?? "–", status: row.status, stops: siblingStops.filter((stop) => stop.chainId === row.id).length, missingStation: !siblingStops.some((stop) => stop.chainId === row.id && stop.orderStop), /** nach Station 1 dieselbe Kette wie die gezeigte */ same: several ? sameAsThis(row) : true, /** die Käufer nach Station 1, der Reihe nach */ route: extraStops(stopsOf(row.id)).map((stop) => stop.buyerName) })) } : null;
+    /** Die Auswahl „Für welche Sparten gilt diese Kette?“ wurde schon einmal gespeichert – dann gilt `linked` */ linksSaved,
+    chains: siblings.filter((row) => orderCategories.includes(row.categoryId)).sort((a, b) => orderCategories.indexOf(a.categoryId) - orderCategories.indexOf(b.categoryId)).map((row) => ({ chainId: row.id, categoryId: row.categoryId, categoryName: categoryRows.find((item) => item.id === row.categoryId)?.name ?? "–", status: row.status, stops: siblingStops.filter((stop) => stop.chainId === row.id).length, missingStation: !siblingStops.some((stop) => stop.chainId === row.id && stop.orderStop), /** nach Station 1 dieselbe Kette wie die gezeigte */ same: several ? sameAsThis(row) : true, /** gespeichert: teilt sich die Kette mit der gezeigten (v391) */ linked: linksSaved ? row.id !== chain.id && groups.get(row.id) === groups.get(chain.id) : false, /** die Käufer nach Station 1, der Reihe nach */ route: extraStops(stopsOf(row.id)).map((stop) => stop.buyerName) })) } : null;
   const now = new Date();
   const describe = (row: typeof rows[number]) => {
     if (row.result === "übersprungen") return { status: "übersprungen" as const, info: row.skipReason ?? "" };
@@ -282,6 +285,36 @@ export async function copyOrderChain(db: Db, tenantId: number, input: { fromChai
     await reorderStops(db, tenantId, target.id, [...after].sort((a, b) => rank(a) - rank(b) || a.position - b.position).map((stop) => stop.id));
   }
   return { success: true, copied: targets.length, dropped };
+}
+
+/**
+ * „Für welche Sparten gilt diese Kette?“ speichern (v391): Die angehakten Sparten bekommen dieselbe Kette (wie copyOrderChain – für schon
+ * gleiche Ketten ändert sich nichts) und bleiben damit verbunden, auch nach dem Neuladen. Abgewählte behalten ihre Kette, folgen den
+ * Änderungen aber nicht mehr. Eine ausgeschaltete Sparte lässt sich nicht neu dazunehmen.
+ */
+export async function saveChainScope(db: Db, tenantId: number, input: { chainId: number; linkedChainIds: number[] }) {
+  const chain = (await db.select({ id: deliveryChains.id, orderId: deliveryChains.orderId, categoryId: deliveryChains.categoryId }).from(deliveryChains).where(and(eq(deliveryChains.id, input.chainId), eq(deliveryChains.tenantId, tenantId))).limit(1))[0];
+  if (!chain) throw new Error("Lieferkette wurde nicht gefunden."); if (!chain.orderId) throw new Error("Diese Kette gehört zu keiner Bestellung.");
+  const order = (await db.select().from(orders).where(and(eq(orders.id, chain.orderId), eq(orders.tenantId, tenantId))).limit(1))[0]; if (!order) throw new Error("Die Bestellung dieser Kette wurde nicht gefunden.");
+  const config = (await db.select().from(orderOperationalConfigs).where(eq(orderOperationalConfigs.orderId, order.id)).limit(1))[0];
+  const orderCategories = orderCategoryIds(order, config);
+  const siblings = (await db.select({ id: deliveryChains.id, categoryId: deliveryChains.categoryId, status: deliveryChains.status, linkGroup: deliveryChains.linkGroup }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, order.id)))).filter((row) => orderCategories.includes(row.categoryId));
+  if (!siblings.some((row) => row.id === chain.id)) throw new Error("Diese Sparte gehört nicht mehr zur Bestellung.");
+  const wanted = Array.from(new Set(input.linkedChainIds)).filter((id) => id !== chain.id);
+  if (wanted.some((id) => !siblings.some((row) => row.id === id))) throw new Error("Eine der gewählten Sparten gehört nicht zu dieser Bestellung.");
+  // Vor dem ersten Speichern zählen Ketten mit denselben Stationen als gemeinsam (wie bis v390) – dafür der Fingerabdruck jeder Kette
+  const allStops = await db.select().from(deliveryStops).where(inArray(deliveryStops.chainId, siblings.map((row) => row.id)));
+  const reasons = await db.select({ id: reclamationReasons.id, forwardToNextStop: reclamationReasons.forwardToNextStop }).from(reclamationReasons).where(and(eq(reclamationReasons.tenantId, tenantId), eq(reclamationReasons.active, true))).orderBy(reclamationReasons.id);
+  const rules: RouteRule[] = allStops.length ? await db.select({ stopId: deliveryStopReasons.stopId, reasonId: deliveryStopReasons.reasonId, allowed: deliveryStopReasons.allowed, passOn: deliveryStopReasons.passOn }).from(deliveryStopReasons).where(inArray(deliveryStopReasons.stopId, allStops.map((stop) => stop.id))) : [];
+  const withSignature = siblings.map((row) => ({ id: row.id, linkGroup: row.linkGroup, signature: chainSignature({ stops: allStops.filter((stop) => stop.chainId === row.id) as RouteStop[], rules, reasons }) }));
+  const before = chainLinkGroups(withSignature);
+  const added = wanted.filter((id) => before.get(id) !== before.get(chain.id));
+  const switchedOff = added.filter((id) => siblings.find((row) => row.id === id)!.status !== "aktiv");
+  if (switchedOff.length) throw new Error("Eine ausgeschaltete Sparte lässt sich nicht dazunehmen – schalte ihre Kette zuerst ein.");
+  const copied = wanted.length ? await copyOrderChain(db, tenantId, { fromChainId: chain.id, toChainIds: wanted }) : { success: true, copied: 0, dropped: [] as Array<{ categoryName: string; buyerName: string; field: string }> };
+  const next = relinkChains(withSignature, chain.id, wanted);
+  for (const row of siblings) { const group = next.get(row.id) ?? row.id; if (row.linkGroup !== group) await db.update(deliveryChains).set({ linkGroup: group }).where(eq(deliveryChains.id, row.id)); }
+  return { success: true, linked: wanted, added, dropped: copied.dropped };
 }
 
 /** Reihenfolge der Stops neu setzen (Drag & Drop / Pfeile); Positionen werden 1..n durchnummeriert. */

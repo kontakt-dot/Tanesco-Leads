@@ -586,9 +586,9 @@ export async function runAutomationsForLead(db: Db, input: { tenantId: number; a
           await db.insert(leadStatusEvents).values({ tenantId, leadId: source.id, previousStatus: source.status, nextStatus: source.status, actorUserId: input.actorUserId, note: `Automatisierung: Bestellung zugeordnet (${order.orderNumber})` });
         }
         summary = `${label} zugeordnet`;
-        // Echtzeit-Auslieferung, wenn die Bestellkonfiguration es vorsieht (Ketten ohne Bestellung liefern sofort).
-        const config = orderId ? (await db.select().from(orderOperationalConfigs).where(and(eq(orderOperationalConfigs.tenantId, tenantId), eq(orderOperationalConfigs.orderId, orderId))).limit(1))[0] : undefined;
-        if (!orderId || config?.realtimeDelivery) {
+        // Immer in Echtzeit (v391): Der Lead geht sofort raus. Kann die Bestellung ihn gerade nicht nehmen (kein Liefertag, noch nicht gestartet),
+        // holt der Zeitplaner ihn nach. Bis v390 wartete er bei Bestellungen ohne Echtzeit auf das Tages-, Wochen- oder Monatsfenster.
+        {
           try {
             const delivery = await deliverLeadNow(db, { tenantId, actorUserId: input.actorUserId, lead: await currentLead(), preferChainId: chainId, preferOrderId: orderId });
             if (delivery.result === "abgelehnt") summary += `; Auslieferung abgelehnt: ${delivery.attempts.map((attempt) => attempt.reason ?? attempt.buyerName).join("; ")}`;

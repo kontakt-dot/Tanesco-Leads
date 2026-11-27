@@ -1,11 +1,12 @@
 /**
- * Zeitplaner für Auslieferungen ohne Echtzeit (Lieferintervall täglich/wöchentlich/monatlich) und für
- * Wiederholungen abgelehnter Übergaben.
+ * Zeitplaner für Leads, die nicht sofort rausgehen konnten, und für Wiederholungen abgelehnter Übergaben.
  *
  *  - Kandidaten: Leads mit Bestellzuordnung (metadata.assignedOrderId), die noch nicht als „zugewiesen“ ausgeliefert sind.
- *  - Intervall: sofort → bei jedem Lauf; täglich → einmal pro Kalendertag; wöchentlich → einmal pro Kalenderwoche;
- *    monatlich → einmal pro Monat (Bezug: letzte Lieferung der Bestellung, MEZ/MESZ des Servers).
- *  - Echtzeit-Bestellungen: nur Wiederholung nach Ablehnung (Abstand ≥ RETRY_MINUTES, höchstens MAX_ATTEMPTS Versuche).
+ *  - Seit v391 liefert jede Bestellung in Echtzeit – es gibt kein Tages-, Wochen- oder Monatsfenster mehr. Die Zuordnung liefert den Lead
+ *    selbst; was dabei nicht ging (kein Liefertag, Bestellung noch nicht gestartet, Fehler) oder aus der Zeit vor v391 auf ein Fenster
+ *    wartet, holt dieser Lauf nach – sobald der Lead NACHHOLEN_NACH_MS lang unberührt ist (so kommt er der Sofort-Lieferung nie zuvor) und
+ *    höchstens NACHHOLEN_TAGE alt (ältere bleiben, wie sie sind – kein Schwall alter Leads an einen Käufer).
+ *  - Wiederholung nach Ablehnung: Abstand ≥ RETRY_MINUTES, höchstens MAX_ATTEMPTS Versuche, dann „hängend“.
  *  - Reihenfolge: FIFO/LIFO nach Mandanteneinstellung, Bestellmenge und Konfiguration werden von deliverLeadNow geprüft.
  *
  * Start im Server: startDeliveryScheduler() – Intervall über DELIVERY_SCHEDULER_INTERVAL_MINUTES (Standard 15, 0 = aus).
@@ -31,6 +32,11 @@ export { intervalWindowOpen };
 
 export const MAX_ATTEMPTS = 3;
 export const RETRY_MINUTES = 30;
+/** Nachholen erst, wenn der Lead so lange unberührt ist – die Sofort-Lieferung nach der Zuordnung läuft dann längst (v391). */
+export const NACHHOLEN_NACH_MS = 2 * 60_000;
+/** Nachgeholt wird nur, was höchstens so alt ist (v391): Wochenende, Feiertage und ein Wochenfenster von vor v391 passen hinein. */
+export const NACHHOLEN_TAGE = 14;
+const dayStart = (value: Date) => { const copy = new Date(value); copy.setHours(0, 0, 0, 0); return copy; };
 
 export type ScheduledRunSummary = { tenantId: number; checked: number; delivered: number; rejected: number; skipped: number; abandoned: number; details: string[] };
 
@@ -48,8 +54,6 @@ export async function runScheduledDeliveries(db: Db, options: { tenantId?: numbe
     const configs = orderIds.length ? await db.select().from(orderOperationalConfigs).where(and(eq(orderOperationalConfigs.tenantId, tenantId), inArray(orderOperationalConfigs.orderId, orderIds))) : [];
     const orderRows = orderIds.length ? await db.select().from(orders).where(and(eq(orders.tenantId, tenantId), inArray(orders.id, orderIds))) : [];
     const deliveries = orderIds.length ? await db.select().from(leadDeliveries).where(and(eq(leadDeliveries.tenantId, tenantId), inArray(leadDeliveries.orderId, orderIds))) : [];
-    const lastDeliveryAt = new Map<number, Date>(); for (const row of deliveries) if (row.orderId && (row.result === "angeboten" || row.result === "angenommen")) { const previous = lastDeliveryAt.get(row.orderId); if (!previous || previous < row.occurredAt) lastDeliveryAt.set(row.orderId, row.occurredAt); }
-    const windowOpened = new Set<number>();
     for (const lead of pending) {
       const orderId = Number(metadataOf(lead).assignedOrderId); const config = configs.find((row) => row.orderId === orderId); const order = orderRows.find((row) => row.id === orderId);
       if (!order || !config) { summary.skipped += 1; continue; }
@@ -61,12 +65,17 @@ export async function runScheduledDeliveries(db: Db, options: { tenantId?: numbe
       }
       const lastAttempt = attempts.reduce<Date | undefined>((latest, row) => !latest || latest < row.occurredAt ? row.occurredAt : latest, undefined);
       if (lastAttempt && now.getTime() - lastAttempt.getTime() < RETRY_MINUTES * 60_000) { summary.skipped += 1; continue; }
-      if (config.realtimeDelivery && !attempts.length) { summary.skipped += 1; continue; } // Echtzeit-Leads liefert die Zuordnung selbst; hier nur Wiederholungen
-      if (!config.realtimeDelivery && !windowOpened.has(orderId) && !intervalWindowOpen(config.deliveryInterval, lastDeliveryAt.get(orderId), now)) { summary.skipped += 1; continue; }
+      if (!attempts.length) {
+        // Nachholen (v391): nur, was noch nicht rausging und gerade niemand anfasst – nicht für beendete, ausgeschaltete oder noch nicht gestartete Bestellungen
+        if (deliveries.some((row) => row.leadId === lead.id && row.orderId === orderId && (row.result === "angeboten" || row.result === "angenommen"))) { summary.skipped += 1; continue; }
+        if (now.getTime() - new Date(lead.updatedAt ?? lead.createdAt).getTime() < NACHHOLEN_NACH_MS) { summary.skipped += 1; continue; }
+        if (now.getTime() - new Date(lead.createdAt).getTime() > NACHHOLEN_TAGE * 86_400_000) { summary.skipped += 1; continue; }
+        if (!["offen", "aktiv"].includes(String(order.status)) || config.active === false || (config.startsAt && now < dayStart(config.startsAt))) { summary.skipped += 1; continue; }
+      }
       try {
         const result = await deliverLeadNow(db, { tenantId, actorUserId: null, lead, preferOrderId: orderId, now, settings });
         if (result.result === "abgelehnt") { summary.rejected += 1; summary.details.push(`${lead.publicId}: abgelehnt (${result.attempts.map((attempt) => attempt.reason ?? attempt.buyerName).join("; ")})`); }
-        else { summary.delivered += 1; windowOpened.add(orderId); summary.details.push(`${lead.publicId}: ${result.result} → ${result.buyerName}`); }
+        else { summary.delivered += 1; summary.details.push(`${lead.publicId}: ${result.result} → ${result.buyerName}`); }
       } catch (error) {
         summary.skipped += 1; summary.details.push(`${lead.publicId}: ${error instanceof Error ? error.message : "unbekannter Fehler"}`);
       }

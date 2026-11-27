@@ -3676,3 +3676,26 @@ html.dark .md-timeline li.is-bad::before{background:#f97066;box-shadow:0 0 0 4px
 html:not(.dark) .ig-wattfox-origin.is-ok{border-color:#abefc6;background:#ecfdf3;color:#067647}
 .ig-wattfox-origin.is-warn{border:1px solid rgba(247,144,9,.4);background:rgba(247,144,9,.1);color:#fedf89}
 html:not(.dark) .ig-wattfox-origin.is-warn{border-color:#fedf89;background:#fffaeb;color:#93370d}
+
+/* ───────── Version 391: Takt immer in Echtzeit (Bestellformular) · „Für welche Sparten gilt diese Kette?“ mit Speichern ───────── */
+/* Bestellformular: Lieferung steht fest auf „In Echtzeit“ – sieht aus wie ein Feld, lässt sich aber nicht ändern */
+.of-realtime{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(177,171,255,.16);border-radius:9px;background:rgba(12,9,27,.55);font-size:13px;font-weight:700;color:var(--lt-ink)}
+html:not(.dark) .of-realtime{border-color:#e8ecf1;background:#f3f6f8;color:#0f172a}
+.of-realtime svg{flex:none;width:15px;height:15px;color:var(--lt-accent)}
+/* Lieferkette der Bestellung: Speichern unter den Sparten – grüner Haken, wenn alles gespeichert ist; gelber Hinweis, solange nicht */
+.lk-sparten-save{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding-top:10px;border-top:1px dashed var(--lt-line-2)}
+.lk-sparten-save>span{display:inline-flex;align-items:center;gap:6px;margin-right:auto;font-size:12.5px;font-weight:650;color:var(--lt-muted)}
+.lk-sparten-save>span svg{flex:none;width:15px;height:15px}
+.lk-sparten-save.is-saved>span{color:var(--lt-good)}
+.lk-sparten-save.is-dirty>span{color:var(--fx-warn,#fcd34d)}
+.lk-sparten-reset{padding:0 2px;border:0;background:none;font:inherit;font-size:12.5px;font-weight:650;color:var(--lt-ink-2);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.lk-sparten-reset:disabled{opacity:.5;cursor:default}
+.lk-sparten-reset:focus-visible{outline:2px solid var(--lt-ink-2);outline-offset:2px}
+.lk-sparten-save .flux-button{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 16px;border-radius:10px}
+.lk-sparten-save .flux-button svg{width:15px;height:15px}
+.lk-sparten-save .flux-button:disabled{opacity:.45}
+/* Gewählte Sparte: dezent grau statt zartrot (wie die hervorgehobenen Zeilen seit v386) – rote Schrift und roter Rand zeigen die Wahl */
+html:not(.dark) .lk-sparten .lk-sparte.is-on{border-color:#bc001d;background:#f2f4f7;color:#bc001d}
+/* Schritte der Bestellung (1 Bestellung definieren · 2 Lieferkette): der gewählte Schritt dezent grau statt rosa – die rote Zahl zeigt ihn */
+html:not(.dark) .order-steps.surface-panel button.active{background:#f7f8fa!important;border-color:#d0d5dd!important}
+@media (max-width:560px){.lk-sparten-save>span{flex:1 1 100%;margin-right:0}.lk-sparten-save .flux-button{margin-left:auto}}

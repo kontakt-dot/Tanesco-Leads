@@ -64,17 +64,18 @@ describe("Pipeline-Zusätze im Chat-Build", () => {
     expect(repeated.attempts.length).toBeGreaterThan(0);
     await call("leadops.updateTenantSettings", { outgoingDuplicateProtection: true });
 
-    // Tägliches Intervall ohne Echtzeit → Zeitplaner
+    // Seit v391 immer in Echtzeit: Auch wer noch „täglich, ohne Echtzeit“ schickt, bekommt Echtzeit – „Bestellung zuordnen“ liefert gleich aus
     const order = await call("leadops.createOrder", { name: "Tagesbestellung", buyerName: "Tages Käufer", categoryId: cat.id, quantity: 5, unitPrice: 40, status: "aktiv" });
+    expect(getStore().tables.orderOperationalConfigs.find((row) => row.orderId === order.orderId)).toMatchObject({ deliveryInterval: "sofort", realtimeDelivery: true });
     await call("leadops.saveOrderWorkspace", { orderId: order.orderId, name: "Tagesbestellung", buyerName: "Tages Käufer", buyerUserId: null, categoryId: cat.id, categoryIds: [cat.id], quantity: 5, unitPrice: 40, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "täglich", compensateClaims: false, priority: 1, realtimeDelivery: false, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } });
     const daily = (await call("leadops.listDeliveryChains")).find((c: any) => c.orderId === order.orderId); // seit v376 steht die Kette mit dem Speichern
     expect(daily.stops).toHaveLength(1); await call("leadops.updateDeliveryChain", { id: daily.id, name: "Tageskette" });
     const pendingLead = await call("leadops.importLead", { categoryId: cat.id, firstName: "Warte", lastName: "Schleife", city: "Kiel" });
-    await call("leadops.assignLeadsToOrder", { publicIds: [pendingLead.publicId], orderId: order.orderId });
-    expect(getStore().tables.leads.find((row) => row.publicId === pendingLead.publicId)!.status).toBe("neu");
-    const run = await call("leadops.runScheduledDeliveries");
-    expect(run.delivered).toBe(1);
+    expect(getStore().tables.orderOperationalConfigs.find((row) => row.orderId === order.orderId)).toMatchObject({ deliveryInterval: "sofort", realtimeDelivery: true });
+    expect(await call("leadops.assignLeadsToOrder", { publicIds: [pendingLead.publicId], orderId: order.orderId })).toMatchObject({ updated: 1, delivered: 1, open: 0 });
     expect(getStore().tables.leads.find((row) => row.publicId === pendingLead.publicId)!.status).toBe("zugewiesen");
+    const run = await call("leadops.runScheduledDeliveries");
+    expect(run.delivered).toBe(0); // nichts wartet mehr auf ein Tagesfenster
   });
 });
 

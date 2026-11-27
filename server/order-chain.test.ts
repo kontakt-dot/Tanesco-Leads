@@ -179,7 +179,7 @@ describe("Station 1 in Worten und die Standard-Gründe", () => {
       config: { buyerUserId: 50, startsAt: new Date("2026-12-01T11:00:00Z"), endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"], deliveryInterval: "sofort", advancedFilters: { postcodes: "Bayern, Hessen" }, supplierRestrictions: { blockUnknownSuppliers: true, allowedSupplierIds: [7] }, categoryIds: [1, 2] },
       mainCategoryId: 1, supplierName: (id) => (id === 7 ? "Signal Ads" : `Lieferant #${id}`), categoryName: (id) => (id === 1 ? "Photovoltaik" : "Wärmepumpe"),
     });
-    expect(Object.fromEntries(station.facts.map((fact) => [fact.key, `${fact.label}: ${fact.value}`]))).toEqual({ lieferant: "Lieferant: Signal Ads", sparten: "Leadsparten: Photovoltaik, Wärmepumpe", preis: "Preis: 44,00 € je Lead", menge: "Menge: 87 von 120 geliefert", start: "Start: 01.12.2026", ende: "Ende: fortlaufend", gebiet: "Bundesländer: Bayern, Hessen", tage: "Liefertage: Mo–Fr", takt: "Takt: sofort" });
+    expect(Object.fromEntries(station.facts.map((fact) => [fact.key, `${fact.label}: ${fact.value}`]))).toEqual({ lieferant: "Lieferant: Signal Ads", sparten: "Leadsparten: Photovoltaik, Wärmepumpe", preis: "Preis: 44,00 € je Lead", menge: "Menge: 87 von 120 geliefert", start: "Start: 01.12.2026", ende: "Ende: fortlaufend", gebiet: "Bundesländer: Bayern, Hessen", tage: "Liefertage: Mo–Fr", takt: "Takt: in Echtzeit" });
     expect(station).toMatchObject({ orderNumber: "ORD-TEST", name: "PV Bayern", buyerName: "Sonnenwerk GmbH", unitPrice: "44.00", quantity: 120, delivered: 87, buyerMissing: false });
   });
   it("ohne Einschränkungen: alle Lieferanten, landesweit, jeden Tag, unbegrenzt – und der Hinweis, wenn kein Käufer gewählt ist", () => {

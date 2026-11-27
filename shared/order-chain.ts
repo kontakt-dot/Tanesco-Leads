@@ -157,7 +157,8 @@ export function daysInShort(days: unknown): string {
 }
 const day = (value: Date | string | null | undefined) => { if (!value) return ""; const date = value instanceof Date ? value : new Date(value); return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Berlin" }); };
 const euro = (value: string | number) => `${(Number(value) || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
-const TAKT: Record<string, string> = { sofort: "sofort", täglich: "einmal am Tag", wöchentlich: "einmal in der Woche", monatlich: "einmal im Monat" };
+/** Seit v391 liefert jede Bestellung in Echtzeit – bis v390 stand hier das Lieferintervall („einmal am Tag“), auch wenn die Bestellung längst sofort lieferte. */
+export const ORDER_TAKT = "in Echtzeit";
 
 /** Alles, was aus der Bestellung in die Kette kommt – als lesbare Zeilen (Lieferant, Sparten, Preis, Menge, Start, Ende, Gebiet, Liefertage, Takt). */
 export function describeOrderStation(input: OrderStationInput): OrderStation {
@@ -176,7 +177,7 @@ export function describeOrderStation(input: OrderStationInput): OrderStation {
     { key: "ende", label: "Ende", value: end || "fortlaufend" },
     { key: "gebiet", label: area.states.length ? (area.states.length === 1 ? "Bundesland" : "Bundesländer") : "Gebiet", value: areaText },
     { key: "tage", label: "Liefertage", value: daysInShort(config?.deliveryDays) },
-    { key: "takt", label: "Takt", value: TAKT[String(config?.deliveryInterval ?? "sofort")] ?? String(config?.deliveryInterval ?? "sofort") },
+    { key: "takt", label: "Takt", value: ORDER_TAKT },
   ];
   return { orderId: order.id, orderNumber: order.orderNumber, name: (order.name ?? "").trim() || orderChainName(order.orderNumber), status: order.status, buyerName: order.buyerName, unitPrice: price(order.unitPrice), quantity, delivered, buyerMissing: !orderHasBuyer(order, config as { buyerUserId?: number | null } | null | undefined), facts };
 }
