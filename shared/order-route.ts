@@ -124,3 +124,11 @@ export function routeSentence(route: Pick<OrderRoute, "active" | "stops" | "retu
   const rest = buyers.slice(1).map((buyer, index) => (index === 0 ? `geht er an ${buyer}` : `danach an ${buyer}`)).join(", ");
   return `Jeder Lead geht zuerst an ${buyers[0]}. Nimmt ${buyers[0]} ihn nicht, ${rest}. Nimmt ihn keine Station, ${routeEnd(route)}.`;
 }
+
+/** Die Lieferkette kurz für eine Kachel: „Aurora Home → Vektor Klima“; bei mehreren Wegen deren Zahl. */
+export function routeShort(routes: OrderRoute[]): { text: string; title: string } {
+  if (!routes.length) return { text: "noch keine", title: "Für diese Bestellung gibt es noch keine Lieferkette. Sie entsteht, sobald du die Bestellung speicherst." };
+  if (routes.length > 1) return { text: `${routes.length} Wege – je nach Sparte`, title: routes.map((route) => routeSentence(route)).join(" · ") };
+  const route = routes[0]; const names = route.stops.filter((stop) => stop.active).map((stop) => stop.buyerName);
+  return { text: !route.active ? "ausgeschaltet" : names.length ? names.join(" → ") : "keine eingeschaltete Station", title: routeSentence(route) };
+}
