@@ -4,6 +4,7 @@
  */
 import { and, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { avatarUrlOf } from "../shared/avatar";
+import { CHOOSABLE_AREAS } from "../shared/customer-areas";
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { apiTokens, balanceTransactions, claims, deliveryStops, impersonationSessions, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, reclamationReasons, supplierInboundMappings, suppliers, users } from "../drizzle/schema";
@@ -12,7 +13,8 @@ import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integratio
 import type { Db } from "./lead-pipeline";
 import { buildLeadExportPayload } from "./lead-integration-export";
 
-export const BUYER_AREAS = ["Angebote", "Shop", "Marktplatz", "Guthaben", "Pipeline", "Bestellungen", "Käufe", "Reklamationen", "Lead-Import", "E-Mails", "Support", "Integrationen", "Team", "App-Download-Logos"] as const;
+/** Bereiche des Kundenbereichs, die sich ein- und ausschalten lassen (v388: nur die, die es wirklich gibt – siehe shared/customer-areas.ts). */
+export const BUYER_AREAS = CHOOSABLE_AREAS;
 
 type Settings = typeof memberOperationalSettings.$inferSelect;
 

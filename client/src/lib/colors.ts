@@ -11,7 +11,7 @@ export function categoryColor(category: { id: number; color?: string | null } | 
 /** Lead-Status: Farbe + lesbares Label. */
 export const STATUS_STYLE: Record<string, { color: string; label: string }> = {
   neu: { color: "#2563eb", label: "Neu" },
-  genehmigt: { color: "#0d9488", label: "Freigegeben" },
+  genehmigt: { color: "#c026d3", label: "Freigegeben" }, // v388: Magenta statt Türkis – Türkis sah dem Grün von „Zugewiesen“ zu ähnlich
   zugewiesen: { color: "#16a34a", label: "Zugewiesen" },
   reklamiert: { color: "#dc2626", label: "Reklamiert" },
   fehlerhaft: { color: "#ea580c", label: "Fehlerhaft" },

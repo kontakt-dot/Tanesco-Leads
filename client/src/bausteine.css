@@ -3487,3 +3487,20 @@ html:not(.dark) .order-overview{--ov-mono:linear-gradient(135deg,#bc001d,#fb2c36
 .order-card-actions .order-delete:hover{background:color-mix(in srgb,#f43f5e 12%,transparent);color:#f43f5e}
 @media (max-width:720px){.order-toolbar{padding:12px 16px 4px}.order-cards{grid-template-columns:minmax(0,1fr);padding:8px 14px 16px}}
 @media (prefers-reduced-motion:reduce){.order-card,.order-view button{transition:none}.order-card:hover{transform:none}}
+
+/* ───────── Version 388: Knöpfe der Leads rechts, Lead-Kategorie in der Leiste, Benutzer → Ansicht ───────── */
+@media (min-width:761px){.live-leads-workspace>.page-intro.compact>.lead-header-actions{justify-content:flex-end;margin-left:auto}}
+.live-leads-workspace .lt-panel .lt-control.lt-category-pick{min-width:200px}
+.va-intro{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.va-areas{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;margin:14px 0 0;padding:0;list-style:none}
+.va-areas label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;min-height:54px;padding:9px 12px;border:1px solid var(--lt-line);border-radius:12px;background:var(--lt-tile);cursor:pointer;transition:border-color .15s ease,background-color .15s ease}
+.va-areas label:hover{border-color:var(--lt-line-2)}
+.va-areas input{width:16px;height:16px;accent-color:var(--lt-accent-strong)}
+.va-areas b{display:block;font-size:13.5px;font-weight:650;color:var(--lt-ink)}
+.va-areas small{display:block;margin-top:1px;font-size:12px;color:var(--lt-muted)}
+.va-areas em{font-style:normal;font-size:11px;font-weight:650;color:var(--lt-faint);white-space:nowrap}
+.va-areas li.is-off label{background:var(--lt-head)}
+.va-areas li.is-off b{color:var(--lt-muted)}
+.va-areas li.is-always label{cursor:default}
+.va-note{margin:10px 0 0;font-size:12px;color:var(--lt-faint)}
+@media (prefers-reduced-motion:reduce){.va-areas label{transition:none}}

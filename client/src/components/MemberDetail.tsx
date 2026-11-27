@@ -12,6 +12,7 @@ import { roleLabel } from "@/components/MemberDirectory";
 import IntegrationTab from "@/components/IntegrationTab";
 import { confirmAction } from "@/lib/confirm";
 import { orderStatusLabel } from "../../../shared/order-status";
+import { CHOOSABLE_AREAS, CUSTOMER_AREAS } from "../../../shared/customer-areas";
 
 type Tab = "stammdaten" | "passwort" | "bestellungen" | "lieferant" | "reklamation" | "zahlung" | "benachrichtigungen" | "aktivitaet" | "ansicht" | "tools";
 const TABS: Array<{ key: Tab; label: string; hint: string; icon: LucideIcon }> = [
@@ -244,15 +245,32 @@ function ActivityTab({ membershipId }: { membershipId: number }) {
     <div className="mt-3 grid gap-1">{visible.map((event, index) => <div key={index} className="grid gap-1 rounded-lg border border-white/8 bg-white/[.02] p-3 text-sm md:grid-cols-[170px_1fr_120px]"><span className="text-xs text-slate-500">{new Date(event.at).toLocaleString("de-DE")}</span><span className="text-slate-200">{event.title}{event.detail && <span className="block text-xs text-slate-500">{event.detail}</span>}</span><span className="text-xs text-violet-200">{event.leadPublicId ? `Lead ${event.leadPublicId}` : event.kind}</span></div>)}{!visible.length && <p className="text-sm text-slate-500">Noch keine Aktivität.</p>}</div></section>;
 }
 
+/**
+ * Reiter „Ansicht“ (v388): welche Seiten der Kunde in seinem Bereich sieht – genau die Seiten, die es im Kundenbereich gibt
+ * (shared/customer-areas.ts). Bis v387 standen hier 14 Bereiche aus der alten Vorlage, von denen nur fünf wirkten.
+ */
 function VisibilityTab({ data, onDone }: { data: Detail; onDone: () => void }) {
   const { settings, membership } = data;
-  const [areas, setAreas] = useState<string[] | null>(Array.isArray(settings.visibleAreas) ? (settings.visibleAreas as string[]) : null);
+  const supplier = membership.partnerType === "lieferant";
+  const [areas, setAreas] = useState<string[] | null>(Array.isArray(settings.visibleAreas) ? (settings.visibleAreas as string[]).filter((area) => CHOOSABLE_AREAS.includes(area)) : null);
   const [categoryIds, setCategoryIds] = useState<number[] | null>(Array.isArray(settings.visibleCategoryIds) ? (settings.visibleCategoryIds as number[]) : null);
   const save = trpc.leadops.updateMemberVisibility.useMutation({ onSuccess: () => { toast.success("Ansicht gespeichert."); onDone(); }, onError: (error) => toast.error(error.message) });
   const areaOn = (area: string) => areas === null || areas.includes(area);
-  const toggleArea = (area: string) => setAreas((current) => { const base = current ?? [...data.buyerAreas]; return base.includes(area) ? base.filter((item) => item !== area) : [...base, area]; });
+  const toggleArea = (area: string) => setAreas((current) => { const base = current ?? [...CHOOSABLE_AREAS]; return base.includes(area) ? base.filter((item) => item !== area) : [...base, area]; });
   const categoryOn = (id: number) => categoryIds === null || categoryIds.includes(id);
   const toggleCategory = (id: number) => setCategoryIds((current) => { const base = current ?? data.categories.map((category) => category.id); return base.includes(id) ? base.filter((item) => item !== id) : [...base, id]; });
-  return <div className="grid gap-4"><section className="surface-panel operations-panel p-5"><span className="eyebrow">SICHTBARE BEREICHE</span><p className="mt-1 text-xs text-slate-400">Lege fest, welche Einträge dieser Kunde in der Seitenleiste sieht. Standard übernimmt die Voreinstellung des Tenants.</p><div className="mt-3 grid gap-2 md:grid-cols-3">{data.buyerAreas.map((area) => <label key={area} className="flex items-center gap-2 text-sm text-slate-200"><input type="checkbox" checked={areaOn(area)} onChange={() => toggleArea(area)} /> {area}</label>)}</div></section>
-    <section className="surface-panel operations-panel p-5"><span className="eyebrow">SICHTBARE LEAD-KATEGORIEN (INTEGRATION)</span><p className="mt-1 text-xs text-slate-400">Lege fest, welche einzelnen Lead-Kategorien dieser Kunde auf der Integrations-Seite sieht. Ausgeblendete Kategorien betreffen nur die Anzeige.</p><div className="mt-3 grid gap-2 md:grid-cols-3">{data.categories.map((category) => <label key={category.id} className="flex items-center gap-2 text-sm text-slate-200"><input type="checkbox" checked={categoryOn(category.id)} onChange={() => toggleCategory(category.id)} /> {category.name} <span className="text-xs text-slate-500">{category.shortcode}</span></label>)}</div><div className="mt-4 flex justify-between"><Button size="sm" variant="ghost" onClick={() => { setAreas(null); setCategoryIds(null); }}>Auf Standard zurücksetzen</Button><Button className="flux-button" size="sm" onClick={() => save.mutate({ membershipId: membership.id, visibleAreas: areas, visibleCategoryIds: categoryIds })} disabled={save.isPending}>Speichern</Button></div></section></div>;
+  const shown = CUSTOMER_AREAS.filter((area) => !area.onlySupplier || supplier);
+  return <div className="grid gap-4 fx-scope va">
+    <section className="surface-panel operations-panel p-5" aria-label="Sichtbare Bereiche"><span className="eyebrow">SICHTBARE BEREICHE</span>
+      <p className="va-intro">Lege fest, welche Seiten dieser Kunde in seinem Bereich sieht. Dashboard, Leads und Einstellungen sieht er immer – ohne eigene Auswahl sieht er alles.</p>
+      <ul className="va-areas">{shown.map((area) => { const on = area.always || areaOn(area.key);
+        return <li key={area.key} className={area.always ? "is-always" : on ? "is-on" : "is-off"}><label><input type="checkbox" checked={on} disabled={area.always} onChange={() => toggleArea(area.key)} /><span><b>{area.label}</b><small>{area.hint}</small></span>{area.always ? <em>immer sichtbar</em> : null}</label></li>; })}</ul>
+      {!supplier && <p className="va-note">„Lead-Import“ (Leads hochladen) gibt es nur bei Lieferanten-Zugängen – deshalb steht er hier nicht.</p>}
+    </section>
+    <section className="surface-panel operations-panel p-5" aria-label="Sichtbare Lead-Kategorien"><span className="eyebrow">SICHTBARE LEAD-KATEGORIEN (INTEGRATION)</span>
+      <p className="va-intro">Welche Lead-Kategorien dieser Kunde auf seiner Seite „Integrationen“ sieht. Ausgeblendete Kategorien betreffen nur die Anzeige – an der Lieferung ändert sich nichts.</p>
+      <div className="mt-3 grid gap-2 md:grid-cols-3">{data.categories.map((category) => <label key={category.id} className="flex items-center gap-2 text-sm text-slate-200"><input type="checkbox" checked={categoryOn(category.id)} onChange={() => toggleCategory(category.id)} /> {category.name} <span className="text-xs text-slate-500">{category.shortcode}</span></label>)}</div>
+      <div className="mt-4 flex justify-between"><Button size="sm" variant="ghost" onClick={() => { setAreas(null); setCategoryIds(null); }}>Auf Standard zurücksetzen</Button><Button className="flux-button" size="sm" onClick={() => save.mutate({ membershipId: membership.id, visibleAreas: areas, visibleCategoryIds: categoryIds })} disabled={save.isPending}>Speichern</Button></div>
+    </section>
+  </div>;
 }

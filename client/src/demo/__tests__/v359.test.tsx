@@ -66,8 +66,8 @@ describe("Version 359", () => {
     await click(Array.from(root.querySelectorAll("button")).find((button) => button.textContent?.trim().startsWith("Filter")), 500);
     const panel = () => root.querySelector<HTMLElement>('.lt-filters[aria-label="Erweiterte Filter"]');
     expect(panel()).toBeTruthy(); expect(panel()!.querySelector(".lt-filters-head b")!.textContent).toBe("Erweiterte Filter");
-    expect(Array.from(panel()!.querySelectorAll(".lt-field > span")).map((node) => node.textContent)).toEqual(["Kategorie", "Käufer", "Lieferant", "Zuordnung", "Auslieferung", "Erstellt ab", "Erstellt bis", "Ausgeliefert ab", "Ausgeliefert bis"]);
-    expect(panel()!.querySelectorAll(".lt-field-control")).toHaveLength(9);
+    expect(Array.from(panel()!.querySelectorAll(".lt-field > span")).map((node) => node.textContent)).toEqual(["Kategorie", "Käufer", "Lieferant", "Zuordnung", "Sortierung", "Auslieferung", "Erstellt ab", "Erstellt bis", "Ausgeliefert ab", "Ausgeliefert bis"]); // v388: die Sortierung steht jetzt hier
+    expect(panel()!.querySelectorAll(".lt-field-control")).toHaveLength(10);
     expect(Array.from(panel()!.querySelectorAll("button")).some((button) => button.textContent === "Alle zurücksetzen")).toBe(false); // nichts gesetzt
     const categories = Array.from(panel()!.querySelector<HTMLSelectElement>('select[aria-label="Kategorie filtern"]')!.options).filter((option) => option.value);
     const category = categories.find((option) => (getStore().tables.leads as unknown as Array<{ categoryId: number }>).some((lead) => String(lead.categoryId) === option.value))!;

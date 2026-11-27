@@ -102,5 +102,7 @@ export async function customerEndpoints(db: Db, tenantId: number, userId: number
   const { membership, settings } = await contextFor(db, tenantId, userId);
   const rows = await db.select({ id: deliveryEndpoints.id, categoryId: deliveryEndpoints.categoryId, enabled: deliveryEndpoints.enabled, method: deliveryEndpoints.method, url: deliveryEndpoints.url }).from(deliveryEndpoints).where(and(eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membership.id)));
   const categories = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId));
-  return { webhookUrl: settings?.webhookUrl ?? null, endpoints: rows.map((row) => ({ id: row.id, categoryName: categories.find((category) => category.id === row.categoryId)?.name ?? "–", enabled: row.enabled, method: row.method, url: row.url })) };
+  // v388: „Sichtbare Lead-Kategorien (Integration)“ beim Benutzer wirkt jetzt – ausgeblendete Kategorien stehen nicht auf seiner Seite „Integrationen“
+  const shown = Array.isArray(settings?.visibleCategoryIds) ? new Set((settings!.visibleCategoryIds as unknown[]).map(Number)) : null;
+  return { webhookUrl: settings?.webhookUrl ?? null, endpoints: rows.filter((row) => !shown || shown.has(row.categoryId)).map((row) => ({ id: row.id, categoryName: categories.find((category) => category.id === row.categoryId)?.name ?? "–", enabled: row.enabled, method: row.method, url: row.url })) };
 }
