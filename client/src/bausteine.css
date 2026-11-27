@@ -2942,3 +2942,158 @@ html.dark .rd button.border:hover:not(:disabled),html.dark .rk button.border:hov
   .rk-row .rk-chevron{grid-column:3;grid-row:1/5}
 }
 @media (prefers-reduced-motion:reduce){.fx-tabs button,.fx-search,.fx-tool,.fx-field,.fx-select,.rd-batch,.rd-pick,.rd-drop,.rd-row,.rd-chips button,.rk-row,.rk-chevron,.rk-hits button{transition:none}}
+
+/* ═══════════════════════════ Version 381 ═══════════════════════════
+   Vertriebspipeline und E-Mail-Kampagnen im Stil der neu gestalteten Seiten: Zahlen als eine Leiste, echte Überschriften statt Schildern,
+   ruhige Zustände – hell, dunkel, Handy. Schilder bleiben nur ÜBER einer Überschrift (Seitenkopf, „Liste hochladen“ …).
+   Regeln wie in v377: Kästen mit Text, die rosa oder lila hinterlegt waren, sind weiß mit einem farbigen Rand links
+   (rot = überfällig bzw. „geht als Nächstes raus“, bernstein = heute fällig, blau = Termin heute). Farbe trägt nur noch Bedeutung:
+   blau = geöffnet, bernstein = geklickt, grün = geantwortet – in den Zahlen, in der Kontaktliste und auf den Karten dieselben Töne.
+   Gewähltes bleibt rot wie gewohnt. Das dunkle Design behält seine Farben; dort ändert sich nur der Aufbau. */
+.vp,.ek{--px-card:linear-gradient(180deg,rgba(33,30,58,.9),rgba(24,21,45,.9));--px-shadow:0 26px 70px -46px rgba(0,0,0,.75);--px-open:#60a5fa;--px-click:#fbbf24;--px-reply:#34d399;--px-deliver:#2dd4bf;--px-bad:#fb7185}
+html:not(.dark) .vp,html:not(.dark) .ek{--px-card:#ffffff;--px-shadow:0 24px 60px -46px rgba(15,23,42,.35);--px-open:#2a78d6;--px-click:#d97706;--px-reply:#1baf7a;--px-deliver:#0e9384;--px-bad:#d92d20}
+
+/* ── Gemeinsame Bausteine: Überschrift, Beschriftung, Zahlen-Leiste ── */
+.fx-h{display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:740;letter-spacing:-.01em;line-height:1.3;color:#f1effe}
+.fx-h>svg{flex:none;width:16px;height:16px;color:#a39bff}
+.fx-h.is-sub{font-size:13.5px;font-weight:700;letter-spacing:0}
+html:not(.dark) .fx-h{color:#17130f}
+html:not(.dark) .fx-h>svg{color:#bc001d}
+.fx-cap{display:inline-flex;align-items:center;font-size:12px;font-weight:600;line-height:1.3;color:#9a9cba}
+html:not(.dark) .fx-cap{color:#667085}
+.fx-rail{display:grid;grid-template-columns:repeat(var(--fx-rail-n,4),minmax(0,1fr));gap:1px;margin:0 0 14px;border:1px solid var(--lt-line);border-radius:20px;background:var(--rd-surface);box-shadow:var(--px-shadow,none);overflow:hidden}
+.fx-stat{display:grid;align-content:start;gap:5px;min-width:0;padding:15px 20px 16px;background:var(--rd-surface);box-shadow:1px 0 0 var(--lt-line),0 1px 0 var(--lt-line),1px 1px 0 var(--lt-line)}
+.fx-stat>span{display:flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;font-weight:600;line-height:1.3;color:var(--lt-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fx-stat>span svg{flex:none;width:15px;height:15px;color:var(--lt-accent)}
+.fx-stat strong{font-size:26px;font-weight:760;letter-spacing:-.03em;line-height:1.1;color:var(--lt-ink);font-variant-numeric:tabular-nums}
+.fx-stat small{font-size:12px;line-height:1.4;color:var(--lt-muted)}
+.fx-stat.is-bad strong,.fx-stat.is-bad>span svg{color:var(--fx-bad)}
+.fx-stat.is-warn strong,.fx-stat.is-warn>span svg{color:var(--fx-warn)}
+.fx-stat.is-good strong,.fx-stat.is-good>span svg{color:var(--lt-good)}
+@media (max-width:900px){.fx-rail{grid-template-columns:repeat(2,minmax(0,1fr))}.fx-rail .fx-stat:last-child:nth-child(odd){grid-column:1/-1}}
+@media (max-width:600px){.fx-stat{padding:12px 14px 13px}.fx-stat strong{font-size:22px}}
+
+/* ── Vertriebspipeline ── */
+/* Filterleiste: Beschriftungen ohne Schild – wie im dunklen Design. Rot ist dort nur noch, was gewählt ist. */
+html:not(.dark) .vp .dashboard-filter-group>.eyebrow{margin:0!important;padding:0!important;border:0!important;border-radius:0;background:none!important;color:#475467!important;font-size:10.5px;letter-spacing:.07em}
+html:not(.dark) .vp .dashboard-filter-group>.eyebrow svg{color:#bc001d!important}
+/* Tabellen in Statistik und Einstellungen: Spaltenköpfe in normaler Schrift */
+.vp .dash-table th{font-size:12px;font-weight:600;letter-spacing:0;text-transform:none}
+/* Aufgaben: Überschriften der Gruppen in normaler Schrift; Zeilen weiß mit farbigem Rand links statt farbiger Fläche */
+.vp .today-group-title{font-size:13px;letter-spacing:0;text-transform:none}
+html:not(.dark) .vp .today-item,html:not(.dark) .vp .today-item.is-ueberfaellig,html:not(.dark) .vp .today-item.is-heute,html:not(.dark) .vp .today-item.is-termin.is-today{border-color:#e7e9ee!important;background:#ffffff!important}
+html:not(.dark) .vp .today-item.is-ueberfaellig{box-shadow:inset 3px 0 0 #d92d20}
+html:not(.dark) .vp .today-item.is-heute{box-shadow:inset 3px 0 0 #f79009}
+html:not(.dark) .vp .today-item.is-termin.is-today{box-shadow:inset 3px 0 0 #2a78d6}
+/* „Jetzt anrufen“ je Zeile: kräftig rot nur bei Überfälligem – sonst ein ruhiger Knopf, oben steht „Alle abtelefonieren“ */
+html:not(.dark) .vp .today-call{border:1px solid #f0c2c8!important;background:#ffffff!important;color:#bc001d!important;box-shadow:none!important}
+html:not(.dark) .vp .today-call svg{color:#bc001d!important}
+html:not(.dark) .vp .today-call:hover:not(:disabled){border-color:#bc001d!important;background:#fff5f5!important}
+html.dark .vp .today-call{border:1px solid var(--lt-line-2);background:var(--lt-tile);color:var(--lt-ink)}
+html.dark .vp .today-call:hover:not(:disabled){border-color:var(--lt-accent-strong);background:var(--lt-chip)}
+/* „Früheren Stand wiederherstellen“: weißer Kasten statt lila Fläche */
+html:not(.dark) .undo-restore{border-color:#e7e9ee!important;background:#ffffff!important;color:#475467!important;box-shadow:inset 3px 0 0 #bc001d}
+
+/* ── Kontaktliste (Vertriebspipeline → Kontakte, E-Mail-Kampagnen → Kontakte) ── */
+/* Spaltenköpfe in normaler Schrift; „Mails“ als ruhiger Knopf; das Kürzel im Rot der übrigen Kürzel statt lila */
+html:not(.dark) .vp .email-leads-table th,html:not(.dark) .ek .email-leads-table th{border-bottom:1px solid #e7e9ee!important;background:#f7f8fa!important;color:#667085!important;font-size:12px!important;font-weight:600;letter-spacing:0;text-transform:none}
+html:not(.dark) .vp .email-leads-mails,html:not(.dark) .ek .email-leads-mails{border-color:#d0d5dd!important;background:#ffffff!important;color:#17130f!important}
+html:not(.dark) .vp .email-leads-mails small,html:not(.dark) .ek .email-leads-mails small{color:#667085!important}
+html:not(.dark) .vp .email-leads-mails:hover,html:not(.dark) .vp .email-leads-mails[aria-expanded="true"],html:not(.dark) .ek .email-leads-mails:hover,html:not(.dark) .ek .email-leads-mails[aria-expanded="true"]{border-color:#bc001d!important;background:#fff5f5!important}
+html:not(.dark) .vp .email-leads-table tr.is-mails-open>td,html:not(.dark) .vp .email-leads-table tr.email-leads-sub>td,html:not(.dark) .ek .email-leads-table tr.is-mails-open>td,html:not(.dark) .ek .email-leads-table tr.email-leads-sub>td{background:#fff8f8!important}
+html:not(.dark) .vp .email-leads-table tr.is-clickable:hover td,html:not(.dark) .ek .email-leads-table tr.is-clickable:hover td{background:#fff8f8!important}
+html:not(.dark) .vp .email-leads-table .cd-avatar,html:not(.dark) .ek .email-leads-table .cd-avatar{background:#fde8ea!important;color:#bc001d!important}
+/* Die Knöpfe am Zeilenende (anrufen, sperren, löschen) bleiben beim Blättern nach rechts stehen – vorher waren sie auf kleineren Bildschirmen abgeschnitten */
+.vp .email-leads-table td.email-leads-row-tools,.ek .email-leads-table td.email-leads-row-tools{position:sticky;right:0;z-index:1;background:var(--rd-surface);box-shadow:-12px 0 14px -14px rgba(0,0,0,.55)}
+.vp .email-leads-table th:last-child,.ek .email-leads-table th:last-child{position:sticky;right:0;z-index:2}
+html.dark .vp .email-leads-table tr.is-clickable:hover td.email-leads-row-tools,html.dark .ek .email-leads-table tr.is-clickable:hover td.email-leads-row-tools{background:#25223f}
+html.dark .vp .email-leads-table tr.is-picked td.email-leads-row-tools,html.dark .ek .email-leads-table tr.is-picked td.email-leads-row-tools{background:#2a2750}
+html:not(.dark) .vp .email-leads-table td.email-leads-row-tools,html:not(.dark) .ek .email-leads-table td.email-leads-row-tools{background:#ffffff;box-shadow:-12px 0 14px -14px rgba(16,24,40,.3)}
+html:not(.dark) .vp .email-leads-table tr.is-picked td,html:not(.dark) .ek .email-leads-table tr.is-picked td{background:#fff5f5!important}
+/* „Nicht geöffnet“ ist kein Alarm: ruhig statt rosa. Farbe kommt erst mit der Reaktion – geöffnet blau, geklickt bernstein, geantwortet grün. */
+html:not(.dark) .vp .email-leads-state.is-gesendet,html:not(.dark) .ek .email-leads-state.is-gesendet{background:#ffffff!important;color:#475467!important;box-shadow:inset 0 0 0 1px #d0d5dd}
+
+/* ── E-Mail-Kampagnen ── */
+.ek{display:block}
+/* Kennzahlen: eine Karte – oben die Auswahl (welche Kampagne, welcher Zeitraum), darunter die Zahlen als Leiste, unten „Gesendet je Lead-Kategorie“ */
+.ek .cd-kpibar{display:grid;grid-template-columns:minmax(0,1fr) auto;margin-bottom:16px;border:1px solid var(--lt-line);border-radius:20px;background:var(--px-card);box-shadow:var(--px-shadow);overflow:hidden}
+.ek .cd-kpibar-head{grid-column:1/-1;grid-row:1;margin:0;padding:12px 16px;border-bottom:1px solid var(--lt-line);background:var(--lt-head)}
+.ek .cd-kpibar .cd-kpis{grid-column:1/-1;grid-row:2}
+.ek .cd-kpibar .cd-cats{grid-column:1;grid-row:3;margin:0;padding:10px 16px;border-top:1px solid var(--lt-line)}
+.ek .cd-kpibar .cd-today-line{grid-column:2;grid-row:3;align-items:center;margin:0;padding:10px 16px;border-top:1px solid var(--lt-line)}
+.ek .cd-kpibar .cd-today-line:not(:has(button)){display:none}
+.ek .cd-period-label{font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none}
+.ek .cd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;border:1px solid var(--lt-line);border-radius:18px;background:var(--rd-surface);overflow:hidden}
+.ek .cd-kpibar .cd-kpis{border:0;border-radius:0}
+.ek .cd-kpi{gap:3px;padding:14px 18px 15px;border:0;border-radius:0;background:var(--rd-surface);box-shadow:1px 0 0 var(--lt-line),0 1px 0 var(--lt-line),1px 1px 0 var(--lt-line);overflow:visible}
+html:not(.dark) .ek .cd-kpi{border:0!important;background:#ffffff!important;box-shadow:1px 0 0 var(--lt-line),0 1px 0 var(--lt-line),1px 1px 0 var(--lt-line)!important}
+.ek .cd-kpi::before{display:none}
+.ek .cd-kpi>span{display:flex;align-items:center;gap:7px}
+.ek .cd-kpi.is-open>span::before,.ek .cd-kpi.is-click>span::before,.ek .cd-kpi.is-reply>span::before,.ek .cd-kpi.is-delivered>span::before,.ek .cd-kpi.is-bad>span::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:var(--kpi-dot)}
+.ek .cd-kpi.is-open{--kpi-dot:var(--px-open)}
+.ek .cd-kpi.is-click{--kpi-dot:var(--px-click)}
+.ek .cd-kpi.is-reply{--kpi-dot:var(--px-reply)}
+.ek .cd-kpi.is-delivered{--kpi-dot:var(--px-deliver)}
+.ek .cd-kpi.is-bad{--kpi-dot:var(--px-bad)}
+.ek .cd-kpi.is-pick{transition:background-color .15s}
+.ek .cd-kpi.is-pick:hover{transform:none;background:var(--lt-hover)}
+html:not(.dark) .ek .cd-kpi.is-pick:hover{background:#fff8f8!important}
+.ek .cd-kpi.is-pick.is-active,html:not(.dark) .ek .cd-kpi.is-pick.is-active{background:var(--fx-pick)!important;box-shadow:inset 0 -3px 0 var(--fx-pick-line),1px 0 0 var(--lt-line),0 1px 0 var(--lt-line)!important}
+.ek .cd-kpi.is-pick:focus-visible{outline:2px solid var(--lt-ink-2);outline-offset:-2px}
+/* Karte einer Kampagne: „Nächster Versand“ weiß mit rotem Rand links; Hinweise, bei denen etwas zu tun ist, bernstein statt rosa */
+html:not(.dark) .ek .cl-next.is-run{border-color:#e7e9ee!important;background:#ffffff!important;color:#475467!important;box-shadow:inset 3px 0 0 #bc001d}
+html:not(.dark) .ek .cl-next.is-run .fact-icon{background:#fff1f2!important;color:#bc001d!important}
+html:not(.dark) .ek .cl-next.is-run .cl-next-main b{color:#17130f!important}
+html:not(.dark) .ek .cl-next.is-run .cl-next-main small b{color:#bc001d!important}
+html:not(.dark) .ek .audience-status .is-warn{background:#fffaeb!important;color:#93370d!important;box-shadow:inset 0 0 0 1px #fedf89}
+html:not(.dark) .ek .audience-status .is-pending{background:#ffffff!important;color:#344054!important;box-shadow:inset 0 0 0 1px #d0d5dd}
+/* Schild der Lead-Kategorie: in der Farbe der Kategorie (wie überall); ohne eindeutige Kategorie ruhig */
+html:not(.dark) .sparte-badge{border-color:#d0d5dd!important;background:#ffffff!important;color:#344054!important}
+html:not(.dark) .sparte-badge small{color:#667085!important}
+html:not(.dark) .sparte-badge.cat-strong{border-color:color-mix(in srgb,var(--cat) 60%,#fff)!important;background:color-mix(in srgb,var(--cat) 15%,#fff)!important;color:color-mix(in srgb,var(--cat) 72%,#000)!important}
+html:not(.dark) .sparte-badge.cat-strong small{color:inherit!important;opacity:.8}
+
+@media (max-width:760px){
+  .ek .cd-kpibar{grid-template-columns:minmax(0,1fr)}
+  .ek .cd-kpibar .cd-today-line{grid-column:1;grid-row:4;justify-content:flex-start;border-top:0;padding-top:0}
+  .ek .cd-kpibar-head{padding:10px 12px}
+  .ek .cd-kpi{padding:12px 14px 13px}
+}
+@media (prefers-reduced-motion:reduce){.ek .cd-kpi.is-pick{transition:none}}
+
+/* Freigabe-Fenster: der Hinweis „Die KI schreibt neue Entwürfe …“ ruhig statt lila */
+html:not(.dark) .rv-prewrite{border-color:#e7e9ee!important;background:#f7f8fa!important;color:#344054!important}
+html:not(.dark) .rv-prewrite svg{color:#bc001d!important}
+/* Editor einer Kampagne: Kasten „KI schreibt jede E-Mail persönlich“ weiß mit rotem Rand links; der Hinweis an der einzelnen E-Mail ruhig statt lila */
+html:not(.dark) .ek .ki-box{border-color:#e7e9ee!important;background:#ffffff!important;box-shadow:inset 3px 0 0 #bc001d}
+html:not(.dark) .ek .ki-box.is-off{box-shadow:none}
+html:not(.dark) .ek .tree-preview-ki{border-color:#e7e9ee!important;background:#f7f8fa!important;color:#344054!important}
+html:not(.dark) .ek .tree-preview-ki svg,html:not(.dark) .ek .tree-preview-ki button{color:#bc001d!important}
+/* Kontaktliste im dunklen Design: die stehende Namensspalte hatte einen dunkleren Grund als die Zeile */
+@media (min-width:761px) and (max-width:1480px){
+  html.dark .vp .email-leads-table td:nth-child(2),html.dark .ek .email-leads-table td:nth-child(2){background:var(--rd-surface)}
+  html.dark .vp .email-leads-table tr.is-clickable:hover td:nth-child(2),html.dark .ek .email-leads-table tr.is-clickable:hover td:nth-child(2){background:#25223f}
+  html.dark .vp .email-leads-table tr.is-picked td:nth-child(2),html.dark .ek .email-leads-table tr.is-picked td:nth-child(2){background:#2a2750}
+}
+@media (max-width:600px){.fx-stat>span{align-items:flex-start;white-space:normal}.fx-stat>span svg{margin-top:1px}}
+/* Posteingang: das Feld „Was willst du antworten?“ ruhig statt lila (beim Einsprechen bleibt es rot) */
+html:not(.dark) .ek .inbox-ai-brief:not(.is-listening){border-color:#d0d5dd!important;background:#ffffff!important}
+html:not(.dark) .ek .inbox-ai-brief-icon{color:#bc001d!important}
+/* Auswahlfelder mit langem Text (Einstellungen → Automatik) ragten über ihre Karte hinaus */
+.vp .operations-panel select{max-width:100%}
+/* Karte einer Kampagne: der Strich unter „Geklickt“ in Bernstein – wie „Geklickt“ in den Zahlen oben und in der Kontaktliste (vorher pink) */
+.ek .cl-f.is-open{--bar:var(--px-open)}
+.ek .cl-f.is-click{--bar:var(--px-click)}
+.ek .cl-f.is-reply{--bar:var(--px-reply)}
+html:not(.dark) .ek .cl-f.is-open i{background:var(--px-open)!important}
+html:not(.dark) .ek .cl-f.is-click i{background:var(--px-click)!important}
+html:not(.dark) .ek .cl-f.is-reply i{background:var(--px-reply)!important}
+/* Zahl zum Anklicken: „ansehen“ steht nicht mehr hinter jeder Zeile, sondern erscheint oben rechts, wenn man auf die Zahl zeigt (am Handy immer, in Grau) */
+.ek .cd-kpi.is-pick small:not(.cd-why)::after{content:none}
+.ek .cd-kpi.is-pick::after{content:"ansehen";position:absolute;top:14px;right:14px;font-size:11px;font-weight:600;line-height:1.3;color:var(--lt-accent);opacity:0;transition:opacity .15s}
+.ek .cd-kpi.is-pick:hover::after,.ek .cd-kpi.is-pick:focus-visible::after{opacity:1}
+@media (hover:none){.ek .cd-kpi.is-pick::after{color:var(--lt-faint);opacity:1}}
+/* Editor: der Hinweis „Die Qualifizierung in der Vorlage wird angepasst …“ weiß mit rotem Rand links statt rosa Fläche; der Knopf darin bleibt rot */
+html:not(.dark) .ek .sparte-field small.sparte-warn{border-color:#e7e9ee!important;background:#ffffff!important;color:#344054!important;box-shadow:inset 3px 0 0 #bc001d}
+/* „Karten verteilen“: Beschriftung über den Knöpfen statt daneben */
+.distribute-block>.fx-cap{display:flex;margin-bottom:2px}

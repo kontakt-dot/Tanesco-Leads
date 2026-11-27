@@ -756,10 +756,10 @@ describe("Statistik der Pipeline „E-Mail-Kampagne“ (Chat-Build)", () => {
     const board = await call("leadops.pipelineOverview", { source: "email" }); const sent = board.stages.find((stage: any) => /versendet/i.test(stage.label)); expect(sent.total).toBeGreaterThan(62);
     window.history.replaceState(null, "", "/?page=Vertriebspipeline&quelle=email&ansicht=stats");
     const view = mount(); await settle(400); await settle(400);
-    const section = Array.from(view.container.querySelectorAll<HTMLElement>("section")).find((node) => node.textContent?.includes("AKTUELLE VERTEILUNG"))!; expect(section).toBeTruthy();
+    const section = Array.from(view.container.querySelectorAll<HTMLElement>("section")).find((node) => node.textContent?.includes("Aktuelle Verteilung"))!; expect(section).toBeTruthy();
     const row = Array.from(section.querySelectorAll<HTMLElement>(".qa-summary-row")).find((node) => node.querySelector("span")?.textContent === sent.label)!;
     expect(row.querySelector("b")?.textContent).toBe(String(sent.total));
-    const tile = Array.from(view.container.querySelectorAll<HTMLElement>(".metric-card")).find((node) => node.textContent?.startsWith("Kampagnen"))!; expect(tile.querySelector("strong")?.textContent).toBe(String(board.campaigns.filter((item: any) => item.campaignId !== "ohne-kampagne").length));
+    const tile = Array.from(view.container.querySelectorAll<HTMLElement>(".fx-rail .fx-stat")).find((node) => node.textContent?.startsWith("Kampagnen"))!; expect(tile.querySelector("strong")?.textContent).toBe(String(board.campaigns.filter((item: any) => item.campaignId !== "ohne-kampagne").length));
   });
 });
 
