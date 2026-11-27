@@ -1,4 +1,5 @@
 import { outboundMeta } from "../shared/lead-fields";
+import { repairedPhone } from "../shared/phone";
 export type ExportableLead = {
   publicId: string;
   categoryId: number;
@@ -21,7 +22,7 @@ export function assertSafeExportUrl(callbackUrl: string) {
 }
 
 export function buildLeadExportPayload(lead: ExportableLead) {
-  return { lead: { publicId: lead.publicId, categoryId: lead.categoryId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, fields: outboundMeta(lead.metadata) } };
+  return { lead: { publicId: lead.publicId, categoryId: lead.categoryId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone ? repairedPhone(lead.phone, lead.country) : lead.phone /* v390: nie „49…“ ohne Plus */, postcode: lead.postcode, city: lead.city, country: lead.country, fields: outboundMeta(lead.metadata) } };
 }
 
 export type IntegrationExportConfig = { authMethod?: "api_key" | "bearer" | "basic" | "ohne"; headers?: Record<string, string>; payloadMapping?: Record<string, string>; [key: string]: unknown };
@@ -32,7 +33,7 @@ export type IntegrationExportConfig = { authMethod?: "api_key" | "bearer" | "bas
  */
 export function buildProviderPayload(lead: ExportableLead, mapping: Record<string, string>, publisherId?: string | null, provider?: string) {
   const fields = outboundMeta(lead.metadata); // ohne die Merker der Software (z. B. „API-Fehler abgehakt am …“)
-  const source: Record<string, unknown> = { ...fields, publicId: lead.publicId, categoryId: lead.categoryId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, publisherId: publisherId ?? null, metadata: fields };
+  const source: Record<string, unknown> = { ...fields, publicId: lead.publicId, categoryId: lead.categoryId, firstName: lead.firstName, lastName: lead.lastName, email: lead.email, phone: lead.phone ? repairedPhone(lead.phone, lead.country) : lead.phone, postcode: lead.postcode, city: lead.city, country: lead.country, publisherId: publisherId ?? null, metadata: fields };
   const payload: Record<string, unknown> = {};
   for (const [target, key] of Object.entries(mapping)) {
     if (!key) continue; const value = source[key]; if (value === undefined || value === null || value === "") continue;

@@ -3,7 +3,8 @@
  * damit Server und Browser-Demo dieselben Regeln nutzen.
  */
 import { leadSalutation, outboundMeta, realText } from "../shared/lead-fields";
-import { isWattfoxTemplate, wattfoxLeadId, wattfoxPayload, wattfoxTemplateOptions } from "../shared/wattfox";
+import { isWattfoxTemplate, wattfoxLeadId, wattfoxOrigin, wattfoxPayload, wattfoxTemplateOptions } from "../shared/wattfox";
+import { internationalPhone, nationalPhone, repairedPhone } from "../shared/phone";
 import { normalizePostcode } from "../shared/postcode";
 import { campaignDeliverySkip, type LeadCampaignRules } from "../shared/dialer-campaign";
 
@@ -16,7 +17,7 @@ export type AuthConfig = { loginUrl: string; credentials: HeaderPair[]; tokenPat
 export type FieldFilter = { field: string; op: "gleich" | "enthaelt"; value: string };
 export type ValueMapping = { field: string; ourValue: string; customerCode: string };
 
-export const PLACEHOLDERS = ["lead_id", "lead_number", "salutation", "first_name", "last_name", "email", "phone", "street", "street_name", "house_number", "postal_code", "city", "country_code", "lead_type", "lead_type_shortcode", "date"] as const;
+export const PLACEHOLDERS = ["lead_id", "lead_number", "salutation", "first_name", "last_name", "email", "phone", "phone_e164", "phone_national", "street", "street_name", "house_number", "postal_code", "city", "country_code", "lead_type", "lead_type_shortcode", "date"] as const;
 
 /* ------------------------------------------------------------------ Vorlagen */
 
@@ -24,7 +25,7 @@ export function leadTemplateValues(lead: TemplateLead, category?: { name: string
   const custom = outboundMeta(lead.metadata); // ohne die Merker der Software (z. B. „API-Fehler abgehakt am …“)
   const street = String(custom.street ?? custom.strasse ?? "");
   const match = /^(.*?)[\s,]*(\d+[a-zA-Z]?(?:[-/]\d+[a-zA-Z]?)?)\s*$/.exec(street);
-  const values: Record<string, unknown> = { lead_id: lead.publicId, lead_number: lead.id, salutation: leadSalutation(custom) ?? realText(custom.salutation, 20) ?? realText(custom.anrede, 20) ?? "", /* v386: erkannte Anrede aus „salutation“ ODER „anrede“ – ein leerer Wert im ersten Feld verdeckt die echte Anrede nicht mehr */ first_name: lead.firstName ?? "", last_name: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street, street_name: match ? match[1].trim() : street, house_number: match ? match[2] : "", postal_code: normalizePostcode(lead.postcode, lead.country) ?? "", city: lead.city ?? "", country_code: lead.country ?? "DE", lead_type: category?.name ?? "", lead_type_shortcode: category?.shortcode ?? "", date: new Date(lead.createdAt).toISOString(), ...extra };
+  const values: Record<string, unknown> = { lead_id: lead.publicId, lead_number: lead.id, salutation: leadSalutation(custom) ?? realText(custom.salutation, 20) ?? realText(custom.anrede, 20) ?? "", /* v386: erkannte Anrede aus „salutation“ ODER „anrede“ – ein leerer Wert im ersten Feld verdeckt die echte Anrede nicht mehr */ first_name: lead.firstName ?? "", last_name: lead.lastName ?? "", email: lead.email ?? "", phone: repairedPhone(lead.phone, lead.country) /* v390: nie „49…“ ohne Plus – kaputte Formen werden „+49…“ */, phone_e164: internationalPhone(lead.phone, lead.country) ?? "", phone_national: nationalPhone(lead.phone, lead.country) ?? "", street, street_name: match ? match[1].trim() : street, house_number: match ? match[2] : "", postal_code: normalizePostcode(lead.postcode, lead.country) ?? "", city: lead.city ?? "", country_code: lead.country ?? "DE", lead_type: category?.name ?? "", lead_type_shortcode: category?.shortcode ?? "", date: new Date(lead.createdAt).toISOString(), ...extra };
   for (const [key, value] of Object.entries(custom)) values[`custom_data.${key}`] = value;
   return values;
 }
@@ -49,7 +50,7 @@ export function buildEndpointBody(endpoint: Pick<EndpointLike, "bodyTemplate" | 
   const mappings = Array.isArray(endpoint.valueMappings) ? (endpoint.valueMappings as ValueMapping[]) : [];
   // Wattfox-Vorlage: Die Felder baut die Software selbst (Produkt, Zusatzinteresse, Werte von Wattfox) – aus dem Body kommen Herkunft (utm_…) und eigene Zusätze
   const wattfox = wattfoxTemplateOptions(endpoint.bodyTemplate);
-  if (wattfox) { const built = wattfoxPayload(applyValueMappings(values, mappings)); const payload = { ...built.payload, ...wattfox }; return { body: JSON.stringify(payload), json: true as const, payload, missing: built.missing }; }
+  if (wattfox) { const built = wattfoxPayload(applyValueMappings(values, mappings)); const payload = { ...built.payload, ...wattfoxOrigin(wattfox) }; /* v390: Herkunft immer wie vereinbart, kleine Tippfehler am vereinbarten Wert korrigiert */ return { body: JSON.stringify(payload), json: true as const, payload, missing: built.missing }; }
   const rendered = endpoint.bodyTemplate?.trim() ? renderTemplate(endpoint.bodyTemplate, values, mappings) : JSON.stringify({ first_name: values.first_name, last_name: values.last_name, email: values.email, phone: values.phone, postal_code: values.postal_code, city: values.city, country_code: values.country_code, custom_data: Object.fromEntries(Object.entries(values).filter(([key]) => key.startsWith("custom_data.")).map(([key, value]) => [key.slice(12), value])) });
   let payload: unknown;
   try { payload = JSON.parse(rendered); } catch { return { body: rendered, json: false as const }; }

@@ -6233,6 +6233,9 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     expect(wf).toMatchObject({ ok: true, status: 200 });
     const sent = outbound.slice(before).find((call) => call.url === WATTFOX.leadsUrl)!;
     expect(sent.body).toMatchObject({ productId: 2, otherinterests: [20], childinterests: [6], salutation: "Frau", firstname: "Laura", lastname: "Stein", street: "Probeweg 9", zip: "79115", implementation: "bis in 1 Monat", ph_artdesgebaeude: "Ein-/Zweifamilienhaus", ph_ausrichtungderflaeche: "Süd", ph_alterderflaeche: "25 bis 75 Jahre alt", ph_stromspeicher: "Ja", hz_bisherigeheizung: ["Gasheizung"], hz_groessederflaeche: 161, utm_source: "Tanesco Digital GbR" });
+    // v390 (Qualitätskontrolle von Wattfox): Telefon international ohne Leerzeichen; mehr Angaben direkt in den Feldern; Herkunft genau wie vereinbart
+    expect(sent.body).toMatchObject({ phone: "+497610000010", ph_ausrichtungsued: "Ja", hz_gasanschluss: "Ja, im Haus", wp_nutzung: ["zum Heizen"], utm_medium: "affiliate", utm_campaign: "Hauskompass, Meta vorqualifiziert" });
+    expect(String(sent.body.phone)).not.toMatch(/^49/); expect(sent.body.mobile).toBeUndefined(); // Festnetz – kein Handy
     const after = (await db.select().from(leads).where(eq(leads.id, row.id)))[0];
     expect((after.metadata as Record<string, unknown>).partnerReference).toBe(wf.partnerReference);
     expect(String(wf.partnerReference)).toMatch(/^\d+$/);

@@ -54,7 +54,7 @@ describe("Wattfox: Leads im Format von Wattfox", () => {
     expect(built.filter((item) => item.products.main === "wp" && !item.products.extra)).toHaveLength(3);
     expect(built.filter((item) => item.products.extra)).toHaveLength(3);
     expect(new Set(built.map((item) => item.payload.email)).size).toBe(9);
-    expect(built.every((item) => String(item.payload.email).endsWith("@example.com") && /^\+49 761 0+\d$/.test(String(item.payload.phone)))).toBe(true);
+    expect(built.every((item) => String(item.payload.email).endsWith("@example.com") && /^\+497610+\d$/.test(String(item.payload.phone)))).toBe(true); // seit v390 international ohne Leerzeichen
   });
 
   it("Pflichtangaben: Anrede nur bei PV, sonst Name, Anschrift, Telefon, E-Mail – PLZ mit 5 Ziffern", () => {

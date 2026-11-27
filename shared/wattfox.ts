@@ -10,10 +10,18 @@
  *    Marke der Kunde gewonnen wurde; nur nach Rücksprache mit Wattfox ändern (andere Marke = anderer Wert). Leer wird es gar nicht mitgeschickt.
  *  - Unsere Angaben werden in die Werte von Wattfox übersetzt. Was nicht genau passt (Dachalter, beheizte Fläche …),
  *    geht mit dem nächstliegenden Wert raus – der genaue Wert steht zusätzlich im Hinweisfeld (notes).
+ *  - Rückmeldung der Qualitätskontrolle von Wattfox (27.11.2026, zu einer anderen Software) – bei uns ausgeschlossen (v390):
+ *    · Telefonnummer immer international („+4917012345678“), nie „49…“ ohne Plus – sonst kann der Dialer von Wattfox nicht automatisch anrufen.
+ *    · Alles, was wir wissen, geht mit: wo es ein Feld gibt, im Feld; alles Übrige als „Bezeichnung: Wert“ im Hinweisfeld (Freitext).
+ *      Nie dabei: Aufnahme, Transkript, Name des Agenten, Bewertung, Einwilligung, Herkunft der Anzeige, Lieferant, Preise, interne Nummern.
+ *    · Herkunft ohne Tippfehler: utm_source und utm_medium immer genau wie vereinbart; utm_campaign mit kleinem Tippfehler → vereinbarter Wert.
  *
  * Bewusst ohne Datenbank: Server, Vorschau und Tests nutzen dieselbe Logik.
  */
 import { categoryProducts } from "./dialer-contact";
+import { isTechnicalMeta, metaLabel } from "./lead-fields";
+import { internationalPhone } from "./phone";
+import { heatPumpCategoryFields, pvCategoryFields } from "../server/category-fields";
 
 export const WATTFOX = {
   /** Testumgebung laut Mail von Wattfox (die Adressen in den PDFs gelten nicht) */
@@ -50,6 +58,50 @@ export function wattfoxTemplateOptions(template: string | null | undefined): Rec
   } catch { return null; }
 }
 export const isWattfoxTemplate = (template: string | null | undefined) => wattfoxTemplateOptions(template) !== null;
+
+const squash = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "");
+/** Abstand zweier Texte in Zeichen (Einfügen, Löschen, Tauschen) */
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    previous = current;
+  }
+  return previous[b.length];
+}
+/** Liegt ein Wert nur um Groß-/Kleinschreibung, Satz- oder Leerzeichen oder bis zu zwei Tippfehler neben dem vereinbarten? */
+const nearlyAgreed = (value: string, agreed: string) => editDistance(squash(value), squash(agreed)) <= 2;
+
+/**
+ * Herkunft, wie mit Wattfox vereinbart (v390) – gilt für jeden Lead, egal was im Body der Lieferadresse steht:
+ *  - utm_source und utm_medium immer genau so (Wattfox: nie ändern),
+ *  - utm_campaign wie im Body; liegt der Wert nur um Schreibweise oder einen kleinen Tippfehler neben dem vereinbarten
+ *    („hauskompass meta vorqualifizert“), geht der vereinbarte raus. Ein wirklich anderer Wert (andere Marke nach Rücksprache) bleibt; leer geht er nicht mit.
+ */
+export function wattfoxOrigin(options: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...options, utm_source: WATTFOX.utm.utm_source, utm_medium: WATTFOX.utm.utm_medium };
+  const campaign = typeof options.utm_campaign === "string" || typeof options.utm_campaign === "number" ? String(options.utm_campaign).replace(/\s+/g, " ").trim() : "";
+  if (!campaign) delete out.utm_campaign;
+  else out.utm_campaign = nearlyAgreed(campaign, WATTFOX.utm.utm_campaign) ? WATTFOX.utm.utm_campaign : campaign;
+  return out;
+}
+
+/** Prüfung für den Endpoint-Editor: Was geht als Herkunft raus, und weicht etwas vom Vereinbarten ab? */
+export function wattfoxOriginCheck(template: string | null | undefined): { ok: boolean; sent: Record<string, unknown>; problems: string[] } | null {
+  const options = wattfoxTemplateOptions(template); if (!options) return null;
+  const sent = wattfoxOrigin(options); const problems: string[] = [];
+  for (const key of ["utm_source", "utm_medium"] as const) if (options[key] !== WATTFOX.utm[key]) problems.push(`„${key}“ steht im Body als „${String(options[key] ?? "")}“ – es geht trotzdem „${WATTFOX.utm[key]}“ raus (nie ändern).`);
+  const campaign = typeof options.utm_campaign === "string" ? options.utm_campaign.trim() : "";
+  if (!campaign) problems.push(`„utm_campaign“ fehlt – die Callagents von Wattfox sehen dann nicht, unter welcher Marke der Kunde gewonnen wurde. Vereinbart: „${WATTFOX.utm.utm_campaign}“.`);
+  else if (campaign !== WATTFOX.utm.utm_campaign) problems.push(sent.utm_campaign === WATTFOX.utm.utm_campaign ? `„utm_campaign“ ist falsch geschrieben („${campaign}“) – es geht der vereinbarte Wert „${WATTFOX.utm.utm_campaign}“ raus.` : `„utm_campaign“ weicht vom vereinbarten Wert ab: „${campaign}“ statt „${WATTFOX.utm.utm_campaign}“ – nur nach Rücksprache mit Wattfox so lassen.`);
+  return { ok: problems.length === 0, sent, problems };
+}
+/** Body mit der vereinbarten Herkunft – eigene Zusätze im Body bleiben */
+export function wattfoxTemplateWithAgreedOrigin(template: string | null | undefined): string {
+  const options = wattfoxTemplateOptions(template) ?? {};
+  return JSON.stringify({ vorlage: "wattfox", ...options, ...WATTFOX.utm }, null, 2);
+}
 /** Sieht die Adresse nach einer Testumgebung aus? (Testleads nie aus Versehen ins Live-System) */
 export const isTestAddress = (url: string | null | undefined) => /prelive|entwicklung|staging|sandbox|[./-](test|dev)[./-]/i.test(String(url ?? ""));
 
@@ -66,16 +118,43 @@ const plain = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replac
 const yes = (value: string | null) => Boolean(value && /^(ja|yes|true|1|x|j|y)\b/i.test(value.trim()));
 const numberIn = (value: string): number | null => { const match = /(\d+(?:[.,]\d+)?)/.exec(value.replace(/(\d)\.(\d{3})\b/g, "$1$2")); return match ? Number(match[1].replace(",", ".")) : null; };
 
-/** Angaben des Leads (custom_data.<schlüssel>) – auffindbar über verschiedene Schreibweisen der Schlüssel. */
+/** Angaben des Leads (custom_data.<schlüssel>) – auffindbar über verschiedene Schreibweisen der Schlüssel. Merkt sich, was schon verwendet wurde. */
 function fieldsOf(values: Values) {
-  const map = new Map<string, string>();
+  const map = new Map<string, string>(); const keys = new Map<string, string>(); const used = new Set<string>();
   for (const [key, value] of Object.entries(values)) {
     if (!key.startsWith("custom_data.")) continue;
-    const content = Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean).join(", ") : text(value, 2000);
+    const content = Array.isArray(value) ? value.map((item) => (item && typeof item === "object" ? "" : text(item))).filter(Boolean).join(", ") : typeof value === "boolean" ? (value ? "Ja" : "Nein") : value && typeof value === "object" ? "" : text(value, 2000);
     const name = norm(key.slice("custom_data.".length));
-    if (content && name && !map.has(name)) map.set(name, content);
+    if (content && name && !map.has(name)) { map.set(name, content); keys.set(name, key.slice("custom_data.".length)); }
   }
-  return { get: (...names: string[]) => { for (const name of names) { const found = map.get(norm(name)); if (found) return found; } return null; } };
+  return {
+    get: (...names: string[]) => { for (const name of names) { const found = map.get(norm(name)); if (found) { used.add(norm(name)); return found; } } return null; },
+    /** alle Angaben, die noch nicht verwendet wurden – in der Reihenfolge des Leads */
+    rest: () => Array.from(map.entries()).filter(([name]) => !used.has(name)).map(([name, value]) => ({ key: keys.get(name) ?? name, value })),
+  };
+}
+
+/**
+ * Was nie an Wattfox geht – auch nicht im Hinweisfeld: Aufnahme und Transkript, Agent und Bewertung, Einwilligung, Herkunft der Anzeige und Kampagne,
+ * Lieferant, Preise, interne Nummern und Merker. Die Grunddaten (Name, Anschrift, Telefon, E-Mail) stehen schon in ihren Feldern.
+ */
+const NEVER_PARTS = /record|aufnahme|aufzeich|sprachaufz|sprachnachricht|voice|audio|mp3|wav|transkript|transcript|zusammenfassung|kurzfassung|telefonist|bewertung|verdict|consent|optin|einwillig|zustimm|dsgvo|datenschutz|lieferant|supplier|ghl|ondialer|dialer|kampagne|campaign|utm|adset|adname|formid|fbclid|gclid|clickid|pixel|token|secret|passw|password|marge|provision|duplicate|dublette|uuid|callid|leadid|externalid|metadata/;
+/** ganze Wortteile – „Wärmequelle“, „Strompreis“ oder „Lebenspartner“ bleiben erlaubt, „Quelle“, „Preis“ oder „Partner“ allein nicht */
+const NEVER_WORDS = new Set(["source", "quelle", "summary", "caller", "score", "punkte", "preis", "price", "kosten", "anzeige", "formular", "form", "ad", "ads", "fb", "meta", "google", "partner", "agent", "agenten", "agentname", "bearbeiter", "mitarbeiter", "einkauf", "verkauf", "ek", "vk", "status", "kategorie", "category", "type", "typ", "platform", "plattform", "channel", "kanal", "created", "time", "url", "link", "intern", "internal", "admin"]);
+const MAIN_FIELDS = new Set(["anrede", "salutation", "titel", "vorname", "nachname", "firstname", "lastname", "name", "fullname", "email", "mail", "emailadresse", "telefon", "telefonnummer", "phone", "phonenumber", "mobil", "mobilnummer", "handy", "plz", "postleitzahl", "postalcode", "zip", "zipcode", "ort", "stadt", "city", "strasse", "street", "hausnummer", "housenumber", "land", "country", "countrycode", "firma", "company", "test", "id"]);
+/** Bezeichnungen der Felder, wie sie in den Lead-Kategorien heißen („Wie viele Angebote“) – Felder von OnDialer kommen mit „pv_“/„wp_“ davor. */
+const LABELS = new Map<string, string>([...pvCategoryFields, ...heatPumpCategoryFields].map((field) => [norm(field.fieldKey), field.label] as [string, string]).concat([["eauto", "E-Auto"], ["baujahr", "Baujahr"], ["dachneigung", "Dachneigung"], ["kaufodermiete", "Kauf oder Miete"]]));
+export function wattfoxLabel(key: string): string {
+  return LABELS.get(norm(key)) ?? LABELS.get(norm(key.replace(/^(pv|wp)[_-]/i, ""))) ?? metaLabel(key);
+}
+
+/** Darf diese Angabe als „Bezeichnung: Wert“ ins Hinweisfeld? */
+export function wattfoxExtraAllowed(key: string, value: string): boolean {
+  const name = norm(key); const words = key.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, "$1 $2").split(/[^A-Za-z0-9ÄÖÜäöüß]+/).map(norm).filter(Boolean);
+  if (!name || MAIN_FIELDS.has(name) || isTechnicalMeta(key) || NEVER_PARTS.test(name) || words.some((word) => NEVER_WORDS.has(word))) return false;
+  if (/(^|[_\s.-])id$/i.test(key) || /(At|_at)$/.test(key)) return false; // Nummern und Zeitstempel der Software
+  if (/https?:\/\/|www\./i.test(value) || value.length > 500) return false; // Links (z. B. zu einer Aufnahme) und lange Texte (Transkript)
+  return true;
 }
 
 /** Hauptprodukt aus der Kategorie, Zusatzinteresse aus Kategorie (PV+WP) oder den Feldern „Wärmepumpe“ / „Interesse Photovoltaikanlage“ / „Kombi Lead“. */
@@ -219,6 +298,60 @@ export function wattfoxDistribution(raw: string | null): { values: string[]; exa
   return out.length ? { values: out, exact: true } : { values: ["bitte beraten"], exact: false };
 }
 
+/** Dachneigung → 0° bis 15° | 16° bis 30° | 31° bis 45° | 46° bis 60° | weiß nicht. Ohne Angabe, aber „Flachdach“ als Dachart → 0° bis 15°. */
+export function wattfoxPitch(raw: string | null, roofType: string | null): Mapped | null {
+  if (raw) {
+    const value = plain(raw);
+    if (/flach/.test(value)) return { value: "0° bis 15°", exact: true };
+    if (/weiss nicht|unklar|unsicher/.test(value)) return { value: "weiß nicht", exact: true };
+    const range = /(\d+)\s*(?:°|grad)?\s*(?:-|–|bis)\s*(\d+)/.exec(value); const degrees = range ? (Number(range[1]) + Number(range[2])) / 2 : numberIn(value);
+    if (degrees === null || degrees > 60) return { value: "weiß nicht", exact: false };
+    return { value: degrees <= 15 ? "0° bis 15°" : degrees <= 30 ? "16° bis 30°" : degrees <= 45 ? "31° bis 45°" : "46° bis 60°", exact: !range };
+  }
+  return roofType && /flachdach/.test(plain(roofType)) ? { value: "0° bis 15°", exact: true } : null;
+}
+
+/** „Haben Sie eine südlich ausgerichtete Dachfläche?“ → Ja | Nein | Teilweise | Bin nicht sicher – aus der Dachausrichtung. */
+export function wattfoxSouth(raw: string | null): string | null {
+  if (!raw) return null;
+  const value = plain(raw).trim(); const token = value.replace(/[^a-z]/g, "");
+  if (/weiss nicht|unklar|unsicher/.test(value)) return "Bin nicht sicher";
+  if (/teilweise|teils/.test(value)) return "Teilweise";
+  if (/sued|sud/.test(value) || ["s", "sw", "so", "se"].includes(token)) return "Ja";
+  if (/nord|west|ost|east/.test(value) || ["n", "w", "o", "nw", "no", "ow", "wo"].includes(token)) return "Nein";
+  return "Bin nicht sicher";
+}
+
+/** Gasanschluss → „Ja, im Haus“ | „Ja, in Straße“ | Nein | Weiß nicht. Ohne Angabe: heizt der Kunde mit Erdgas, liegt Gas im Haus. */
+export function wattfoxGas(raw: string | null, heatingRaw: string | null): string | null {
+  if (raw) {
+    const value = plain(raw);
+    if (/strasse|strase/.test(value)) return "Ja, in Straße";
+    if (/^nein|^no\b|kein/.test(value.trim())) return "Nein";
+    if (/haus|^ja|vorhanden/.test(value.trim())) return "Ja, im Haus";
+    return "Weiß nicht";
+  }
+  return heatingRaw && /erdgas/.test(plain(heatingRaw)) ? "Ja, im Haus" : null;
+}
+
+/** Alter der Heizung in Jahren – auch aus einem Baujahr („2005“). */
+export function wattfoxHeatingAge(raw: string | null, now = new Date()): number | null {
+  const number = raw ? numberIn(raw) : null; if (number === null) return null;
+  const years = number > 1900 && number <= now.getFullYear() ? now.getFullYear() - number : number;
+  return years >= 0 && years <= 100 ? Math.round(years) : null;
+}
+
+/** Kauf oder Miete: PV → Miete | Kauf | „Miete / Kauf“ | „Weiß nicht / Beratung erwünscht“, Heizung → Kauf | „Kauf / Contracting“ | Contracting. */
+export function wattfoxAcquisition(raw: string | null, product: Product): string | null {
+  if (!raw) return null;
+  const value = plain(raw); const buy = /kauf/.test(value); const rent = /miet|pacht|leasing/.test(value); const contracting = /contracting/.test(value);
+  if (product === "pv") return buy && rent ? "Miete / Kauf" : rent ? "Miete" : buy ? "Kauf" : "Weiß nicht / Beratung erwünscht";
+  return buy && contracting ? "Kauf / Contracting" : contracting ? "Contracting" : buy ? "Kauf" : null;
+}
+
+/** Handynummer (international)? Deutschland 015x/016x/017x, Österreich 065x–069x, Schweiz 075–079 */
+export const isMobilePhone = (number: string) => /^\+49(15|16|17)\d/.test(number) || /^\+436[5-9]\d/.test(number) || /^\+417[5-9]\d/.test(number);
+
 function salutationOf(raw: unknown): "Herr" | "Frau" | null {
   const value = plain(text(raw)).replace(/\.$/, "");
   if (/^(herrn?|hr|mr|maennlich|m|bay)$/.test(value)) return "Herr";
@@ -265,6 +398,7 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
   const implementation = wattfoxImplementation(implementationRaw);
   exactOr("Umsetzung", implementationRaw, implementation);
 
+  const phone = wattfoxPhone(values, fields);
   const payload: WattfoxPayload = {
     productId: products.main === "pv" ? WATTFOX.products.pv : WATTFOX.products.heating,
     childinterests: withWp ? [WATTFOX.heatPumpChild] : undefined,
@@ -277,7 +411,8 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
     zip: text(values.postal_code).replace(/\s+/g, "").slice(0, 5),
     city: text(values.city),
     country: (text(values.country_code) || "DE").slice(0, 2).toUpperCase(),
-    phone: text(values.phone),
+    phone, // immer international – nie „49…“ ohne Plus (Rückmeldung der Qualitätskontrolle von Wattfox)
+    mobile: isMobilePhone(phone) ? phone : undefined, // Handynummer auch im eigenen Feld „mobile“ (Wattfox: „am besten direkt in die Felder“)
     email: text(values.email).toLowerCase(),
     implementation: implementation.value,
   };
@@ -288,7 +423,14 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
     const ageRaw = fields.get("dachalter", "pv_dachalter"); const older = fields.get("dach_aelter_als_30_jahre", "pv_dach_aelter_als_30_jahre"); const age = wattfoxRoofAge(ageRaw, older);
     const storageRaw = fields.get("stromspeicher", "pv_stromspeicher"); const storage = wattfoxStorage(storageRaw);
     const consumptionRaw = fields.get("stromverbrauch", "pv_stromverbrauch"); const consumption = wattfoxConsumption(consumptionRaw);
+    const pitchRaw = fields.get("dachneigung", "pv_dachneigung", "neigung_dach"); const pitch = wattfoxPitch(pitchRaw, fields.get("dachart", "pv_dachart"));
+    const powerRaw = fields.get("anlagenleistung", "pv_anlagenleistung", "kwp", "leistung_kwp"); const power = powerRaw ? numberIn(powerRaw) : null;
+    const acquisitionRaw = fields.get("erwerb", "pv_erwerb", "kauf_oder_miete", "miete_oder_kauf", "art_des_erwerbs");
     Object.assign(payload, {
+      ph_neigungderflaeche: pitch?.value,
+      ph_ausrichtungsued: wattfoxSouth(orientationRaw) ?? undefined,
+      ph_anlagenleistung: power !== null && power > 0 && power < 1000 ? Math.round(power * 10) / 10 : undefined,
+      ph_erwerb: wattfoxAcquisition(acquisitionRaw, "pv") ?? undefined,
       ph_artdesgebaeude: building?.value,
       ph_ausrichtungderflaeche: orientation?.value,
       ph_alterderflaeche: age?.value,
@@ -296,7 +438,8 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
       ph_stromspeicher: storage?.value,
       stromverbrauch: consumption?.value, // nur als Zahl (kWh im Jahr) – Stromkosten im Monat stehen im Hinweisfeld, als Zahl hielte Wattfox sie für kWh
     });
-    exactOr("Gebäude", buildingRaw, building); exactOr("Dachausrichtung", orientationRaw, orientation); exactOr("Dachalter", ageRaw ?? (older ? `älter als 30 Jahre: ${older}` : null), age); exactOr("Stromspeicher", storageRaw, storage);
+    exactOr("Gebäude", buildingRaw, building); exactOr("Dachausrichtung", orientationRaw, orientation); exactOr("Dachalter", ageRaw ?? (older ? `älter als 30 Jahre: ${older}` : null), age); exactOr("Stromspeicher", storageRaw, storage); exactOr("Dachneigung", pitchRaw, pitch);
+    if (acquisitionRaw && !/kauf|miet|pacht|leasing/i.test(plain(acquisitionRaw))) note("Kauf oder Miete laut Gespräch", acquisitionRaw);
     if (consumptionRaw && !consumption) note("Stromverbrauch laut Gespräch", consumptionRaw); else exactOr("Stromverbrauch", consumptionRaw, consumption);
     note("Monatliche Stromkosten", withUnit(fields.get("monatliche_stromkosten", "pv_monatliche_stromkosten"), "€ im Monat"));
     note("Dachart", fields.get("dachart", "pv_dachart")); note("Dachmaterial", fields.get("dachmaterial", "pv_dachmaterial")); note("Bestandsanlage", fields.get("bestandsanlage", "pv_bestandsanlage"));
@@ -311,7 +454,14 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
     const pumpRaw = fields.get("bevorzugte_waermepumpe", "wp_bevorzugte_waermepumpe"); const pump = wattfoxPumpType(pumpRaw);
     const distributionRaw = fields.get("aktuelle_waermeverteilung", "wp_aktuelle_waermeverteilung"); const distribution = wattfoxDistribution(distributionRaw);
     const yearRaw = fields.get("baujahr", "pv_baujahr", "wp_baujahr", "baujahr_gebaeude"); const year = yearRaw ? numberIn(yearRaw) : null;
+    const gasRaw = fields.get("gasanschluss", "wp_gasanschluss", "gas_anschluss");
+    const heatingAgeRaw = fields.get("alter_heizung", "heizungsalter", "alter_der_heizung", "alter_heizsystem", "baujahr_heizung", "wp_alter_heizung");
+    const hzAcquisitionRaw = fields.get("erwerb", "wp_erwerb", "art_des_erwerbs", "kauf_oder_contracting");
     Object.assign(payload, {
+      hz_gasanschluss: wattfoxGas(gasRaw, heatingRaw) ?? undefined,
+      hz_alterderheizung: wattfoxHeatingAge(heatingAgeRaw) ?? undefined,
+      hz_artdeserwerbs: wattfoxAcquisition(hzAcquisitionRaw, "wp") ?? undefined,
+      wp_nutzung: heatingRaw || areaRaw || pumpRaw ? ["zum Heizen"] : undefined, // wer eine Wärmepumpe für sein Haus anfragt, will damit heizen
       hz_gebaeudetyp: building?.value,
       hz_bisherigeheizung: heating.values.length ? heating.values : undefined,
       hz_taetigkeit: newBuild ? "Neuinstallation" : heatingRaw ? "Austausch / Modernisierung" : undefined,
@@ -332,11 +482,26 @@ export function wattfoxPayload(values: Values): { payload: WattfoxPayload; produ
   note("Erreichbarkeit", fields.get("erreichbarkeit", "pv_erreichbarkeit", "wp_erreichbarkeit"));
   note("Hinweis", fields.get("kommentare", "wp_kommentare", "info", "pv_info", "wp_info"));
   note("Notiz des Agenten", fields.get("dialerNote"));
+  // weitere Rufnummern des Kunden (z. B. Festnetz neben dem Handy) – ebenfalls international
+  const mainPhone = String(payload.phone ?? ""); const otherPhones: string[] = [];
+  for (const name of ["telefon", "telefonnummer", "telefon_2", "telefon2", "mobil", "mobilnummer", "handy", "handynummer", "festnetz", "festnetznummer", "zweitnummer", "weitere_rufnummer"]) { const raw = fields.get(name); const number = raw ? internationalPhone(raw, String(payload.country ?? "DE")) : null; if (number && number !== mainPhone && !otherPhones.includes(number)) otherPhones.push(number); }
+  if (!payload.mobile) { const mobile = otherPhones.find(isMobilePhone); if (mobile) { payload.mobile = mobile; otherPhones.splice(otherPhones.indexOf(mobile), 1); } } // zweite Nummer ist ein Handy → ins Feld „mobile“
+  note(otherPhones.length > 1 ? "Weitere Rufnummern" : "Weitere Rufnummer", otherPhones.join(", "));
+  // Alles Übrige, was wir über den Kunden wissen, als „Bezeichnung: Wert“ (Wattfox: „Schickt gerne alle Infos mit“) – ohne Aufnahme, Agent, Herkunft der Anzeige …
+  fields.get("kombi_lead", "wp_kombi_lead", "pv_kombi_lead"); fields.get("waermepumpe", "pv_waermepumpe", "interesse_waermepumpe"); // stecken im Zusatzinteresse
+  fields.get("interesse_photovoltaikanlage", "wp_interesse_photovoltaikanlage", "wp_interesse_photovolatikanalge", "interesse_photovolatikanalge", "interesse_photovoltaik");
+  for (const item of fields.rest()) if (wattfoxExtraAllowed(item.key, item.value)) note(wattfoxLabel(item.key), item.value);
   if (values.test === true || fields.get("test") === "true") notes.unshift("TESTLEAD – bitte nicht bearbeiten");
   payload.notes = notes.join("\n").slice(0, 2000) || undefined;
 
   const clean = compact(payload);
   return { payload: clean, products, missing: wattfoxMissing(clean, products.main) };
+}
+
+/** Telefon an Wattfox: international („+4917012345678“), egal ob als „49…“, „0049…“, „0…“ oder „+49 (0)…“ gespeichert; fehlt sie am Lead, die aus den Angaben. */
+function wattfoxPhone(values: Values, fields: ReturnType<typeof fieldsOf>): string {
+  const raw = text(values.phone) || fields.get("telefon", "telefonnummer", "mobil", "mobilnummer", "handy", "phone_number") || "";
+  return raw ? internationalPhone(raw, text(values.country_code) || "DE") ?? raw : "";
 }
 
 /** Was Wattfox laut Beschreibung zwingend braucht – fehlt etwas, geht der Lead gar nicht erst raus (sonst lehnt Wattfox ihn ab). */

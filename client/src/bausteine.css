@@ -3670,3 +3670,9 @@ html.dark .md-timeline li.is-bad::before{background:#f97066;box-shadow:0 0 0 4px
   .md-timeline li{grid-template-columns:minmax(0,1fr)}
 }
 @media (prefers-reduced-motion:reduce){.md-order,.md-toggle,.md-toggle input[type="checkbox"],.md-toggle input[type="checkbox"]::after,.md-chip-plug,.md-checks label{transition:none}.md-order:hover{transform:none}}
+
+/* ───────── Version 390: Wattfox – Herkunft im Endpoint-Editor geprüft (grün) oder Abweichung (gelb) ───────── */
+.ig-wattfox-origin.is-ok{border:1px solid rgba(18,183,106,.35);background:rgba(18,183,106,.1);color:#a6f4c5}
+html:not(.dark) .ig-wattfox-origin.is-ok{border-color:#abefc6;background:#ecfdf3;color:#067647}
+.ig-wattfox-origin.is-warn{border:1px solid rgba(247,144,9,.4);background:rgba(247,144,9,.1);color:#fedf89}
+html:not(.dark) .ig-wattfox-origin.is-warn{border-color:#fedf89;background:#fffaeb;color:#93370d}
