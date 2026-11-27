@@ -23,6 +23,7 @@ import { downloadCsv, downloadXlsx } from "@/lib/table-download";
 import { leadDisplayName, realText } from "../../../shared/lead-fields";
 import { tilePeriod } from "../../../shared/lead-period";
 import { pageItems } from "@/lib/pageItems";
+import { openInApp } from "@/lib/navigate";
 
 const labels = ["Alle", "Neu", "Freigegeben", "Zugewiesen", "Reklamiert", "Fehlerhaft", "Hängend", "Deaktiviert", "Dubletten"] as const;
 const statusMap = { Alle: undefined, Neu: "neu", Freigegeben: "genehmigt", Zugewiesen: "zugewiesen", Reklamiert: "reklamiert", Fehlerhaft: "fehlerhaft", Hängend: "hängend", Deaktiviert: "deaktiviert", Dubletten: undefined } as const;
@@ -243,5 +244,5 @@ export default function LiveLeads() {
       <button type="button" className="lt-bulk-close" aria-label="Auswahl aufheben" title="Auswahl aufheben" onClick={() => { setSelectedIds([]); setStagedAction(""); setStagedTargetId(""); }}><X aria-hidden="true" /></button>
     </section>}
     {logId && <LeadLogDrawer publicId={logId} name={rows.find((row) => row.id === logId)?.name} onClose={() => setLogId(null)} onOpenLead={() => { openDetail(logId); setLogId(null); }} />}
-    {selected && <LeadQuickViewOverlay lead={selected} onClose={() => setSelectedId(null)} onDeliver={() => deliver.mutate({ publicId: selected.id })} onClaimCreated={() => { utils.leadops.listLeadsPaged.invalidate(); setSelectedId(null); window.location.assign("/?page=Reklamationen"); }}  onOpenLead={() => { openDetail(selected.id); setSelectedId(null); }} onOpenLog={() => { setLogId(selected.id); setSelectedId(null); }} />}</div>;
+    {selected && <LeadQuickViewOverlay lead={selected} onClose={() => setSelectedId(null)} onDeliver={() => deliver.mutate({ publicId: selected.id })} onClaimCreated={(claimId) => { utils.leadops.listLeadsPaged.invalidate(); utils.leadops.listClaims.invalidate(); setSelectedId(null); openInApp(`/?page=Reklamationen&claimId=${claimId}`); }}  onOpenLead={() => { openDetail(selected.id); setSelectedId(null); }} onOpenLog={() => { setLogId(selected.id); setSelectedId(null); }} />}</div>;
 }

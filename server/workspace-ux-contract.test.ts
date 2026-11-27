@@ -85,7 +85,8 @@ describe("Tanesco Leads UX-Verträge", () => {
 
   it("zeigt im Support den aktivierten WhatsApp-Einstieg und den Plattformtestplan", () => {
     const source = component("LiveServiceDesk.tsx");
-    expect(source).toContain('return <WhatsAppSupport />');
+    expect(source).toContain("export default function LiveServiceDesk()"); // seit v380 ist die Datei nur noch die Support-Seite – die Reklamationen stehen in ClaimsDesk.tsx
+    expect(source).not.toContain("listClaims");
     expect(source).toContain("491634950514");
     expect(source).toContain("WhatsApp-Chat"); expect(source).toContain("Chat öffnen"); expect(source).toContain("ANFRAGEN DEINER KUNDEN");
     expect(source).toContain("PLATTFORMTEST · SCHRITT FÜR SCHRITT");

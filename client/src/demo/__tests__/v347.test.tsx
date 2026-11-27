@@ -187,12 +187,13 @@ describe("Version 347", () => {
 
   it("Rohdaten: Liste ohne offene Kontakte erklärt, warum es nichts zu übernehmen gibt, und führt zu den Leads", async () => {
     const root = await open("page=Rohdaten", 2000);
-    const cardOf = (name: string) => Array.from(root.querySelectorAll<HTMLElement>("section .cursor-pointer")).find((item) => item.querySelector("strong")?.textContent === name)!;
-    const done = cardOf("Kontakte vom Dialer"); expect(done).toBeTruthy(); expect(done.textContent).toContain("3 Kontakte"); expect(done.textContent).toContain("3 Leads");
-    expect(done.querySelector(".raw-batch-done p")!.textContent).toBe("Alle 3 Kontakte sind schon Leads – hier gibt es nichts mehr zu übernehmen.");
-    expect(texts(done, ".raw-batch-done button")).toEqual(["Leads ansehen", "Löschen"]); expect(Array.from(done.querySelectorAll("button")).some((button) => button.disabled)).toBe(false); // keine toten Knöpfe
+    // seit v380: jede Liste ist eine Karte (.rd-batch) mit Balken und Legende
+    const cardOf = (name: string) => Array.from(root.querySelectorAll<HTMLElement>(".rd-batch")).find((item) => item.querySelector(".rd-batch-title strong")?.textContent === name)!;
+    const done = cardOf("Kontakte vom Dialer"); expect(done).toBeTruthy(); expect(done.querySelector(".rd-batch-nums b")!.textContent).toBe("3"); expect(texts(done, ".rd-legend li")[0]).toBe("3 Leads");
+    expect(done.querySelector(".rd-done p")!.textContent).toBe("Alle 3 Kontakte sind schon Leads – hier gibt es nichts mehr zu übernehmen.");
+    expect(texts(done, "button")).toEqual(["Leads ansehen", "Kontakte zeigen", "Löschen"]); expect(Array.from(done.querySelectorAll("button")).some((button) => button.disabled)).toBe(false); // keine toten Knöpfe
     // Liste mit offenen Kontakten: die gewohnten Knöpfe, alle anklickbar
-    const openCard = cardOf("Messe Hannover 09-2026.xlsx"); expect(texts(openCard, "button")).toEqual(["Ins Callcenter (Wählliste)", "Alle als Leads übernehmen", "Löschen"]); expect(Array.from(openCard.querySelectorAll("button")).some((button) => button.disabled)).toBe(false); expect(openCard.querySelector(".raw-batch-done")).toBeNull();
+    const openCard = cardOf("Messe Hannover 09-2026.xlsx"); expect(texts(openCard, "button")).toEqual(["Ins Callcenter (Wählliste)", "Alle als Leads übernehmen", "Kontakte zeigen", "Löschen"]); expect(Array.from(openCard.querySelectorAll("button")).some((button) => button.disabled)).toBe(false); expect(openCard.querySelector(".rd-done")).toBeNull();
     await click(Array.from(done.querySelectorAll("button")).find((button) => button.textContent === "Leads ansehen"), 1500);
     expect(new URLSearchParams(window.location.search).get("page")).toBe("Leads"); expect(root.querySelector(".lt")).toBeTruthy();
   }, 40_000);

@@ -25,6 +25,7 @@ import { suppliers } from "../drizzle/schema";
 import { logActivity } from "./activity";
 import { NOT_POSSIBLE_PREFIX } from "../shared/api-errors";
 import { normalizePostcode } from "../shared/postcode";
+import { restoredLeadStatus } from "../shared/claim-view";
 
 export type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 export type LeadRow = typeof leads.$inferSelect;
@@ -224,6 +225,23 @@ export async function markDeliveryReclaimed(db: Db, tenantId: number, leadId: nu
 /** Abgelehnte Reklamation: Lieferung gilt wieder als angenommen. */
 export async function restoreDeliveryAfterRejectedClaim(db: Db, tenantId: number, claimId: number) {
   await db.update(leadDeliveries).set({ result: "angenommen", claimId: null }).where(and(eq(leadDeliveries.tenantId, tenantId), eq(leadDeliveries.claimId, claimId)));
+}
+
+/**
+ * Abgelehnte Reklamation: Der Lead ist nicht mehr „reklamiert“. Er bekommt den Status von vor der Reklamation zurück (steht im Lead-Log),
+ * sonst „zugewiesen“, wenn eine Lieferung gilt. Hängt noch eine offene oder genehmigte Reklamation am Lead, bleibt er reklamiert.
+ */
+export async function restoreLeadAfterRejectedClaim(db: Db, tenantId: number, leadId: number, claimId: number, actorUserId: number | null): Promise<string | null> {
+  const lead = (await db.select({ id: leads.id, status: leads.status }).from(leads).where(and(eq(leads.tenantId, tenantId), eq(leads.id, leadId))).limit(1))[0];
+  if (!lead || lead.status !== "reklamiert") return null;
+  const others = await db.select({ id: claims.id, status: claims.status }).from(claims).where(and(eq(claims.tenantId, tenantId), eq(claims.leadId, leadId)));
+  if (others.some((row) => row.id !== claimId && row.status !== "abgelehnt")) return null;
+  const before = (await db.select({ previousStatus: leadStatusEvents.previousStatus }).from(leadStatusEvents).where(and(eq(leadStatusEvents.tenantId, tenantId), eq(leadStatusEvents.leadId, leadId), eq(leadStatusEvents.nextStatus, "reklamiert"), ne(leadStatusEvents.previousStatus, "reklamiert"))).orderBy(desc(leadStatusEvents.occurredAt), desc(leadStatusEvents.id)).limit(1))[0];
+  const delivered = (await db.select({ id: leadDeliveries.id }).from(leadDeliveries).where(and(eq(leadDeliveries.tenantId, tenantId), eq(leadDeliveries.leadId, leadId), inArray(leadDeliveries.result, ["angeboten", "angenommen"]))).limit(1))[0];
+  const next = restoredLeadStatus(before?.previousStatus ?? null, Boolean(delivered)); if (!next) return null;
+  await db.update(leads).set({ status: next }).where(eq(leads.id, leadId));
+  await db.insert(leadStatusEvents).values({ tenantId, leadId, previousStatus: "reklamiert", nextStatus: next, actorUserId, note: "Reklamation abgelehnt – der Lead gilt wieder wie vor der Reklamation." });
+  return next;
 }
 
 /** Weitergeben nach Reklamation: Regel des Stops für diesen Grund, sonst die Einstellung des Grundes. */

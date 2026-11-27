@@ -6985,4 +6985,65 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await owner.leadops.deleteOrder({ orderId: order.orderId }).catch(() => undefined);
     }
   }, 60000);
+
+  it("v380. Reklamationen: Die Sammelaktion entscheidet wie die einzelne Entscheidung (Lieferung, Lead-Status, Weitergeben); abgelehnt gibt dem Lead seinen Status zurück; die Liste nennt den Käufer", async () => {
+    const { claimEvents: eventsTable, leadStatusEvents: statusTable } = await import("../drizzle/schema");
+    const { deliverLeadNow } = await import("./lead-pipeline");
+    const stamp = Date.now().toString(36).slice(-6); const tag = stamp.toUpperCase();
+    // eigene Kategorie mit einer Kette aus zwei Stationen, damit keine Kette früherer Schritte mitspielt
+    await owner.leadops.createCategory({ shortcode: `K0A${tag}`, name: `V380 Solar ${stamp}`, defaultLeadPrice: "40.00" });
+    const cat = (await owner.leadops.listCategories()).find((row) => row.shortcode === `K0A${tag}`)!;
+    const chain = await owner.leadops.createDeliveryChain({ categoryId: cat.id, name: `V380 Kette ${stamp}`, priority: 1, sellTarget: 1, status: "aktiv" });
+    const erster = `V380 Erster ${stamp}`; const zweiter = `V380 Zweiter ${stamp}`;
+    const stop1 = await owner.leadops.addChainStop({ chainId: chain.chainId, buyerName: erster, unitPrice: 40, reclamationWindowHours: 240 });
+    const stop2 = await owner.leadops.addChainStop({ chainId: chain.chainId, buyerName: zweiter, unitPrice: 25, reclamationWindowHours: 0 });
+    // „Dublette“ = weitergeben an die nächste Station, jeder andere Grund endet an Station 1
+    const reasons = await owner.leadops.listReclamationReasons(); const dublette = reasons.find((reason) => reason.name === "Dublette")!; const endet = reasons.find((reason) => reason.id !== dublette.id && reason.active)!;
+    await owner.leadops.saveStopRules({ stopId: stop1.stopId, rules: reasons.map((reason) => ({ reasonId: reason.id, allowed: true, passOn: reason.id === dublette.id })) });
+    const makeLead = async (key: string) => { const inserted = await db.insert(leads).values({ tenantId: S.tenantId, publicId: `K0${key}${tag}`, categoryId: cat.id, kind: "verkauf", firstName: "Rita", lastName: `V380${key}`, email: `v380-${key.toLowerCase()}-${stamp}@example.de`, phone: `+49 89 55580${key.charCodeAt(0)}${stamp.length}`, postcode: "80331", city: "Testort", country: "DE", status: "genehmigt", cost: "0.00", supplierId: null, metadata: {} } as never); return (await db.select().from(leads).where(eq(leads.id, Number(inserted[0].insertId))))[0]; };
+    const rowsOf = async (leadId: number) => (await db.select().from(leadDeliveries).where(eq(leadDeliveries.leadId, leadId))).sort((x, y) => x.id - y.id);
+    const statusOf = async (leadId: number) => (await db.select().from(leads).where(eq(leads.id, leadId)))[0].status;
+    const listed = async (claimId: number) => (await owner.leadops.listClaims({ categoryId: cat.id })).find((row) => row.id === claimId)!;
+    try {
+      const made: Array<Awaited<ReturnType<typeof makeLead>>> = [];
+      // Station 1 hat ein Reklamationsfenster (240 h): bis es abläuft, gilt die Lieferung als „angeboten“
+      for (const key of ["A", "B", "C", "D", "E", "F"]) { const lead = await makeLead(key); expect(await deliverLeadNow(db, { tenantId: S.tenantId, actorUserId: null, lead })).toMatchObject({ result: "angeboten", buyerName: erster, unitPrice: "40.00" }); made.push(lead); }
+      const [a, b, c, d, e, f] = made;
+      const claim = async (leadId: number, reason: string) => (await owner.leadops.createClaim({ leadId, reason, details: `V380 ${stamp}` })).claimId;
+      const cA = await claim(a.id, dublette.name); const cB = await claim(b.id, endet.name); const cC = await claim(c.id, dublette.name); const cD = await claim(d.id, endet.name); const cE = await claim(e.id, endet.name); const cF1 = await claim(f.id, endet.name); const cF2 = await claim(f.id, dublette.name);
+      // erfasst: der Lead ist reklamiert, die Lieferung auch – und sie hängt an der Reklamation
+      for (const lead of made) expect(await statusOf(lead.id)).toBe("reklamiert");
+      expect((await rowsOf(a.id)).map((row) => [row.result, row.claimId])).toEqual([["reklamiert", cA]]);
+      // (a) die Liste nennt Käufer und Preis der reklamierten Lieferung – auch bei der zweiten Reklamation desselben Leads; Käufer-Zugänge sehen beides nicht
+      const all = await owner.leadops.listClaims({ categoryId: cat.id }); expect(all.map((row) => row.id).sort((x, y) => x - y)).toEqual([cA, cB, cC, cD, cE, cF1, cF2].sort((x, y) => x - y));
+      expect(all.every((row) => row.buyerName === erster && row.unitPrice === "40.00")).toBe(true);
+      const partnerRows = await invitee.leadops.listClaims({}); expect(partnerRows.length).toBeGreaterThan(0); expect(partnerRows.every((row) => row.buyerName === null && row.unitPrice === null)).toBe(true);
+      // (b) einzeln ablehnen: die Lieferung gilt wieder als angenommen, der Lead hat seinen Status von vorher – beides steht im Lead-Log
+      expect(await owner.leadops.resolveClaim({ claimId: cB, status: "abgelehnt" })).toEqual({ success: true, reinjected: false });
+      expect((await rowsOf(b.id)).map((row) => [row.result, row.claimId])).toEqual([["angenommen", null]]); expect(await statusOf(b.id)).toBe("zugewiesen");
+      const logB = (await db.select().from(statusTable).where(eq(statusTable.leadId, b.id))).sort((x, y) => x.id - y.id).map((row) => [row.previousStatus, row.nextStatus, row.note]);
+      expect(logB.slice(-2)).toEqual([["zugewiesen", "reklamiert", "Reklamation erfasst."], ["reklamiert", "zugewiesen", "Reklamation abgelehnt – der Lead gilt wieder wie vor der Reklamation."]]);
+      expect(await listed(cB)).toMatchObject({ status: "abgelehnt", buyerName: erster, unitPrice: "40.00" }); // die Verknüpfung ist gelöst – der Käufer steht trotzdem da
+      // (c) Sammelaktion „ablehnen“: genau derselbe Weg; schon Entschiedenes zählt nicht mit
+      expect(await owner.leadops.bulkResolveClaims({ claimIds: [cD, cB], status: "abgelehnt" })).toEqual({ updated: 1, reinjected: 0 });
+      expect((await rowsOf(d.id)).map((row) => [row.result, row.claimId])).toEqual([["angenommen", null]]); expect(await statusOf(d.id)).toBe("zugewiesen");
+      expect((await db.select().from(eventsTable).where(eq(eventsTable.claimId, cD))).filter((row) => row.eventType === "entschieden").map((row) => [row.previousStatus, row.nextStatus, row.note])).toEqual([["offen", "abgelehnt", "Sammelaktion: Reklamation abgelehnt."]]);
+      // (d) Sammelaktion „genehmigen“: „Dublette“ heißt weitergeben – beide Leads gehen an die zweite Station (die erste wird als Dublette übersprungen)
+      expect(await owner.leadops.bulkResolveClaims({ claimIds: [cA, cC], status: "genehmigt" })).toEqual({ updated: 2, reinjected: 2 });
+      for (const [lead, claimId] of [[a, cA], [c, cC]] as const) { const rows = await rowsOf(lead.id); expect(rows.map((row) => [row.stopId, row.result])).toEqual([[stop1.stopId, "reklamiert"], [stop1.stopId, "übersprungen"], [stop2.stopId, "angeboten"]]); expect(rows[0].claimId).toBe(claimId); expect(rows[2].acceptedAt).not.toBeNull(); expect(await statusOf(lead.id)).toBe("zugewiesen"); } // Station 2 hat kein Reklamationsfenster: sofort angenommen
+      expect(await listed(cA)).toMatchObject({ status: "genehmigt", buyerName: erster, unitPrice: "40.00" }); // reklamiert hat der erste Käufer – nicht der, der den Lead danach bekam
+      // (e) genehmigt mit einem Grund, der an dieser Station endet: nichts wird weitergegeben, der Lead bleibt reklamiert
+      expect(await owner.leadops.resolveClaim({ claimId: cE, status: "genehmigt" })).toEqual({ success: true, reinjected: false });
+      expect((await rowsOf(e.id)).map((row) => [row.result, row.claimId])).toEqual([["reklamiert", cE]]); expect(await statusOf(e.id)).toBe("reklamiert");
+      // (f) zwei Reklamationen an einem Lead: erst wenn beide abgelehnt sind, ist er nicht mehr reklamiert
+      await owner.leadops.resolveClaim({ claimId: cF1, status: "abgelehnt" }); expect(await statusOf(f.id)).toBe("reklamiert"); expect((await rowsOf(f.id)).map((row) => [row.result, row.claimId])).toEqual([["angenommen", null]]);
+      expect(await owner.leadops.bulkResolveClaims({ claimIds: [cF2], status: "abgelehnt" })).toEqual({ updated: 1, reinjected: 0 }); expect(await statusOf(f.id)).toBe("zugewiesen");
+      // (g) nichts für Käufer-Zugänge; unbekannte Nummern zählen nicht
+      await expect(invitee.leadops.bulkResolveClaims({ claimIds: [cE], status: "abgelehnt" })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/);
+      await expect(invitee.leadops.resolveClaim({ claimId: cE, status: "abgelehnt" })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/);
+      expect(await owner.leadops.bulkResolveClaims({ claimIds: [999_999_999], status: "genehmigt" })).toEqual({ updated: 0, reinjected: 0 });
+    } finally {
+      await owner.leadops.deleteDeliveryChain({ chainId: chain.chainId }).catch(() => undefined);
+    }
+  }, 60000);
 });
