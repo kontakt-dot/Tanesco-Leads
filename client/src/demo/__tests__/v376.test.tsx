@@ -176,7 +176,7 @@ describe("Version 376", () => {
     expect(root.querySelector(".md-tab-hint")!.textContent).toBe("Persönliche Daten, Adresse, Verhalten");
     await click(tabs()[9], 700);
     expect(tabs()[9].getAttribute("aria-selected")).toBe("true"); expect(tabs()[0].getAttribute("aria-selected")).toBe("false");
-    expect(new URLSearchParams(window.location.search).get("tab")).toBe("tools"); expect(root.querySelector(".md-tab-hint")!.textContent).toContain("Schnittstellen");
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("tools"); expect(root.querySelector(".md-tab-hint")!.textContent).toBe("Schnittstelle, Rückmeldung und Benachrichtigung – alles, was Leads mit diesem Käufer verbindet"); // seit v383 steht auch die Rückmeldung in diesem Reiter
     // früherer Link „tab=integration“ (aus der Lieferkette) landet beim Reiter Integration
     cleanup(); const old = await open("page=Benutzer&member=2&tab=integration"); await until(() => old.querySelector(".md-tabs") !== null);
     expect(Array.from(old.querySelectorAll('.md-tabs [role="tab"]')).find((node) => node.getAttribute("aria-selected") === "true")!.textContent).toBe("Integration");

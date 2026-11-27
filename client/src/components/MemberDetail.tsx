@@ -24,7 +24,7 @@ const TABS: Array<{ key: Tab; label: string; hint: string; icon: LucideIcon }> =
   { key: "benachrichtigungen", label: "Benachrichtigungen", hint: "Welche E-Mails dieser Benutzer bekommt", icon: Bell },
   { key: "aktivitaet", label: "Aktivität", hint: "Was mit diesem Benutzer und seinen Leads passiert ist", icon: Activity },
   { key: "ansicht", label: "Ansicht", hint: "Welche Menüpunkte dieser Kunde sieht", icon: LayoutPanelLeft },
-  { key: "tools", label: "Integration", hint: "Webhook und Schnittstellen, über die Leads zu diesem Kunden gehen", icon: Plug },
+  { key: "tools", label: "Integration", hint: "Schnittstelle, Rückmeldung und Benachrichtigung – alles, was Leads mit diesem Käufer verbindet", icon: Plug },
 ];
 /** Reiter aus der Adresse – unbekannte Angaben (z. B. das frühere „integration“) landen beim passenden oder beim ersten Reiter. */
 const tabFromAddress = (): Tab => { const value = new URLSearchParams(window.location.search).get("tab"); return TABS.some((item) => item.key === value) ? (value as Tab) : value === "integration" ? "tools" : "stammdaten"; };

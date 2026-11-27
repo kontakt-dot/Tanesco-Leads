@@ -1,91 +1,80 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../server/routers";
-import { useEffect, useState } from "react";
+import { BarChart3, Plus, Save, Trash2, UserRound, X } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { confirmAction, promptAction } from "@/lib/confirm";
-import PartnerPlatforms from "@/components/PartnerPlatforms";
+import { buyerIntegrationUrl } from "@/components/PartnerReport";
+import { providerName } from "../../../shared/partner-report";
 
 type Accounts = inferRouterOutputs<AppRouter>["leadops"]["listPartnerAccounts"];
-const field = "h-10 w-full rounded-md border border-white/10 bg-slate-900 px-3 text-sm text-slate-100";
-const Toggle = ({ checked, onChange, label, hint }: { checked: boolean; onChange: (value: boolean) => void; label: string; hint?: string }) => <label className="flex items-start gap-3 rounded-lg border border-white/8 bg-white/[.02] p-3 text-sm text-slate-200"><input type="checkbox" className="mt-1" checked={checked} onChange={(event) => onChange(event.target.checked)} /><span><span className="block">{label}</span>{hint && <span className="mt-0.5 block text-xs text-slate-400">{hint}</span>}</span></label>;
+const BRAND: Record<string, string> = { aroundhome: "#f97316", wattfox: "#eab308", leadnodes: "#0ea5e9", enpal: "#22c55e", gohighlevel: "#6366f1" };
+const stamp = (value: Date | string) => new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const title = (account: { provider: string; label: string }) => { const name = providerName(account.provider); const label = account.label.trim(); return label && label.toLowerCase() !== name.toLowerCase() ? `${name} (${label})` : name; };
 
+/**
+ * Einstellungen → Integrationen: was für alle Käufer gilt. Seit v383 wird ein Käufer nur noch bei ihm selbst eingerichtet
+ * (Benutzer → Käufer → Reiter „Integration“: Schnittstelle, Rückmeldung, Testleads). Hier bleiben: die Übersicht aller Rückmeldungen
+ * (mit Zuordnung für ältere Konten ohne Käufer), die Zuordnung der Stornogründe, die Telefonnummern-Prüfung und die Vorlagen.
+ */
 export default function PartnerAccountsPanel() {
   const utils = trpc.useUtils();
   const accounts = trpc.leadops.listPartnerAccounts.useQuery(undefined, { retry: false });
-  const refresh = () => utils.leadops.listPartnerAccounts.invalidate();
-  if (accounts.error) return <section className="surface-panel p-6 text-sm text-red-200">{accounts.error.message}</section>;
-  if (!accounts.data) return <section className="surface-panel p-6 text-sm text-slate-400">Partner-Zugänge werden geladen…</section>;
+  const refresh = () => { void utils.leadops.listPartnerAccounts.invalidate(); void utils.leadops.partnerReport.invalidate(); };
+  if (accounts.error) return <p className="ie-note is-bad">{accounts.error.message}</p>;
+  if (!accounts.data) return <p className="ie-note">Rückmeldungen werden geladen …</p>;
   const data = accounts.data;
-  return <div className="mt-4 grid gap-4">
-    <header><span className="eyebrow">PARTNER-STATUSRÜCKMELDUNG</span><h2 className="mt-1 text-lg text-slate-100">Aroundhome, WattFox & Telefonnummern-Prüfung</h2><p className="mt-1 text-xs text-slate-400">Automatische Rückmeldungen deiner Partner: Stornos werden erkannt, Reklamationsgründen zugeordnet und als Reklamation angelegt. Bei WattFox über die Tracking-URL, bei Aroundhome über den Abgleich der Vorgänge.</p></header>
-    <AroundhomeSection data={data} onDone={refresh} />
-    <CancelRules provider="aroundhome" title="STORNOGRÜNDE AROUNDHOME" intro="Ordne die Stornogründe aus dem Aroundhome-Abgleich deinen Reklamationsgründen zu. Ohne Treffer gilt der Standard-Grund des Kontos." data={data} onDone={refresh} />
-    <WattfoxSection data={data} onDone={refresh} />
-    <CancelRules provider="wattfox" title="STORNOGRÜNDE WATTFOX" intro="Ordne WattFox-Codes deinen Reklamationsgründen zu. Erste passende Regel gewinnt." data={data} onDone={refresh} />
-    <PartnerPlatforms data={data} onDone={refresh} />
+  return <div className="ie-stack">
+    <FeedbackOverview data={data} onDone={refresh} />
+    <CancelRules provider="aroundhome" title="Stornogründe von Aroundhome zuordnen" intro="Welcher Stornogrund von Aroundhome wird zu welchem Reklamationsgrund? Die erste passende Regel gewinnt. Ohne Treffer gilt der Grund, der beim Käufer hinterlegt ist." data={data} onDone={refresh} />
+    <CancelRules provider="wattfox" title="Stornogründe von WattFox zuordnen" intro="Welcher Code von WattFox wird zu welchem Reklamationsgrund? Die erste passende Regel gewinnt." data={data} onDone={refresh} />
     <HlrSection data={data} onDone={refresh} />
     <PresetsSection />
   </div>;
 }
 
-function PresetsSection() {
-  const utils = trpc.useUtils();
-  const presets = trpc.leadops.listIntegrationPresets.useQuery(undefined, { retry: false });
+/** Alle Rückmeldungen auf einen Blick: zu welchem Käufer sie gehören – ältere Konten ohne Käufer lassen sich hier noch zuordnen. Neue entstehen nur beim Käufer. */
+function FeedbackOverview({ data, onDone }: { data: Accounts; onDone: () => void }) {
+  const members = trpc.leadops.listMembers.useQuery(undefined, { retry: false });
+  const buyers = (members.data ?? []).filter((member) => member.status === "aktiv" && (member as { partnerType?: string }).partnerType !== "lieferant");
   const onError = (error: { message: string }) => toast.error(error.message);
-  const rename = trpc.leadops.updateIntegrationPreset.useMutation({ onSuccess: () => utils.leadops.listIntegrationPresets.invalidate(), onError });
-  const remove = trpc.leadops.deleteIntegrationPreset.useMutation({ onSuccess: () => { toast.success("Preset gelöscht."); utils.leadops.listIntegrationPresets.invalidate(); }, onError });
-  const kindLabel: Record<string, string> = { endpoint: "Ausgehender API-Call", response_mapping: "Response-Mapping", return_webhook: "Rückgabe-Webhook" };
-  return <section className="surface-panel operations-panel p-5"><span className="eyebrow">INTEGRATIONS-PRESETS</span><p className="mt-1 text-xs text-slate-400">Alles, was bei einem Benutzer im Reiter Integration eingerichtet und dort „Als Preset gespeichert“ wurde. Bei jedem anderen Benutzer über „Preset hinzufügen“ mit einem Klick übernehmbar.</p>
-    <div className="table-wrap wrap-cells mt-3"><table className="flux-table"><thead><tr><th>Name</th><th>Art</th><th>Kategorie</th><th>Inhalt</th><th>Schlüssel</th><th>Verwendet</th><th></th></tr></thead><tbody>{(presets.data ?? []).map((preset) => <tr key={preset.id}><td className="text-slate-100">{preset.name}{preset.description && <div className="text-xs text-slate-500">{preset.description}</div>}</td><td>{kindLabel[preset.kind]}</td><td>{preset.categoryShortcode ?? "–"}</td><td className="text-xs text-slate-400">{preset.summary}</td><td className="text-xs">{preset.kind === "response_mapping" ? "–" : preset.hasSecrets ? <span className="text-amber-200">enthalten</span> : "werden abgefragt"}</td><td>{preset.usageCount}×</td><td><div className="flex gap-1"><Button size="sm" variant="ghost" onClick={async () => { const name = await promptAction("Neuer Name:", preset.name); if (name?.trim()) rename.mutate({ id: preset.id, name: name.trim() }); }}>Umbenennen</Button><Button size="sm" variant="ghost" onClick={async () => { if (await confirmAction("Preset löschen? Bereits hinzugefügte Konfigurationen bleiben bei den Benutzern erhalten.")) remove.mutate({ id: preset.id }); }}>Löschen</Button></div></td></tr>)}</tbody></table>{!presets.data?.length && <p className="p-4 text-sm text-slate-500">Noch kein Preset.</p>}</div></section>;
-}
-
-function AroundhomeSection({ data, onDone }: { data: Accounts; onDone: () => void }) {
-  const [editing, setEditing] = useState<Accounts["aroundhome"][number] | { id: 0 } | null>(null);
-  const sync = trpc.leadops.syncAroundhomeAccount.useMutation({ onSuccess: (result) => { toast.success(result.summary); onDone(); }, onError: (error) => toast.error(error.message) });
-  const remove = trpc.leadops.deletePartnerAccount.useMutation({ onSuccess: () => { toast.success("Konto entfernt."); onDone(); }, onError: (error) => toast.error(error.message) });
-  return <section className="surface-panel operations-panel p-5"><div className="flex items-start justify-between gap-3"><div><span className="eyebrow">AROUNDHOME-KONTEN</span><p className="mt-1 text-xs text-slate-400">Pro Publisher-ID ein Konto mit Zugangstoken und dem Export-Link, wie er mit euch geteilt wurde. „Aktualisieren“ liest die Vorgänge ein und legt bei Storno eine Reklamation an.</p></div><Button size="sm" variant="outline" onClick={() => setEditing({ id: 0 })}>Konto hinzufügen</Button></div>
-    <div className="mt-3 grid gap-2">{data.aroundhome.map((account) => <div key={account.id} className="grid gap-2 rounded-lg border border-white/8 bg-white/[.02] p-3 md:grid-cols-[1fr_auto]"><div><div className="flex flex-wrap items-center gap-2 text-sm text-slate-100"><strong>{account.label}</strong><span className="text-xs text-slate-500">Publisher {account.publisherId || "—"}</span><Badge variant="outline" className={account.enabled ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{account.enabled ? "Aktiv" : "Inaktiv"}</Badge>{account.reclaimOnCancel && <Badge variant="outline" className="border-amber-400/25 bg-amber-500/10 text-amber-200">Reklamation bei Storno</Badge>}</div><div className="text-xs text-slate-500">{account.lastSyncAt ? `Zuletzt ${new Date(account.lastSyncAt).toLocaleString("de-DE")}: ${account.lastSyncSummary}` : "Noch kein Abgleich"}</div></div><div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={() => sync.mutate({ id: account.id })} disabled={sync.isPending}>Aktualisieren</Button><Button size="sm" variant="ghost" onClick={() => setEditing(account)}>Bearbeiten</Button><Button size="sm" variant="ghost" onClick={async () => { if (await confirmAction("Konto entfernen?")) remove.mutate({ id: account.id }); }}>Entfernen</Button></div></div>)}{!data.aroundhome.length && <p className="text-sm text-slate-500">Noch kein Aroundhome-Konto.</p>}</div>
-    {editing && <AroundhomeDialog data={data} account={"label" in editing ? editing : null} onClose={() => setEditing(null)} onDone={() => { setEditing(null); onDone(); }} />}
+  const assign = trpc.leadops.updatePartnerAccount.useMutation({ onSuccess: () => { toast.success("Käufer zugeordnet."); onDone(); }, onError });
+  const remove = trpc.leadops.deletePartnerAccount.useMutation({ onSuccess: () => { toast.success("Rückmeldung entfernt."); onDone(); }, onError });
+  const rows = [
+    ...data.aroundhome.map((account) => ({ id: account.id, provider: "aroundhome", label: account.label, enabled: account.enabled, note: account.lastSyncAt ? `Zuletzt abgeglichen am ${stamp(account.lastSyncAt)}` : "Noch kein Abgleich" })),
+    ...data.wattfox.map((account) => ({ id: account.id, provider: "wattfox", label: account.label, enabled: account.enabled, note: "WattFox meldet jede Änderung selbst" })),
+    ...data.platforms.map((account) => ({ id: account.id, provider: account.provider as string, label: account.label, enabled: account.enabled, note: "Die Anbindung folgt" })),
+  ];
+  return <section className="ie-card" aria-label="Rückmeldungen der Käufer">
+    <header className="ie-head"><div><h2 className="fx-h">Rückmeldungen der Käufer</h2><p>Was Käufer zu ihren Leads zurückmelden – Stornos, Status, Provision. Eingerichtet wird das beim Käufer im Reiter „Integration“. Hier siehst du alle auf einen Blick.</p></div><a className="fx-tool" href="/?page=Statistik&view=Integrationen"><BarChart3 aria-hidden="true" /> Im Dashboard ansehen</a></header>
+    {!rows.length ? <p className="ie-empty">Noch keine Rückmeldung eingerichtet. Öffne einen Käufer unter „Benutzer“ und richte sie dort im Reiter „Integration“ ein. <a href="/?page=Benutzer">Zu den Benutzern</a></p>
+      : <ul className="ie-rows">{rows.map((row) => { const buyerId = data.buyerOf[row.id] ?? null; const member = buyerId ? (members.data ?? []).find((item) => item.userId === buyerId) : undefined; const name = title(row); return <li key={row.id} className={buyerId ? "" : "is-open"} style={{ "--brand": BRAND[row.provider] } as CSSProperties}>
+        <span className="bf-mark" aria-hidden="true">{providerName(row.provider).slice(0, 2)}</span>
+        <div><b>{name}</b><small>{row.note}{row.enabled ? "" : " · pausiert"}</small></div>
+        {buyerId ? (member ? <a className="fx-tool" href={buyerIntegrationUrl(member.membershipId)} title="Beim Käufer öffnen"><UserRound aria-hidden="true" /> {member.name ?? member.email ?? `Käufer #${buyerId}`}</a> : <span className="ie-buyer">{members.isLoading ? "…" : `Käufer #${buyerId}`}</span>)
+          : <select aria-label={`Käufer für ${name}`} className="fx-select ie-assign" value="" disabled={assign.isPending} onChange={(event) => { const next = Number(event.target.value) || null; if (next) assign.mutate({ id: row.id, buyerUserId: next }); }}><option value="">Käufer zuordnen …</option>{buyers.map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.name ?? buyer.email ?? `Käufer #${buyer.userId}`}</option>)}</select>}
+        <button type="button" className="fx-tool ie-remove" aria-label={`${name} entfernen`} title="Entfernen" disabled={remove.isPending} onClick={async () => { if (await confirmAction(`Rückmeldung „${name}“ entfernen? Stornos und Provisionen dieses Partners erscheinen dann nicht mehr im Dashboard.${row.provider === "wattfox" ? " Die Adresse für WattFox gilt danach nicht mehr." : ""}`, { danger: true, confirmLabel: "Ja, entfernen" })) remove.mutate({ id: row.id }); }}><Trash2 aria-hidden="true" /></button>
+      </li>; })}</ul>}
+    {rows.some((row) => !data.buyerOf[row.id]) && <p className="ie-hint">Eine Rückmeldung ohne Käufer erkennt ihre Leads nur an der Schnittstelle (Vorlage oder Adresse). Ordne sie dem Käufer zu, über den geliefert wird – dann stimmen die Zahlen im Dashboard sicher.</p>}
   </section>;
 }
 
-function AroundhomeDialog({ data, account, onClose, onDone }: { data: Accounts; account: Accounts["aroundhome"][number] | null; onClose: () => void; onDone: () => void }) {
-  const [form, setForm] = useState({ label: account?.label ?? "", publisherId: account?.publisherId ?? "", accessToken: account?.accessToken ?? "", exportUrl: account?.exportUrl ?? "", reclaimOnCancel: account?.reclaimOnCancel ?? true, reclaimReasonId: account?.reclaimReasonId ?? null, enabled: account?.enabled ?? true });
-  const save = trpc.leadops.saveAroundhomeAccount.useMutation({ onSuccess: () => { toast.success("Aroundhome-Konto gespeichert."); onDone(); }, onError: (error) => toast.error(error.message) });
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 px-4" onClick={onClose}><section className="surface-panel w-full max-w-lg p-6" onClick={(event) => event.stopPropagation()}><h2 className="text-lg text-slate-100">{account ? "Aroundhome-Konto bearbeiten" : "Aroundhome-Konto hinzufügen"}</h2><div className="mt-4 grid gap-3">
-    <label className="text-xs text-slate-300">Bezeichnung<Input value={form.label} placeholder="z. B. Aroundhome PV" onChange={(event) => setForm((current) => ({ ...current, label: event.target.value }))} /></label>
-    <label className="text-xs text-slate-300">Publisher-ID<Input value={form.publisherId} onChange={(event) => setForm((current) => ({ ...current, publisherId: event.target.value }))} /></label>
-    <label className="text-xs text-slate-300">Zugangstoken (accessToken)<Input value={form.accessToken} onChange={(event) => setForm((current) => ({ ...current, accessToken: event.target.value }))} /></label>
-    <label className="text-xs text-slate-300">Export-Link (wie von Aroundhome geteilt)<Input value={form.exportUrl} placeholder="https://…" onChange={(event) => setForm((current) => ({ ...current, exportUrl: event.target.value }))} /></label>
-    <Toggle checked={form.reclaimOnCancel} onChange={(value) => setForm((current) => ({ ...current, reclaimOnCancel: value }))} label="Reklamation bei Storno" hint="Erzeugt automatisch eine Reklamation (offen zur Prüfung), wenn Aroundhome einen Vorgang storniert." />
-    <label className="text-xs text-slate-300">Standard-Reklamationsgrund<select className={field} value={form.reclaimReasonId ?? ""} onChange={(event) => setForm((current) => ({ ...current, reclaimReasonId: event.target.value ? Number(event.target.value) : null }))}><option value="">— kein Standard —</option>{data.reasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select></label>
-    <Toggle checked={form.enabled} onChange={(value) => setForm((current) => ({ ...current, enabled: value }))} label="Konto aktiv" />
-  </div><div className="mt-4 flex justify-end gap-2"><Button variant="ghost" size="sm" onClick={onClose}>Abbrechen</Button><Button className="flux-button" size="sm" onClick={() => save.mutate({ id: account?.id, ...form })} disabled={save.isPending}>Speichern</Button></div></section></div>;
-}
-
-function WattfoxSection({ data, onDone }: { data: Accounts; onDone: () => void }) {
-  const [label, setLabel] = useState("");
-  const create = trpc.leadops.createWattfoxAccount.useMutation({ onSuccess: () => { toast.success("Tracking-URL erzeugt."); setLabel(""); onDone(); }, onError: (error) => toast.error(error.message) });
-  const update = trpc.leadops.updatePartnerAccount.useMutation({ onSuccess: () => onDone(), onError: (error) => toast.error(error.message) });
-  const remove = trpc.leadops.deletePartnerAccount.useMutation({ onSuccess: () => { toast.success("Tracking-URL entfernt."); onDone(); }, onError: (error) => toast.error(error.message) });
-  const copy = async (value: string) => { try { await navigator.clipboard.writeText(value); toast.success("Kopiert."); } catch { toast.error("Kopieren nicht möglich."); } };
-  return <section className="surface-panel operations-panel p-5"><span className="eyebrow">WATTFOX TRACKING-URL</span><p className="mt-1 text-xs text-slate-400">Erzeuge eine Tracking-URL und hinterlege sie bei WattFox. WattFox ruft sie mit lead_id, status und code auf; Stornos werden über die Zuordnung unten zu Reklamationen.</p>
-    <div className="mt-3 flex gap-1"><Input value={label} placeholder="Bezeichnung, z. B. WattFox Wärmepumpe" onChange={(event) => setLabel(event.target.value)} /><Button size="sm" variant="outline" onClick={() => create.mutate({ label, reclaimOnCancel: true, reclaimReasonId: null })} disabled={create.isPending}>Tracking-URL erzeugen</Button></div>
-    <div className="mt-3 grid gap-2">{data.wattfox.map((account) => <div key={account.id} className="rounded-lg border border-white/8 bg-white/[.02] p-3"><div className="flex flex-wrap items-center gap-2 text-sm text-slate-100"><strong>{account.label}</strong><Badge variant="outline" className={account.enabled ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-400"}>{account.enabled ? "Aktiv" : "Inaktiv"}</Badge></div><div className="mt-1 flex flex-wrap items-center gap-2"><code className="max-w-full truncate rounded bg-black/30 px-2 py-1 text-xs text-slate-200">{account.trackingUrl}</code><Button size="sm" variant="ghost" onClick={() => copy(account.trackingUrl)}>Kopieren</Button></div><div className="mt-2 grid gap-2 md:grid-cols-[1fr_1fr_auto]"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={account.reclaimOnCancel} onChange={(event) => update.mutate({ id: account.id, reclaimOnCancel: event.target.checked })} /> Reklamation bei Storno</label><select className={field} value={account.reclaimReasonId ?? ""} onChange={(event) => update.mutate({ id: account.id, reclaimReasonId: event.target.value ? Number(event.target.value) : null })}><option value="">Standard-Grund: keiner</option>{data.reasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select><div className="flex gap-1"><Button size="sm" variant="ghost" onClick={() => update.mutate({ id: account.id, enabled: !account.enabled })}>{account.enabled ? "Deaktivieren" : "Aktivieren"}</Button><Button size="sm" variant="ghost" onClick={async () => { if (await confirmAction("Tracking-URL entfernen? WattFox-Aufrufe darauf schlagen dann fehl.")) remove.mutate({ id: account.id }); }}>Entfernen</Button></div></div></div>)}{!data.wattfox.length && <p className="text-sm text-slate-500">Noch keine Tracking-URL.</p>}</div>
-  </section>;
-}
-
-function CancelRules({ provider, title, intro, data, onDone }: { provider: "aroundhome" | "wattfox"; title: string; intro: string; data: Accounts; onDone: () => void }) {
+function CancelRules({ provider, title: heading, intro, data, onDone }: { provider: "aroundhome" | "wattfox"; title: string; intro: string; data: Accounts; onDone: () => void }) {
   const [rules, setRules] = useState(data.cancelRules.filter((rule) => rule.provider === provider));
   useEffect(() => { setRules(data.cancelRules.filter((rule) => rule.provider === provider)); }, [data.cancelRules, provider]);
   const save = trpc.leadops.saveCancelRules.useMutation({ onSuccess: () => { toast.success("Zuordnung gespeichert."); onDone(); }, onError: (error) => toast.error(error.message) });
-  return <section className="surface-panel operations-panel p-5"><span className="eyebrow">{title}</span><p className="mt-1 text-xs text-slate-400">{intro}</p>
-    <div className="mt-3 grid gap-2">{rules.map((rule, index) => <div key={index} className="grid gap-1 md:grid-cols-[140px_1fr_1fr_auto]"><select className={field} value={rule.matchOp} onChange={(event) => setRules((current) => current.map((item, i) => i === index ? { ...item, matchOp: event.target.value as typeof rule.matchOp } : item))}><option value="enthaelt">enthält</option><option value="gleich">ist genau</option><option value="beginnt">beginnt mit</option></select><Input value={rule.matchValue} placeholder={provider === "wattfox" ? "z. B. duplicate" : "z. B. Kunde nicht erreichbar"} onChange={(event) => setRules((current) => current.map((item, i) => i === index ? { ...item, matchValue: event.target.value } : item))} /><select className={field} value={rule.reasonId} onChange={(event) => setRules((current) => current.map((item, i) => i === index ? { ...item, reasonId: Number(event.target.value) } : item))}><option value={0}>Reklamationsgrund wählen …</option>{data.reasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select><Button size="sm" variant="ghost" onClick={() => setRules((current) => current.filter((_, i) => i !== index))}>✕</Button></div>)}{!rules.length && <p className="text-sm text-slate-500">Noch keine Zuordnung.</p>}</div>
-    <div className="mt-3 flex justify-between"><Button size="sm" variant="outline" onClick={() => setRules((current) => [...current, { id: 0, provider, matchOp: "enthaelt", matchValue: "", reasonId: 0 }])}>Regel hinzufügen</Button><Button className="flux-button" size="sm" onClick={() => save.mutate({ provider, rules: rules.map((rule) => ({ matchOp: rule.matchOp, matchValue: rule.matchValue, reasonId: rule.reasonId })) })} disabled={save.isPending}>Speichern</Button></div>
+  return <section className="ie-card" aria-label={heading}>
+    <header className="ie-head"><div><h3 className="fx-h is-sub">{heading}</h3><p>{intro}</p></div></header>
+    {rules.length > 0 ? <ul className="ie-rules">{rules.map((rule, index) => <li key={index}>
+      <select className="fx-select" aria-label="Vergleich" value={rule.matchOp} onChange={(event) => setRules((current) => current.map((item, i) => i === index ? { ...item, matchOp: event.target.value as typeof rule.matchOp } : item))}><option value="enthaelt">enthält</option><option value="gleich">ist genau</option><option value="beginnt">beginnt mit</option></select>
+      <input className="fx-field" aria-label="Text des Partners" value={rule.matchValue} placeholder={provider === "wattfox" ? "z. B. duplicate" : "z. B. Kunde nicht erreichbar"} onChange={(event) => setRules((current) => current.map((item, i) => i === index ? { ...item, matchValue: event.target.value } : item))} />
+      <select className="fx-select" aria-label="Reklamationsgrund" value={rule.reasonId} onChange={(event) => setRules((current) => current.map((item, i) => i === index ? { ...item, reasonId: Number(event.target.value) } : item))}><option value={0}>Reklamationsgrund wählen …</option>{data.reasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select>
+      <button type="button" className="fx-tool ie-remove" aria-label="Regel entfernen" title="Regel entfernen" onClick={() => setRules((current) => current.filter((_, i) => i !== index))}><X aria-hidden="true" /></button>
+    </li>)}</ul> : <p className="ie-empty">Noch keine Zuordnung.</p>}
+    <footer className="ie-foot"><Button size="sm" variant="outline" onClick={() => setRules((current) => [...current, { id: 0, provider, matchOp: "enthaelt", matchValue: "", reasonId: 0 }])}><Plus aria-hidden="true" /> Regel hinzufügen</Button><Button className="flux-button" size="sm" onClick={() => save.mutate({ provider, rules: rules.map((rule) => ({ matchOp: rule.matchOp, matchValue: rule.matchValue, reasonId: rule.reasonId })) })} disabled={save.isPending}><Save aria-hidden="true" /> {save.isPending ? "Speichert …" : "Zuordnung speichern"}</Button></footer>
   </section>;
 }
 
@@ -94,10 +83,29 @@ function HlrSection({ data, onDone }: { data: Accounts; onDone: () => void }) {
   useEffect(() => { setForm({ apiKey: data.hlrlookup.apiKey, apiSecret: data.hlrlookup.apiSecret, enabled: data.hlrlookup.enabled }); }, [data.hlrlookup]);
   const save = trpc.leadops.saveHlrLookup.useMutation({ onSuccess: () => { toast.success("Telefonnummern-Prüfung gespeichert."); onDone(); }, onError: (error) => toast.error(error.message) });
   const test = trpc.leadops.testHlrLookup.useMutation({ onSuccess: (result) => { toast[result.ok ? "success" : "error"](result.summary); onDone(); }, onError: (error) => toast.error(error.message) });
-  return <section className="surface-panel operations-panel p-5"><span className="eyebrow">TELEFONNUMMERN-PRÜFUNG (HLRLOOKUP.COM)</span><p className="mt-1 text-xs text-slate-400">Prüft Telefonnummern beim API-Import. Ungültige Nummern werden als „fehlerhaft“ markiert und im Lead-Verlauf vermerkt. Zugangsdaten von hlrlookup.com.</p>
-    <div className="mt-3 grid gap-3 md:grid-cols-2"><label className="text-xs text-slate-300">API-Schlüssel<Input value={form.apiKey} onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))} /></label><label className="text-xs text-slate-300">API-Passwort<Input type="password" value={form.apiSecret} onChange={(event) => setForm((current) => ({ ...current, apiSecret: event.target.value }))} /></label></div>
-    <div className="mt-3"><Toggle checked={form.enabled} onChange={(value) => setForm((current) => ({ ...current, enabled: value }))} label="Prüfung beim Import aktiv" hint="Jede Prüfung kostet bei hlrlookup.com Guthaben." /></div>
-    {data.hlrlookup.lastTestAt && <p className="mt-2 text-xs text-slate-500">Letzter Test {new Date(data.hlrlookup.lastTestAt).toLocaleString("de-DE")}: {data.hlrlookup.lastTestSummary}</p>}
-    <div className="mt-3 flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => test.mutate()} disabled={!data.hlrlookup.id || test.isPending}>Verbindung testen</Button><Button className="flux-button" size="sm" onClick={() => save.mutate(form)} disabled={save.isPending}>Speichern</Button></div>
+  return <section className="ie-card" aria-label="Telefonnummern prüfen">
+    <header className="ie-head"><div><h3 className="fx-h is-sub">Telefonnummern prüfen (hlrlookup.com)</h3><p>Prüft die Telefonnummer, wenn ein Lead über die Schnittstelle hereinkommt. Ungültige Nummern werden als „fehlerhaft“ markiert und im Verlauf des Leads vermerkt. Die Zugangsdaten bekommst du bei hlrlookup.com.</p></div></header>
+    <div className="ie-fields"><label className="rd-field"><span>API-Schlüssel</span><input className="fx-field" value={form.apiKey} autoComplete="off" spellCheck={false} onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))} /></label><label className="rd-field"><span>API-Passwort</span><input className="fx-field" type="password" value={form.apiSecret} autoComplete="off" onChange={(event) => setForm((current) => ({ ...current, apiSecret: event.target.value }))} /></label></div>
+    <div className="ie-switch"><label htmlFor="ie-hlr"><b>Beim Hereinkommen prüfen</b><small>Jede Prüfung kostet Guthaben bei hlrlookup.com.</small></label><Switch id="ie-hlr" checked={form.enabled} onCheckedChange={(enabled) => setForm((current) => ({ ...current, enabled }))} aria-label="Telefonnummern beim Hereinkommen prüfen" /></div>
+    <footer className="ie-foot"><small>{data.hlrlookup.lastTestAt ? `Letzter Test am ${stamp(data.hlrlookup.lastTestAt)}: ${data.hlrlookup.lastTestSummary ?? ""}` : "Noch nicht getestet."}</small><span><Button size="sm" variant="outline" onClick={() => test.mutate()} disabled={!data.hlrlookup.id || test.isPending}>{test.isPending ? "Testet …" : "Verbindung testen"}</Button><Button className="flux-button" size="sm" onClick={() => save.mutate(form)} disabled={save.isPending}><Save aria-hidden="true" /> {save.isPending ? "Speichert …" : "Speichern"}</Button></span></footer>
   </section>;
+}
+
+function PresetsSection() {
+  const utils = trpc.useUtils();
+  const presets = trpc.leadops.listIntegrationPresets.useQuery(undefined, { retry: false });
+  const onError = (error: { message: string }) => toast.error(error.message);
+  const rename = trpc.leadops.updateIntegrationPreset.useMutation({ onSuccess: () => utils.leadops.listIntegrationPresets.invalidate(), onError });
+  const remove = trpc.leadops.deleteIntegrationPreset.useMutation({ onSuccess: () => { toast.success("Vorlage gelöscht."); utils.leadops.listIntegrationPresets.invalidate(); }, onError });
+  const kindLabel: Record<string, string> = { endpoint: "Schnittstelle", response_mapping: "Antworten einordnen", return_webhook: "Rückgabe an den Lieferanten" };
+  return <section className="ie-card" aria-label="Vorlagen für Schnittstellen">
+    <header className="ie-head"><div><h3 className="fx-h is-sub">Vorlagen für Schnittstellen (Presets)</h3><p>Was du bei einem Käufer im Reiter „Integration“ eingerichtet und „Als Preset gespeichert“ hast. Bei jedem anderen Käufer übernimmst du es mit „Preset hinzufügen“ in einem Klick.</p></div></header>
+    {!presets.data?.length ? <p className="ie-empty">{presets.isLoading ? "Vorlagen werden geladen …" : "Noch keine Vorlage gespeichert."}</p>
+      : <div className="ie-table-wrap"><table className="ie-table"><thead><tr><th>Name</th><th>Art</th><th>Kategorie</th><th>Inhalt</th><th>Zugangsdaten</th><th>Verwendet</th><th /></tr></thead><tbody>{presets.data.map((preset) => <tr key={preset.id}><td><b>{preset.name}</b>{preset.description && <small>{preset.description}</small>}</td><td>{kindLabel[preset.kind]}</td><td>{preset.categoryShortcode ?? "–"}</td><td><small>{preset.summary}</small></td><td>{preset.kind === "response_mapping" ? "–" : preset.hasSecrets ? "enthalten" : "werden abgefragt"}</td><td>{preset.usageCount}×</td><td><span className="ie-actions"><Button size="sm" variant="ghost" onClick={async () => { const name = await promptAction("Neuer Name:", preset.name); if (name?.trim()) rename.mutate({ id: preset.id, name: name.trim() }); }}>Umbenennen</Button><Button size="sm" variant="ghost" onClick={async () => { if (await confirmAction("Vorlage löschen? Was bei Käufern schon übernommen wurde, bleibt dort erhalten.", { danger: true, confirmLabel: "Ja, löschen" })) remove.mutate({ id: preset.id }); }}>Löschen</Button></span></td></tr>)}</tbody></table></div>}
+  </section>;
+}
+
+/** Kopf der Seite Einstellungen → Integrationen: sagt, wo ein Käufer eingerichtet wird – und was hier bleibt. */
+export function IntegrationSettingsHead() {
+  return <header className="page-intro compact"><div><span className="eyebrow">EINSTELLUNGEN</span><h1>Integrationen</h1><p>Einen Käufer richtest du bei ihm selbst ein: Benutzer → Käufer öffnen → Reiter „Integration“. Dort stehen seine Schnittstelle, die Rückmeldung und die Testleads an einer Stelle. Hier bleibt, was für alle gilt.</p></div><nav className="people-header-actions"><a className="fx-tool" href="/?page=Benutzer"><UserRound aria-hidden="true" /> Zu den Benutzern</a></nav></header>;
 }

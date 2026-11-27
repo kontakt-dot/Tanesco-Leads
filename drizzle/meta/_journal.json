@@ -883,6 +883,13 @@
       "when": 1797100000000,
       "tag": "0125_agenten_loeschen",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "5",
+      "when": 1797200000000,
+      "tag": "0126_kaeufer_ohne_konto",
+      "breakpoints": true
     }
   ]
 }

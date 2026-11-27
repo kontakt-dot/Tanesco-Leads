@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { BadgeCheck, CalendarRange, Check, ChevronDown, Info, KeyRound, PackagePlus, Pencil, RefreshCw, Search, Send, Wallet, X } from "lucide-react";
+import { BadgeCheck, Cable, CalendarRange, Check, ChevronDown, Info, KeyRound, PackagePlus, Pencil, RefreshCw, Search, Send, Wallet, X } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { toast } from "sonner";
 import { CONTACT_FILTERS, CONTACT_STATUS, QUICK_RANGES, QUOTA_PERIODS, REPORT_BASES, activeQuickRange, berlinDay, euro, isDay, providerName, quickRange, quotaPeriod, quotaSentence, share, type ContactStatus, type QuotaPeriod, type ReportBasis, type ReportCard, type ReportCounts } from "../../../shared/partner-report";
@@ -10,8 +10,12 @@ import { CONTACT_FILTERS, CONTACT_STATUS, QUICK_RANGES, QUOTA_PERIODS, REPORT_BA
  * des Partners (offen, anerkannt, storniert, ausgezahlt) mit Provision. Alle Filter stehen in der Adresse; jede Ansicht lässt sich verlinken.
  * Seit v378: „Abgelehnt“ heißt „PrePing abgelehnt“ (der Partner hatte den Kontakt schon), und je Konto lässt sich ein Kontingent eintragen
  * (je Woche, Tag oder Monat) – die Karte zeigt dann, wie viele Leads noch nachzuschieben sind.
+ * Seit v383: Jeder Käufer mit Schnittstelle hat von selbst eine Karte – auch ohne Partnerkonto. Fehlt die Rückmeldung des Partners,
+ * steht das im Kopf der Karte mit dem Weg zum Käufer, bei dem man sie einrichtet.
  */
-const BRAND: Record<string, string> = { aroundhome: "#f97316", wattfox: "#eab308", leadnodes: "#0ea5e9", enpal: "#22c55e", gohighlevel: "#6366f1" };
+const BRAND: Record<string, string> = { aroundhome: "#f97316", wattfox: "#eab308", leadnodes: "#0ea5e9", enpal: "#22c55e", gohighlevel: "#6366f1", api: "#64748b" };
+/** Der Reiter „Integration“ beim Käufer – dort wird seit v383 alles eingerichtet, auch die Rückmeldung. */
+export const buyerIntegrationUrl = (membershipId: number) => `/?page=Benutzer&member=${membershipId}&tab=tools`;
 const count = (value: number) => value.toLocaleString("de-DE");
 const longDay = (day: string) => { const [y, m, d] = day.split("-"); return `${d}.${m}.${y}`; };
 const stamp = (value: string) => new Date(value).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -34,9 +38,9 @@ function writeQuery(query: Query, isDefault: boolean) {
 function Tile({ label, value, tone, children }: { label: string; value: string; tone?: "good" | "bad" | "calm"; children?: ReactNode }) {
   return <div className={`pr-tile ${tone ? `is-${tone}` : ""}`}><span>{label}</span><strong>{value}</strong>{children && <small>{children}</small>}</div>;
 }
-/** Der Weg der gelieferten Leads als ein Balken: abgelehnt · ohne Rückmeldung · offen · storniert · anerkannt. */
-function Flow({ counts }: { counts: ReportCounts }) {
-  const parts = [{ key: "rejected", label: "PrePing abgelehnt", value: counts.rejected }, { key: "silent", label: "ohne Rückmeldung", value: counts.silent + counts.pending }, { key: "open", label: "offen", value: counts.open }, { key: "cancelled", label: "storniert", value: counts.cancelled }, { key: "confirmed", label: "anerkannt", value: counts.confirmed }].filter((part) => part.value > 0);
+/** Der Weg der gelieferten Leads als ein Balken: abgelehnt · ohne Rückmeldung · offen · storniert · anerkannt. Meldet der Partner nichts zurück, heißt der Rest schlicht „angenommen“. */
+function Flow({ counts, rated }: { counts: ReportCounts; rated: boolean }) {
+  const parts = [{ key: "rejected", label: "PrePing abgelehnt", value: counts.rejected }, { key: "silent", label: rated ? "ohne Rückmeldung" : "angenommen", value: counts.silent + counts.pending }, { key: "open", label: "offen", value: counts.open }, { key: "cancelled", label: "storniert", value: counts.cancelled }, { key: "confirmed", label: "anerkannt", value: counts.confirmed }].filter((part) => part.value > 0);
   if (!counts.delivered) return null;
   return <div className="pr-flow" role="img" aria-label={`Von ${count(counts.delivered)} gelieferten Leads: ${parts.map((part) => `${count(part.value)} ${part.label}`).join(", ")}`}>
     <div className="pr-flow-bar">{parts.map((part) => <i key={part.key} className={`is-${part.key}`} style={{ flexGrow: part.value }} title={`${count(part.value)} ${part.label} · ${share(part.value, counts.delivered)}`} />)}</div>
@@ -104,19 +108,26 @@ function Quota({ card }: { card: ReportCard }) {
 
 function PartnerCard({ card, query, onSync, syncing }: { card: ReportCard; query: Query; onSync: () => void; syncing: boolean }) {
   const { account, counts: c } = card; const [contactsOpen, setContactsOpen] = useState(false);
-  const rated = account.mode !== "none" && (account.mode === "pull" || c.rated > 0);
-  return <article className="pr-card" style={{ "--brand": BRAND[account.provider] ?? "var(--lt-accent-strong)" } as CSSProperties} aria-label={card.title}>
-    <header className="pr-card-head"><span className="pr-mark" aria-hidden="true">{providerName(account.provider).slice(0, 2)}</span><div><h3>{card.title}</h3><p>{account.buyerName ? `Käufer: ${account.buyerName}` : "Noch keinem Käufer zugeordnet"}</p></div>
+  const own = account.provider === "api"; const partner = providerName(account.provider);
+  // Der Partner könnte zurückmelden, aber es ist noch nichts eingerichtet (kein Zugang, keine Adresse) – oder es gibt nur die Schnittstelle des Käufers
+  const missing = account.mode !== "none" && !account.hasAccess;
+  const rated = account.mode !== "none" && (c.rated > 0 || (account.mode === "pull" && account.hasAccess));
+  const buyerUrl = account.membershipId ? buyerIntegrationUrl(account.membershipId) : null;
+  return <article className={`pr-card ${account.virtual ? "is-own" : ""}`} style={{ "--brand": BRAND[account.provider] ?? "var(--lt-accent-strong)" } as CSSProperties} aria-label={card.title}>
+    <header className="pr-card-head"><span className="pr-mark" aria-hidden="true">{own ? <Cable /> : partner.slice(0, 2)}</span><div><h3>{card.title}</h3><p>{own ? "Käufer mit eigener Schnittstelle" : account.buyerName ? `Käufer: ${account.buyerName}` : "Noch keinem Käufer zugeordnet"}</p></div>
       {account.mode === "pull" && account.hasAccess ? <div className="pr-sync"><span title={account.lastSyncNote ?? undefined}>zuletzt aktualisiert {ago(account.lastSyncAt)}</span><Button variant="outline" size="sm" disabled={syncing} onClick={onSync}><RefreshCw className={syncing ? "animate-spin" : ""} /> {syncing ? "Wird abgeglichen …" : "Aktualisieren"}</Button></div>
-        : account.mode === "push" ? <div className="pr-sync is-info"><Info aria-hidden="true" /><span>{providerName(account.provider)} meldet jede Änderung selbst – es gibt nichts abzurufen.</span></div>
-        : <div className="pr-sync is-info"><KeyRound aria-hidden="true" /><span>{account.mode === "pull" ? "Noch kein Zugang hinterlegt." : "Für diesen Partner gibt es noch keinen Rückkanal."} <a href="/?page=Einstellungen&setting=Integrationen">Unter Einstellungen → Integrationen einrichten</a></span></div>}</header>
+        : account.mode === "push" && account.hasAccess ? <div className="pr-sync is-info"><Info aria-hidden="true" /><span>{partner} meldet jede Änderung selbst – es gibt nichts abzurufen.</span></div>
+        : missing ? <div className="pr-sync is-info is-todo"><KeyRound aria-hidden="true" /><span>Die Rückmeldung von {partner} ist noch nicht eingerichtet – Stornos und Provisionen fehlen deshalb. {buyerUrl ? <a href={buyerUrl}>Beim Käufer einrichten</a> : <a href="/?page=Einstellungen&setting=Integrationen">Unter Einstellungen → Integrationen ansehen</a>}</span></div>
+        : own ? <div className="pr-sync is-info"><Info aria-hidden="true" /><span>Dieser Käufer meldet nichts zurück. Die Karte zeigt, was geliefert, abgelehnt und angenommen wurde.{buyerUrl && <> <a href={buyerUrl}>Käufer öffnen</a></>}</span></div>
+        : <div className="pr-sync is-info"><KeyRound aria-hidden="true" /><span>Für {partner} gibt es noch keinen Rückkanal – die Anbindung folgt. {buyerUrl ? <a href={buyerUrl}>Käufer öffnen</a> : <a href="/?page=Einstellungen&setting=Integrationen">Unter Einstellungen → Integrationen ansehen</a>}</span></div>}</header>
     <Quota card={card} />
-    <Flow counts={c} />
-    <section className="pr-block" aria-label="Zustellung"><h4>Zustellung</h4><div className="pr-tiles">
+    <Flow counts={c} rated={rated} />
+    <section className="pr-block" aria-label="Zustellung"><h4>Zustellung</h4><div className={`pr-tiles ${rated ? "" : "is-three"}`}>
       <Tile label="Geliefert" value={count(c.delivered)}>{c.pending ? `${count(c.pending)} noch ohne Ergebnis` : null}</Tile>
       <Tile label="PrePing abgelehnt" value={count(c.rejected)} tone="calm">{share(c.rejected, c.delivered)} · hatte der Partner schon – sofort beim Senden abgelehnt (meist Dublette)</Tile>
       <Tile label="Angenommen" value={count(c.accepted)}>{share(c.accepted, c.delivered)} der gelieferten</Tile>
-      <Tile label="Gesamtquote" value={share(c.confirmed, c.delivered)} tone="good">{count(c.confirmed)} anerkannt von {count(c.delivered)} gelieferten{c.open ? ` · ${count(c.open)} noch offen` : ""}</Tile>
+      {/* Die Gesamtquote (anerkannt von geliefert) gibt es nur, wenn der Partner zurückmeldet */}
+      {rated && <Tile label="Gesamtquote" value={share(c.confirmed, c.delivered)} tone="good">{count(c.confirmed)} anerkannt von {count(c.delivered)} gelieferten{c.open ? ` · ${count(c.open)} noch offen` : ""}</Tile>}
     </div></section>
     {rated && <section className="pr-block" aria-label="Bewertung durch den Partner"><h4>Bewertung durch den Partner <span>{count(c.rated)} von {count(c.accepted)} angenommenen bewertet</span></h4><div className="pr-tiles">
       <Tile label="Offen" value={count(c.open)}>{share(c.open, c.accepted)} · noch nicht entschieden</Tile>
@@ -180,11 +191,11 @@ export default function PartnerReport() {
       <div className="pr-quick" role="group" aria-label="Schnellwahl"><CalendarRange aria-hidden="true" />{QUICK_RANGES.map((item) => <button key={item.key} type="button" aria-pressed={quick === item.key} className={quick === item.key ? "is-on" : ""} onClick={() => apply(quickRange(item.key, today))}>{item.label}</button>)}</div>
     </section>
     {basis.note && <p className="pr-basis-note"><Info aria-hidden="true" /><span><b>{basis.label}:</b> {basis.note}</span></p>}
-    {report.isLoading ? <div className="pr-skeleton" aria-label="Wird geladen"><i /><i /><i /></div> : report.error ? <p className="pr-note is-bad">{report.error.message}</p> : !cards.length ? <section className="pr-empty"><KeyRound aria-hidden="true" /><h3>Noch kein Partnerkonto</h3><p>Lege unter Einstellungen → Integrationen ein Konto bei Aroundhome, WattFox, Leadnodes, Enpal oder GoHighLevel an. Danach steht hier je Konto, was aus den gelieferten Leads wurde.</p><a className="flux-button pr-empty-link" href="/?page=Einstellungen&setting=Integrationen">Partnerkonto anlegen</a></section> : <>
-      <section className={`pr-rail ${quotas.length ? "has-quota" : ""}`} aria-label="Alle Partnerkonten zusammen">
-        <div className="pr-stat"><span><KeyRound aria-hidden="true" /> Partnerkonten</span><strong>{count(cards.length)}</strong><small>{longDay(query.from)} – {longDay(query.to)}</small></div>
-        <div className="pr-stat"><span><Send aria-hidden="true" /> Geliefert</span><strong>{count(sum.delivered)}</strong><small>an alle Konten zusammen</small></div>
-        <div className="pr-stat is-good"><span><BadgeCheck aria-hidden="true" /> Anerkannt</span><strong>{count(sum.confirmed)} <em>{share(sum.confirmed, sum.delivered)}</em></strong><small>{sum.open ? `${count(sum.open)} noch offen` : "Gesamtquote aller Konten"}</small></div>
+    {report.isLoading ? <div className="pr-skeleton" aria-label="Wird geladen"><i /><i /><i /></div> : report.error ? <p className="pr-note is-bad">{report.error.message}</p> : !cards.length ? <section className="pr-empty"><Cable aria-hidden="true" /><h3>Noch keine Integration</h3><p>Sobald ein Käufer eine Schnittstelle hat, steht hier von selbst, was aus den gelieferten Leads wurde. Du richtest sie beim Käufer ein: Benutzer → Käufer öffnen → Reiter „Integration“.</p><a className="flux-button pr-empty-link" href="/?page=Benutzer">Zu den Benutzern</a></section> : <>
+      <section className={`pr-rail ${quotas.length ? "has-quota" : ""}`} aria-label="Alle Integrationen zusammen">
+        <div className="pr-stat"><span><Cable aria-hidden="true" /> Integrationen</span><strong>{count(cards.length)}</strong><small>{longDay(query.from)} – {longDay(query.to)}</small></div>
+        <div className="pr-stat"><span><Send aria-hidden="true" /> Geliefert</span><strong>{count(sum.delivered)}</strong><small>an alle zusammen</small></div>
+        <div className="pr-stat is-good"><span><BadgeCheck aria-hidden="true" /> Anerkannt</span><strong>{count(sum.confirmed)} <em>{share(sum.confirmed, sum.delivered)}</em></strong><small>{sum.open ? `${count(sum.open)} noch offen` : "Gesamtquote aller Integrationen"}</small></div>
         <div className="pr-stat"><span><Wallet aria-hidden="true" /> Provision</span><strong>{euro(sum.commission)}</strong><small>{sum.confirmed ? `Ø ${euro(sum.matched / sum.confirmed)} je anerkanntem Lead` : "noch keine anerkannten Leads"}</small></div>
         {quotas.length > 0 && <div className={`pr-stat is-push ${pushLeft ? "is-open" : "is-good"}`}><span><PackagePlus aria-hidden="true" /> Noch nachschieben</span><strong>{count(pushLeft)}</strong><small>{pushLeft ? `für ${quotas.filter((card) => card.quota!.open > 0).length} von ${quotas.length} ${quotas.length === 1 ? "Kontingent" : "Kontingenten"} – laufender Zeitraum` : `${quotas.length === 1 ? "das Kontingent ist" : `alle ${quotas.length} Kontingente sind`} erfüllt`}</small></div>}
       </section>

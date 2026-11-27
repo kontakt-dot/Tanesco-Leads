@@ -1,18 +1,19 @@
 /**
- * Einstellungen → Integrationen: Partner-Statusrückmeldungen.
+ * Rückmeldungen der Partner. Eingerichtet werden sie seit v383 beim Käufer (Benutzer → Käufer → Reiter „Integration“ →
+ * „Rückmeldung des Käufers“); unter Einstellungen → Integrationen steht nur noch, was für alle gilt.
  *  - Aroundhome: Konten (Publisher-ID, Zugangstoken/Export-Link), Abgleich der Vorgänge, Reklamation bei Storno.
  *  - WattFox: Tracking-URL je Konto, eingehende Statusmeldungen → Reklamation nach Code-Zuordnung.
  *  - hlrlookup: Telefonnummern-Prüfung beim Import (Zugangsdaten, Verbindungstest).
  *  - Storno-Zuordnungsregeln je Partner (Text/Code → Reklamationsgrund, erste passende Regel gewinnt).
  */
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { claimEvents, claims, leadDeliveries, leadStatusEvents, leads, partnerAccounts, partnerCallbacks, partnerCancelRules, reclamationReasons, type PartnerAccount } from "../drizzle/schema";
+import { claimEvents, claims, deliveryEndpoints, leadDeliveries, leadStatusEvents, leads, memberships, partnerAccounts, partnerCallbacks, partnerCancelRules, reclamationReasons, users, type PartnerAccount } from "../drizzle/schema";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
 import { upsertDailyStats } from "./d2d";
 import { upsertPartnerTransaction } from "./partner-report";
-import { PARTNER_PROVIDERS } from "../shared/partner-report";
+import { PARTNER_PROVIDERS, guessProvider } from "../shared/partner-report";
 
 export const SECRET_MASK = "••••••••";
 type Credentials = { accessToken?: string; exportUrl?: string; apiKey?: string; apiSecret?: string };
@@ -40,7 +41,17 @@ export async function listPartnerAccounts(db: Db, tenantId: number, appUrl: stri
   };
 }
 
-export async function saveAroundhomeAccount(db: Db, tenantId: number, input: { id?: number; label: string; publisherId: string; accessToken: string; exportUrl: string; reclaimOnCancel: boolean; reclaimReasonId: number | null; enabled: boolean }) {
+/** Gehört der Käufer zu diesem Bereich? Sonst darf ihm kein Konto zugeordnet werden. */
+async function assertBuyer(db: Db, tenantId: number, buyerUserId: number) {
+  const member = (await db.select({ id: memberships.id }).from(memberships).where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, buyerUserId))).limit(1))[0];
+  if (!member) throw new Error("Der Käufer wurde nicht gefunden.");
+}
+/** Die Zeile „api“ eines Käufers (hält nur sein Kontingent). Wird für ihn eine Rückmeldung eingerichtet, wird aus ihr das Konto des Partners – das Kontingent bleibt. */
+async function placeholderAccount(db: Db, tenantId: number, buyerUserId: number) {
+  return (await db.select().from(partnerAccounts).where(and(eq(partnerAccounts.tenantId, tenantId), eq(partnerAccounts.buyerUserId, buyerUserId), eq(partnerAccounts.provider, "api"))).orderBy(asc(partnerAccounts.id)).limit(1))[0];
+}
+
+export async function saveAroundhomeAccount(db: Db, tenantId: number, input: { id?: number; label: string; publisherId: string; accessToken: string; exportUrl: string; reclaimOnCancel: boolean; reclaimReasonId: number | null; enabled: boolean; /** seit v383: beim Käufer angelegt – das Konto gehört ihm von Anfang an */ buyerUserId?: number | null }) {
   const existing = input.id ? (await db.select().from(partnerAccounts).where(and(eq(partnerAccounts.id, input.id), eq(partnerAccounts.tenantId, tenantId), eq(partnerAccounts.provider, "aroundhome"))).limit(1))[0] : undefined;
   if (input.id && !existing) throw new Error("Aroundhome-Konto wurde nicht gefunden.");
   const previous = existing ? readCredentials(existing) : {};
@@ -48,12 +59,26 @@ export async function saveAroundhomeAccount(db: Db, tenantId: number, input: { i
   const credentials = encryptIntegrationSecret(JSON.stringify({ accessToken, exportUrl: input.exportUrl.trim() }));
   const values = { tenantId, provider: "aroundhome" as const, label: input.label.trim() || "Aroundhome", publisherId: input.publisherId.trim() || null, credentialsEncrypted: credentials, reclaimOnCancel: input.reclaimOnCancel, reclaimReasonId: input.reclaimReasonId, enabled: input.enabled };
   if (existing) { await db.update(partnerAccounts).set(values).where(eq(partnerAccounts.id, existing.id)); return { id: existing.id }; }
-  const inserted = await db.insert(partnerAccounts).values(values);
+  if (input.buyerUserId) {
+    await assertBuyer(db, tenantId, input.buyerUserId);
+    const holder = await placeholderAccount(db, tenantId, input.buyerUserId);
+    if (holder) { await db.update(partnerAccounts).set(values).where(eq(partnerAccounts.id, holder.id)); return { id: holder.id }; }
+  }
+  const inserted = await db.insert(partnerAccounts).values({ ...values, buyerUserId: input.buyerUserId ?? null });
   return { id: Number(inserted[0]?.insertId) || 0 };
 }
 
-export async function createWattfoxAccount(db: Db, tenantId: number, input: { label: string; reclaimOnCancel: boolean; reclaimReasonId: number | null }) {
-  const inserted = await db.insert(partnerAccounts).values({ tenantId, provider: "wattfox", label: input.label.trim() || "WattFox", trackingToken: nanoid(32), reclaimOnCancel: input.reclaimOnCancel, reclaimReasonId: input.reclaimReasonId, enabled: true });
+export async function createWattfoxAccount(db: Db, tenantId: number, input: { label: string; reclaimOnCancel: boolean; reclaimReasonId: number | null; /** seit v383: beim Käufer erzeugt – die Adresse gehört ihm von Anfang an */ buyerUserId?: number | null }) {
+  const values = { provider: "wattfox" as const, label: input.label.trim() || "WattFox", trackingToken: nanoid(32), reclaimOnCancel: input.reclaimOnCancel, reclaimReasonId: input.reclaimReasonId, enabled: true };
+  if (input.buyerUserId) {
+    await assertBuyer(db, tenantId, input.buyerUserId);
+    // je Käufer eine Adresse: ein zweiter Klick erzeugt keine zweite
+    const same = (await db.select({ id: partnerAccounts.id }).from(partnerAccounts).where(and(eq(partnerAccounts.tenantId, tenantId), eq(partnerAccounts.buyerUserId, input.buyerUserId), eq(partnerAccounts.provider, "wattfox"))).limit(1))[0];
+    if (same) return { id: same.id };
+    const holder = await placeholderAccount(db, tenantId, input.buyerUserId);
+    if (holder) { await db.update(partnerAccounts).set(values).where(eq(partnerAccounts.id, holder.id)); return { id: holder.id }; }
+  }
+  const inserted = await db.insert(partnerAccounts).values({ tenantId, ...values, buyerUserId: input.buyerUserId ?? null });
   return { id: Number(inserted[0]?.insertId) || 0 };
 }
 
@@ -65,14 +90,64 @@ export async function savePlatformAccount(db: Db, tenantId: number, input: { id?
   const accessToken = !typed || typed.startsWith(SECRET_MASK) ? previous.accessToken ?? "" : typed;
   const values = { tenantId, provider: input.provider, label: input.label.trim() || PARTNER_PROVIDERS.find((item) => item.key === input.provider)?.name || input.provider, credentialsEncrypted: accessToken ? encryptIntegrationSecret(JSON.stringify({ accessToken })) : null, buyerUserId: input.buyerUserId, enabled: true };
   if (existing) { await db.update(partnerAccounts).set(values).where(eq(partnerAccounts.id, existing.id)); return { id: existing.id }; }
+  if (input.buyerUserId) {
+    await assertBuyer(db, tenantId, input.buyerUserId);
+    const holder = await placeholderAccount(db, tenantId, input.buyerUserId);
+    if (holder) { await db.update(partnerAccounts).set(values).where(eq(partnerAccounts.id, holder.id)); return { id: holder.id }; }
+  }
   const inserted = await db.insert(partnerAccounts).values(values);
   return { id: Number(inserted[0]?.insertId) || 0 };
 }
 
 export async function updatePartnerAccount(db: Db, tenantId: number, input: { id: number; label?: string; reclaimOnCancel?: boolean; reclaimReasonId?: number | null; enabled?: boolean; buyerUserId?: number | null }) {
   const { id, ...values } = input;
+  if (values.buyerUserId) {
+    // Ein Konto wird einem Käufer zugeordnet: Hält dieser schon eine Zeile „api“ (nur Kontingent), geht ihr Kontingent auf das Konto über und sie entfällt
+    await assertBuyer(db, tenantId, values.buyerUserId);
+    const holder = await placeholderAccount(db, tenantId, values.buyerUserId);
+    if (holder && holder.id !== id) {
+      const target = (await db.select({ quotaAmount: partnerAccounts.quotaAmount }).from(partnerAccounts).where(and(eq(partnerAccounts.id, id), eq(partnerAccounts.tenantId, tenantId))).limit(1))[0];
+      if (target && !target.quotaAmount && holder.quotaAmount) await db.update(partnerAccounts).set({ quotaAmount: holder.quotaAmount, quotaPeriod: holder.quotaPeriod }).where(eq(partnerAccounts.id, id));
+      if (target) await db.delete(partnerAccounts).where(eq(partnerAccounts.id, holder.id));
+    }
+  }
   await db.update(partnerAccounts).set(values).where(and(eq(partnerAccounts.id, id), eq(partnerAccounts.tenantId, tenantId)));
   return { success: true as const };
+}
+
+/**
+ * Rückmeldung eines Käufers (seit v383, Benutzer → Käufer → Reiter „Integration“): die Konten, die zu ihm gehören, was seine Schnittstelle
+ * über den Partner verrät, und Konten ohne Käufer, die sich ihm zuordnen lassen. Zugangsdaten erscheinen nur gekürzt.
+ */
+export async function getBuyerFeedback(db: Db, tenantId: number, membershipId: number, appUrl: string) {
+  const member = (await db.select({ userId: memberships.userId, name: users.name, company: users.company }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).where(and(eq(memberships.id, membershipId), eq(memberships.tenantId, tenantId))).limit(1))[0];
+  if (!member) throw new Error("Der Benutzer gehört nicht zu diesem Lead-Bereich.");
+  const [accounts, endpoints, reasons] = await Promise.all([
+    db.select().from(partnerAccounts).where(and(eq(partnerAccounts.tenantId, tenantId), ne(partnerAccounts.provider, "hlrlookup"))).orderBy(asc(partnerAccounts.id)),
+    db.select({ url: deliveryEndpoints.url, bodyTemplate: deliveryEndpoints.bodyTemplate }).from(deliveryEndpoints).where(and(eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId))),
+    db.select({ id: reclamationReasons.id, name: reclamationReasons.name, active: reclamationReasons.active }).from(reclamationReasons).where(eq(reclamationReasons.tenantId, tenantId)).orderBy(asc(reclamationReasons.sortOrder)),
+  ]);
+  const base = appUrl.replace(/\/+$/, ""); const own = accounts.filter((account) => account.buyerUserId === member.userId);
+  return {
+    buyerUserId: member.userId, buyerName: member.company ?? member.name ?? "Käufer", hasEndpoint: endpoints.length > 0,
+    /** der Partner, den die Schnittstelle verrät (Vorlage oder Adresse) – als Vorschlag */
+    suggested: endpoints.map(guessProvider).find((key) => key !== "api") ?? null,
+    accounts: own.filter((account) => account.provider !== "api").map((account) => { const credentials = readCredentials(account); return { id: account.id, provider: account.provider as Exclude<PartnerAccount["provider"], "hlrlookup" | "api">, label: account.label ?? "", enabled: account.enabled, reclaimOnCancel: account.reclaimOnCancel, reclaimReasonId: account.reclaimReasonId, lastSyncAt: account.lastSyncAt, lastSyncSummary: account.lastSyncSummary, quotaAmount: account.quotaAmount, quotaPeriod: account.quotaPeriod, trackingUrl: account.provider === "wattfox" && account.trackingToken ? `${base}/api/partner/wattfox/${account.trackingToken}` : null, publisherId: account.publisherId ?? "", accessToken: mask(credentials.accessToken), exportUrl: credentials.exportUrl ?? "" }; }),
+    unassigned: accounts.filter((account) => !account.buyerUserId && account.provider !== "api").map((account) => ({ id: account.id, provider: account.provider as string, label: account.label ?? "" })),
+    reasons,
+  };
+}
+
+/** Rückmeldung eines Käufers entfernen. Hat er ein Kontingent, bleibt es: Aus dem Konto wird wieder die Zeile „api“ – ohne Zugangsdaten, ohne Adresse. */
+export async function removeBuyerFeedback(db: Db, tenantId: number, id: number) {
+  const account = (await db.select().from(partnerAccounts).where(and(eq(partnerAccounts.id, id), eq(partnerAccounts.tenantId, tenantId))).limit(1))[0];
+  if (!account || account.provider === "hlrlookup" || account.provider === "api") throw new Error("Die Rückmeldung wurde nicht gefunden.");
+  if (account.buyerUserId && account.quotaAmount) {
+    await db.update(partnerAccounts).set({ provider: "api", label: null, publisherId: null, credentialsEncrypted: null, trackingToken: null, reclaimOnCancel: false, reclaimReasonId: null, lastSyncAt: null, lastSyncSummary: null }).where(eq(partnerAccounts.id, account.id));
+    return { success: true as const, keptQuota: true };
+  }
+  await db.delete(partnerAccounts).where(eq(partnerAccounts.id, account.id));
+  return { success: true as const, keptQuota: false };
 }
 
 export async function deletePartnerAccount(db: Db, tenantId: number, id: number) {

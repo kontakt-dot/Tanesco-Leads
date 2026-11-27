@@ -7092,4 +7092,75 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       for (const id of [first, second]) await owner.leadops.deleteCooperation({ id }).catch(() => undefined);
     }
   }, 60000);
+
+  it("v383. Integration an einer Stelle: Ein Käufer mit Schnittstelle hat von selbst eine Karte in der Statistik; Kontingent und Rückmeldung werden bei ihm eingerichtet – das Kontingent übersteht Einrichten, Entfernen und Zuordnen", async () => {
+    const { partnerAccounts: accountsTable, integrationEvents: eventsTable, leads: leadsTable, deliveryEndpoints: endpointsTable } = await import("../drizzle/schema"); const { WATTFOX_TEMPLATE: template } = await import("../shared/wattfox");
+    const tenantId = S.tenantId as number; const stamp = Date.now().toString(36).slice(-6);
+    const buyer = async (company: string, mail: string) => { const created = await owner.leadops.createMember({ firstName: "Vera", lastName: "Kauf", company, email: `${mail}-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind: "benutzer", status: "aktiv" }); return { membershipId: created.membershipId, userId: (await owner.leadops.getMemberDetail({ membershipId: created.membershipId })).user.id }; };
+    const base = { categoryId: S.pv.id as number, enabled: true, method: "POST" as const, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, omitAutoFields: false, rotate: false, valueMappings: [] };
+    const own = await buyer(`V383 Haus und Dach ${stamp}`, "v383-eigen"); const fox = await buyer(`V383 Sonnenwerk ${stamp}`, "v383-wattfox"); const quiet = await buyer(`V383 Ohne Schnittstelle ${stamp}`, "v383-ohne");
+    const ownEndpoint = await owner.leadops.saveDeliveryEndpoint({ ...base, membershipId: own.membershipId, url: `https://v383-crm-${stamp}.example/api/leads`, bodyTemplate: "" });
+    const foxEndpoint = await owner.leadops.saveDeliveryEndpoint({ ...base, membershipId: fox.membershipId, url: `https://v383-partner-${stamp}.example/in`, bodyTemplate: template });
+    const leadRows = await db.select({ id: leadsTable.id }).from(leadsTable).where(eq(leadsTable.tenantId, tenantId)).limit(4); expect(leadRows.length).toBeGreaterThanOrEqual(3);
+    const now = Date.now(); const event = (endpointId: number, leadId: number, eventType: "geliefert" | "abgelehnt", minutes: number) => ({ tenantId, endpointId, leadId, categoryId: S.pv.id as number, eventType, occurredAt: new Date(now - minutes * 60_000), createdAt: new Date(now - minutes * 60_000) });
+    await db.insert(eventsTable).values([event(ownEndpoint.id, leadRows[0].id, "abgelehnt", 6), event(ownEndpoint.id, leadRows[0].id, "geliefert", 2), event(ownEndpoint.id, leadRows[1].id, "geliefert", 5), event(ownEndpoint.id, leadRows[2].id, "abgelehnt", 4), event(foxEndpoint.id, leadRows[0].id, "geliefert", 3), event(foxEndpoint.id, leadRows[1].id, "abgelehnt", 1)]);
+    const cards = async () => (await owner.leadops.partnerReport({})).cards; const cardOf = async (userId: number) => (await cards()).find((card) => card.account.buyerUserId === userId);
+    const rows = async (userId: number) => db.select().from(accountsTable).where(and(eq(accountsTable.tenantId, tenantId), eq(accountsTable.buyerUserId, userId)));
+    try {
+      // (0) wie bisher: Ein WattFox-Konto OHNE Käufer (aus früheren Schritten) erkennt die Schnittstelle am Partner und nimmt ihre Übergaben zu sich – dann hat der Käufer keine eigene Karte
+      const older = await db.select().from(accountsTable).where(and(eq(accountsTable.tenantId, tenantId), eq(accountsTable.provider, "wattfox"), sql`${accountsTable.buyerUserId} IS NULL`)).orderBy(asc(accountsTable.id));
+      if (older.length) { const taken = (await cards()).find((card) => card.account.id === older[0].id)!; expect(taken.buyers.find((row) => row.buyerName === `V383 Sonnenwerk ${stamp}`)).toMatchObject({ delivered: 2, accepted: 1, rejected: 1 }); expect(await cardOf(fox.userId)).toBeUndefined(); await db.delete(accountsTable).where(inArray(accountsTable.id, older.map((row) => row.id))); }
+      // (a) ohne ein einziges Konto: beide Käufer haben ihre Karte – der Partner wird an der Schnittstelle erkannt; ein Käufer ohne Schnittstelle hat keine
+      const first = (await cardOf(own.userId))!; const second = (await cardOf(fox.userId))!;
+      expect(first.account).toMatchObject({ id: -own.userId, provider: "api", mode: "none", hasAccess: false, virtual: true, membershipId: own.membershipId, buyerName: `V383 Haus und Dach ${stamp}` }); expect(first.title).toBe(`V383 Haus und Dach ${stamp}`);
+      expect(first.counts).toMatchObject({ delivered: 3, accepted: 2, rejected: 1, rated: 0 }); expect(first.quota).toBeNull(); // je Lead zählt die letzte Übergabe: der zuerst abgelehnte kam danach an
+      expect(second.account).toMatchObject({ id: -fox.userId, provider: "wattfox", mode: "push", hasAccess: false, virtual: true, membershipId: fox.membershipId }); expect(second.title).toBe("WattFox"); expect(second.counts).toMatchObject({ delivered: 2, accepted: 1, rejected: 1 });
+      expect(await cardOf(quiet.userId)).toBeUndefined(); expect(await rows(own.userId)).toEqual([]); expect(await rows(fox.userId)).toEqual([]); // die Statistik legt beim Lesen nichts an
+      const contacts = await owner.leadops.partnerContacts({ accountId: -own.userId }); expect(contacts.total).toBe(3); expect(contacts.rows.map((row) => row.status).sort()).toEqual(["none", "none", "rejected"]);
+      // (b) Kontingent an der Karte ohne Konto: es entsteht die Zeile „api“ für diesen Käufer – die Karte bleibt dieselbe, jetzt mit Kontingent
+      expect(await owner.leadops.setPartnerQuota({ accountId: -own.userId, amount: 10, period: "week" })).toEqual({ success: true, amount: 10, period: "week" });
+      const holder = await rows(own.userId); expect(holder).toHaveLength(1); expect(holder[0]).toMatchObject({ provider: "api", quotaAmount: 10, quotaPeriod: "week", trackingToken: null, credentialsEncrypted: null });
+      const withQuota = (await cardOf(own.userId))!; expect(withQuota.account).toMatchObject({ id: holder[0].id, provider: "api", hasAccess: false }); expect(withQuota.account.virtual).toBeUndefined(); expect(withQuota.title).toBe(`V383 Haus und Dach ${stamp}`);
+      expect(withQuota.quota).toMatchObject({ amount: 10, period: "week", sent: 3, accepted: 2, rejected: 1, open: 8 }); expect(withQuota.counts.delivered).toBe(3);
+      await owner.leadops.setPartnerQuota({ accountId: -own.userId, amount: 12, period: "month" }); expect(await rows(own.userId)).toHaveLength(1); expect((await rows(own.userId))[0]).toMatchObject({ quotaAmount: 12, quotaPeriod: "month" }); // die alte Nummer der Karte trifft dieselbe Zeile
+      // Kontingent entfernen: die Zeile „api“ hat keinen Zweck mehr und verschwindet – die Karte bleibt
+      await owner.leadops.setPartnerQuota({ accountId: holder[0].id, amount: null, period: "week" }); expect(await rows(own.userId)).toEqual([]); expect((await cardOf(own.userId))!.account).toMatchObject({ id: -own.userId, virtual: true });
+      await expect(owner.leadops.setPartnerQuota({ accountId: -999_999_999, amount: 5, period: "week" })).rejects.toThrow("Der Käufer wurde nicht gefunden."); await expect(invitee.leadops.setPartnerQuota({ accountId: -own.userId, amount: 5, period: "week" })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/);
+      // (c) Rückmeldung beim Käufer: was seine Schnittstelle verrät, ist der Vorschlag
+      const empty = await owner.leadops.getBuyerFeedback({ membershipId: fox.membershipId }); expect(empty).toMatchObject({ buyerUserId: fox.userId, buyerName: `V383 Sonnenwerk ${stamp}`, hasEndpoint: true, suggested: "wattfox", accounts: [] });
+      expect(await owner.leadops.getBuyerFeedback({ membershipId: own.membershipId })).toMatchObject({ hasEndpoint: true, suggested: null, accounts: [] }); expect(await owner.leadops.getBuyerFeedback({ membershipId: quiet.membershipId })).toMatchObject({ hasEndpoint: false, suggested: null });
+      await expect(invitee.leadops.getBuyerFeedback({ membershipId: fox.membershipId })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt|Administrator/); await expect(owner.leadops.getBuyerFeedback({ membershipId: 999_999_999 })).rejects.toThrow("Der Benutzer gehört nicht zu diesem Lead-Bereich.");
+      // erst ein Kontingent (Zeile „api“), dann die Adresse für WattFox: aus der Zeile wird das Konto – das Kontingent bleibt
+      await owner.leadops.setPartnerQuota({ accountId: -fox.userId, amount: 7, period: "day" }); const placeholder = (await rows(fox.userId))[0]; expect(placeholder.provider).toBe("api");
+      const made = await owner.leadops.createWattfoxAccount({ label: "", reclaimOnCancel: true, reclaimReasonId: null, buyerUserId: fox.userId }); expect(made.id).toBe(placeholder.id);
+      const account = (await rows(fox.userId))[0]; expect(await rows(fox.userId)).toHaveLength(1); expect(account).toMatchObject({ provider: "wattfox", label: "WattFox", buyerUserId: fox.userId, quotaAmount: 7, quotaPeriod: "day", reclaimOnCancel: true, enabled: true }); expect(account.trackingToken).toMatch(/^[A-Za-z0-9_-]{32}$/);
+      expect((await owner.leadops.createWattfoxAccount({ label: "", reclaimOnCancel: true, reclaimReasonId: null, buyerUserId: fox.userId })).id).toBe(account.id); expect(await rows(fox.userId)).toHaveLength(1); // ein zweiter Klick erzeugt keine zweite Adresse
+      const ready = await owner.leadops.getBuyerFeedback({ membershipId: fox.membershipId }); expect(ready.accounts).toHaveLength(1); expect(ready.accounts[0]).toMatchObject({ id: account.id, provider: "wattfox", enabled: true, reclaimOnCancel: true, quotaAmount: 7, quotaPeriod: "day" }); expect(ready.accounts[0].trackingUrl).toMatch(new RegExp(`/api/partner/wattfox/${account.trackingToken}$`));
+      const live = (await cardOf(fox.userId))!; expect(live.account).toMatchObject({ id: account.id, provider: "wattfox", mode: "push", hasAccess: true }); expect(live.account.virtual).toBeUndefined(); expect(live.counts.delivered).toBe(2); expect(live.quota).toMatchObject({ amount: 7, period: "day" });
+      // (d) Rückmeldung entfernen: mit Kontingent wird aus dem Konto wieder die Zeile „api“ – ohne Adresse; ohne Kontingent ist die Zeile weg
+      expect(await owner.leadops.removeBuyerFeedback({ id: account.id })).toEqual({ success: true, keptQuota: true });
+      expect((await rows(fox.userId))[0]).toMatchObject({ id: account.id, provider: "api", trackingToken: null, label: null, reclaimOnCancel: false, quotaAmount: 7, quotaPeriod: "day" }); expect((await owner.leadops.getBuyerFeedback({ membershipId: fox.membershipId })).accounts).toEqual([]);
+      const back = (await cardOf(fox.userId))!; expect(back.account).toMatchObject({ id: account.id, provider: "wattfox", hasAccess: false }); expect(back.quota).toMatchObject({ amount: 7 }); // die Karte zeigt weiter den erkannten Partner – nur ohne Rückmeldung
+      await expect(owner.leadops.removeBuyerFeedback({ id: account.id })).rejects.toThrow("Die Rückmeldung wurde nicht gefunden."); await expect(invitee.leadops.removeBuyerFeedback({ id: account.id })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/);
+      // (e) Aroundhome beim Käufer mit eigener Schnittstelle: das Konto gehört ihm von Anfang an; ohne Kontingent wird es beim Entfernen gelöscht
+      const around = await owner.leadops.saveAroundhomeAccount({ label: "", publisherId: "p-383", accessToken: "v383-geheim-token", exportUrl: "https://export.aroundhome.example/v383", reclaimOnCancel: false, reclaimReasonId: null, enabled: true, buyerUserId: own.userId });
+      expect((await rows(own.userId))[0]).toMatchObject({ id: around.id, provider: "aroundhome", label: "Aroundhome", buyerUserId: own.userId, publisherId: "p-383" });
+      const aroundSeen = (await owner.leadops.getBuyerFeedback({ membershipId: own.membershipId })).accounts[0]; expect(aroundSeen).toMatchObject({ provider: "aroundhome", publisherId: "p-383", exportUrl: "https://export.aroundhome.example/v383" }); expect(aroundSeen.accessToken).toBe("••••••••oken"); expect(JSON.stringify(aroundSeen)).not.toContain("v383-geheim-token"); // der Zugang erscheint nur gekürzt
+      expect((await cardOf(own.userId))!.account).toMatchObject({ id: around.id, provider: "aroundhome", mode: "pull", hasAccess: true }); expect((await cardOf(own.userId))!.counts.delivered).toBe(3);
+      expect(await owner.leadops.removeBuyerFeedback({ id: around.id })).toEqual({ success: true, keptQuota: false }); expect(await rows(own.userId)).toEqual([]); expect((await cardOf(own.userId))!.account.virtual).toBe(true);
+      // (f) ein älteres Konto ohne Käufer zuordnen: Hält der Käufer schon eine Zeile „api“, geht ihr Kontingent auf das Konto über und sie entfällt
+      const loose = await owner.leadops.createWattfoxAccount({ label: `V383 alt ${stamp}`, reclaimOnCancel: false, reclaimReasonId: null }); expect((await owner.leadops.getBuyerFeedback({ membershipId: fox.membershipId })).unassigned.some((row) => row.id === loose.id)).toBe(true);
+      await owner.leadops.updatePartnerAccount({ id: loose.id, buyerUserId: fox.userId });
+      const merged = await rows(fox.userId); expect(merged).toHaveLength(1); expect(merged[0]).toMatchObject({ id: loose.id, provider: "wattfox", quotaAmount: 7, quotaPeriod: "day" });
+      expect((await cardOf(fox.userId))!.account).toMatchObject({ id: loose.id, provider: "wattfox", hasAccess: true }); expect((await owner.leadops.getBuyerFeedback({ membershipId: fox.membershipId })).unassigned.some((row) => row.id === loose.id)).toBe(false);
+      await expect(owner.leadops.createWattfoxAccount({ label: "", reclaimOnCancel: true, reclaimReasonId: null, buyerUserId: 999_999_999 })).rejects.toThrow("Der Käufer wurde nicht gefunden.");
+      // (g) die Schnittstelle ausschalten: ohne Übergaben gäbe es keine Karte – mit Übergaben bleibt sie (die Zahlen gehen nicht verloren)
+      await owner.leadops.saveDeliveryEndpoint({ ...base, id: ownEndpoint.id, enabled: false, membershipId: own.membershipId, url: `https://v383-crm-${stamp}.example/api/leads`, bodyTemplate: "" }); expect((await cardOf(own.userId))!.counts.delivered).toBe(3);
+      await db.delete(eventsTable).where(eq(eventsTable.endpointId, ownEndpoint.id)); expect(await cardOf(own.userId)).toBeUndefined();
+    } finally {
+      await db.delete(eventsTable).where(inArray(eventsTable.endpointId, [ownEndpoint.id, foxEndpoint.id])); await db.delete(accountsTable).where(and(eq(accountsTable.tenantId, tenantId), inArray(accountsTable.buyerUserId, [own.userId, fox.userId, quiet.userId])));
+      await db.delete(accountsTable).where(and(eq(accountsTable.tenantId, tenantId), like(accountsTable.label, `V383 alt ${stamp}`))); await db.update(endpointsTable).set({ enabled: false }).where(inArray(endpointsTable.id, [ownEndpoint.id, foxEndpoint.id]));
+      for (const member of [own, fox, quiet]) await owner.leadops.updateMembership({ membershipId: member.membershipId, status: "deaktiviert" } as never).catch(() => undefined);
+    }
+  }, 90000);
 });

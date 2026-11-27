@@ -15,7 +15,7 @@ export function samplePartnerData(leads: Array<{ id: number; categoryId: number 
   const accounts: ReportAccount[] = [
     { id: 9001, provider: "aroundhome", label: "Account 1", buyerName: "Aroundhome GmbH", mode: "pull", hasAccess: true, lastSyncAt: ago(0, 0.02), lastSyncNote: "Abgleich abgeschlossen", quotaAmount: 25, quotaPeriod: "week" }, // Beispiel-Kontingent (v378) – in der Vorschau änderbar
     { id: 9002, provider: "aroundhome", label: "D2D Account", buyerName: "Aroundhome GmbH", mode: "pull", hasAccess: true, lastSyncAt: ago(0, 0.03), lastSyncNote: "Abgleich abgeschlossen" },
-    { id: 9003, provider: "wattfox", label: null, buyerName: "Nordlicht Energie", mode: "push", hasAccess: true, lastSyncAt: null, lastSyncNote: null, quotaAmount: 40, quotaPeriod: "month" },
+    { id: 9003, provider: "wattfox", label: null, buyerName: "Sonnenwerk Süd", mode: "push", hasAccess: true, lastSyncAt: null, lastSyncNote: null, quotaAmount: 40, quotaPeriod: "month" },
     { id: 9004, provider: "leadnodes", label: null, buyerName: "Helios Solar", mode: "none", hasAccess: false, lastSyncAt: null, lastSyncNote: null },
   ];
   const deliveries: ReportDelivery[] = []; const transactions: ReportTransaction[] = []; let txId = 0;
@@ -23,7 +23,7 @@ export function samplePartnerData(leads: Array<{ id: number; categoryId: number 
   sorted.forEach((lead, index) => {
     const roll = pick(lead.id); const accountId = index % 5 === 4 ? 9004 : index % 3 === 2 ? 9003 : 9001; const day = Math.floor(pick(lead.id + 7) * 27) + 1;
     const rejected = roll < 0.16;
-    deliveries.push({ accountId, leadId: lead.id, buyerName: accountId === 9001 ? (index % 7 === 0 ? "Aroundhome Regional" : "Aroundhome GmbH") : accountId === 9003 ? "Nordlicht Energie" : "Helios Solar", categoryId: lead.categoryId, deliveredAt: ago(day, Math.floor(roll * 9)), result: rejected ? "rejected" : "accepted" });
+    deliveries.push({ accountId, leadId: lead.id, buyerName: accountId === 9001 ? (index % 7 === 0 ? "Aroundhome Regional" : "Aroundhome GmbH") : accountId === 9003 ? "Sonnenwerk Süd" : "Helios Solar", categoryId: lead.categoryId, deliveredAt: ago(day, Math.floor(roll * 9)), result: rejected ? "rejected" : "accepted" });
     if (rejected || accountId === 9004 || roll > 0.97) return; // abgelehnt, ohne Rückkanal oder (noch) ohne Rückmeldung
     const state = pick(lead.id + 3); const status: ReportTransaction["status"] = state < 0.3 ? "confirmed" : state < 0.82 ? "cancelled" : "open";
     const decided = status === "open" ? null : ago(Math.max(0, day - 2), 3);

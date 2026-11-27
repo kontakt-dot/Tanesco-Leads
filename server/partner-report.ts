@@ -1,15 +1,14 @@
 /**
  * Statistik „Integrationen“: Zeilen aus der Datenbank laden und an die gemeinsame Rechnung (shared/partner-report.ts) geben.
- *  - Zustellungen: Übergaben an die Schnittstellen des Käufers, über den ein Partnerkonto beliefert wird (je Lead und Konto zählt die letzte).
+ *  - Zustellungen: Übergaben an die Schnittstellen eines Käufers (je Lead und Karte zählt die letzte) – mit oder ohne Partnerkonto.
  *  - Transaktionen: was der Partner zum Lead führt – aus dem Abgleich (Aroundhome) oder aus seinen Aufrufen (WattFox).
  * Der Abgleich legt eine Transaktion über Konto + Partner-Nummer an oder aktualisiert sie – er kann beliebig oft laufen.
  */
 import { and, eq, inArray, ne, or, isNull } from "drizzle-orm";
-import { deliveryEndpoints, integrationEvents, leadCategories, leads, memberships, partnerAccounts, partnerTransactions, users, type PartnerAccount } from "../drizzle/schema";
+import { deliveryEndpoints, integrationEvents, leadCategories, leads, memberships, partnerAccounts, partnerTransactions, users } from "../drizzle/schema";
 import { leadDisplayName } from "../shared/lead-fields";
 import { HEALTH_CHECK } from "../shared/api-errors";
-import { berlinBound, berlinDay, buildPartnerReport, isDay, listPartnerContacts, providerMode, quickRange, type ContactStatus, type ReportAccount, type ReportBasis, type ReportDelivery, type ReportFilter, type ReportLead, type ReportTransaction, type QuotaPeriod } from "../shared/partner-report";
-import { isWattfoxTemplate } from "../shared/wattfox";
+import { assembleReport, berlinBound, berlinDay, buildPartnerReport, endpointAccount, isDay, listPartnerContacts, quickRange, type ContactStatus, type RawAccount, type RawEndpoint, type ReportBasis, type ReportFilter, type ReportLead, type ReportTransaction, type QuotaPeriod } from "../shared/partner-report";
 import type { Db } from "./lead-pipeline";
 
 export type ReportQuery = { from?: string | null; to?: string | null; basis?: ReportBasis | null; categoryId?: number | null };
@@ -20,39 +19,28 @@ export function reportFilter(query: ReportQuery, now = new Date()): { filter: Re
   return { filter: { from: berlinBound(from), until: berlinBound(to, true), basis: query.basis ?? "delivery", categoryId: query.categoryId ?? null }, from, to, today };
 }
 
-/** Welche Schnittstelle gehört zu welchem Konto? Über den Käufer des Kontos – sonst über die Vorlage oder die Adresse (WattFox-Vorlage, „aroundhome“ in der Adresse …). */
-export function endpointAccount(endpoint: { url: string; bodyTemplate: string | null; buyerUserId: number | null }, accounts: Array<Pick<PartnerAccount, "id" | "provider" | "buyerUserId">>): number | null {
-  const byBuyer = endpoint.buyerUserId ? accounts.find((account) => account.buyerUserId === endpoint.buyerUserId) : undefined; if (byBuyer) return byBuyer.id;
-  const url = endpoint.url.toLowerCase(); const free = accounts.filter((account) => !account.buyerUserId);
-  const hit = free.find((account) => account.provider === "wattfox" ? isWattfoxTemplate(endpoint.bodyTemplate) || /wattfox|photovoltaik-angebotsvergleich/.test(url) : account.provider === "gohighlevel" ? /gohighlevel|leadconnectorhq|msgsndr/.test(url) : url.includes(account.provider));
-  return hit?.id ?? null;
-}
+export { endpointAccount } from "../shared/partner-report";
 
+/**
+ * Rohdaten laden: Konten, die Schnittstellen der Käufer (mit Käufer) und ihre Übergaben. Was daraus Karten und Zustellungen werden,
+ * entscheidet `assembleReport` (shared) – seit v383 bekommt auch jeder Käufer mit Schnittstelle eine Karte, zu dem es kein Konto gibt.
+ */
 async function loadReportRows(db: Db, tenantId: number) {
   const [accountRows, endpointRows, txRows] = await Promise.all([
     db.select().from(partnerAccounts).where(and(eq(partnerAccounts.tenantId, tenantId), ne(partnerAccounts.provider, "hlrlookup"))).orderBy(partnerAccounts.id),
-    db.select({ id: deliveryEndpoints.id, url: deliveryEndpoints.url, bodyTemplate: deliveryEndpoints.bodyTemplate, buyerUserId: memberships.userId, name: users.name, company: users.company })
+    db.select({ id: deliveryEndpoints.id, url: deliveryEndpoints.url, bodyTemplate: deliveryEndpoints.bodyTemplate, enabled: deliveryEndpoints.enabled, membershipId: deliveryEndpoints.membershipId, buyerUserId: memberships.userId, name: users.name, company: users.company })
       .from(deliveryEndpoints).leftJoin(memberships, eq(memberships.id, deliveryEndpoints.membershipId)).leftJoin(users, eq(users.id, memberships.userId)).where(eq(deliveryEndpoints.tenantId, tenantId)),
     db.select().from(partnerTransactions).where(eq(partnerTransactions.tenantId, tenantId)),
   ]);
-  const buyerIds = accountRows.map((row) => row.buyerUserId).filter((id): id is number => typeof id === "number");
-  const buyerRows = buyerIds.length ? await db.select({ id: users.id, name: users.name, company: users.company }).from(users).where(inArray(users.id, buyerIds)) : [];
-  const buyerLabel = new Map(buyerRows.map((row) => [row.id, row.company ?? row.name ?? "Käufer"]));
-  const endpointInfo = new Map<number, { accountId: number; buyerName: string }>();
-  for (const endpoint of endpointRows) { const accountId = endpointAccount(endpoint, accountRows); if (accountId) endpointInfo.set(endpoint.id, { accountId, buyerName: endpoint.company ?? endpoint.name ?? "Käufer" }); }
-  const endpointIds = Array.from(endpointInfo.keys());
+  const buyerIds = Array.from(new Set(accountRows.map((row) => row.buyerUserId).filter((id): id is number => typeof id === "number")));
+  const buyerRows = buyerIds.length ? await db.select({ id: users.id, name: users.name, company: users.company, membershipId: memberships.id }).from(users).leftJoin(memberships, and(eq(memberships.userId, users.id), eq(memberships.tenantId, tenantId))).where(inArray(users.id, buyerIds)) : [];
+  const rawAccounts: RawAccount[] = accountRows.map((row) => ({ id: row.id, provider: row.provider, label: row.label, buyerUserId: row.buyerUserId, hasAccess: row.provider === "wattfox" ? Boolean(row.trackingToken) : Boolean(row.credentialsEncrypted), lastSyncAt: row.lastSyncAt, lastSyncNote: row.lastSyncSummary, quotaAmount: row.quotaAmount, quotaPeriod: row.quotaPeriod }));
+  const endpoints: RawEndpoint[] = endpointRows.map((row) => ({ id: row.id, url: row.url, bodyTemplate: row.bodyTemplate, enabled: row.enabled, buyerUserId: row.buyerUserId ?? null, membershipId: row.buyerUserId ? row.membershipId : null, buyerName: row.company ?? row.name ?? null }));
+  // nur Übergaben an Schnittstellen, die zu einer Karte führen: zu einem Konto oder zu einem Käufer
+  const endpointIds = endpoints.filter((endpoint) => endpoint.buyerUserId || endpointAccount(endpoint, rawAccounts)).map((endpoint) => endpoint.id);
   const events = endpointIds.length ? await db.select({ id: integrationEvents.id, endpointId: integrationEvents.endpointId, leadId: integrationEvents.leadId, categoryId: integrationEvents.categoryId, eventType: integrationEvents.eventType, occurredAt: integrationEvents.occurredAt })
     .from(integrationEvents).where(and(eq(integrationEvents.tenantId, tenantId), inArray(integrationEvents.endpointId, endpointIds), or(isNull(integrationEvents.externalReference), ne(integrationEvents.externalReference, HEALTH_CHECK)))) : [];
-  // je Lead und Konto zählt die letzte Übergabe: angekommen = angenommen, abgelehnt = abgelehnt
-  const latest = new Map<string, ReportDelivery & { at: number; eventId: number }>();
-  for (const event of events) {
-    const info = event.endpointId ? endpointInfo.get(event.endpointId) : undefined; if (!info || !event.leadId) continue;
-    const at = new Date(event.occurredAt).getTime(); const key = `${info.accountId}:${event.leadId}`; const known = latest.get(key);
-    if (known && (known.at > at || (known.at === at && known.eventId > event.id))) continue;
-    latest.set(key, { accountId: info.accountId, leadId: event.leadId, buyerName: info.buyerName, categoryId: event.categoryId ?? null, deliveredAt: event.occurredAt, result: event.eventType === "abgelehnt" || event.eventType === "storniert" ? "rejected" : "accepted", at, eventId: event.id });
-  }
-  const deliveries: ReportDelivery[] = Array.from(latest.values()).map(({ at: _at, eventId: _eventId, ...row }) => row);
-  const accounts: ReportAccount[] = accountRows.map((row) => ({ id: row.id, provider: row.provider, label: row.label, buyerName: row.buyerUserId ? buyerLabel.get(row.buyerUserId) ?? null : deliveries.find((delivery) => delivery.accountId === row.id)?.buyerName ?? null, mode: providerMode(row.provider), hasAccess: row.provider === "wattfox" ? Boolean(row.trackingToken) : Boolean(row.credentialsEncrypted), lastSyncAt: row.lastSyncAt, lastSyncNote: row.lastSyncSummary, quotaAmount: row.quotaAmount, quotaPeriod: row.quotaPeriod }));
+  const { accounts, deliveries } = assembleReport({ accounts: rawAccounts, endpoints, events, buyers: buyerRows.map((row) => ({ userId: row.id, membershipId: row.membershipId ?? null, name: row.company ?? row.name ?? null })) });
   const transactions: ReportTransaction[] = txRows.map((row) => ({ id: row.id, accountId: row.accountId, leadId: row.leadId, status: row.status, transactionAt: row.transactionAt ?? row.createdAt, processedAt: row.processedAt, paidAt: row.paidAt, commission: Number(row.commission) || 0, campaignId: row.campaignId, campaignName: row.campaignName, partnerCategory: row.partnerCategory, subId: row.subId, cancelReason: row.cancelReason }));
   return { accounts, deliveries, transactions };
 }
@@ -67,9 +55,22 @@ export async function partnerReport(db: Db, tenantId: number, query: ReportQuery
  * Die Auslieferung ändert sich dadurch nicht – das Kontingent ist die Messlatte der Statistik („noch nachschieben“).
  */
 export async function setPartnerQuota(db: Db, tenantId: number, input: { accountId: number; amount: number | null; period: QuotaPeriod }) {
+  const amount = input.amount && input.amount > 0 ? Math.floor(input.amount) : null;
+  if (input.accountId < 0) {
+    // Karte eines Käufers ohne Konto (seit v383): Das Kontingent braucht einen Platz – ein Konto „api“ für diesen Käufer, ohne Rückmeldung.
+    const buyerUserId = -input.accountId;
+    const member = (await db.select({ id: memberships.id }).from(memberships).where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, buyerUserId))).limit(1))[0];
+    if (!member) throw new Error("Der Käufer wurde nicht gefunden.");
+    const known = (await db.select({ id: partnerAccounts.id }).from(partnerAccounts).where(and(eq(partnerAccounts.tenantId, tenantId), eq(partnerAccounts.buyerUserId, buyerUserId), ne(partnerAccounts.provider, "hlrlookup"))).orderBy(partnerAccounts.id).limit(1))[0];
+    if (known) { await db.update(partnerAccounts).set({ quotaAmount: amount, quotaPeriod: input.period }).where(eq(partnerAccounts.id, known.id)); return { success: true, amount, period: input.period }; }
+    if (!amount) return { success: true, amount, period: input.period };
+    await db.insert(partnerAccounts).values({ tenantId, provider: "api", buyerUserId, label: null, enabled: true, quotaAmount: amount, quotaPeriod: input.period });
+    return { success: true, amount, period: input.period };
+  }
   const account = (await db.select({ id: partnerAccounts.id, provider: partnerAccounts.provider }).from(partnerAccounts).where(and(eq(partnerAccounts.id, input.accountId), eq(partnerAccounts.tenantId, tenantId))).limit(1))[0];
   if (!account || account.provider === "hlrlookup") throw new Error("Das Partnerkonto wurde nicht gefunden.");
-  const amount = input.amount && input.amount > 0 ? Math.floor(input.amount) : null;
+  // Ein Konto „api“ hält nur das Kontingent: ohne Kontingent hat es keinen Zweck mehr – der Käufer behält seine Karte auch ohne Konto
+  if (!amount && account.provider === "api") { await db.delete(partnerAccounts).where(eq(partnerAccounts.id, account.id)); return { success: true, amount, period: input.period }; }
   await db.update(partnerAccounts).set({ quotaAmount: amount, quotaPeriod: input.period }).where(eq(partnerAccounts.id, account.id));
   return { success: true, amount, period: input.period };
 }

@@ -11,12 +11,12 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 
 describe("Stil-Block „Version 382“", () => {
   const all = read("../client/src/bausteine.css");
-  const start = all.lastIndexOf("/*", all.indexOf("Version 382")); const block = all.slice(start).replace(/\/\*[\s\S]*?\*\//g, "");
+  const start = all.lastIndexOf("/*", all.indexOf("Version 382")); const next = all.indexOf("Version 383"); const block = all.slice(start, next > 0 ? all.lastIndexOf("/*", next) : undefined).replace(/\/\*[\s\S]*?\*\//g, "");
   const rules = Array.from(block.matchAll(/([^{}]+)\{([^{}]*)\}/g)).map((match) => ({ selector: match[1].replace(/\s+/g, " ").trim(), body: match[2].replace(/\s+/g, "") })).filter((rule) => !rule.selector.startsWith("@"));
   const body = (selector: string) => rules.filter((rule) => rule.selector.split(",").map((part) => part.trim()).includes(selector)).map((rule) => rule.body).join(";");
 
   it("steht am Ende der Bausteine – nach dem Block der Version 381", () => {
-    expect(start).toBeGreaterThan(all.indexOf("Version 381")); expect(all.indexOf("Version 383")).toBe(-1); expect(rules.length).toBeGreaterThan(120);
+    expect(start).toBeGreaterThan(all.indexOf("Version 381")); expect(rules.length).toBeGreaterThan(120);
     for (const selector of [".ko-row", ".ko-detail", ".ko-block", ".ko-maps li", ".ko-good", ".st-layout", ".st-menu", ".st-panel", ".st-card", ".st-switches li", ".st-reason-rows li"]) expect(body(selector), selector).not.toBe("");
   });
 

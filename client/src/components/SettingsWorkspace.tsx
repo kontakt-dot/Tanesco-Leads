@@ -10,7 +10,7 @@ import AppearanceSettings from "@/components/AppearanceSettings";
 import MailSettingsPanel from "@/components/MailSettingsPanel";
 import ApiTokenPanel from "@/components/ApiTokenPanel";
 import IntegrationPanel from "@/components/IntegrationPanel";
-import PartnerAccountsPanel from "@/components/PartnerAccountsPanel";
+import PartnerAccountsPanel, { IntegrationSettingsHead } from "@/components/PartnerAccountsPanel";
 import ApiDocsPanel from "@/components/ApiDocsPanel";
 import LegalSettingsPanel from "@/components/LegalSettingsPanel";
 import TermsPanel from "@/components/TermsPanel";
@@ -184,7 +184,7 @@ export default function SettingsWorkspace() {
   const backBar = <SettingsBackBar active={active} onBack={backToList} onSwitch={open} />;
   // Breite Bereiche (eigene Seitenköpfe, Karten, Tabellen): Zurück-Leiste + Inhalt über die ganze Breite, die Liste links
   // ist dabei ausgeblendet – ohne die Leiste käme man nicht mehr zur Liste zurück. Am Handy erst nach dem Antippen in der Liste.
-  if (!phoneList && WIDE.has(active)) return <div className="fx-scope st is-wide">{backBar}{active === "API-Dokumentation" ? <><ApiTokenPanel /><ApiDocsPanel /></> : active === "Integrationen" ? <><IntegrationPanel /><PartnerAccountsPanel /></> : active === "Rechnung & Rechtliches" ? <LegalSettingsPanel /> : active === "Nutzungsbedingungen" ? <TermsPanel /> : <ReasonsSection />}</div>;
+  if (!phoneList && WIDE.has(active)) return <div className="fx-scope st is-wide">{backBar}{active === "API-Dokumentation" ? <><ApiTokenPanel /><ApiDocsPanel /></> : active === "Integrationen" ? <div className="ie"><IntegrationSettingsHead /><PartnerAccountsPanel /><section className="ie-older-wrap" aria-label="Ältere Verbindungen"><IntegrationPanel embedded /></section></div> : active === "Rechnung & Rechtliches" ? <LegalSettingsPanel /> : active === "Nutzungsbedingungen" ? <TermsPanel /> : <ReasonsSection />}</div>;
 
   // Liste + Bereich nebeneinander (Computer) – die Zurück-Leiste braucht es nur am Handy, wo der Bereich die Liste verdeckt.
   return <div className="fx-scope st">{phoneList ? <header className="page-intro compact"><div><span className="eyebrow block">ORGANISATION</span><h1>Einstellungen</h1><p>Tippe einen Bereich an – oben links geht es jeweils zurück zur Liste.</p></div></header> : isPhone() ? backBar : null}

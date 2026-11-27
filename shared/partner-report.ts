@@ -8,7 +8,12 @@
  * Die Zeitbasis legt fest, welches Datum im Zeitraum liegen muss – und damit, welche Zustellungen überhaupt zählen:
  *  - Zustelldatum: alle Zustellungen · Transaktionsdatum: nur die mit Transaktion · Bearbeitungsdatum: nur entschiedene · Auszahlungsdatum: nur ausgezahlte.
  * Maßgeblich ist immer der Stand der Transaktion von heute. Bewusst ohne Datenbank: Server, Vorschau und Tests rechnen gleich.
+ *
+ * Seit v383 braucht es kein Partnerkonto mehr, damit ein Käufer erscheint: Jeder Käufer mit eigener Schnittstelle bekommt von selbst
+ * eine Karte (geliefert, PrePing abgelehnt, angenommen). Die Rückmeldung des Partners – und damit der zweite Block – kommt dazu,
+ * sobald sie beim Käufer eingerichtet ist (`assembleReport`).
  */
+import { isWattfoxTemplate } from "./wattfox";
 
 export type ReportBasis = "delivery" | "transaction" | "processed" | "paid";
 export const REPORT_BASES: Array<{ key: ReportBasis; label: string; note: string }> = [
@@ -19,18 +24,35 @@ export const REPORT_BASES: Array<{ key: ReportBasis; label: string; note: string
 ];
 /** Wie der Status zurückkommt: „pull“ = wir rufen ab · „push“ = der Partner ruft uns auf · „none“ = noch kein Rückkanal */
 export type PartnerMode = "pull" | "push" | "none";
-export type PartnerProvider = "aroundhome" | "wattfox" | "leadnodes" | "enpal" | "gohighlevel";
+export type PartnerProvider = "aroundhome" | "wattfox" | "leadnodes" | "enpal" | "gohighlevel" | "api";
 export const PARTNER_PROVIDERS: Array<{ key: PartnerProvider; name: string; mode: PartnerMode; about: string }> = [
   { key: "aroundhome", name: "Aroundhome", mode: "pull", about: "Wir rufen den Transaktions-Export aus dem Partnerprogramm ab (Publisher-ID und Access-Token oder der komplette Export-Link)." },
   { key: "wattfox", name: "WattFox", mode: "push", about: "WattFox ruft bei jeder Statusänderung unsere Tracking-URL auf. Es gibt nichts abzurufen." },
   { key: "leadnodes", name: "Leadnodes", mode: "none", about: "Abruf per API-Token des Leadnodes-Kontos – die Anbindung folgt, sobald die Beschreibung der Schnittstelle vorliegt." },
   { key: "enpal", name: "Enpal", mode: "none", about: "Die Anbindung folgt, sobald Enpal einen Zugang zum Partner-Portal bereitstellt." },
   { key: "gohighlevel", name: "GoHighLevel", mode: "none", about: "Status aus der Pipeline eines GoHighLevel-Kontos – die Anbindung folgt." },
+  // „api“ (seit v383): ein Käufer mit eigener Schnittstelle, dessen Partner wir nicht kennen – es gibt keine Rückmeldung zum Lead
+  { key: "api", name: "Eigene Schnittstelle", mode: "none", about: "Der Käufer bekommt die Leads über seine eigene Schnittstelle. Eine Rückmeldung zum Lead gibt es nicht – die Statistik zeigt, was geliefert, abgelehnt und angenommen wurde." },
 ];
 export const providerName = (provider: string): string => PARTNER_PROVIDERS.find((item) => item.key === provider)?.name ?? provider;
 export const providerMode = (provider: string): PartnerMode => PARTNER_PROVIDERS.find((item) => item.key === provider)?.mode ?? "none";
 
-export type ReportAccount = { id: number; provider: string; label: string | null; buyerName: string | null; mode: PartnerMode; hasAccess: boolean; lastSyncAt: Date | string | null; lastSyncNote: string | null; /** Kontingent (seit v378): so viele angenommene Leads je Tag, Woche oder Monat – leer = keins */ quotaAmount?: number | null; quotaPeriod?: QuotaPeriod | null };
+/** Wege der Rückmeldung, die sich beim Käufer einrichten lassen (seit v383, Benutzer → Käufer → Reiter „Integration“). */
+export type FeedbackKind = "wattfox" | "aroundhome" | "plattform";
+export const FEEDBACK_KINDS: Array<{ key: FeedbackKind; title: string; text: string; action: string; next: string }> = [
+  { key: "wattfox", title: "WattFox", text: "WattFox ruft unsere Adresse auf, sobald sich bei einem Lead etwas ändert.", action: "Adresse für WattFox erzeugen", next: "Du bekommst eine Adresse, die du bei WattFox als Tracking-URL einträgst." },
+  { key: "aroundhome", title: "Aroundhome", text: "Wir rufen den Stand der Leads bei Aroundhome ab – alle 15 Minuten.", action: "Zugang speichern", next: "Danach gleicht die Software von selbst ab." },
+  { key: "plattform", title: "Leadnodes, Enpal oder GoHighLevel", text: "Der Zugang wird hinterlegt. Die Rückmeldung selbst folgt, sobald die Anbindung fertig ist.", action: "Zugang speichern", next: "Bis dahin zeigt die Statistik geliefert, abgelehnt und angenommen." },
+];
+/** Der Weg der Rückmeldung zu einem Partner – „Eigene Schnittstelle“ und Unbekanntes haben keinen. */
+export const feedbackKind = (provider: string | null | undefined): FeedbackKind | null => (provider === "wattfox" || provider === "aroundhome" ? provider : provider === "leadnodes" || provider === "enpal" || provider === "gohighlevel" ? "plattform" : null);
+
+export type ReportAccount = {
+  id: number; provider: string; label: string | null; buyerName: string | null; mode: PartnerMode; hasAccess: boolean; lastSyncAt: Date | string | null; lastSyncNote: string | null;
+  /** Kontingent (seit v378): so viele angenommene Leads je Tag, Woche oder Monat – leer = keins */ quotaAmount?: number | null; quotaPeriod?: QuotaPeriod | null;
+  /** seit v383: der Käufer, über den geliefert wird – mit der Nummer seines Benutzer-Eintrags für den Link „Beim Käufer einrichten“ */ buyerUserId?: number | null; membershipId?: number | null;
+  /** seit v383: Karte ohne gespeichertes Konto – der Käufer hat eine Schnittstelle, mehr ist nicht eingerichtet. Ihre Nummer ist die negative Nummer des Käufers. */ virtual?: boolean;
+};
 /** Eine Zustellung: ein Lead an ein Konto (je Lead und Konto zählt die letzte). `pending` = noch kein Ergebnis. */
 export type ReportDelivery = { accountId: number; leadId: number; buyerName: string; categoryId: number | null; deliveredAt: Date | string; result: "accepted" | "rejected" | "pending" };
 export type ReportTransaction = {
@@ -171,6 +193,80 @@ export function quotaSentence(quota: ReportQuota): string {
   return `Du musst ${word.now} noch ${leads(quota.open)} nachschieben.${why}${pace}`;
 }
 
+/* ------------------------------------------------------------------ Karten zusammenstellen (seit v383 auch je Käufer) */
+
+/** Was die Statistik aus der Datenbank braucht – roh, noch ohne Rechnung. */
+export type RawAccount = { id: number; provider: string; label: string | null; buyerUserId: number | null; hasAccess: boolean; lastSyncAt: Date | string | null; lastSyncNote: string | null; quotaAmount?: number | null; quotaPeriod?: QuotaPeriod | null };
+export type RawEndpoint = { id: number; url: string; bodyTemplate: string | null; enabled: boolean; buyerUserId: number | null; membershipId: number | null; buyerName: string | null };
+export type RawEvent = { id: number; endpointId: number | null; leadId: number | null; categoryId: number | null; eventType: string; occurredAt: Date | string };
+export type RawBuyer = { userId: number; membershipId: number | null; name: string | null };
+
+/** Den Partner an der Schnittstelle erkennen: an der Vorlage oder an der Adresse (WattFox-Vorlage, „aroundhome“ in der Adresse …) – sonst „api“. */
+export function guessProvider(endpoint: { url: string; bodyTemplate: string | null }): PartnerProvider {
+  const url = endpoint.url.toLowerCase();
+  if (isWattfoxTemplate(endpoint.bodyTemplate) || /wattfox|photovoltaik-angebotsvergleich/.test(url)) return "wattfox";
+  if (/gohighlevel|leadconnectorhq|msgsndr/.test(url)) return "gohighlevel";
+  for (const key of ["aroundhome", "leadnodes", "enpal"] as const) if (url.includes(key)) return key;
+  return "api";
+}
+/** Welche Schnittstelle gehört zu welchem Konto? Über den Käufer des Kontos – sonst erkennt ein Konto ohne Käufer „seine“ Schnittstelle am Partner. */
+export function endpointAccount(endpoint: { url: string; bodyTemplate: string | null; buyerUserId: number | null }, accounts: Array<{ id: number; provider: string; buyerUserId: number | null }>): number | null {
+  // der Käufer des Kontos entscheidet – ein Konto mit Rückmeldung geht dabei vor einer Zeile „api“, die nur ein Kontingent hält
+  const own = endpoint.buyerUserId ? accounts.filter((account) => account.buyerUserId === endpoint.buyerUserId) : []; const byBuyer = own.find((account) => account.provider !== "api") ?? own[0]; if (byBuyer) return byBuyer.id;
+  const partner = guessProvider(endpoint); if (partner === "api") return null;
+  return accounts.find((account) => !account.buyerUserId && account.provider === partner)?.id ?? null;
+}
+/** Titel einer Karte: der Partner (mit Bezeichnung des Kontos) – bei einer eigenen Schnittstelle der Name des Käufers. */
+export function reportTitle(account: Pick<ReportAccount, "provider" | "label" | "buyerName">): string {
+  if (account.provider === "api") return account.buyerName?.trim() || account.label?.trim() || "Käufer";
+  const name = providerName(account.provider); const label = account.label?.trim();
+  return `${name}${label && label.toLowerCase() !== name.toLowerCase() ? ` (${label})` : ""}`;
+}
+/**
+ * Konten und Zustellungen für die Statistik zusammenstellen.
+ *  - Jedes gespeicherte Konto erscheint. Ein Konto „api“ (hält z. B. nur das Kontingent eines Käufers) zeigt den Partner, den seine Schnittstelle verrät.
+ *  - Jeder Käufer mit Schnittstelle, zu dem es kein Konto gibt, bekommt eine Karte von selbst (`virtual`, Nummer = −Nummer des Käufers) –
+ *    sobald eine seiner Schnittstellen eingeschaltet ist oder schon einmal geliefert hat.
+ *  - Zustellungen: je Lead und Karte zählt die letzte Übergabe – angekommen = angenommen, abgelehnt oder storniert = abgelehnt.
+ */
+export function assembleReport(input: { accounts: RawAccount[]; endpoints: RawEndpoint[]; events: RawEvent[]; buyers?: RawBuyer[] }): { accounts: ReportAccount[]; deliveries: ReportDelivery[] } {
+  const buyers = new Map((input.buyers ?? []).map((buyer) => [buyer.userId, buyer]));
+  const ofBuyer = new Map<number, RawEndpoint[]>();
+  for (const endpoint of input.endpoints) if (endpoint.buyerUserId) ofBuyer.set(endpoint.buyerUserId, [...(ofBuyer.get(endpoint.buyerUserId) ?? []), endpoint]);
+  const partnerOf = (buyerUserId: number | null | undefined): PartnerProvider => (buyerUserId ? (ofBuyer.get(buyerUserId) ?? []).map(guessProvider).find((key) => key !== "api") ?? "api" : "api");
+  const buyerName = (buyerUserId: number | null | undefined): string | null => (buyerUserId ? buyers.get(buyerUserId)?.name?.trim() || (ofBuyer.get(buyerUserId) ?? []).map((endpoint) => endpoint.buyerName?.trim()).find(Boolean) || null : null);
+  const membershipOf = (buyerUserId: number | null | undefined): number | null => (buyerUserId ? buyers.get(buyerUserId)?.membershipId ?? (ofBuyer.get(buyerUserId) ?? []).map((endpoint) => endpoint.membershipId).find((id) => typeof id === "number") ?? null : null);
+  // Schnittstelle → Karte (Konto oder Käufer ohne Konto)
+  const cardOf = new Map<number, { accountId: number; buyerName: string }>(); const loose = new Set<number>();
+  for (const endpoint of input.endpoints) {
+    const accountId = endpointAccount(endpoint, input.accounts); const name = endpoint.buyerName?.trim() || buyerName(endpoint.buyerUserId) || "Käufer";
+    if (accountId) cardOf.set(endpoint.id, { accountId, buyerName: name });
+    else if (endpoint.buyerUserId) { cardOf.set(endpoint.id, { accountId: -endpoint.buyerUserId, buyerName: name }); loose.add(endpoint.buyerUserId); }
+  }
+  const latest = new Map<string, ReportDelivery & { at: number; eventId: number }>();
+  for (const event of input.events) {
+    const card = event.endpointId ? cardOf.get(event.endpointId) : undefined; if (!card || !event.leadId) continue;
+    const at = time(event.occurredAt); const key = `${card.accountId}:${event.leadId}`; const known = latest.get(key);
+    if (known && (known.at > at || (known.at === at && known.eventId > event.id))) continue;
+    latest.set(key, { accountId: card.accountId, leadId: event.leadId, buyerName: card.buyerName, categoryId: event.categoryId ?? null, deliveredAt: event.occurredAt, result: event.eventType === "abgelehnt" || event.eventType === "storniert" ? "rejected" : "accepted", at, eventId: event.id });
+  }
+  const deliveries: ReportDelivery[] = Array.from(latest.values()).map(({ at: _at, eventId: _eventId, ...row }) => row);
+  const delivered = new Set(deliveries.map((row) => row.accountId));
+  const accounts: ReportAccount[] = input.accounts.map((row) => {
+    const provider = row.provider === "api" ? partnerOf(row.buyerUserId) : row.provider;
+    return { id: row.id, provider, label: row.label, buyerName: buyerName(row.buyerUserId) ?? deliveries.find((delivery) => delivery.accountId === row.id)?.buyerName ?? null, mode: providerMode(provider), hasAccess: row.provider === "api" ? false : row.hasAccess, lastSyncAt: row.lastSyncAt, lastSyncNote: row.lastSyncNote, quotaAmount: row.quotaAmount ?? null, quotaPeriod: row.quotaPeriod ?? null, buyerUserId: row.buyerUserId, membershipId: membershipOf(row.buyerUserId) };
+  });
+  const own: ReportAccount[] = [];
+  for (const buyerUserId of Array.from(loose)) {
+    const endpoints = ofBuyer.get(buyerUserId) ?? []; if (!endpoints.some((endpoint) => endpoint.enabled) && !delivered.has(-buyerUserId)) continue;
+    const provider = partnerOf(buyerUserId);
+    own.push({ id: -buyerUserId, provider, label: null, buyerName: buyerName(buyerUserId) ?? "Käufer", mode: providerMode(provider), hasAccess: false, lastSyncAt: null, lastSyncNote: null, quotaAmount: null, quotaPeriod: null, buyerUserId, membershipId: membershipOf(buyerUserId), virtual: true });
+  }
+  own.sort((a, b) => (a.buyerName ?? "").localeCompare(b.buyerName ?? "", "de") || b.id - a.id);
+  const shown = new Set([...accounts, ...own].map((account) => account.id));
+  return { accounts: [...accounts, ...own], deliveries: deliveries.filter((row) => shown.has(row.accountId)) };
+}
+
 /** Eine Karte je Partnerkonto – jedes Konto erscheint, auch mit lauter Nullen. `today` (deutscher Tag) legt den laufenden Zeitraum der Kontingente fest. */
 export function buildPartnerReport(input: { accounts: ReportAccount[]; deliveries: ReportDelivery[]; transactions: ReportTransaction[]; filter: ReportFilter; today?: string }): ReportCard[] {
   const { filter } = input; const { txOf, loose } = link(input.deliveries, input.transactions); const today = input.today ?? berlinDay(new Date());
@@ -202,7 +298,7 @@ export function buildPartnerReport(input: { accounts: ReportAccount[]; deliverie
     direct.commission = cents(direct.commission); direct.bySub = Array.from(subs.values()).sort((a, b) => b.total - a.total || a.subId.localeCompare(b.subId, "de")); direct.byDay = Array.from(days.values()).map((day) => ({ ...day, commission: cents(day.commission) })).sort((a, b) => b.day.localeCompare(a.day));
     const done = finish(total); done.commission = cents(done.commission + direct.commission);
     return {
-      account, title: `${providerName(account.provider)}${account.label?.trim() && account.label.trim().toLowerCase() !== providerName(account.provider).toLowerCase() ? ` (${account.label.trim()})` : ""}`, counts: done, unmatched: direct.total, unmatchedCommission: direct.commission,
+      account, title: reportTitle(account), counts: done, unmatched: direct.total, unmatchedCommission: direct.commission,
       quota: buildQuota({ accountId: account.id, amount: account.quotaAmount, period: account.quotaPeriod, deliveries: input.deliveries, today }),
       buyers: Array.from(buyers, ([buyerName, row]) => ({ buyerName, ...finish(row) })).sort((a, b) => b.delivered - a.delivered || a.buyerName.localeCompare(b.buyerName, "de")),
       direct: direct.total ? direct : null,

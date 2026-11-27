@@ -3281,3 +3281,152 @@ html.dark .st button.border:hover:not(:disabled){border-color:var(--lt-accent-st
   .gq-agent-row .gq-category .gq-label{width:100%}
   .cq-list-panel .gq-category .filter-select{flex:1;width:100%;max-width:none}
 }
+
+/* ═══════════════════════════ Version 383 ═══════════════════════════
+   Integration an einer Stelle – beim Käufer. Die Statistik zeigt jeden Käufer mit Schnittstelle von selbst; die Rückmeldung des Partners
+   wird beim Käufer eingerichtet (Reiter „Integration“ → „Rückmeldung des Käufers“); unter Einstellungen → Integrationen steht nur noch,
+   was für alle gilt. Farbe trägt Bedeutung: bernstein = hier ist noch etwas einzurichten, rot erst beim Zeigen auf „Entfernen“. */
+
+/* ── Statistik: Karte eines Käufers ohne Konto, fehlende Rückmeldung ── */
+.pr-mark svg{width:19px;height:19px;color:var(--lt-ink-2)}
+.pr-sync.is-info{flex-wrap:nowrap;align-items:flex-start}
+.pr-sync.is-info svg{margin-top:2px}
+.pr-sync.is-todo{border-color:var(--fx-warn-line);background:var(--fx-warn-bg);color:var(--lt-ink-2)}
+.pr-sync.is-todo svg{color:var(--fx-warn)}
+.pr-tiles.is-three{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:1100px){.pr-tiles.is-three{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:640px){.pr-tiles.is-three{grid-template-columns:minmax(0,1fr)}}
+
+/* ── Beim Käufer: Rückmeldung ── */
+.bf{display:grid;gap:14px;min-width:0;padding:20px;border:1px solid var(--lt-line);border-radius:20px;background:var(--rd-surface)}
+.bf-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px 20px}
+.bf-head>div{flex:1 1 320px;min-width:0}
+.bf-head p{margin:5px 0 0;max-width:78ch;font-size:13px;line-height:1.5;color:var(--lt-muted)}
+.bf-head .fx-tool{text-decoration:none}
+.bf-note{margin:0;font-size:13px;line-height:1.5;color:var(--lt-muted)}
+.bf-note.is-bad{color:var(--fx-bad)}
+.bf-state{display:flex;align-items:flex-start;gap:10px;margin:0;padding:11px 14px;border:1px solid var(--lt-line);border-radius:13px;background:var(--lt-tile);font-size:13px;line-height:1.5;color:var(--lt-muted)}
+.bf-state svg{flex:none;width:16px;height:16px;margin-top:2px;color:var(--lt-muted)}
+.bf-state b{font-weight:650;color:var(--lt-ink)}
+.bf-setup{display:grid;gap:14px;min-width:0}
+.bf-mark{display:grid;place-items:center;flex:none;width:38px;height:38px;border:1px solid color-mix(in srgb,var(--brand,var(--lt-line-2)) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--brand,transparent) 18%,transparent);font-size:13px;font-weight:800;letter-spacing:-.02em;color:var(--lt-ink)}
+.bf-existing{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--fx-warn-line);border-radius:14px;background:var(--fx-warn-bg)}
+.bf-existing>b{font-size:13px;font-weight:650;color:var(--lt-ink)}
+.bf-existing ul{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.bf-existing li{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:13.5px;font-weight:600;color:var(--lt-ink)}
+.bf-existing li>span:nth-child(2){flex:1 1 160px;min-width:0}
+.bf-existing .bf-mark{width:32px;height:32px;border-radius:10px;font-size:11.5px}
+.bf-kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0;margin:0;padding:0;border:0}
+.bf-kinds.is-two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.bf-kinds legend{margin-bottom:8px;padding:0;font-size:13px;font-weight:650;color:var(--lt-ink)}
+.bf-kinds label{position:relative;display:flex;align-items:flex-start;gap:10px;min-width:0;padding:12px 14px;border:1px solid var(--lt-line-2);border-radius:14px;background:var(--lt-field);cursor:pointer;transition:border-color .15s,background-color .15s}
+.bf-kinds label:hover{border-color:var(--lt-accent-strong)}
+.bf-kinds label.is-on{border-color:var(--fx-pick-line);background:var(--fx-pick);box-shadow:0 0 0 1px var(--fx-pick-line)}
+.bf-kinds input{flex:none;width:16px;height:16px;margin:2px 0 0;accent-color:var(--lt-accent-strong)}
+.bf-kinds label:focus-within{outline:2px solid var(--lt-ink-2);outline-offset:2px}
+.bf-kinds span{display:grid;gap:3px;min-width:0}
+.bf-kinds b{font-size:13.5px;font-weight:680;color:var(--lt-ink)}
+.bf-kinds small{font-size:12.5px;line-height:1.45;color:var(--lt-muted)}
+.bf-kinds em{position:absolute;top:-9px;right:12px;padding:1px 8px;border:1px solid var(--lt-line-2);border-radius:999px;background:var(--rd-surface);font-style:normal;font-size:11px;font-weight:650;color:var(--lt-ink-2)}
+.bf-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 14px;min-width:0}
+.bf-wide{grid-column:1/-1}
+.bf-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px}
+.bf-foot small{flex:1 1 260px;font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.bf-foot>span{display:flex;flex-wrap:wrap;gap:8px}
+.bf-more{justify-self:start}
+.bf-account{display:grid;gap:14px;min-width:0;padding:16px;border:1px solid var(--lt-line);border-radius:16px;background:var(--lt-tile)}
+.bf-account.is-off{opacity:.78}
+.bf-account>header{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.bf-account>header>div{flex:1 1 220px;display:grid;gap:2px;min-width:0}
+.bf-account>header b{font-size:15px;font-weight:720;color:var(--lt-ink)}
+.bf-account>header small{font-size:12.5px;line-height:1.45;color:var(--lt-muted)}
+.bf-url{display:grid;gap:6px;min-width:0}
+.bf-url>span{font-size:12.5px;font-weight:650;color:var(--lt-ink)}
+.bf-url>div{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.bf-url code{flex:1 1 280px;min-width:0;padding:9px 12px;border:1px solid var(--lt-line-2);border-radius:11px;background:var(--lt-field);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.4;color:var(--lt-ink);overflow-wrap:anywhere}
+.bf-url small,.bf-sync small{font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.bf-sync{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 14px}
+.bf-sync small{flex:1 1 260px;min-width:0}
+.bf-sync>span{display:flex;flex-wrap:wrap;gap:8px}
+.bf-claim{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 18px;padding-top:14px;border-top:1px solid var(--lt-line)}
+.bf-claim>label:first-child{display:grid;gap:3px;min-width:0;cursor:pointer}
+.bf-claim b{font-size:13.5px;font-weight:650;color:var(--lt-ink)}
+.bf-claim small{font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.bf-reason{grid-column:1/-1;max-width:460px}
+.bf-claim a,.bf-account>footer a{color:var(--lt-accent);font-weight:650;text-decoration:underline;text-underline-offset:2px}
+.bf-account>footer{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;padding-top:14px;border-top:1px solid var(--lt-line)}
+.bf-account>footer small{flex:1 1 260px;font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.bf-account>footer>span{display:flex;flex-wrap:wrap;gap:8px}
+.bf-remove:hover:not(:disabled){border-color:var(--fx-bad-line);background:var(--fx-bad-bg);color:var(--fx-bad)}
+html.dark .bf button.border{border:1px solid var(--lt-line-2);background:var(--lt-tile);color:var(--lt-ink)}
+html.dark .bf button.border:hover:not(:disabled){border-color:var(--lt-accent-strong);background:var(--lt-chip)}
+@media (max-width:900px){.bf-kinds,.bf-kinds.is-two{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:760px){
+  .bf{padding:14px;border-radius:16px}
+  .bf-fields{grid-template-columns:minmax(0,1fr)}
+  .bf-claim{grid-template-columns:minmax(0,1fr) auto}
+}
+@media (prefers-reduced-motion:reduce){.bf-kinds label{transition:none}}
+
+/* ── Einstellungen → Integrationen: nur noch, was für alle gilt ── */
+.ie{display:grid;gap:16px;min-width:0}
+.ie>.page-intro{margin-bottom:0}
+.ie .page-intro .fx-tool{text-decoration:none}
+.ie-stack{display:grid;gap:14px;min-width:0}
+.ie-card{display:grid;gap:14px;min-width:0;padding:20px;border:1px solid var(--lt-line);border-radius:20px;background:var(--rd-surface)}
+.ie-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px 20px}
+.ie-head>div:first-child{flex:1 1 320px;min-width:0}
+.ie-head p{margin:5px 0 0;max-width:84ch;font-size:13px;line-height:1.5;color:var(--lt-muted)}
+.ie-head .fx-tool{text-decoration:none}
+.ie-note,.ie-empty,.ie-hint{margin:0;font-size:13px;line-height:1.5;color:var(--lt-muted)}
+.ie-note.is-bad{color:var(--fx-bad)}
+.ie-empty{padding:14px 16px;border:1px dashed var(--lt-line-2);border-radius:14px}
+.ie-empty a{color:var(--lt-accent);font-weight:650;text-decoration:underline;text-underline-offset:2px}
+.ie-hint{padding:10px 14px;border:1px solid var(--fx-warn-line);border-radius:12px;background:var(--fx-warn-bg);color:var(--lt-ink-2)}
+.ie-rows{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.ie-rows li{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:12px;min-width:0;padding:10px 12px;border:1px solid var(--lt-line);border-radius:14px;background:var(--lt-tile)}
+.ie-rows li.is-open{border-color:var(--fx-warn-line)}
+.ie-rows li>div{display:grid;gap:2px;min-width:0}
+.ie-rows b{overflow:hidden;font-size:14px;font-weight:680;color:var(--lt-ink);text-overflow:ellipsis;white-space:nowrap}
+.ie-rows small{font-size:12.5px;color:var(--lt-muted)}
+.ie-rows .fx-tool{max-width:280px;overflow:hidden;text-decoration:none;text-overflow:ellipsis}
+.ie-buyer{font-size:13px;color:var(--lt-muted)}
+.ie-assign{width:auto;min-width:200px;max-width:280px}
+.ie-remove{width:38px;padding:0}
+.ie-remove:hover:not(:disabled){border-color:var(--fx-bad-line);background:var(--fx-bad-bg);color:var(--fx-bad)}
+.ie-rules{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.ie-rules li{display:grid;grid-template-columns:150px minmax(0,1fr) minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0}
+.ie-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px}
+.ie-foot small{flex:1 1 240px;font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.ie-foot>span{display:flex;flex-wrap:wrap;gap:8px}
+.ie-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 14px}
+.ie-switch{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 0 0;border-top:1px solid var(--lt-line)}
+.ie-switch label{display:grid;gap:3px;min-width:0;cursor:pointer}
+.ie-switch b{font-size:13.5px;font-weight:650;color:var(--lt-ink)}
+.ie-switch small{font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+.ie-table-wrap{min-width:0;overflow-x:auto;border:1px solid var(--lt-line);border-radius:14px}
+.ie-table{width:100%;min-width:720px;border-collapse:collapse;font-size:13px}
+.ie-table th{padding:9px 12px;border-bottom:1px solid var(--lt-line);background:var(--lt-head);font-size:11.5px;font-weight:600;text-align:left;white-space:nowrap;color:var(--lt-muted)}
+.ie-table td{padding:10px 12px;border-top:1px solid var(--lt-line);vertical-align:top;color:var(--lt-ink-2)}
+.ie-table tbody tr:first-child td{border-top:0}
+.ie-table td b{display:block;font-weight:650;color:var(--lt-ink)}
+.ie-table td small{display:block;font-size:12px;line-height:1.45;color:var(--lt-muted)}
+.ie-actions{display:flex;gap:4px}
+.ie-older-wrap{display:grid;gap:14px;min-width:0;padding-top:18px;border-top:1px solid var(--lt-line)}
+.ie-older-wrap>*{margin-top:0}
+html.dark .ie button.border{border:1px solid var(--lt-line-2);background:var(--lt-tile);color:var(--lt-ink)}
+html.dark .ie button.border:hover:not(:disabled){border-color:var(--lt-accent-strong);background:var(--lt-chip)}
+@media (max-width:900px){
+  .ie-rows li{grid-template-columns:auto minmax(0,1fr) auto}
+  .ie-rows li>.fx-tool:not(.ie-remove),.ie-rows li>.ie-assign,.ie-rows li>.ie-buyer{grid-column:2/-1;grid-row:2;justify-self:start;max-width:100%}
+  .ie-rows li>.ie-remove{grid-column:3;grid-row:1}
+  .ie-rules li{grid-template-columns:minmax(0,1fr) auto}
+  .ie-rules li>*:not(.ie-remove){grid-column:1}
+  .ie-rules li>.ie-remove{grid-column:2;grid-row:1}
+  .ie-fields{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:760px){.ie-card{padding:14px;border-radius:16px}}
+
+/* ── Beim Käufer: Überschriften der übrigen Abschnitte im Reiter „Integration“ ── */
+.it-section .fx-h{margin:0}
+.it-intro{max-width:92ch;margin:5px 0 0;font-size:13px;line-height:1.5;color:var(--lt-muted)}
