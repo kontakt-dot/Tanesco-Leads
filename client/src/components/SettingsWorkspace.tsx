@@ -1,12 +1,11 @@
-import { Badge } from "@/components/ui/badge";
 import AvatarUpload, { useOwnAvatar } from "@/components/AvatarUpload";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { BadgeCheck, Cable, ChevronLeft, ChevronRight, Code2, Copy, CreditCard, FileText, Globe, KeyRound, Mail, Palette, Plus, Receipt, Save, Send, Settings2, Share2, ShieldCheck, ShieldQuestion, Upload, UserRound } from "lucide-react";
-import { useEffect, useReducer, useState } from "react";
+import { ArrowDown, ArrowUp, Cable, ChevronLeft, ChevronRight, Code2, FileText, KeyRound, Palette, Plus, Receipt, Save, Send, Settings2, ShieldQuestion, Upload, UserRound, Users } from "lucide-react";
+import { useEffect, useMemo, useReducer, useState, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { openInApp } from "@/lib/navigate";
 import AppearanceSettings from "@/components/AppearanceSettings";
 import MailSettingsPanel from "@/components/MailSettingsPanel";
 import ApiTokenPanel from "@/components/ApiTokenPanel";
@@ -16,28 +15,27 @@ import ApiDocsPanel from "@/components/ApiDocsPanel";
 import LegalSettingsPanel from "@/components/LegalSettingsPanel";
 import TermsPanel from "@/components/TermsPanel";
 import { COMPANY_FOOTER, COMPANY_WEBSITE } from "../../../shared/email-design";
+import { movedReasons, passwordIssue, SETTING_GROUPS, SETTING_INFO, settingFromAddress, SYSTEM_SWITCHES, systemSwitchGroups, type Setting, type SystemSwitchKey } from "../../../shared/settings-view";
 
-const settings = ["Profil", "System", "E-Mail-Versand", "Rechnung & Rechtliches", "API-Dokumentation", "Integrationen", "Passwort", "Branding", "E-Mail", "Domain", "Reklamationen", "Zahlung", "Abonnement", "Affiliate", "Nutzungsbedingungen"] as const;
-const SETTINGS_ICONS: Record<string, typeof Settings2> = { Profil: UserRound, "E-Mail-Versand": Send, System: Settings2, "Rechnung & Rechtliches": Receipt, "API-Dokumentation": Code2, Integrationen: Cable, Passwort: KeyRound, Branding: Palette, "E-Mail": Mail, Domain: Globe, Reklamationen: ShieldQuestion, Zahlung: CreditCard, Abonnement: BadgeCheck, Affiliate: Share2, Nutzungsbedingungen: FileText };
-type Setting = typeof settings[number];
-/**
- * Nur diese Bereiche speichert der Knopf „Änderungen speichern“ in der Kopfzeile wirklich.
- * Alle anderen haben eigene Speichern-Knöpfe direkt am Abschnitt (z. B. E-Mail-Versand); dort wird
- * der Knopf oben ausgeblendet – sonst meldet er einen Erfolg, ohne dass etwas gespeichert wurde.
- */
-const HEADER_SAVE: ReadonlySet<string> = new Set(["System", "Branding", "Nutzungsbedingungen", "API-Dokumentation"]);
-
-const descriptions: Record<Setting, string> = { Profil: "Persönliche Daten und Kontakt", "E-Mail-Versand": "Anbieter, Zugang, Testmail, Domain-Prüfung und Antworten-Abgleich für alle ausgehenden E-Mails.", System: "Land, Zeitzone, Sprache, Währung", "Rechnung & Rechtliches": "Absender, Steuer, AGB und Datenschutz", "API-Dokumentation": "Lead-Import, Reklamation und Rechnungen", Integrationen: "Partner-Zugänge für Status-Rückmeldungen", Passwort: "Login ändern", Branding: "Logo, Farben und Wortmarke", "E-Mail": "Absender-Domain und Zustellbarkeit", Domain: "Eigene Domain verbinden", Reklamationen: "Gründe und Erstattungsfrist", Zahlung: "Stripe API-Key des Mandanten", Abonnement: "Plan und Lead-Kontingent", Affiliate: "Tenants werben und Provision verwalten", Nutzungsbedingungen: "Akzeptierte Plattform-AGB" };
+const SETTINGS_ICONS: Record<Setting, typeof Settings2> = { Profil: UserRound, Passwort: KeyRound, Branding: Palette, "Rechnung & Rechtliches": Receipt, Nutzungsbedingungen: FileText, System: Settings2, Reklamationen: ShieldQuestion, "E-Mail-Versand": Send, Integrationen: Cable, "API-Dokumentation": Code2 };
+/** Breite Bereiche bringen ihren eigenen Seitenkopf mit – sie stehen über die ganze Breite, darüber die Zurück-Leiste. */
+const WIDE: ReadonlySet<Setting> = new Set<Setting>(["API-Dokumentation", "Integrationen", "Rechnung & Rechtliches", "Nutzungsbedingungen", "Reklamationen"]);
 
 const isPhone = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 760px)").matches;
-const requestedSetting = (): Setting | null => { const value = new URLSearchParams(window.location.search).get("setting"); return settings.includes(value as Setting) ? (value as Setting) : null; };
+const requestedSetting = (): Setting | null => settingFromAddress(new URLSearchParams(window.location.search).get("setting"));
+
 /** Leiste über jedem geöffneten Bereich: zurück zur Liste, Brotkrumen und ein Direktwechsel in einen anderen Bereich – ohne Umweg über die Seitenleiste oder den Browser. */
 function SettingsBackBar({ active, onBack, onSwitch }: { active: Setting; onBack: () => void; onSwitch: (next: Setting) => void }) {
   return <nav className="settings-backbar" aria-label="Einstellungen">
     <button type="button" className="settings-back" onClick={onBack}><ChevronLeft className="h-4 w-4" /> Zurück zu den Einstellungen</button>
     <span className="settings-crumb"><span>Einstellungen</span><ChevronRight className="h-3.5 w-3.5" /><strong>{active}</strong></span>
-    <label className="settings-jump">Bereich wechseln<select aria-label="Anderen Bereich öffnen" value={active} onChange={(event) => onSwitch(event.target.value as Setting)}>{settings.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+    <label className="settings-jump">Bereich wechseln<select aria-label="Anderen Bereich öffnen" value={active} onChange={(event) => onSwitch(event.target.value as Setting)}>{SETTING_GROUPS.map((group) => <optgroup key={group.label} label={group.label}>{group.items.map((item) => <option key={item} value={item}>{item}</option>)}</optgroup>)}</select></label>
   </nav>;
+}
+
+/** Ein Kasten innerhalb eines Bereichs: Überschrift, eine Zeile dazu, Inhalt. */
+function Card({ title, hint, className = "", children }: { title: string; hint?: ReactNode; className?: string; children: ReactNode }) {
+  return <section className={`st-card ${className}`.trim()}><h3 className="fx-h is-sub">{title}</h3>{hint ? <p className="st-hint">{hint}</p> : null}{children}</section>;
 }
 
 /** Einstellungen → Profil: eigenes Profilbild hochladen oder entfernen. */
@@ -45,7 +43,129 @@ function OwnAvatarSettings() {
   const me = trpc.auth.me.useQuery(undefined, { retry: false }); const own = useOwnAvatar();
   const user = me.data as ({ name?: string | null; email?: string | null; avatarUrl?: string | null } | null | undefined);
   const initials = (user?.name ?? user?.email ?? "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-  return <div className="rounded-xl border border-white/10 bg-white/[.018] p-4 settings-avatar"><span className="eyebrow">PROFILBILD</span><p className="mt-1 text-sm text-slate-400">Dein Bild erscheint oben rechts, in der Benutzerliste und bei deinen Karten in der Vertriebspipeline.</p><div className="mt-3"><AvatarUpload initials={initials} avatarUrl={user?.avatarUrl ?? null} onPick={own.set} onRemove={own.remove} busy={own.busy} /></div></div>;
+  return <Card title="Profilbild" hint="Dein Bild erscheint oben rechts, in der Benutzerliste und bei deinen Karten in der Vertriebspipeline." className="settings-avatar"><AvatarUpload initials={initials} avatarUrl={user?.avatarUrl ?? null} onPick={own.set} onRemove={own.remove} busy={own.busy} /></Card>;
+}
+
+function ProfileSection() {
+  const me = trpc.auth.me.useQuery(undefined, { retry: false }); const user = me.data as ({ name?: string | null; email?: string | null } | null | undefined);
+  return <div className="st-stack">
+    <OwnAvatarSettings />
+    <AppearanceSettings />
+    <Card title="Name und E-Mail-Adresse" hint="Beides steht bei deinem Eintrag unter „Benutzer“ – dort im Reiter „Stammdaten“.">
+      <div className="st-facts"><span><small>Name</small><b>{user?.name || "–"}</b></span><span><small>E-Mail-Adresse</small><b>{user?.email || "–"}</b></span><Button type="button" variant="outline" size="sm" onClick={() => openInApp("/?page=Benutzer")}><Users aria-hidden="true" /> Benutzer öffnen</Button></div>
+    </Card>
+  </div>;
+}
+
+/** Einstellungen → Passwort: ändert wirklich das Passwort des eigenen Zugangs (derselbe Weg wie „Passwort ändern“ im Profil-Menü). */
+function PasswordSection() {
+  const [current, setCurrent] = useState(""); const [next, setNext] = useState(""); const [repeat, setRepeat] = useState(""); const [tried, setTried] = useState(false);
+  const change = trpc.auth.changePassword.useMutation({ onSuccess: () => { toast.success("Passwort geändert."); setCurrent(""); setNext(""); setRepeat(""); setTried(false); }, onError: (error) => toast.error(error.message) });
+  const issue = passwordIssue(current, next, repeat);
+  const submit = (event: FormEvent) => { event.preventDefault(); setTried(true); if (issue) return; change.mutate({ currentPassword: current, newPassword: next }); };
+  return <form className="st-form st-password" onSubmit={submit} aria-label="Passwort ändern">
+    <label className="rd-field"><span>Aktuelles Passwort</span><input className="fx-field" type="password" value={current} onChange={(event) => setCurrent(event.target.value)} autoComplete="current-password" /></label>
+    <label className="rd-field"><span>Neues Passwort</span><input className="fx-field" type="password" value={next} onChange={(event) => setNext(event.target.value)} autoComplete="new-password" /></label>
+    <label className="rd-field"><span>Neues Passwort wiederholen</span><input className="fx-field" type="password" value={repeat} onChange={(event) => setRepeat(event.target.value)} autoComplete="new-password" /></label>
+    <p className="st-hint">Mindestens 10 Zeichen, mit Buchstaben und mindestens einer Ziffer.</p>
+    {tried && issue && <p className="st-issue" role="alert">{issue}</p>}
+    <div className="st-foot"><span /><Button type="submit" className="flux-button" disabled={change.isPending}><KeyRound aria-hidden="true" /> {change.isPending ? "Wird geändert …" : "Passwort ändern"}</Button></div>
+  </form>;
+}
+
+type SystemState = Record<SystemSwitchKey, boolean>;
+const systemOf = (saved: Record<string, unknown> | null | undefined): SystemState => ({ fifo: saved?.distributionOrder !== "lifo", preping: Boolean(saved?.incomingPrePing ?? false), skipEmpty: Boolean(saved?.skipEmptyApiFields ?? false), duplicate: Boolean(saved?.outgoingDuplicateProtection ?? true), uploadUpdate: saved?.uploadDuplicateMode !== "ueberspringen" });
+
+/** Einstellungen → System: wie Leads verteilt und übergeben werden und was mit doppelten Kontakten passiert. */
+function SystemSection() {
+  const utils = trpc.useUtils();
+  const { data } = trpc.leadops.getTenantSettings.useQuery();
+  const saved = useMemo(() => systemOf(data?.settings as Record<string, unknown> | null | undefined), [data]);
+  const [state, setState] = useState<SystemState>(saved);
+  useEffect(() => { setState(saved); }, [saved]);
+  const update = trpc.leadops.updateTenantSettings.useMutation({ onSuccess: () => { toast.success("System wurde gespeichert."); void utils.leadops.getTenantSettings.invalidate(); }, onError: (error) => toast.error(error.message) });
+  const dirty = SYSTEM_SWITCHES.some((item) => state[item.key] !== saved[item.key]);
+  const save = () => update.mutate({ distributionOrder: state.fifo ? "fifo" : "lifo", incomingPrePing: state.preping, skipEmptyApiFields: state.skipEmpty, outgoingDuplicateProtection: state.duplicate, uploadDuplicateMode: state.uploadUpdate ? "aktualisieren" : "ueberspringen" });
+  return <>
+    {systemSwitchGroups().map((group) => <Card key={group.group} title={group.group}>
+      <ul className="st-switches">{group.items.map((item) => <li key={item.key}><label htmlFor={`st-switch-${item.key}`}><b>{item.title}</b><small>{item.text}</small></label><Switch id={`st-switch-${item.key}`} checked={state[item.key]} onCheckedChange={(checked) => setState((value) => ({ ...value, [item.key]: checked }))} aria-label={item.title} /></li>)}</ul>
+    </Card>)}
+    <div className="st-foot"><span>{dirty ? "Es gibt ungespeicherte Änderungen." : "Alles gespeichert."}</span><Button className="flux-button" onClick={save} disabled={!dirty || update.isPending}><Save aria-hidden="true" /> {update.isPending ? "Speichert …" : "Änderungen speichern"}</Button></div>
+  </>;
+}
+
+type Branding = { name: string; primaryColor: string; supportEmail: string; senderName: string; logoUrl: string | null; companyFooter: string; websiteUrl: string; appointmentUrl: string };
+const BRAND_COLORS = ["#8178ff", "#5b53d8", "#2563eb", "#0ea5e9", "#0f9d7a", "#22c55e", "#f59e0b", "#f97316", "#ba160e", "#ec4899", "#111318", "#64748b"];
+
+/** Einstellungen → Branding: Logo, Name, Farbe und die Fußzeile der E-Mails. */
+function BrandingSection() {
+  const utils = trpc.useUtils();
+  const { data } = trpc.leadops.getTenantSettings.useQuery();
+  const saved = useMemo<Branding>(() => { const tenant = data?.tenant; const own = data?.settings as { supportEmail?: string | null; senderName?: string | null; companyFooter?: string | null; websiteUrl?: string | null; appointmentUrl?: string | null } | null | undefined; return { name: tenant?.name || "Tanesco Leads", primaryColor: tenant?.primaryColor || "#8178ff", supportEmail: own?.supportEmail || "support@tanesco-leads.example", senderName: own?.senderName || tenant?.name || "Tanesco Leads", logoUrl: (tenant as { logoUrl?: string | null } | undefined)?.logoUrl ?? null, companyFooter: own?.companyFooter || COMPANY_FOOTER, websiteUrl: own?.websiteUrl || COMPANY_WEBSITE, appointmentUrl: own?.appointmentUrl || "" }; }, [data]);
+  const [branding, setBranding] = useState<Branding>(saved);
+  useEffect(() => { setBranding(saved); }, [saved]);
+  const set = <K extends keyof Branding>(key: K, value: Branding[K]) => setBranding((current) => ({ ...current, [key]: value }));
+  const refresh = () => void utils.leadops.getTenantSettings.invalidate();
+  const updateSettings = trpc.leadops.updateTenantSettings.useMutation({ onError: (error) => toast.error(error.message) });
+  const updateBranding = trpc.leadops.updateTenantBranding.useMutation({ onSuccess: () => { toast.success("Branding wurde gespeichert."); refresh(); }, onError: (error) => toast.error(error.message) });
+  const applyFooter = trpc.leadops.applyFooterToCampaigns.useMutation({ onSuccess: (result) => toast.success(result.updated ? `Fußzeile in ${result.updated} ${result.updated === 1 ? "Kampagne" : "Kampagnen"} übernommen.` : "Alle Kampagnen hatten die Fußzeile schon."), onError: (error) => toast.error(error.message) });
+  const dirty = (Object.keys(saved) as Array<keyof Branding>).some((key) => (branding[key] ?? "") !== (saved[key] ?? ""));
+  const save = () => { updateSettings.mutate({ companyFooter: branding.companyFooter.trim() || null, websiteUrl: branding.websiteUrl.trim() || null, appointmentUrl: branding.appointmentUrl.trim() || null }); updateBranding.mutate({ name: branding.name, primaryColor: branding.primaryColor, supportEmail: branding.supportEmail, senderName: branding.senderName, logoUrl: branding.logoUrl }); };
+  const pickLogo = (file: File | undefined) => { if (!file) return; if (file.size > 300 * 1024) { toast.error("Das Logo ist größer als 300 KB. Bitte verkleinern."); return; } const reader = new FileReader(); reader.onload = () => set("logoUrl", String(reader.result)); reader.readAsDataURL(file); };
+  return <>
+    <Card title="Logo" hint="PNG, JPG, SVG oder WebP, am besten quer und mit durchsichtigem Hintergrund (bis 300 KB). Erscheint in der Seitenleiste und in E-Mails.">
+      <div className="st-logo"><div className="st-logo-box">{branding.logoUrl ? <img src={branding.logoUrl} alt="Logo" /> : <span>Kein Logo</span>}</div>
+        <label className="st-upload"><span><Upload aria-hidden="true" /> Logo hochladen</span><input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="sr-only" onChange={(event) => { pickLogo(event.target.files?.[0]); event.target.value = ""; }} /></label>
+        {branding.logoUrl && <Button type="button" variant="ghost" size="sm" onClick={() => set("logoUrl", null)}>Logo entfernen</Button>}</div>
+    </Card>
+    <Card title="Name und Farbe">
+      <div className="st-fields">
+        <label className="rd-field"><span>Name der Software</span><input className="fx-field" value={branding.name} onChange={(event) => set("name", event.target.value)} /></label>
+        <div className="rd-field"><span>Farbe</span><div className="st-colors">{BRAND_COLORS.map((color) => <button key={color} type="button" aria-label={`Farbe ${color}`} aria-pressed={branding.primaryColor.toLowerCase() === color} className={branding.primaryColor.toLowerCase() === color ? "swatch-selected" : ""} style={{ backgroundColor: color }} onClick={() => set("primaryColor", color)} />)}<label className="st-color-own" title="Eigene Farbe"><Palette aria-hidden="true" /><input type="color" className="sr-only" value={/^#[0-9A-Fa-f]{6}$/.test(branding.primaryColor) ? branding.primaryColor : "#8178ff"} onChange={(event) => set("primaryColor", event.target.value)} /></label><input className="fx-field st-color-code" value={branding.primaryColor} onChange={(event) => set("primaryColor", event.target.value)} aria-label="Farbwert" /></div></div>
+        <label className="rd-field"><span>E-Mail-Adresse für Rückfragen (Support)</span><input className="fx-field" type="email" value={branding.supportEmail} onChange={(event) => set("supportEmail", event.target.value)} /></label>
+        <label className="rd-field"><span>Absendername</span><input className="fx-field" value={branding.senderName} onChange={(event) => set("senderName", event.target.value)} /></label>
+      </div>
+    </Card>
+    <Card title="Fußzeile der E-Mails" hint="Steht unter jeder E-Mail – in Kampagnen, Einzel-E-Mails und Systemmails. Webseite und Terminlink werden automatisch anklickbar.">
+      <div className="st-fields is-three">
+        <label className="rd-field"><span>Anschrift</span><input className="fx-field" value={branding.companyFooter} placeholder={COMPANY_FOOTER} onChange={(event) => set("companyFooter", event.target.value)} /></label>
+        <label className="rd-field"><span>Webseite</span><input className="fx-field" value={branding.websiteUrl} placeholder={COMPANY_WEBSITE} onChange={(event) => set("websiteUrl", event.target.value)} /></label>
+        <label className="rd-field"><span>Terminlink</span><input className="fx-field" value={branding.appointmentUrl} placeholder="z. B. cal.com/tanesco" onChange={(event) => set("appointmentUrl", event.target.value)} /></label>
+      </div>
+      <div className="st-apply"><Button type="button" size="sm" variant="outline" disabled={applyFooter.isPending || dirty} onClick={() => applyFooter.mutate({})}>{applyFooter.isPending ? "Wird übernommen …" : "Auf bestehende Kampagnen übernehmen"}</Button><small>{dirty ? "Erst speichern – der Knopf nutzt den gespeicherten Stand." : "Neue Kampagnen übernehmen die Fußzeile von selbst. Der Knopf setzt sie auch in allen Kampagnen, die es schon gibt – eigene Fußzeilen werden dabei ersetzt."}</small></div>
+    </Card>
+    <div className="st-foot"><span>{dirty ? "Es gibt ungespeicherte Änderungen." : "Alles gespeichert."}</span><Button className="flux-button" onClick={save} disabled={!dirty || updateSettings.isPending || updateBranding.isPending}><Save aria-hidden="true" /> {updateBranding.isPending ? "Speichert …" : "Änderungen speichern"}</Button></div>
+  </>;
+}
+
+/** Einstellungen → Reklamationen: die Gründe, aus denen ein Käufer reklamieren kann – Name, Reihenfolge, was danach mit dem Lead passiert. */
+function ReasonsSection() {
+  const reasons = trpc.leadops.listReclamationReasons.useQuery(undefined, { retry: false });
+  const [name, setName] = useState("");
+  const refetch = () => void reasons.refetch();
+  const create = trpc.leadops.createReclamationReason.useMutation({ onSuccess: () => { refetch(); setName(""); toast.success("Reklamationsgrund angelegt."); }, onError: (error) => toast.error(error.message) });
+  const update = trpc.leadops.updateReclamationReason.useMutation({ onSuccess: refetch, onError: (error) => toast.error(error.message) });
+  const rows = reasons.data ?? [];
+  const add = (event: FormEvent) => { event.preventDefault(); const clean = name.trim(); if (clean.length < 2) return void toast.error("Bitte einen Grund eintragen (mindestens zwei Zeichen)."); if (rows.some((row) => row.name.trim().toLowerCase() === clean.toLowerCase())) return void toast.error("Diesen Grund gibt es schon."); create.mutate({ name: clean, forwardToSupplier: false, sortOrder: rows.reduce((max, row) => Math.max(max, row.sortOrder + 1), 0) }); };
+  const move = (id: number, step: -1 | 1) => { for (const change of movedReasons(rows, id, step)) update.mutate(change); };
+  const active = rows.filter((row) => row.active).length;
+  return <div className="fx-scope tg st-reasons">
+    <header className="page-intro compact"><div><span className="eyebrow">EINSTELLUNGEN</span><h1>Reklamationsgründe</h1><p>Aus diesen Gründen kann ein Käufer einen Lead reklamieren. Du legst fest, wie sie heißen, in welcher Reihenfolge sie zur Auswahl stehen – und ob der Lead danach an die nächste Station der Lieferkette geht.</p></div></header>
+    <section className="tg-list" aria-label="Reklamationsgründe">
+      <div className="tg-list-head"><div><h2>Gründe</h2><p>{reasons.data ? `${active} von ${rows.length} stehen zur Auswahl.` : "Wird geladen …"}</p></div></div>
+      <form className="st-reason-add" onSubmit={add}><input className="fx-field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Neuer Grund, z. B. Falsche Telefonnummer" maxLength={160} aria-label="Neuer Reklamationsgrund" /><Button type="submit" className="flux-button" disabled={create.isPending}><Plus aria-hidden="true" /> Grund anlegen</Button></form>
+      {reasons.isLoading ? <p className="tg-note">Gründe werden geladen …</p> : !rows.length ? <p className="tg-note">Noch kein Grund angelegt. Die Standard-Gründe kommen dazu, sobald du die erste Lieferkette einrichtest – oder du legst hier eigene an.</p> : <>
+        <div className="st-reason-head" aria-hidden="true"><span>Reihenfolge</span><span>Grund</span><span>Lead geht an die nächste Station</span><span>Zur Auswahl</span></div>
+        <ul className="st-reason-rows">{rows.map((reason, index) => <li key={reason.id} className={reason.active ? "" : "is-off"}>
+          <span className="st-reason-move"><button type="button" aria-label={`${reason.name} nach oben`} title="Nach oben" disabled={index === 0 || update.isPending} onClick={() => move(reason.id, -1)}><ArrowUp aria-hidden="true" /></button><button type="button" aria-label={`${reason.name} nach unten`} title="Nach unten" disabled={index === rows.length - 1 || update.isPending} onClick={() => move(reason.id, 1)}><ArrowDown aria-hidden="true" /></button></span>
+          <span className="st-reason-name"><input className="fx-field" defaultValue={reason.name} key={`${reason.id}:${reason.name}`} maxLength={160} onBlur={(event) => { const next = event.target.value.trim(); if (next.length >= 2 && next !== reason.name) update.mutate({ id: reason.id, name: next }); else event.target.value = reason.name; }} onKeyDown={(event) => { if (event.key === "Enter") (event.target as HTMLInputElement).blur(); }} aria-label={`Bezeichnung ${reason.name}`} /><small>{reason.systemReason ? "Standard-Grund" : "Eigener Grund"}{reason.description ? ` · ${reason.description}` : ""}</small></span>
+          <label className="st-reason-switch" title="An: Wird eine Reklamation mit diesem Grund genehmigt, bekommt die nächste Station der Lieferkette den Lead. Aus: Der Lead endet hier. Eine Station kann das für sich anders regeln."><Switch checked={reason.forwardToNextStop ?? true} onCheckedChange={(forwardToNextStop) => update.mutate({ id: reason.id, forwardToNextStop })} aria-label={`${reason.name}: Lead geht an die nächste Station`} /><small>{(reason.forwardToNextStop ?? true) ? "geht weiter" : "endet hier"}</small></label>
+          <label className="st-reason-switch" title="Aus: Der Grund steht nicht mehr zur Auswahl – bestehende Reklamationen behalten ihn."><Switch checked={reason.active} onCheckedChange={(next) => update.mutate({ id: reason.id, active: next })} aria-label={`${reason.name}: zur Auswahl`} /><small>{reason.active ? "wählbar" : "ausgeblendet"}</small></label>
+        </li>)}</ul>
+      </>}
+    </section>
+    <p className="ko-good"><b>Gut zu wissen:</b> Was hier steht, gilt als Voreinstellung. In der Lieferkette kannst du bei jeder Station unter „Wenn der Kunde reklamiert“ für einzelne Gründe etwas anderes festlegen.</p>
+  </div>;
 }
 
 export default function SettingsWorkspace() {
@@ -60,59 +180,20 @@ export default function SettingsWorkspace() {
   const [, relayout] = useReducer((count: number) => count + 1, 0);
   useEffect(() => { window.addEventListener("resize", relayout); return () => window.removeEventListener("resize", relayout); }, []);
   const phoneList = showList && isPhone(); // Handy, Liste sichtbar → der Bereich bleibt ausgeblendet
-  const [state, setState] = useState({ fifo: true, shop: false, marketplace: false, relist: true, preping: false, skipEmpty: false, duplicate: true, credit: false, manualApproval: true, uploadUpdate: true });
-  const [branding, setBranding] = useState<{ name: string; primaryColor: string; supportEmail: string; senderName: string; logoUrl: string | null; companyFooter: string; websiteUrl: string; appointmentUrl: string }>({ name: "Tanesco Leads", primaryColor: "#8178ff", supportEmail: "support@tanesco-leads.example", senderName: "Tanesco Leads", logoUrl: null, companyFooter: COMPANY_FOOTER, websiteUrl: COMPANY_WEBSITE, appointmentUrl: "" });
-  const [reasonName, setReasonName] = useState("");
-  const [reasonForward, setReasonForward] = useState(false);
-  const { data: tenantConfiguration } = trpc.leadops.getTenantSettings.useQuery();
-  const updateSettings = trpc.leadops.updateTenantSettings.useMutation({ onSuccess: () => toast.success(`${active} wurde gespeichert.`), onError: (error) => toast.error(error.message) });
-  const createApiToken = trpc.leadops.createApiToken.useMutation({ onSuccess: (result) => toast.success(`API-Token einmalig erzeugt: ${result.token}`), onError: (error) => toast.error(error.message) });
-  const applyFooter = trpc.leadops.applyFooterToCampaigns.useMutation({ onSuccess: (result) => toast.success(result.updated ? `Fußzeile in ${result.updated} ${result.updated === 1 ? "Kampagne" : "Kampagnen"} übernommen.` : "Alle Kampagnen hatten die Fußzeile schon."), onError: (error) => toast.error(error.message) });
-  const updateBranding = trpc.leadops.updateTenantBranding.useMutation({ onSuccess: () => toast.success(`${active} wurde gespeichert.`), onError: (error) => toast.error(error.message) });
-  const reasons = trpc.leadops.listReclamationReasons.useQuery(undefined, { retry: false });
-  const createReason = trpc.leadops.createReclamationReason.useMutation({ onSuccess: () => { reasons.refetch(); setReasonName(""); setReasonForward(false); toast.success("Reklamationsgrund angelegt."); }, onError: (error) => toast.error(error.message) });
-  const updateReason = trpc.leadops.updateReclamationReason.useMutation({ onSuccess: () => reasons.refetch(), onError: (error) => toast.error(error.message) });
-
-  useEffect(() => {
-    if (!tenantConfiguration) return;
-    const tenant = tenantConfiguration.tenant;
-    const savedSettings = tenantConfiguration.settings;
-    setBranding({ name: tenant.name || "Tanesco Leads", primaryColor: tenant.primaryColor || "#8178ff", supportEmail: savedSettings?.supportEmail || "support@tanesco-leads.example", senderName: savedSettings?.senderName || tenant.name || "Tanesco Leads", logoUrl: (tenant as { logoUrl?: string | null }).logoUrl ?? null, companyFooter: (savedSettings as { companyFooter?: string | null } | null)?.companyFooter || COMPANY_FOOTER, websiteUrl: (savedSettings as { websiteUrl?: string | null } | null)?.websiteUrl || COMPANY_WEBSITE, appointmentUrl: (savedSettings as { appointmentUrl?: string | null } | null)?.appointmentUrl || "" });
-    setState((current) => ({ ...current, fifo: savedSettings?.distributionOrder !== "lifo", shop: savedSettings?.shopEnabled ?? current.shop, marketplace: tenant.marketplaceEnabled ?? current.marketplace, relist: tenant.reclamationRule === "relist", preping: savedSettings?.incomingPrePing ?? current.preping, skipEmpty: savedSettings?.skipEmptyApiFields ?? current.skipEmpty, duplicate: savedSettings?.outgoingDuplicateProtection ?? current.duplicate, credit: savedSettings?.creditEnabled ?? current.credit, manualApproval: savedSettings?.orderApproval === "manuell", uploadUpdate: (savedSettings as { uploadDuplicateMode?: string } | null)?.uploadDuplicateMode !== "ueberspringen" }));
-  }, [tenantConfiguration]);
-
-  const save = () => {
-    if (active === "System") return updateSettings.mutate({ distributionOrder: state.fifo ? "fifo" : "lifo", incomingPrePing: state.preping, skipEmptyApiFields: state.skipEmpty, outgoingDuplicateProtection: state.duplicate, uploadDuplicateMode: state.uploadUpdate ? "aktualisieren" : "ueberspringen" });
-    if (active === "Branding") { updateSettings.mutate({ companyFooter: branding.companyFooter.trim() || null, websiteUrl: branding.websiteUrl.trim() || null, appointmentUrl: branding.appointmentUrl.trim() || null }); return updateBranding.mutate({ name: branding.name, primaryColor: branding.primaryColor, supportEmail: branding.supportEmail, senderName: branding.senderName, logoUrl: branding.logoUrl }); }
-    if (active === "Nutzungsbedingungen") return updateSettings.mutate({ acceptedTermsVersion: "1.0" });
-    if (active === "API-Dokumentation") return createApiToken.mutate({ name: `Tanesco Leads API ${new Date().toLocaleDateString("de-DE")}`, scopes: ["leads:write", "claims:write", "invoices:read"] });
-    toast.message(`${active}: Dieser Bereich wird über die Speichern-Knöpfe direkt am Abschnitt gespeichert.`);
-  };
-  const toggle = (key: keyof typeof state) => setState((value) => ({ ...value, [key]: !value[key] }));
-  const settingRows = active === "System" ? [["Verteilreihenfolge", "FIFO-Verteilung über passende aktive Käufer", "fifo"], ["Eingehendes PrePing", "Automatische Reklamation bei qualifizierter Partnerablehnung", "preping"], ["Leere API-Felder auslassen", "Leere Felder nicht in ausgehende Übergaben aufnehmen", "skipEmpty"], ["Ausgehender Dublettenschutz", "Dublettenschutz pro Käufer vor Übergabe anwenden", "duplicate"], ["Keine doppelten Kontakte beim Hochladen", "Ist ein Kontakt (gleiche E-Mail oder Telefonnummer) schon da, wird er beim Hochladen aktualisiert statt ein zweites Mal angelegt", "uploadUpdate"]] as const : [];
 
   const backBar = <SettingsBackBar active={active} onBack={backToList} onSwitch={open} />;
   // Breite Bereiche (eigene Seitenköpfe, Karten, Tabellen): Zurück-Leiste + Inhalt über die ganze Breite, die Liste links
   // ist dabei ausgeblendet – ohne die Leiste käme man nicht mehr zur Liste zurück. Am Handy erst nach dem Antippen in der Liste.
-  const wide = (content: React.ReactNode) => <>{backBar}{content}</>;
-  if (!phoneList && active === "API-Dokumentation" && Boolean(globalThis.location)) return wide(<><ApiTokenPanel/><ApiDocsPanel/></>);
-  if (!phoneList && active === "Integrationen" && Boolean(globalThis.location)) return wide(<><IntegrationPanel/><PartnerAccountsPanel/></>);
-  if (!phoneList && active === "Rechnung & Rechtliches" && Boolean(globalThis.location)) return wide(<LegalSettingsPanel/>);
-  if (!phoneList && active === "Nutzungsbedingungen" && Boolean(globalThis.location)) return wide(<TermsPanel/>);
-  if (!phoneList && active === "Reklamationen") {
-    if (active === "Reklamationen") return wide(<><header className="page-intro compact"><div><span className="eyebrow">RECLAMATION SETTINGS</span><h1>Reklamationen</h1><p>Verwalten Sie Gründe und Lieferantenweitergaben für den aktiven Mandanten.</p></div></header><section className="surface-panel operations-panel"><div className="panel-title"><div><span className="eyebrow">GRUND KATALOG</span><h2>Reklamationsgründe</h2><p>Bezeichnung, Reihenfolge und Weitergabe gelten unmittelbar im aktiven Mandanten.</p></div></div><div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]"><Input value={reasonName} onChange={(event) => setReasonName(event.target.value)} placeholder="Neuer Reklamationsgrund"/><label className="flex items-center gap-2 rounded-md border border-white/10 px-3 text-xs text-slate-300">An Lieferant weitergeben<Switch checked={reasonForward} onCheckedChange={setReasonForward}/></label><Button className="flux-button" onClick={() => reasonName.trim().length < 2 ? toast.error("Geben Sie einen Reklamationsgrund an.") : createReason.mutate({ name: reasonName.trim(), forwardToSupplier: reasonForward, sortOrder: reasons.data?.length ?? 0 })} disabled={createReason.isPending}><Plus/> Grund anlegen</Button></div><div className="mt-5 space-y-2">{reasons.data?.map((reason) => <div className="grid gap-3 rounded-xl border border-white/7 bg-white/[.02] p-4 lg:grid-cols-[minmax(0,1fr)_110px_auto_auto_auto]" key={reason.id}><div><Input defaultValue={reason.name} onBlur={(event) => { const name = event.target.value.trim(); if (name.length >= 2 && name !== reason.name) updateReason.mutate({ id: reason.id, name }); }} aria-label={`Bezeichnung ${reason.name}`}/><p className="mt-2 text-xs text-slate-500">{reason.systemReason ? "Systemgrund" : "Mandantengrund"}{reason.description ? ` · ${reason.description}` : ""}</p></div><Input type="number" min="0" defaultValue={reason.sortOrder} onBlur={(event) => { const sortOrder = Number(event.target.value); if (Number.isInteger(sortOrder) && sortOrder >= 0 && sortOrder !== reason.sortOrder) updateReason.mutate({ id: reason.id, sortOrder }); }} aria-label={`Reihenfolge ${reason.name}`}/><label className="flex items-center gap-2 rounded-md border border-white/10 px-3 text-xs text-slate-400" title="Lead geht nach der Reklamation an den nächsten Stop der Kette; aus = der Lead endet hier.">Weitergeben<Switch checked={reason.forwardToNextStop ?? true} onCheckedChange={(forwardToNextStop) => updateReason.mutate({ id: reason.id, forwardToNextStop })}/></label><label className="flex items-center gap-2 rounded-md border border-white/10 px-3 text-xs text-slate-400">Lieferant<Switch checked={reason.forwardToSupplier} onCheckedChange={(forwardToSupplier) => updateReason.mutate({ id: reason.id, forwardToSupplier })}/></label><label className="flex items-center gap-2 rounded-md border border-white/10 px-3 text-xs text-slate-400">Aktiv<Switch checked={reason.active} onCheckedChange={(active) => updateReason.mutate({ id: reason.id, active })}/></label></div>)}{!reasons.data?.length && <p className="py-8 text-center text-sm text-slate-500">Für den aktiven Mandanten sind noch keine Reklamationsgründe angelegt.</p>}</div></section></>);
-  }
+  if (!phoneList && WIDE.has(active)) return <div className="fx-scope st is-wide">{backBar}{active === "API-Dokumentation" ? <><ApiTokenPanel /><ApiDocsPanel /></> : active === "Integrationen" ? <><IntegrationPanel /><PartnerAccountsPanel /></> : active === "Rechnung & Rechtliches" ? <LegalSettingsPanel /> : active === "Nutzungsbedingungen" ? <TermsPanel /> : <ReasonsSection />}</div>;
 
   // Liste + Bereich nebeneinander (Computer) – die Zurück-Leiste braucht es nur am Handy, wo der Bereich die Liste verdeckt.
-  return <>{phoneList ? <header className="page-intro compact"><div><span className="eyebrow block">TENANT CONFIGURATION</span><h1>Einstellungen</h1><p>Tippe einen Bereich an – oben links geht es jeweils zurück zur Liste.</p></div></header> : isPhone() ? backBar : null}
-    <section className={`settings-layout grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)] ${phoneList ? "is-list" : "is-detail"}`}><aside className="surface-panel h-fit p-2 settings-list"><div className="max-h-[620px] overflow-auto">{settings.map((item) => <button key={item} onClick={() => open(item)} className={`settings-tab flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition ${active === item && !phoneList ? "active bg-violet-500/15 text-violet-100" : "text-slate-400 hover:bg-white/5 hover:text-slate-100"}`}>{(() => { const Icon = SETTINGS_ICONS[item] ?? Settings2; return <Icon className="settings-tab-icon h-4 w-4 shrink-0" />; })()}<span className="flex-1">{item}</span><ChevronRight className="settings-tab-arrow h-3.5 w-3.5 opacity-0 transition" /></button>)}</div></aside>{!phoneList && <section className="surface-panel operations-panel settings-detail"><div className="panel-title"><div><span className="eyebrow">{active.toUpperCase()}</span><h2>{active}</h2><p>{descriptions[active]}</p></div><Badge variant="outline" className="border-white/15 text-slate-300">Mandant · DE</Badge></div>{active === "E-Mail-Versand" ? <MailSettingsPanel /> : active === "Profil" ? <div className="mt-6 space-y-4"><OwnAvatarSettings /><AppearanceSettings /><div className="rounded-xl border border-white/10 bg-white/[.018] p-4"><span className="eyebrow">PROFIL</span><p className="mt-1 text-sm text-slate-400">Name, E-Mail und Passwort änderst du über das Profil-Symbol oben rechts.</p></div></div> : active === "API-Dokumentation" ? <div className="mt-6 space-y-4"><div className="rounded-xl border border-violet-400/15 bg-violet-500/5 p-4"><div className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-violet-300"/><strong className="text-sm">API-Token</strong></div><p className="mt-2 text-xs text-slate-400">Tokens sind ausschließlich mit Bearer-Authentifizierung gültig und werden nur bei der Erstellung vollständig angezeigt.</p><Button className="flux-button mt-4" size="sm" onClick={save} disabled={createApiToken.isPending}><Plus /> Token anlegen</Button></div>{[["POST", "/api/v1/leads", "Lead-Import"], ["POST", "/api/v1/claims", "Reklamationsmeldung"], ["GET", "/api/v1/invoices", "Rechnungsabruf"]].map(([method, path, label]) => <div className="flex items-center gap-3 rounded-xl border border-white/7 bg-white/[.02] p-3" key={path}><Badge variant="outline" className="border-cyan-400/25 bg-cyan-500/10 text-cyan-200">{method}</Badge><div className="min-w-0 flex-1"><strong className="block text-xs text-slate-100">{label}</strong><code className="text-[11px] text-slate-500">{path}</code></div><Button variant="ghost" size="icon" onClick={() => toast.message("Endpunkt in die Zwischenablage kopiert.")}><Copy /></Button></div>)}</div> : active === "Passwort" ? <div className="mt-6 max-w-xl space-y-4"><Input type="password" placeholder="Aktuelles Passwort"/><div className="grid gap-3 sm:grid-cols-2"><Input type="password" placeholder="Neues Passwort"/><Input type="password" placeholder="Bestätigen"/></div><p className="text-xs text-slate-500">Mindestens 8 Zeichen.</p><Button className="flux-button" onClick={() => toast.success("Passwortänderung geprüft.")}>Passwort ändern</Button></div> : active === "Branding" ? <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="md:col-span-2 rounded-xl border border-white/10 bg-white/[.018] p-4"><span className="eyebrow">LOGO</span><p className="mt-1 text-xs text-slate-400">PNG, JPG, SVG oder WebP, am besten quer und mit transparentem Hintergrund (bis 300 KB). Erscheint in der Seitenleiste und in E-Mails.</p>
-                <div className="mt-3 flex flex-wrap items-center gap-4"><div className="grid h-20 w-40 place-items-center overflow-hidden rounded-lg border border-white/10 bg-white p-2">{branding.logoUrl ? <img src={branding.logoUrl} alt="Logo" className="max-h-full max-w-full object-contain" /> : <span className="text-xs text-slate-400">Kein Logo</span>}</div>
-                  <label className="cursor-pointer"><span className="inline-flex h-9 items-center gap-2 rounded-md border border-white/15 px-3 text-sm text-slate-100 hover:bg-white/5"><Upload className="h-4 w-4" /> Logo hochladen</span><input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 300 * 1024) { toast.error("Das Logo ist größer als 300 KB. Bitte verkleinern."); return; } const reader = new FileReader(); reader.onload = () => setBranding((value) => ({ ...value, logoUrl: String(reader.result) })); reader.readAsDataURL(file); event.target.value = ""; }} /></label>
-                  {branding.logoUrl && <Button variant="ghost" onClick={() => setBranding((value) => ({ ...value, logoUrl: null }))}>Logo entfernen</Button>}</div></div>
-              <label className="text-xs text-slate-400">Wortmarke<Input className="mt-2 bg-slate-900/60" value={branding.name} onChange={(event) => setBranding((value) => ({ ...value, name: event.target.value }))}/></label>
-              <div className="text-xs text-slate-400">Primärfarbe<div className="mt-2 flex flex-wrap items-center gap-2">{["#8178ff", "#5b53d8", "#2563eb", "#0ea5e9", "#0f9d7a", "#22c55e", "#f59e0b", "#f97316", "#ba160e", "#ec4899", "#111318", "#64748b"].map((color) => <button key={color} type="button" aria-label={`Farbe ${color}`} className={`h-7 w-7 rounded-full border-2 transition ${branding.primaryColor.toLowerCase() === color ? "swatch-selected" : "border-transparent opacity-85 hover:opacity-100"}`} style={{ backgroundColor: color }} onClick={() => setBranding((value) => ({ ...value, primaryColor: color }))} />)}<label className="grid h-7 w-7 cursor-pointer place-items-center rounded-full border border-white/20 text-slate-300" title="Eigene Farbe"><Palette className="h-3.5 w-3.5" /><input type="color" className="sr-only" value={/^#[0-9A-Fa-f]{6}$/.test(branding.primaryColor) ? branding.primaryColor : "#8178ff"} onChange={(event) => setBranding((value) => ({ ...value, primaryColor: event.target.value }))} /></label><Input value={branding.primaryColor} onChange={(event) => setBranding((value) => ({ ...value, primaryColor: event.target.value }))} className="w-28 bg-slate-900/60 font-mono text-xs" /></div></div>
-              <label className="text-xs text-slate-400">Support-E-Mail<Input type="email" value={branding.supportEmail} onChange={(event) => setBranding((value) => ({ ...value, supportEmail: event.target.value }))} className="mt-2 bg-slate-900/60"/></label>
-              <label className="text-xs text-slate-400">Absendername<Input value={branding.senderName} onChange={(event) => setBranding((value) => ({ ...value, senderName: event.target.value }))} className="mt-2 bg-slate-900/60"/></label>
-              <div className="md:col-span-2 rounded-xl border border-white/10 bg-white/[.018] p-4"><span className="eyebrow">FUSSZEILE DER E-MAILS</span><p className="mt-1 text-xs text-slate-400">Steht unter jeder E-Mail – in Kampagnen, Einzel-E-Mails und Systemmails. Webseite und Terminlink werden automatisch anklickbar.</p><div className="mt-3 grid gap-3 md:grid-cols-3"><label className="text-xs text-slate-400">Anschrift<Input className="mt-2 bg-slate-900/60" value={branding.companyFooter} placeholder={COMPANY_FOOTER} onChange={(event) => setBranding((value) => ({ ...value, companyFooter: event.target.value }))}/></label><label className="text-xs text-slate-400">Webseite<Input className="mt-2 bg-slate-900/60" value={branding.websiteUrl} placeholder={COMPANY_WEBSITE} onChange={(event) => setBranding((value) => ({ ...value, websiteUrl: event.target.value }))}/></label><label className="text-xs text-slate-400">Terminlink<Input className="mt-2 bg-slate-900/60" value={branding.appointmentUrl} placeholder="z. B. cal.com/tanesco" onChange={(event) => setBranding((value) => ({ ...value, appointmentUrl: event.target.value }))}/></label></div><div className="mt-3 flex flex-wrap items-center gap-3"><Button size="sm" variant="outline" disabled={applyFooter.isPending} onClick={() => applyFooter.mutate({})}>{applyFooter.isPending ? "Wird übernommen …" : "Auf bestehende Kampagnen übernehmen"}</Button><small className="text-xs text-slate-500">Neue Kampagnen übernehmen die Fußzeile von selbst. Der Knopf setzt sie auch in allen Kampagnen, die es schon gibt – eigene Fußzeilen werden dabei ersetzt.</small></div><p className="mt-2 text-xs text-slate-500">Erst speichern, dann übernehmen: Der Knopf nutzt den gespeicherten Stand.</p></div><p className="md:col-span-2 text-xs text-slate-500">Diese Angaben gelten nur für den aktiven Mandanten und werden mit „Änderungen speichern“ übernommen.</p></div> : active === "Zahlung" ? <div className="mt-6 space-y-4"><div className="rounded-xl border border-white/7 bg-white/[.02] p-4"><div className="flex items-center justify-between"><div><strong className="text-sm">Stripe für diesen Mandanten</strong><p className="mt-1 text-xs text-slate-500">Checkout und Webhooks werden über sichere Server-Endpunkte verarbeitet.</p></div><Badge variant="outline" className="border-amber-400/25 bg-amber-500/10 text-amber-100">Einrichtung ausstehend</Badge></div><Button className="mt-4" variant="outline" onClick={() => toast.message("Stripe-Testumgebung ist in den Zahlungseinstellungen verfügbar.")}>Zahlungseinstellungen öffnen</Button></div></div> : active === "Nutzungsbedingungen" ? <div className="mt-6 rounded-xl border border-white/7 bg-white/[.02] p-5"><ShieldCheck className="h-7 w-7 text-emerald-300"/><h3 className="mt-3 text-sm font-semibold">B2B-Nutzungsbedingungen</h3><p className="mt-2 text-xs leading-5 text-slate-400">Die Zustimmung wird versionsgeführt pro Mandant gespeichert. Plattformzugang setzt eine aktive Annahme durch eine vertretungsberechtigte Person voraus.</p><Button className="flux-button mt-4" size="sm" onClick={save}>Version 1.0 akzeptieren</Button></div> : settingRows.length ? <div className="mt-6 divide-y divide-white/7">{settingRows.map(([label, detail, key]) => <div className="flex items-center gap-4 py-4" key={key}><div className="flex-1"><strong className="text-sm">{label}</strong><p className="mt-1 text-xs text-slate-500">{detail}</p></div><Switch checked={state[key]} onCheckedChange={() => toggle(key)}/></div>)}</div> : <div className="mt-6 rounded-xl border border-dashed border-white/10 p-7 text-center"><p className="text-sm text-slate-200">{active} konfigurieren</p><p className="mx-auto mt-2 max-w-lg text-xs leading-5 text-slate-500">Dieser Bereich ist mandantenbezogen angelegt und kann über die geschützten Einstellungsabläufe verwaltet werden.</p></div>}{HEADER_SAVE.has(active) && <div className="mt-5 flex justify-end"><Button className="flux-button" onClick={save} disabled={updateSettings.isPending || updateBranding.isPending || createApiToken.isPending}><Save /> Änderungen speichern</Button></div>}</section>}</section></>;
+  return <div className="fx-scope st">{phoneList ? <header className="page-intro compact"><div><span className="eyebrow block">ORGANISATION</span><h1>Einstellungen</h1><p>Tippe einen Bereich an – oben links geht es jeweils zurück zur Liste.</p></div></header> : isPhone() ? backBar : null}
+    <section className={`settings-layout st-layout ${phoneList ? "is-list" : "is-detail"}`}>
+      <aside className="st-menu settings-list" aria-label="Bereiche der Einstellungen">{SETTING_GROUPS.map((group) => <div key={group.label} className="st-group"><span className="st-group-label">{group.label}</span>{group.items.map((item) => { const Icon = SETTINGS_ICONS[item]; return <button key={item} type="button" onClick={() => open(item)} aria-current={active === item && !phoneList ? "page" : undefined} className={`settings-tab ${active === item && !phoneList ? "active" : ""}`}><Icon className="settings-tab-icon" aria-hidden="true" /><span>{item}</span><ChevronRight className="settings-tab-arrow" aria-hidden="true" /></button>; })}</div>)}</aside>
+      {!phoneList && <section className="st-panel settings-detail" aria-label={active}>
+        <header className="st-panel-head"><h2>{active}</h2><p>{SETTING_INFO[active]}</p></header>
+        {active === "Profil" ? <ProfileSection /> : active === "Passwort" ? <PasswordSection /> : active === "System" ? <SystemSection /> : active === "Branding" ? <BrandingSection /> : <MailSettingsPanel />}
+      </section>}
+    </section>
+  </div>;
 }

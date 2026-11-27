@@ -217,14 +217,14 @@ function CallList({ onOpen, agent, onAgent, campaign, onCampaign, range, onRange
         <div className="cq-campaign-row">
           <span className="gq-label">Kampagne</span>
           <div className="dashboard-segments"><button type="button" className={campaign ? "" : "active"} onClick={() => onCampaign("")}>Alle</button>{(campaigns.data ?? []).map((item) => <button key={item.name} type="button" className={campaign === item.name ? "active" : ""} onClick={() => onCampaign(item.name)}>{item.name}</button>)}</div>
-          <div className="gq-tools"><CallAiChip /><button type="button" className="cq-tool" title={`Kampagne einstellen: Kriterien, Prüffragen, Auswertung${campaign ? ` für „${campaign}“` : ""}`} onClick={() => setShowSettings(true)}><Settings2 aria-hidden="true" /><span>Einstellen</span></button><button type="button" className="cq-tool" title="Aufnahmen testen – Datei hochladen oder Links einfügen" onClick={() => setShowImport(true)}><Upload aria-hidden="true" /><span>Aufnahmen testen</span></button></div>
         </div>
         <div className="gq-agent-row">
           <div className="gq-agents" role="group" aria-label="Nach Agent filtern">
             <span className="gq-label">Agent</span>
             <AgentPicker agents={agentChips} value={agent} onChange={onAgent} pictureOf={pictureOf} />
           </div>
-          <label className="gq-category"><span className="gq-label">Lead-Kategorie</span><select className="filter-select h-8" aria-label="Nach Lead-Kategorie filtern" value={categoryId ?? ""} onChange={(event) => onCategory(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kategorien</option>{(categoryOptions.data ?? []).map((item) => <option key={item.id} value={item.id}>{item.emoji ? `${item.emoji} ` : ""}{item.name} ({item.count})</option>)}</select></label>
+          <div className="gq-tools"><CallAiChip /><button type="button" className="cq-tool" title={`Kampagne einstellen: Kriterien, Prüffragen, Auswertung${campaign ? ` für „${campaign}“` : ""}`} onClick={() => setShowSettings(true)}><Settings2 aria-hidden="true" /><span>Einstellen</span></button><button type="button" className="cq-tool" title="Aufnahmen testen – Datei hochladen oder Links einfügen" onClick={() => setShowImport(true)}><Upload aria-hidden="true" /><span>Aufnahmen testen</span></button></div>
+          <label className="gq-category"><span className="gq-label">Lead-Kategorie</span><select className="filter-select" aria-label="Nach Lead-Kategorie filtern" value={categoryId ?? ""} onChange={(event) => onCategory(event.target.value ? Number(event.target.value) : null)}><option value="">Alle Kategorien</option>{(categoryOptions.data ?? []).map((item) => <option key={item.id} value={item.id}>{item.emoji ? `${item.emoji} ` : ""}{item.name} ({item.count})</option>)}</select></label>
         </div>
       </div>
       <CallRecheckNotice active={rechecked} onShow={setRechecked} />

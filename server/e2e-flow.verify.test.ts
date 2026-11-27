@@ -7046,4 +7046,50 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       await owner.leadops.deleteDeliveryChain({ chainId: chain.chainId }).catch(() => undefined);
     }
   }, 60000);
+
+  it("v382. Kooperationen: Die Liste nennt je Partner seine Kategorien und Felder (vorher scheiterte sie, sobald es einen Partner gab); anlegen nennt die Nummer; Zuordnungen und Partner lassen sich löschen", async () => {
+    const { cooperationCategoryMappings: categoryMap, cooperationFieldMappings: fieldMap } = await import("../drizzle/schema");
+    const stamp = Date.now().toString(36).slice(-6);
+    const cat = (await owner.leadops.listCategories())[0];
+    const made = await owner.leadops.createCooperation({ partnerTenantName: `V382 Partner ${stamp}`, direction: "beidseitig" });
+    const other = await owner.leadops.createCooperation({ partnerTenantName: `V382 Zweiter ${stamp}` });
+    expect(made.success).toBe(true); expect(typeof made.id).toBe("number"); expect(other.id).not.toBe(made.id);
+    const first = made.id!; const second = other.id!;
+    const find = async (id: number) => (await owner.leadops.listCooperations()).find((row) => row.id === id);
+    try {
+      await owner.leadops.setCooperationCategoryMapping({ cooperationId: first, sourceCategoryId: cat.id, partnerCategoryName: "Solar Privat" });
+      await owner.leadops.setCooperationFieldMapping({ cooperationId: first, sourceField: "postcode", partnerField: "zip" });
+      await owner.leadops.setCooperationFieldMapping({ cooperationId: first, sourceField: "phone", partnerField: "telefon" });
+      await owner.leadops.setCooperationFieldMapping({ cooperationId: second, sourceField: "email", partnerField: "mail" });
+      // (a) die Liste lädt – und jeder Partner hat genau seine eigenen Zuordnungen
+      const mine = (await find(first))!; const theirs = (await find(second))!;
+      expect(mine).toMatchObject({ partnerTenantName: `V382 Partner ${stamp}`, direction: "beidseitig", status: "angefragt" });
+      expect(mine.categories.map((row) => [row.sourceCategoryId, row.partnerCategoryName])).toEqual([[cat.id, "Solar Privat"]]);
+      expect(mine.fields.map((row) => `${row.sourceField}→${row.partnerField}`).sort()).toEqual(["phone→telefon", "postcode→zip"]);
+      expect(theirs).toMatchObject({ direction: "ausgehend", status: "angefragt", categories: [] }); expect(theirs.fields.map((row) => `${row.sourceField}→${row.partnerField}`)).toEqual(["email→mail"]);
+      // (b) noch einmal zuordnen ersetzt den Namen, statt eine zweite Zeile anzulegen
+      await owner.leadops.setCooperationFieldMapping({ cooperationId: first, sourceField: "postcode", partnerField: "plz" });
+      await owner.leadops.setCooperationCategoryMapping({ cooperationId: first, sourceCategoryId: cat.id, partnerCategoryName: "Solar" });
+      const renamed = (await find(first))!; expect(renamed.categories.map((row) => row.partnerCategoryName)).toEqual(["Solar"]); expect(renamed.fields.map((row) => `${row.sourceField}→${row.partnerField}`).sort()).toEqual(["phone→telefon", "postcode→plz"]);
+      // (c) eine einzelne Zuordnung entfernen – die anderen bleiben, auch beim zweiten Partner
+      expect(await owner.leadops.removeCooperationFieldMapping({ cooperationId: first, sourceField: "phone" })).toEqual({ success: true });
+      expect(await owner.leadops.removeCooperationCategoryMapping({ cooperationId: first, sourceCategoryId: cat.id })).toEqual({ success: true });
+      const thinned = (await find(first))!; expect(thinned.categories).toEqual([]); expect(thinned.fields.map((row) => row.sourceField)).toEqual(["postcode"]); expect((await find(second))!.fields).toHaveLength(1);
+      // (d) Stand und Angaben
+      await owner.leadops.updateCooperationStatus({ id: first, status: "aktiv" }); await owner.leadops.updateCooperation({ id: first, partnerTenantName: `V382 Umbenannt ${stamp}`, direction: "eingehend", partnerTenantId: null });
+      expect(await find(first)).toMatchObject({ partnerTenantName: `V382 Umbenannt ${stamp}`, direction: "eingehend", status: "aktiv", partnerTenantId: null });
+      // (e) nichts davon für Käufer-Zugänge; unbekannte Nummern werden abgelehnt
+      await expect(invitee.leadops.deleteCooperation({ id: first })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/);
+      await expect(invitee.leadops.removeCooperationFieldMapping({ cooperationId: first, sourceField: "postcode" })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/);
+      await expect(owner.leadops.removeCooperationFieldMapping({ cooperationId: 999_999_999, sourceField: "email" })).rejects.toThrow("Kooperation wurde nicht gefunden.");
+      await expect(owner.leadops.removeCooperationCategoryMapping({ cooperationId: 999_999_999, sourceCategoryId: cat.id })).rejects.toThrow("Kooperation wurde nicht gefunden.");
+      // (f) löschen: der Partner und seine Zuordnungen sind weg, der andere bleibt
+      expect(await owner.leadops.deleteCooperation({ id: first })).toEqual({ success: true });
+      expect(await find(first)).toBeUndefined(); expect((await find(second))!.fields).toHaveLength(1);
+      expect(await db.select().from(fieldMap).where(eq(fieldMap.cooperationId, first))).toEqual([]); expect(await db.select().from(categoryMap).where(eq(categoryMap.cooperationId, first))).toEqual([]);
+      await expect(owner.leadops.deleteCooperation({ id: first })).rejects.toThrow("Kooperation wurde nicht gefunden.");
+    } finally {
+      for (const id of [first, second]) await owner.leadops.deleteCooperation({ id }).catch(() => undefined);
+    }
+  }, 60000);
 });
