@@ -11,7 +11,9 @@ export function categoryColor(category: { id: number; color?: string | null } | 
 /** Lead-Status: Farbe + lesbares Label. */
 export const STATUS_STYLE: Record<string, { color: string; label: string }> = {
   neu: { color: "#2563eb", label: "Neu" },
-  genehmigt: { color: "#c026d3", label: "Freigegeben" }, // v388: Magenta statt Türkis – Türkis sah dem Grün von „Zugewiesen“ zu ähnlich
+  // v389: Türkisblau – kühle Farben für gute Stände (Neu blau → Freigegeben türkisblau → Zugewiesen grün), warme für Probleme.
+  // Vorher Türkis (#0d9488, zu nah am Grün von „Zugewiesen“) und Magenta (v388, gefiel nicht).
+  genehmigt: { color: "#06b6d4", label: "Freigegeben" },
   zugewiesen: { color: "#16a34a", label: "Zugewiesen" },
   reklamiert: { color: "#dc2626", label: "Reklamiert" },
   fehlerhaft: { color: "#ea580c", label: "Fehlerhaft" },

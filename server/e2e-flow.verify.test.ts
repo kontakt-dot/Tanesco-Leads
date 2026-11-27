@@ -7166,4 +7166,55 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       for (const member of [own, fox, quiet]) await owner.leadops.updateMembership({ membershipId: member.membershipId, status: "deaktiviert" } as never).catch(() => undefined);
     }
   }, 90000);
+
+  it("v389. Käufer-Seite: Die Zahlen im Kopf zählen, was der Käufer bekommen hat – über seine Bestellung, über eine Station mit seinem Konto und direkt ohne Bestellung; nicht, was an eine andere Station seiner Kette ging", async () => {
+    const { leads: leadsTable, leadDeliveries: deliveriesTable, orders: ordersTable, orderOperationalConfigs: configsTable, deliveryChains: chainsTable, deliveryStops: stopsTable, deliveryEndpoints: endpointsTable } = await import("../drizzle/schema");
+    const tenantId = S.tenantId as number; const stamp = Date.now().toString(36).slice(-6); const company = `V389 Dachwerk ${stamp}`;
+    const member = async (kind: "benutzer" | "admin", firm: string | undefined, mail: string) => { const created = await owner.leadops.createMember({ firstName: "Uli", lastName: "Kauf", company: firm, email: `${mail}-${stamp}@kunde.example`, password: "Sicher!Passwort2026", kind, status: "aktiv" }); return { membershipId: created.membershipId, userId: (await owner.leadops.getMemberDetail({ membershipId: created.membershipId })).user.id }; };
+    const buyer = await member("benutzer", company, "v389-kaeufer"); const neighbour = await member("benutzer", `V389 Nachbar ${stamp}`, "v389-nachbar"); const admin = await member("admin", undefined, "v389-admin");
+    const leadRows = await db.select({ id: leadsTable.id }).from(leadsTable).where(eq(leadsTable.tenantId, tenantId)).limit(6); expect(leadRows.length).toBe(6); const [l1, l2, l3, l4, l5, l6] = leadRows.map((row) => row.id);
+    const category = S.pv.id as number; const now = Date.now(); const ago = (minutes: number) => new Date(now - minutes * 60_000);
+    const insertId = (result: unknown) => Number((result as Array<{ insertId?: number }>)[0]?.insertId);
+    const o1 = insertId(await db.insert(ordersTable).values({ tenantId, orderNumber: `V389-${stamp}-A`, name: "V389 aktiv", buyerName: company, categoryId: category, quantity: 10, deliveredCount: 3, unitPrice: "40.00", status: "aktiv" }));
+    const o2 = insertId(await db.insert(ordersTable).values({ tenantId, orderNumber: `V389-${stamp}-B`, name: "V389 pausiert", buyerName: company, categoryId: category, quantity: null, unitPrice: "30.00", status: "pausiert" }));
+    await db.insert(configsTable).values([{ tenantId, orderId: o1, buyerUserId: buyer.userId, syncKey: `v389-${stamp}-a`, active: true }, { tenantId, orderId: o2, buyerUserId: buyer.userId, syncKey: `v389-${stamp}-b`, active: true }]);
+    const orderChain = insertId(await db.insert(chainsTable).values({ tenantId, orderId: o1, categoryId: category, name: `V389 Kette ${stamp}` }));
+    const freeChain = insertId(await db.insert(chainsTable).values({ tenantId, orderId: null, categoryId: category, name: `V389 Kette ohne Bestellung ${stamp}` }));
+    const ownStop = insertId(await db.insert(stopsTable).values({ chainId: orderChain, buyerName: company, buyerUserId: buyer.userId, position: 1, unitPrice: "40.00", orderStop: true }));
+    const neighbourStop = insertId(await db.insert(stopsTable).values({ chainId: orderChain, buyerName: `V389 Nachbar ${stamp}`, buyerUserId: neighbour.userId, position: 2, unitPrice: "35.00" }));
+    const freeStop = insertId(await db.insert(stopsTable).values({ chainId: freeChain, buyerName: company, buyerUserId: buyer.userId, position: 1, unitPrice: "25.00" }));
+    const delivery = (leadId: number, values: { orderId?: number | null; stopId?: number | null; chainId?: number | null; buyerName?: string; unitPrice: string; result: "angenommen" | "abgelehnt" | "reklamiert" | "übersprungen"; at: Date }) => ({ tenantId, leadId, orderId: values.orderId ?? null, stopId: values.stopId ?? null, chainId: values.chainId ?? null, buyerName: values.buyerName ?? company, unitPrice: values.unitPrice, result: values.result, occurredAt: values.at });
+    await db.insert(deliveriesTable).values([
+      delivery(l1, { orderId: o1, chainId: orderChain, stopId: ownStop, unitPrice: "40.00", result: "angenommen", at: ago(30) }), // über die Bestellung (Station 1 = er selbst)
+      delivery(l2, { orderId: o1, unitPrice: "40.00", result: "reklamiert", at: ago(25) }), // über die Bestellung, reklamiert
+      delivery(l3, { orderId: o1, chainId: orderChain, stopId: neighbourStop, buyerName: `V389 Nachbar ${stamp}`, unitPrice: "35.00", result: "angenommen", at: ago(20) }), // an die nächste Station mit eigenem Konto – zählt NICHT
+      delivery(l4, { chainId: freeChain, stopId: freeStop, unitPrice: "25.00", result: "angenommen", at: ago(60 * 24 * 40) }), // über eine Station mit seinem Konto, vor 40 Tagen
+      delivery(l5, { unitPrice: "0.00", result: "angenommen", at: ago(10) }), // direkt ohne Bestellung („Ausliefern → An wen?“)
+      delivery(l6, { unitPrice: "0.00", result: "abgelehnt", at: ago(8) }), // direkt – seine Schnittstelle hat abgelehnt
+      delivery(l1, { unitPrice: "0.00", result: "abgelehnt", at: ago(5) }), // später noch einmal gesendet und abgelehnt: l1 bleibt bekommen
+      delivery(l3, { unitPrice: "0.00", result: "übersprungen", at: ago(4) }), // übersprungen hat ihn nie erreicht
+    ]);
+    const endpointBase = { categoryId: category, method: "POST" as const, sourceFilterMode: "alle" as const, sourceSupplierIds: [], fieldFilters: [], headers: [], authEnabled: false, auth: null, omitAutoFields: false, rotate: false, valueMappings: [], bodyTemplate: "" };
+    const on = await owner.leadops.saveDeliveryEndpoint({ ...endpointBase, enabled: true, membershipId: buyer.membershipId, url: `https://v389-an-${stamp}.example/leads` });
+    const off = await owner.leadops.saveDeliveryEndpoint({ ...endpointBase, enabled: false, membershipId: buyer.membershipId, url: `https://v389-aus-${stamp}.example/leads` });
+    try {
+      const detail = await owner.leadops.getMemberDetail({ membershipId: buyer.membershipId });
+      const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
+      const thisMonth = [ago(30), ago(25), ago(10), ago(60 * 24 * 40)].filter((at) => at.getTime() >= monthStart).length;
+      expect(detail.buyer).toMatchObject({ endpoints: 1, delivered: 4, thisMonth, value: 65, averagePrice: 21.67, claimed: 1, claimRate: 25, rejected: 1, ordersActive: 1, ordersTotal: 2 });
+      expect(Math.abs(new Date(detail.buyer!.lastDeliveryAt!).getTime() - ago(10).getTime())).toBeLessThan(2000); // die letzte bekommene Lieferung (l5) – die Datenbank speichert ohne Millisekunden
+      expect(detail.categories.every((row) => "color" in row)).toBe(true); // Farbe der Kategorie für die Karten der Bestellungen
+      // der Nachbar bekam nur l3 über seine Station
+      expect((await owner.leadops.getMemberDetail({ membershipId: neighbour.membershipId })).buyer).toMatchObject({ delivered: 1, value: 35, ordersTotal: 0, endpoints: 0 });
+      // Team-Mitglieder haben keine Käufer-Zahlen
+      expect((await owner.leadops.getMemberDetail({ membershipId: admin.membershipId })).buyer).toBeNull();
+      await expect(invitee.leadops.getMemberDetail({ membershipId: buyer.membershipId })).rejects.toThrow(/vorbehalten|nicht zur Verfügung|eingeschränkt/);
+    } finally {
+      await db.delete(deliveriesTable).where(and(eq(deliveriesTable.tenantId, tenantId), inArray(deliveriesTable.leadId, [l1, l2, l3, l4, l5, l6]), inArray(deliveriesTable.buyerName, [company, `V389 Nachbar ${stamp}`])));
+      await db.delete(stopsTable).where(inArray(stopsTable.id, [ownStop, neighbourStop, freeStop])); await db.delete(chainsTable).where(inArray(chainsTable.id, [orderChain, freeChain]));
+      await db.delete(configsTable).where(inArray(configsTable.orderId, [o1, o2])); await db.delete(ordersTable).where(inArray(ordersTable.id, [o1, o2]));
+      await db.update(endpointsTable).set({ enabled: false }).where(inArray(endpointsTable.id, [on.id, off.id]));
+      for (const who of [buyer, neighbour, admin]) await owner.leadops.updateMembership({ membershipId: who.membershipId, status: "deaktiviert" } as never).catch(() => undefined);
+    }
+  }, 90000);
 });

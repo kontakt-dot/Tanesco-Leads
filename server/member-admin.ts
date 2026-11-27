@@ -5,9 +5,10 @@
 import { and, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { avatarUrlOf } from "../shared/avatar";
 import { CHOOSABLE_AREAS } from "../shared/customer-areas";
+import { summarizeBuyer, type BuyerDeliveryRow, type BuyerStats } from "../shared/buyer-stats";
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
-import { apiTokens, balanceTransactions, claims, deliveryStops, impersonationSessions, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, reclamationReasons, supplierInboundMappings, suppliers, users } from "../drizzle/schema";
+import { apiTokens, balanceTransactions, claims, deliveryEndpoints, deliveryStops, impersonationSessions, integrationEvents, leadCategories, leadDeliveries, leadStatusEvents, leads, memberOperationalSettings, memberships, orderOperationalConfigs, orders, reclamationReasons, supplierInboundMappings, suppliers, users } from "../drizzle/schema";
 import { hashPassword } from "./_core/auth";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
 import type { Db } from "./lead-pipeline";
@@ -45,11 +46,13 @@ export async function getMemberDetail(db: Db, tenantId: number, membershipId: nu
     db.select().from(supplierInboundMappings).where(and(eq(supplierInboundMappings.tenantId, tenantId), eq(supplierInboundMappings.membershipId, membershipId))),
     db.select().from(balanceTransactions).where(and(eq(balanceTransactions.tenantId, tenantId), eq(balanceTransactions.membershipId, membershipId))).orderBy(desc(balanceTransactions.createdAt), desc(balanceTransactions.id)).limit(50),
     db.select({ order: orders, config: orderOperationalConfigs }).from(orderOperationalConfigs).innerJoin(orders, eq(orders.id, orderOperationalConfigs.orderId)).where(and(eq(orderOperationalConfigs.tenantId, tenantId), eq(orderOperationalConfigs.buyerUserId, user.id))).orderBy(desc(orders.createdAt)),
-    db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)),
+    db.select({ id: leadCategories.id, name: leadCategories.name, shortcode: leadCategories.shortcode, color: leadCategories.color }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)),
     db.select({ id: reclamationReasons.id, name: reclamationReasons.name, active: reclamationReasons.active }).from(reclamationReasons).where(eq(reclamationReasons.tenantId, tenantId)).orderBy(reclamationReasons.sortOrder),
   ]);
   const activeToken = tokens.find((token) => !token.revokedAt) ?? null;
   const { passwordHash: _hash, ...safeUser } = user;
+  const orderRows = buyerOrders.map(({ order, config }) => ({ id: order.id, orderNumber: order.orderNumber, name: order.name, status: order.status, quantity: order.quantity, deliveredCount: order.deliveredCount, unitPrice: order.unitPrice, categoryId: order.categoryId, createdAt: order.createdAt, active: config.active, realtimeDelivery: config.realtimeDelivery }));
+  const buyer = membership.partnerType === "käufer" ? await buyerOverview(db, tenantId, membership.id, user, orderRows) : null;
   return {
     membership: { id: membership.id, role: membership.role, partnerType: membership.partnerType, status: membership.status, integrationId: membership.integrationId, teamId: membership.teamId, createdAt: membership.createdAt },
     user: { ...safeUser, avatarUrl: avatarUrlOf(safeUser.avatarKey) },
@@ -58,11 +61,31 @@ export async function getMemberDetail(db: Db, tenantId: number, membershipId: nu
     token: activeToken ? { id: activeToken.id, createdAt: activeToken.createdAt, lastUsedAt: activeToken.lastUsedAt } : null,
     mappings,
     transactions,
-    orders: buyerOrders.map(({ order, config }) => ({ id: order.id, orderNumber: order.orderNumber, name: order.name, status: order.status, quantity: order.quantity, deliveredCount: order.deliveredCount, unitPrice: order.unitPrice, categoryId: order.categoryId, createdAt: order.createdAt, active: config.active, realtimeDelivery: config.realtimeDelivery })),
+    orders: orderRows,
     categories,
     reasons,
     buyerAreas: BUYER_AREAS,
+    /** v389: Zahlen für den Kopf der Käufer-Seite – nur bei Käufern */
+    buyer,
   };
+}
+
+/**
+ * Was ein Käufer bekommen hat (v389, Kopf der Käufer-Seite): Lieferungen über seine Bestellungen (nur an ihn selbst, nicht an eine weitere
+ * Station der Kette mit eigenem Käufer-Konto – wie im Kundenbereich), über Stationen mit seinem Konto und direkt ohne Bestellung
+ * („Ausliefern → An wen?“, v384: ohne Bestellung und Station, mit seinem Firmennamen). Dazu die eingeschalteten Lieferadressen.
+ */
+export async function buyerOverview(db: Db, tenantId: number, membershipId: number, user: { id: number; name: string | null; company: string | null }, orderRows: Array<{ status: string; active: boolean | null }>): Promise<BuyerStats & { endpoints: number }> {
+  const fields = { id: leadDeliveries.id, leadId: leadDeliveries.leadId, result: leadDeliveries.result, unitPrice: leadDeliveries.unitPrice, occurredAt: leadDeliveries.occurredAt };
+  const buyerName = user.company ?? user.name ?? "Käufer";
+  const [viaOrder, viaStop, direct, endpoints] = await Promise.all([
+    db.select(fields).from(leadDeliveries).innerJoin(orderOperationalConfigs, eq(orderOperationalConfigs.orderId, leadDeliveries.orderId)).leftJoin(deliveryStops, eq(deliveryStops.id, leadDeliveries.stopId)).where(and(eq(leadDeliveries.tenantId, tenantId), eq(orderOperationalConfigs.buyerUserId, user.id), or(isNull(deliveryStops.buyerUserId), eq(deliveryStops.buyerUserId, user.id)))),
+    db.select(fields).from(leadDeliveries).innerJoin(deliveryStops, eq(deliveryStops.id, leadDeliveries.stopId)).where(and(eq(leadDeliveries.tenantId, tenantId), eq(deliveryStops.buyerUserId, user.id))),
+    db.select(fields).from(leadDeliveries).where(and(eq(leadDeliveries.tenantId, tenantId), isNull(leadDeliveries.orderId), isNull(leadDeliveries.stopId), eq(leadDeliveries.buyerName, buyerName))),
+    db.select({ id: deliveryEndpoints.id }).from(deliveryEndpoints).where(and(eq(deliveryEndpoints.tenantId, tenantId), eq(deliveryEndpoints.membershipId, membershipId), eq(deliveryEndpoints.enabled, true))),
+  ]);
+  const rows: BuyerDeliveryRow[] = [...viaOrder, ...viaStop, ...direct];
+  return { endpoints: endpoints.length, ...summarizeBuyer(rows, orderRows) };
 }
 
 export type CreateMemberInput = { firstName: string; lastName: string; company?: string; phone?: string; email: string; password: string; kind: "benutzer" | "admin" | "vertriebler"; status: "aktiv" | "inaktiv"; billingStreet?: string; billingPostalCode?: string; billingCity?: string; billingCountry?: string };

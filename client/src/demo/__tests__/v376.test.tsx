@@ -168,7 +168,7 @@ describe("Version 376", () => {
   it("Benutzer: Kopf mit Name und Stand, Angaben als Leiste, Reiter mit Symbol – der gewählte Reiter steht auch in der Adresse", async () => {
     const root = await open("page=Benutzer&member=2"); await until(() => root.querySelector(".md-hero h1") !== null);
     expect(root.querySelector(".md-hero h1")!.textContent!.length).toBeGreaterThan(2); expect(root.querySelector(".md-state")!.textContent).toMatch(/Aktiv|Eingeladen|Inaktiv/);
-    expect(Array.from(root.querySelectorAll(".md-rail dt")).map((node) => node.textContent)).toEqual(["Zahlungsart", "Guthaben", "Webhook", "Reklamationsfrist", "Registriert am"]);
+    expect(Array.from(root.querySelectorAll(".md-rail dt")).map((node) => node.textContent)).toEqual(["Zahlungsart", "Guthaben", "Letzte Lieferung", "Reklamationsfrist", "Kunde seit"]); // seit v389 bei Käufern: letzte Lieferung und „Kunde seit“ (Team: Webhook, Registriert am)
     const tabs = () => Array.from(root.querySelectorAll<HTMLButtonElement>('.md-tabs [role="tab"]'));
     expect(tabs().map((node) => node.querySelector("span")!.textContent)).toEqual(["Stammdaten", "Passwort", "Bestellungen", "Lieferant", "Reklamation", "Zahlung", "Benachrichtigungen", "Aktivität", "Ansicht", "Integration"]);
     expect(tabs().every((node) => node.querySelector("svg") !== null)).toBe(true);

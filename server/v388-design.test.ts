@@ -38,13 +38,13 @@ describe("Sichtbare Bereiche: genau die Seiten des Kundenbereichs", () => {
 });
 
 describe("Leads: Farbe, Knöpfe, Leiste", () => {
-  it("„Freigegeben“ hat eine eigene Farbe – deutlich anders als „Zugewiesen“ (Abstand der Farben mindestens 30)", () => {
-    expect(STATUS_STYLE.genehmigt.color).toBe("#c026d3"); expect(STATUS_STYLE.zugewiesen.color).toBe("#16a34a");
+  it("„Freigegeben“ hat eine eigene Farbe – deutlich anders als „Zugewiesen“ (v388 Magenta, seit v389 Türkisblau – siehe v389-design.test.ts)", () => {
+    expect(STATUS_STYLE.genehmigt.color).not.toBe("#0d9488"); expect(STATUS_STYLE.zugewiesen.color).toBe("#16a34a");
     const lab = (hex: string) => { const lin = [1, 3, 5].map((index) => { const value = parseInt(hex.slice(index, index + 2), 16) / 255; return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; }); const [r, g, b] = lin;
       const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b), s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
       return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s]; };
     const distance = (a: string, b: string) => 100 * Math.hypot(...lab(a).map((value, index) => value - lab(b)[index]));
-    expect(distance(STATUS_STYLE.genehmigt.color, STATUS_STYLE.zugewiesen.color)).toBeGreaterThan(30);
+    expect(distance(STATUS_STYLE.genehmigt.color, STATUS_STYLE.zugewiesen.color)).toBeGreaterThan(15); // altes Türkis: 11
     for (const [key, style] of Object.entries(STATUS_STYLE)) if (key !== "genehmigt") expect(distance(STATUS_STYLE.genehmigt.color, style.color), key).toBeGreaterThan(12);
   });
   it("Knöpfe im Kopf rechtsbündig; in der Leiste die Lead-Kategorie, die Sortierung steht unter „Filter“", () => {
