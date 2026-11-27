@@ -1,12 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { CalendarClock, Infinity as Unlimited, Pencil, Route, Trash2 } from "lucide-react";
+import { ArrowRight, CalendarClock, Infinity as Unlimited, Pencil, Route, Trash2 } from "lucide-react";
 import type React from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import { categoryColor } from "@/lib/colors";
 import { orderStatusChoice } from "../../../shared/order-status";
 import { nameInitials } from "../../../shared/lead-age";
+import { orderRoutes, routeEnd, routeSentence, type OrderRoute } from "../../../shared/order-route";
 
 type OrderOverviewProps = {
   categories: Array<{ id: number; name: string; shortcode?: string | null; color?: string | null }>;
@@ -26,7 +27,32 @@ function orderEditLink(orderId: number) {
   return `/?${params.toString()}`;
 }
 
+/** Die Bestellung öffnen und gleich die Lieferkette zeigen (Schritt 2). */
+const orderChainLink = (orderId: number) => `${orderEditLink(orderId)}&kette=1`;
+
 function formatMoney(value: number) { return value.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }); }
+const price = (value: number) => value.toLocaleString("de-DE", { style: "currency", currency: "EUR", minimumFractionDigits: Number.isInteger(value) ? 0 : 2, maximumFractionDigits: 2 });
+
+/**
+ * Wohin die Leads einer Bestellung gehen (seit v379): die Lieferkette als Zeile unter der Bestellung – Station 1 ist die Bestellung, danach
+ * die weiteren Stationen der Reihe nach, am Ende, was mit einem Lead passiert, den niemand nimmt. Haben die Leadsparten verschiedene Ketten,
+ * steht je Weg eine Zeile; Sparten mit demselben Weg stehen zusammen.
+ */
+function OrderRouteStrip({ orderId, routes, categoryLabel, several }: { orderId: number; routes: OrderRoute[]; categoryLabel: (id: number) => string; several: boolean }) {
+  if (!routes.length) return <div className="order-route is-missing"><span className="order-route-label"><Route aria-hidden="true" />Lieferkette</span><span className="order-route-none">Für diese Bestellung gibt es noch keine Lieferkette. Sie entsteht, sobald du die Bestellung speicherst.</span><a className="order-route-edit" href={orderChainLink(orderId)}>Kette anlegen</a></div>;
+  return <div className="order-route" aria-label="Lieferkette: wohin die Leads gehen">
+    <span className="order-route-label" title="Station 1 bekommt jeden passenden Lead zuerst. Nimmt sie ihn nicht (Gebiet passt nicht, Dublette, Höchstmenge erreicht, abgelehnt oder reklamiert), geht er zur nächsten Station."><Route aria-hidden="true" />Lieferkette</span>
+    <div className="order-route-lines">{routes.map((route) => { const names = route.categoryIds.map(categoryLabel).join(", "); const sentence = routeSentence(route);
+      return <div key={route.chainIds.join("-")} className={`order-route-line ${route.active ? "" : "is-off"}`} title={sentence}>
+        {(several || routes.length > 1) && <span className="order-route-cats">{routes.length === 1 ? "Alle Sparten" : names}</span>}
+        <ol className="order-route-stops" aria-label={`${routes.length === 1 && several ? "Alle Sparten" : names}: ${sentence}`}>
+          {route.stops.map((stop, index) => <li key={`${stop.position}-${stop.buyerName}`} className={`order-route-stop ${stop.active ? "" : "is-off"} ${stop.orderStop ? "is-order" : ""}`}>{index > 0 && <ArrowRight className="order-route-arrow" aria-hidden="true" />}<span className="order-route-chip" title={`Station ${index + 1}${stop.orderStop ? " – die Bestellung" : ""}${stop.active ? "" : " – ausgeschaltet, wird übersprungen"}${stop.maxLeads ? ` – höchstens ${stop.maxLeads.toLocaleString("de-DE")} Leads` : ""}`}><em>{index + 1}</em><b>{stop.buyerName}</b><small>{price(stop.unitPrice)}{stop.active ? "" : " · aus"}</small></span></li>)}
+          <li className="order-route-end"><ArrowRight className="order-route-arrow" aria-hidden="true" /><span>{!route.active ? "Kette ausgeschaltet" : !route.stops.some((stop) => stop.active) ? "keine eingeschaltete Station" : `sonst ${routeEnd(route).replace(/^geht er |^ist er /, "")}`}</span></li>
+        </ol>
+      </div>; })}</div>
+    <a className="order-route-edit" href={orderChainLink(orderId)} aria-label="Lieferkette dieser Bestellung bearbeiten">Kette bearbeiten</a>
+  </div>;
+}
 const number = (value: number) => value.toLocaleString("de-DE");
 const shortDate = (value: Date | string) => new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
 const INTERVAL: Record<string, string> = { sofort: "sofort", "täglich": "täglich", "wöchentlich": "wöchentlich", monatlich: "monatlich" };
@@ -74,6 +100,7 @@ export function OrderOverview({ categories }: OrderOverviewProps) {
       const categoryIds = Array.isArray(order.categoryIds) ? order.categoryIds.filter((id): id is number => typeof id === "number") : [order.categoryId];
       const orderCategories = categories.filter((category) => categoryIds.includes(category.id)); const categoryText = orderCategories.map((category) => category.name).join(" · ") || "Keine Kategorie";
       const chainCount = chains.data?.filter((chain) => chain.orderId === order.id).length ?? 0;
+      const routes = orderRoutes((chains.data ?? []).filter((chain) => chain.orderId === order.id), categoryIds); const categoryLabel = (id: number) => categories.find((category) => category.id === id)?.name ?? "Sparte";
       const value = Number(order.unitPrice) * delivered; /* geliefert – daneben der Wert der ganzen Bestellung (bei unbegrenzt gibt es keinen) */ const orderValue = order.quantity ? Number(order.unitPrice) * order.quantity : null;
       const startsLater = order.startsAt && new Date(order.startsAt).getTime() > now; const ended = order.endsAt && new Date(order.endsAt).getTime() < now;
       const interval = INTERVAL[order.deliveryInterval] ?? order.deliveryInterval;
@@ -89,6 +116,7 @@ export function OrderOverview({ categories }: OrderOverviewProps) {
         <div className="order-stream-metric order-money"><small>Preis & Wert</small><b>{formatMoney(Number(order.unitPrice))}<span> je Lead</span></b><span title={orderValue !== null ? "Wert der gelieferten Leads von dem der ganzen Bestellung" : "Wert der gelieferten Leads"}>Wert {formatMoney(value)}{orderValue !== null && <> von {formatMoney(orderValue)}</>}</span></div>
         <select aria-label={`Status für ${order.orderNumber}`} className={`order-status-select status-${statusChoice}`} value={statusChoice} title={statusChoice === "aktiv" ? "Aktiv: bekommt Leads" : statusChoice === "pausiert" ? "Inaktiv: bekommt keine Leads" : undefined} disabled={updateStatus.isPending} onChange={(event) => updateStatus.mutate({ id: order.id, status: event.target.value as "aktiv" | "pausiert" })}><option value="aktiv">Aktiv</option><option value="pausiert">Inaktiv</option>{statusChoice === "erfüllt" && <option value="erfüllt" disabled>Erfüllt</option>}{statusChoice === "storniert" && <option value="storniert" disabled>Storniert</option>}</select>
         <div className="order-stream-actions"><Button size="sm" variant="ghost" className="order-edit" asChild><a href={orderEditLink(order.id)}><Pencil /> Bearbeiten</a></Button><Button size="sm" variant="ghost" className="order-delete" aria-label={`Bestellung ${order.orderNumber} löschen`} title="Löschen" disabled={deleteOrder.isPending} onClick={async () => { if (await confirmAction(`Bestellung ${order.orderNumber} wirklich löschen? Zugehörige Lieferketten, Auslieferungsdaten und Bestellkonfigurationen werden entfernt. Bereits zugeordnete Leads bleiben erhalten, werden aber von dieser Bestellung gelöst.`)) deleteOrder.mutate({ orderId: order.id }); }}><Trash2 /></Button></div>
+        {chains.data && <OrderRouteStrip orderId={order.id} routes={routes} categoryLabel={categoryLabel} several={categoryIds.length > 1} />}
       </article>; })}</div>
     {!orders.isLoading && !orders.data?.length && <div className="order-empty">Noch keine Bestellungen vorhanden. Lege die erste Bestellung an – die Kennzahlen landen danach direkt hier.</div>}
   </section>;

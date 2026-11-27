@@ -6927,4 +6927,62 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
       for (const endpoint of [plain, live, off]) await owner.leadops.deleteDeliveryEndpoint({ membershipId, id: endpoint.id }).catch(() => undefined);
     }
   }, 60000);
+
+  it("v379. Lieferkette für mehrere Leadsparten: gleiche Ketten erkennen und eine Kette für einzelne oder alle Sparten übernehmen – mit Einstellungen und Regeln; Station 1 bleibt, Zahlen bleiben an ihren Stationen", async () => {
+    const { deliveryChains: chainsTable, deliveryStops: stopsTable, deliveryStopReasons: rulesTable } = await import("../drizzle/schema");
+    const stamp = Date.now().toString(36).slice(-6); const tag = stamp.toUpperCase();
+    for (const [code, name] of [["K9A", "Solar"], ["K9B", "Wärme"], ["K9C", "Dach"]] as const) await owner.leadops.createCategory({ shortcode: `${code}${tag}`, name: `V379 ${name} ${stamp}`, defaultLeadPrice: "40.00" });
+    const categories = await owner.leadops.listCategories(); const [catA, catB, catC] = ["K9A", "K9B", "K9C"].map((code) => categories.find((row) => row.shortcode === `${code}${tag}`)!);
+    // nur die Sparte A kennt das Feld „dachflaeche“; „city“ ist ein allgemeines Feld
+    await owner.leadops.addCategoryField({ categoryId: catA.id, label: "Dachfläche", fieldKey: "dachflaeche", fieldType: "zahl" });
+    const order = await owner.leadops.createOrder({ name: `V379 Drei Sparten ${stamp}`, buyerName: `V379 Erste ${stamp}`, categoryId: catA.id, quantity: null, unitPrice: 44, status: "aktiv" });
+    expect(await owner.leadops.saveOrderWorkspace({ orderId: order.orderId, name: `V379 Drei Sparten ${stamp}`, buyerName: `V379 Erste ${stamp}`, buyerUserId: inviteeUserId, categoryId: catA.id, categoryIds: [catA.id, catB.id, catC.id], quantity: null, unitPrice: 44, supplierId: null, supplierMode: "alle", supplierIds: [], deliveryInterval: "sofort", compensateClaims: false, priority: 1, realtimeDelivery: true, startsAt: null, endsAt: null, ongoing: true, deliveryDays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"], deliveryArea: "landesweit", pauses: [], advancedFilters: { minAgeDays: null, maxLeadPrice: null, postcodes: null } })).toMatchObject({ success: true, chainsCreated: 3 });
+    const chains = await db.select().from(chainsTable).where(eq(chainsTable.orderId, order.orderId)); const chainOf = (categoryId: number) => chains.find((chain) => chain.categoryId === categoryId)!; const [chainA, chainB, chainC] = [chainOf(catA.id), chainOf(catB.id), chainOf(catC.id)];
+    const stopsOf = async (chainId: number) => (await db.select().from(stopsTable).where(eq(stopsTable.chainId, chainId))).sort((a, b) => a.position - b.position);
+    const siblings = async (chainId: number) => Object.fromEntries((await owner.leadops.chainDetail({ chainId, range: "maximal" })).order!.chains.map((item) => [item.categoryId, { same: item.same, route: item.route }]));
+    try {
+      // (a) frisch gespeichert: jede Sparte hat nur Station 1 – alle drei Ketten sind gleich
+      expect(await siblings(chainA.id)).toEqual({ [catA.id]: { same: true, route: [] }, [catB.id]: { same: true, route: [] }, [catC.id]: { same: true, route: [] } });
+      // (b) weitere Stationen nur in A – mit Preis, Höchstmenge, Gebiet, Filtern und einer Regel
+      const zweite = await owner.leadops.addChainStop({ chainId: chainA.id, buyerName: `V379 Zweite ${stamp}`, unitPrice: 30, reclamationWindowHours: 0 }); const dritte = await owner.leadops.addChainStop({ chainId: chainA.id, buyerName: `V379 Dritte ${stamp}`, unitPrice: 20 });
+      await owner.leadops.updateChainStop({ id: zweite.stopId, maxLeads: 50, geoMode: "plz", geoValues: ["80", "81"], fieldFilters: [{ field: "dachflaeche", op: "groesser", value: "30" }, { field: "city", op: "gesetzt" }], phoneFilter: "exclude_invalid" });
+      const reasons = (await owner.leadops.chainDetail({ chainId: chainA.id, range: "maximal" })).reasons; expect(reasons.length).toBeGreaterThan(1);
+      await owner.leadops.saveStopRules({ stopId: zweite.stopId, rules: [{ reasonId: reasons[0].id, allowed: false, passOn: false }] });
+      const afterEdit = await siblings(chainA.id); expect(afterEdit[catB.id]).toEqual({ same: false, route: [] }); expect(afterEdit[catC.id].same).toBe(false);
+      expect((await siblings(chainB.id))[catA.id]).toEqual({ same: false, route: [`V379 Zweite ${stamp}`, `V379 Dritte ${stamp}`] }); expect((await siblings(chainB.id))[catC.id].same).toBe(true); // B und C sind untereinander noch gleich
+      // (c) für eine einzelne Sparte übernehmen: B bekommt die Kette von A – der Filter auf das Feld, das es nur in A gibt, geht nicht mit
+      const stationB = (await stopsOf(chainB.id))[0];
+      const first = await owner.leadops.copyOrderChain({ fromChainId: chainA.id, toChainIds: [chainB.id] });
+      expect(first).toEqual({ success: true, copied: 1, dropped: [{ categoryName: catB.name, buyerName: `V379 Zweite ${stamp}`, field: "dachflaeche" }] });
+      const stopsB = await stopsOf(chainB.id);
+      const stationName = (await stopsOf(chainA.id))[0].buyerName; // Station 1: der Käufer der Bestellung
+      expect(stopsB.map((stop) => [stop.position, stop.buyerName, stop.unitPrice, stop.orderStop])).toEqual([[1, stationName, "44.00", true], [2, `V379 Zweite ${stamp}`, "30.00", false], [3, `V379 Dritte ${stamp}`, "20.00", false]]);
+      expect(stopsB[0].id).toBe(stationB.id); expect(stopsB[1]).toMatchObject({ maxLeads: 50, reclamationWindowHours: 0, geoMode: "plz", geoValues: ["80", "81"], fieldFilters: [{ field: "city", op: "gesetzt" }], phoneFilter: "exclude_invalid", active: true });
+      expect((await db.select().from(rulesTable).where(eq(rulesTable.stopId, stopsB[1].id))).map((rule) => [rule.reasonId, rule.allowed, rule.passOn])).toEqual([[reasons[0].id, false, false]]);
+      const afterFirst = await siblings(chainA.id); expect(afterFirst[catB.id]).toEqual({ same: true, route: [`V379 Zweite ${stamp}`, `V379 Dritte ${stamp}`] }); expect(afterFirst[catC.id].same).toBe(false); // gleich – obwohl der Filter fehlt, den es dort nicht geben kann
+      expect((await owner.leadops.copyOrderChain({ fromChainId: chainA.id, toChainIds: [chainB.id] })).copied).toBe(1); expect((await stopsOf(chainB.id)).map((stop) => stop.id)).toEqual(stopsB.map((stop) => stop.id)); // noch einmal: nichts verdoppelt sich
+      // (d) A ändern (Preis, Reihenfolge, eine Station weg, eine neue) und für alle übernehmen: B wird angepasst, C bekommt alles neu
+      await owner.leadops.updateChainStop({ id: dritte.stopId, unitPrice: 22.5, active: false }); await owner.leadops.deleteChainStop({ stopId: zweite.stopId });
+      const vierte = await owner.leadops.addChainStop({ chainId: chainA.id, buyerName: `V379 Vierte ${stamp}`, unitPrice: 15 });
+      await owner.leadops.reorderChainStops({ chainId: chainA.id, stopIds: [vierte.stopId, dritte.stopId] });
+      expect(await owner.leadops.copyOrderChain({ fromChainId: chainA.id, toChainIds: [chainB.id, chainC.id, chainA.id] })).toEqual({ success: true, copied: 2, dropped: [] });
+      const wanted = [[1, stationName, "44.00", true], [2, `V379 Vierte ${stamp}`, "15.00", true], [3, `V379 Dritte ${stamp}`, "22.50", false]];
+      for (const chain of [chainA, chainB, chainC]) expect((await stopsOf(chain.id)).map((stop) => [stop.position, stop.buyerName, stop.unitPrice, stop.active]), chain.name).toEqual(wanted);
+      const finalB = await stopsOf(chainB.id); expect(finalB[2].id).toBe(stopsB[2].id); expect(finalB.some((stop) => stop.id === stopsB[1].id)).toBe(false); // „Dritte“ ist dieselbe Station geblieben (ihre Zahlen bleiben), „Zweite“ ist weg – samt ihren Regeln
+      expect(await db.select().from(rulesTable).where(eq(rulesTable.stopId, stopsB[1].id))).toEqual([]);
+      const afterAll = await siblings(chainC.id); expect(Object.values(afterAll).every((item) => item.same)).toBe(true); expect(afterAll[catA.id].route).toEqual([`V379 Vierte ${stamp}`, `V379 Dritte ${stamp}`]);
+      // (e) leere Kette übernehmen: Die anderen Sparten haben danach nur noch Station 1
+      await owner.leadops.deleteChainStop({ stopId: vierte.stopId }); await owner.leadops.deleteChainStop({ stopId: dritte.stopId }); await owner.leadops.copyOrderChain({ fromChainId: chainA.id, toChainIds: [chainC.id] });
+      expect((await stopsOf(chainC.id)).map((stop) => [stop.position, stop.orderStop])).toEqual([[1, true]]); expect((await stopsOf(chainB.id)).length).toBe(3);
+      // (f) nur innerhalb einer Bestellung – und nicht für Käufer-Zugänge
+      const foreign = (await db.select().from(chainsTable).where(and(eq(chainsTable.tenantId, S.tenantId), ne(chainsTable.orderId, order.orderId))).limit(1))[0];
+      if (foreign) await expect(owner.leadops.copyOrderChain({ fromChainId: chainA.id, toChainIds: [foreign.id] })).rejects.toThrow("gehört nicht zu dieser Bestellung");
+      const loose = (await owner.leadops.createChainRule({ categoryIds: [catA.id], supplierMode: "all", supplierIds: [], buyers: [], name: `V379 frei ${stamp}`, active: false })).created[0];
+      await expect(owner.leadops.copyOrderChain({ fromChainId: loose.chainId, toChainIds: [chainB.id] })).rejects.toThrow("gehört zu keiner Bestellung"); await owner.leadops.deleteDeliveryChain({ chainId: loose.chainId });
+      await expect(owner.leadops.copyOrderChain({ fromChainId: 999_999_999, toChainIds: [chainB.id] })).rejects.toThrow("nicht gefunden"); expect(await owner.leadops.copyOrderChain({ fromChainId: chainA.id, toChainIds: [] })).toEqual({ success: true, copied: 0, dropped: [] });
+      await expect(invitee.leadops.copyOrderChain({ fromChainId: chainA.id, toChainIds: [chainB.id] })).rejects.toThrow(/nicht zur Verfügung|eingeschränkt/);
+    } finally {
+      await owner.leadops.deleteOrder({ orderId: order.orderId }).catch(() => undefined);
+    }
+  }, 60000);
 });

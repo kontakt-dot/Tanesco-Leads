@@ -2531,3 +2531,59 @@ html:not(.dark) .pipeline-head-quote .pipeline-head-quote-mark{color:#bc001d!imp
 }
 @media (max-width:640px){.pr-quota-main strong{font-size:38px}.pr-quota-form label,.pr-quota-input,.pr-quota-form .filter-select{width:100%}.pr-quota-form label{flex:1 1 140px}.pr-quota-remove{margin-left:0}}
 @media (prefers-reduced-motion:reduce){.pr-quota-bar i{transition:none}}
+
+/* ═══════════════════════════ Version 379 ═══════════════════════════
+   1) Bestellübersicht: unter jeder Bestellung steht ihre Lieferkette – wohin die Leads gehen (Station 1 = die Bestellung, dann die
+      weiteren Stationen, am Ende, was mit einem Lead passiert, den niemand nimmt). Verschiedene Wege je Sparte = je Weg eine Zeile.
+   2) Lieferkette der Bestellung: „Für welche Sparten gilt diese Kette?“ – alle gemeinsam oder einzelne. Gewählt = zartrot, wie überall. */
+.order-stream-row{grid-template-areas:"id buyer cats progress money status actions" "route route route route route route route"}
+.order-route{grid-area:route;display:flex;align-items:flex-start;gap:10px 14px;min-width:0;margin-top:-2px;padding:10px 12px;border:1px solid var(--ov-line);border-radius:12px;background:var(--ov-kpi-bg)}
+.order-route-label{flex:none;display:inline-flex;align-items:center;gap:6px;height:30px;font-size:12px;font-weight:650;color:var(--ov-muted);white-space:nowrap}
+.order-route-label svg{width:14px;height:14px;color:var(--ov-faint)}
+.order-route-lines{flex:1 1 auto;display:grid;gap:6px;min-width:0}
+.order-route-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.order-route-line.is-off{opacity:.6}
+.order-route-cats{flex:none;display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;background:var(--ov-chip);font-size:11.5px;font-weight:650;color:var(--ov-ink-2);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.order-route-stops{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0;padding:0;list-style:none;min-width:0}
+.order-route-stop,.order-route-end{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.order-route-arrow{flex:none;width:14px;height:14px;color:var(--ov-faint)}
+.order-route-chip{display:inline-flex;align-items:center;gap:7px;min-width:0;height:30px;padding:0 10px 0 4px;border:1px solid var(--ov-line-2);border-radius:999px;background:transparent}
+.order-route-chip em{flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--ov-chip);font-style:normal;font-size:11.5px;font-weight:750;color:var(--ov-ink-2);font-variant-numeric:tabular-nums}
+.order-route-chip b{min-width:0;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:650;color:var(--ov-ink)}
+.order-route-chip small{flex:none;font-size:11.5px;color:var(--ov-muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.order-route-stop.is-order .order-route-chip{border-color:var(--ov-good-line);background:var(--ov-good-bg)}
+.order-route-stop.is-order .order-route-chip em{background:var(--ov-good);color:#fff}
+.order-route-stop.is-off .order-route-chip{border-style:dashed}.order-route-stop.is-off .order-route-chip b{text-decoration:line-through;color:var(--ov-muted)}
+.order-route-end span{font-size:12px;color:var(--ov-muted)}
+.order-route-none{flex:1 1 auto;align-self:center;font-size:12.5px;color:var(--ov-muted)}
+.order-route-edit{flex:none;align-self:center;font-size:12px;font-weight:650;color:var(--ov-ink);text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.order-route-edit:hover{color:var(--ov-accent-strong)}
+.order-route-edit:focus-visible{outline:2px solid var(--ov-ink-2);outline-offset:2px;border-radius:4px}
+html.dark .order-route-stop.is-order .order-route-chip em{color:#06281b}
+@media (max-width:1320px){.order-stream-row{grid-template-areas:"id buyer cats status" "progress progress money actions" "route route route route"}}
+@media (max-width:720px){
+  .order-stream-row{grid-template-areas:"id status" "buyer buyer" "cats cats" "progress progress" "money actions" "route route"}
+  .order-route{flex-wrap:wrap}.order-route-label{height:auto}.order-route-lines{flex:1 1 100%}
+  .order-route-chip b{max-width:150px}
+}
+
+.lk-sparten{display:grid;gap:10px;padding:14px 18px;border:1px solid var(--lt-line-2);border-radius:16px;background:var(--lt-tile);font-size:13px;color:var(--lt-ink-2)}
+.lk-sparten-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.lk-sparten-head b{font-size:14px;font-weight:700;color:var(--lt-ink)}
+.lk-sparten-head span{font-size:12.5px;color:var(--lt-muted)}
+.lk-sparten-chips{display:flex;flex-wrap:wrap;gap:8px}
+.lk-sparte{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border:1px solid var(--lt-line-2);border-radius:999px;background:transparent;color:var(--lt-ink-2);font:inherit;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
+.lk-sparte svg{width:14px;height:14px}
+.lk-sparte:hover:not(:disabled):not(.is-own){border-color:var(--lt-ink-2);color:var(--lt-ink)}
+.lk-sparte.is-on{border-color:var(--lt-ink-2);background:var(--lt-tile-on);color:var(--lt-ink)}
+html:not(.dark) .lk-sparte.is-on{border-color:rgba(188,0,29,.4);background:#fff5f5;color:#bc001d}
+.lk-sparte.is-all{font-weight:700}
+.lk-sparte.is-own{cursor:default}
+.lk-sparte:disabled{opacity:.5;cursor:default}
+.lk-sparte:focus-visible,.lk-sparten-apart button:focus-visible{outline:2px solid var(--lt-ink-2);outline-offset:2px}
+.lk-sparten-apart{display:grid;gap:6px;margin:0;padding:10px 0 0;list-style:none;border-top:1px dashed var(--lt-line-2)}
+.lk-sparten-apart li{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:12.5px;color:var(--lt-muted)}
+.lk-sparten-apart b{font-weight:650;color:var(--lt-ink)}
+.lk-sparten-apart button{padding:0;border:0;background:none;font:inherit;font-size:12.5px;font-weight:650;color:var(--lt-ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.lk-add-form>p.lk-add-all{flex:1 1 100%;margin:0;font-size:12.5px;line-height:1.5;color:var(--lt-muted)}
+

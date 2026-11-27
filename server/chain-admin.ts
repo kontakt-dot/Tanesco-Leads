@@ -3,7 +3,8 @@
  * Ein Lead läuft der Reihe nach über die Stops (Käufer + Preis); passt eine Bedingung nicht, wird der Stop übersprungen (keine Lieferung, keine Belastung).
  */
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
-import { deliveryChains, deliveryEndpoints, deliveryStopReasons, deliveryStops, leadCategories, leadDeliveries, leads, memberships, orderOperationalConfigs, orders, reclamationReasons, suppliers, users } from "../drizzle/schema";
+import { categoryFields, deliveryChains, deliveryEndpoints, deliveryStopReasons, deliveryStops, leadCategories, leadDeliveries, leads, memberships, orderOperationalConfigs, orders, reclamationReasons, suppliers, users } from "../drizzle/schema";
+import { chainSignature, extraStops, planChainCopy, stopBuyerKey, type RouteRule, type RouteStop } from "../shared/order-route";
 import { byChainOrder, chainPlaces, reorderedPriorities, suggestChainName, supplierText, type SupplierFilterMode } from "../shared/chain-rules";
 import { describeOrderStation, orderCategoryIds } from "../shared/order-chain";
 import { DEFAULT_REASONS, missingDefaultReasons } from "../shared/default-reasons";
@@ -161,12 +162,18 @@ export async function chainDetail(db: Db, tenantId: number, chainId: number, ran
   const orderConfig = order ? (await db.select().from(orderOperationalConfigs).where(eq(orderOperationalConfigs.orderId, order.id)).limit(1))[0] : undefined;
   const categoryRows = order ? await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(eq(leadCategories.tenantId, tenantId)) : [];
   const siblings = order ? await db.select({ id: deliveryChains.id, categoryId: deliveryChains.categoryId, status: deliveryChains.status, name: deliveryChains.name, supplierFilterMode: deliveryChains.supplierFilterMode, supplierIds: deliveryChains.supplierIds }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, order.id))) : [];
-  const siblingStops = siblings.length ? await db.select({ id: deliveryStops.id, chainId: deliveryStops.chainId, orderStop: deliveryStops.orderStop }).from(deliveryStops).where(inArray(deliveryStops.chainId, siblings.map((row) => row.id))) : [];
+  const siblingStops = siblings.length ? await db.select().from(deliveryStops).where(inArray(deliveryStops.chainId, siblings.map((row) => row.id))) : [];
   const orderCategories = order ? orderCategoryIds(order, orderConfig) : [];
+  // Mehrere Leadsparten (v379): Welche Sparten haben nach Station 1 dieselbe Kette wie diese? Für sie lässt sich die Kette gemeinsam festlegen.
+  const several = siblings.filter((row) => orderCategories.includes(row.categoryId)).length > 1;
+  const siblingRules: RouteRule[] = several && siblingStops.length ? await db.select({ stopId: deliveryStopReasons.stopId, reasonId: deliveryStopReasons.reasonId, allowed: deliveryStopReasons.allowed, passOn: deliveryStopReasons.passOn }).from(deliveryStopReasons).where(inArray(deliveryStopReasons.stopId, siblingStops.map((stop) => stop.id))) : [];
+  const fieldKeys = several ? await categoryFieldKeys(db, tenantId, siblings.map((row) => row.categoryId)) : new Map<number, Set<string>>();
+  const stopsOf = (chainId: number) => siblingStops.filter((stop) => stop.chainId === chainId) as RouteStop[];
+  const sameAsThis = (row: { id: number; categoryId: number }) => row.id === chain.id || chainSignature({ stops: stopsOf(chain.id), rules: siblingRules, reasons, foreignFields: foreignFieldsOf(fieldKeys, chain.categoryId, row.categoryId) }) === chainSignature({ stops: stopsOf(row.id), rules: siblingRules, reasons });
   const orderInfo = order ? { ...describeOrderStation({ order, config: orderConfig, mainCategoryId: order.categoryId, supplierName: (id) => pickers.suppliers.find((supplier) => supplier.id === id)?.label.split(" — ")[0] ?? `Lieferant #${id}`, categoryName: (id) => categoryRows.find((row) => row.id === id)?.name ?? "" }),
     /** Diese Kette hat (noch) keine Station 1 aus der Bestellung – sie läuft wie vor v376, bis jemand „aus der Bestellung übernehmen“ wählt oder die Bestellung speichert */
     missingStation: !stops.some((stop) => stop.orderStop),
-    chains: siblings.filter((row) => orderCategories.includes(row.categoryId)).sort((a, b) => orderCategories.indexOf(a.categoryId) - orderCategories.indexOf(b.categoryId)).map((row) => ({ chainId: row.id, categoryId: row.categoryId, categoryName: categoryRows.find((item) => item.id === row.categoryId)?.name ?? "–", status: row.status, stops: siblingStops.filter((stop) => stop.chainId === row.id).length, missingStation: !siblingStops.some((stop) => stop.chainId === row.id && stop.orderStop) })) } : null;
+    chains: siblings.filter((row) => orderCategories.includes(row.categoryId)).sort((a, b) => orderCategories.indexOf(a.categoryId) - orderCategories.indexOf(b.categoryId)).map((row) => ({ chainId: row.id, categoryId: row.categoryId, categoryName: categoryRows.find((item) => item.id === row.categoryId)?.name ?? "–", status: row.status, stops: siblingStops.filter((stop) => stop.chainId === row.id).length, missingStation: !siblingStops.some((stop) => stop.chainId === row.id && stop.orderStop), /** nach Station 1 dieselbe Kette wie die gezeigte */ same: several ? sameAsThis(row) : true, /** die Käufer nach Station 1, der Reihe nach */ route: extraStops(stopsOf(row.id)).map((stop) => stop.buyerName) })) } : null;
   const now = new Date();
   const describe = (row: typeof rows[number]) => {
     if (row.result === "übersprungen") return { status: "übersprungen" as const, info: row.skipReason ?? "" };
@@ -229,6 +236,52 @@ export async function addStop(db: Db, tenantId: number, input: { chainId: number
     }
   }
   return { success: true, stopId: Number(inserted[0]?.insertId) || 0, position, alsoAdded };
+}
+
+/** Feldschlüssel je Kategorie – für Feld-Filter, die nur in einer Sparte gelten können. */
+async function categoryFieldKeys(db: Db, tenantId: number, categoryIds: number[]): Promise<Map<number, Set<string>>> {
+  const map = new Map<number, Set<string>>(); const ids = Array.from(new Set(categoryIds)); if (!ids.length) return map;
+  const rows = await db.select({ categoryId: categoryFields.categoryId, fieldKey: categoryFields.fieldKey }).from(categoryFields).where(and(eq(categoryFields.tenantId, tenantId), inArray(categoryFields.categoryId, ids)));
+  for (const row of rows) { const set = map.get(row.categoryId) ?? new Set<string>(); set.add(row.fieldKey); map.set(row.categoryId, set); }
+  return map;
+}
+/** Felder, die es in der Sparte der Quelle gibt, in der des Ziels aber nicht – ein Filter darauf würde dort jeden Lead abweisen. */
+const foreignFieldsOf = (keys: Map<number, Set<string>>, fromCategoryId: number, toCategoryId: number): Set<string> => { const target = keys.get(toCategoryId) ?? new Set<string>(); return new Set(Array.from(keys.get(fromCategoryId) ?? []).filter((key) => !target.has(key))); };
+
+/**
+ * Kette für andere Leadsparten derselben Bestellung übernehmen (v379): Die Ziel-Ketten haben danach nach ihrer Station 1 dieselben Stationen
+ * in derselben Reihenfolge – mit Preis, Einstellungen und Regeln. Stationen mit demselben Käufer bleiben (mit ihren Zahlen) und werden
+ * angepasst, fehlende kommen dazu, überzählige fallen weg. Station 1 (die Bestellung) bleibt, wie sie ist. Feld-Filter auf Felder, die es
+ * in der anderen Sparte nicht gibt, gehen nicht mit – das Ergebnis nennt sie.
+ */
+export async function copyOrderChain(db: Db, tenantId: number, input: { fromChainId: number; toChainIds: number[] }) {
+  const source = (await db.select({ id: deliveryChains.id, orderId: deliveryChains.orderId, categoryId: deliveryChains.categoryId }).from(deliveryChains).where(and(eq(deliveryChains.id, input.fromChainId), eq(deliveryChains.tenantId, tenantId))).limit(1))[0];
+  if (!source) throw new Error("Lieferkette wurde nicht gefunden."); if (!source.orderId) throw new Error("Diese Kette gehört zu keiner Bestellung.");
+  const wanted = Array.from(new Set(input.toChainIds)).filter((id) => id !== source.id); if (!wanted.length) return { success: true, copied: 0, dropped: [] as Array<{ categoryName: string; buyerName: string; field: string }> };
+  const targets = await db.select({ id: deliveryChains.id, categoryId: deliveryChains.categoryId }).from(deliveryChains).where(and(eq(deliveryChains.tenantId, tenantId), eq(deliveryChains.orderId, source.orderId), inArray(deliveryChains.id, wanted)));
+  if (targets.length !== wanted.length) throw new Error("Eine der gewählten Sparten gehört nicht zu dieser Bestellung.");
+  const sourceStops = await db.select().from(deliveryStops).where(eq(deliveryStops.chainId, source.id)) as RouteStop[];
+  const sourceRules: RouteRule[] = sourceStops.length ? await db.select({ stopId: deliveryStopReasons.stopId, reasonId: deliveryStopReasons.reasonId, allowed: deliveryStopReasons.allowed, passOn: deliveryStopReasons.passOn }).from(deliveryStopReasons).where(inArray(deliveryStopReasons.stopId, sourceStops.map((stop) => stop.id))) : [];
+  const fieldKeys = await categoryFieldKeys(db, tenantId, [source.categoryId, ...targets.map((row) => row.categoryId)]);
+  const names = await db.select({ id: leadCategories.id, name: leadCategories.name }).from(leadCategories).where(inArray(leadCategories.id, targets.map((row) => row.categoryId)));
+  const dropped: Array<{ categoryName: string; buyerName: string; field: string }> = [];
+  for (const target of targets) {
+    const targetStops = await db.select().from(deliveryStops).where(eq(deliveryStops.chainId, target.id)) as RouteStop[];
+    const plan = planChainCopy({ source: sourceStops, sourceRules, target: targetStops, foreignFields: foreignFieldsOf(fieldKeys, source.categoryId, target.categoryId) });
+    const categoryName = names.find((row) => row.id === target.categoryId)?.name ?? "–"; for (const item of plan.dropped) dropped.push({ categoryName, ...item });
+    await db.transaction(async (tx) => {
+      if (plan.removes.length) { await tx.delete(deliveryStopReasons).where(inArray(deliveryStopReasons.stopId, plan.removes)); await tx.delete(deliveryStops).where(inArray(deliveryStops.id, plan.removes)); }
+      const setRules = async (stopId: number, rules: typeof plan.updates[number]["rules"]) => { await tx.delete(deliveryStopReasons).where(eq(deliveryStopReasons.stopId, stopId)); if (rules.length) await tx.insert(deliveryStopReasons).values(rules.map((rule) => ({ stopId, ...rule }))); };
+      for (const item of plan.updates) { await tx.update(deliveryStops).set({ ...item.values, geoMode: item.values.geoMode as "landesweit" | "bundesland" | "plz", phoneFilter: item.values.phoneFilter as "all" | "exclude_invalid" | "only_valid" }).where(eq(deliveryStops.id, item.id)); await setRules(item.id, item.rules); }
+      let spare = 5000; // neue Stationen bekommen erst einen freien Platz weit hinten – die Reihenfolge setzt der nächste Schritt
+      for (const item of plan.inserts) { const inserted = await tx.insert(deliveryStops).values({ chainId: target.id, position: (spare += 1), ...item.values, geoMode: item.values.geoMode as "landesweit" | "bundesland" | "plz", phoneFilter: item.values.phoneFilter as "all" | "exclude_invalid" | "only_valid" }); const stopId = Number(inserted[0]?.insertId) || 0; if (stopId) await setRules(stopId, item.rules); }
+    });
+    // Reihenfolge wie in der Quelle (Station 1 bleibt vorn)
+    const after = await db.select({ id: deliveryStops.id, buyerName: deliveryStops.buyerName, buyerUserId: deliveryStops.buyerUserId, orderStop: deliveryStops.orderStop, position: deliveryStops.position }).from(deliveryStops).where(eq(deliveryStops.chainId, target.id));
+    const rank = (stop: typeof after[number]) => (stop.orderStop ? -1 : plan.order.indexOf(stopBuyerKey(stop)));
+    await reorderStops(db, tenantId, target.id, [...after].sort((a, b) => rank(a) - rank(b) || a.position - b.position).map((stop) => stop.id));
+  }
+  return { success: true, copied: targets.length, dropped };
 }
 
 /** Reihenfolge der Stops neu setzen (Drag & Drop / Pfeile); Positionen werden 1..n durchnummeriert. */

@@ -90,17 +90,18 @@ describe("Version 376", () => {
     const { chain, sibling } = aroundhome(); expect(stopsOf(chain.id)).toHaveLength(1); expect(stopsOf(sibling.id)).toHaveLength(1);
     expect(stopsOf(chain.id)[0]).toMatchObject({ orderStop: true, buyerName: "Aroundhome GmbH" }); expect(stopsOf(sibling.id)[0]).toMatchObject({ orderStop: true, buyerName: "Aroundhome GmbH" });
     const root = await open(`page=Lieferkette&chain=${chain.id}`); await until(() => cards(root).length > 0);
-    const sparten = Array.from(root.querySelectorAll<HTMLButtonElement>(".lk-sparten .lk-seg button")); expect(sparten.map((node) => node.textContent)).toEqual(["Photovoltaik", "Wärmepumpe"]); expect(sparten[0].getAttribute("aria-pressed")).toBe("true");
+    // seit v379: Beide Sparten haben dieselbe Kette – beide sind angehakt, und was hier festgelegt wird, gilt für beide
+    const sparten = () => Array.from(root.querySelectorAll<HTMLButtonElement>(".lk-sparten-chips .lk-sparte")); expect(sparten().map((node) => node.textContent)).toEqual(["Alle 2 Sparten", "Photovoltaik", "Wärmepumpe"]); expect(sparten().map((node) => node.getAttribute("aria-pressed"))).toEqual(["true", "true", "true"]);
     await click(root.querySelector(".lk-add-btn"));
     const form = root.querySelector<HTMLFormElement>(".lk-add-form")!; const select = form.querySelector("select")!; const buyerUserId = Number(select.value); expect(buyerUserId).toBeGreaterThan(0);
-    const also = form.querySelector<HTMLInputElement>('.lk-add-all input[type="checkbox"]')!; expect(also.checked).toBe(true); expect(form.querySelector(".lk-add-all")!.textContent).toBe("auch für die Sparte Wärmepumpe dieser Bestellung");
+    expect(form.querySelector(".lk-add-all")!.textContent).toBe("Die Station kommt in die Ketten von Photovoltaik und Wärmepumpe – wie oben angehakt.");
     await act(async () => { fireEvent.change(form.querySelector<HTMLInputElement>(".lk-add-price input")!, { target: { value: "29,5" } }); });
-    await click(button(form, "Station hinzufügen"), 900);
+    await click(button(form, "Station hinzufügen"), 900); await until(() => stopsOf(sibling.id).length === 2);
     expect(stopsOf(chain.id).map((row) => [row.position, row.buyerUserId, Number(row.unitPrice), Boolean(row.orderStop)])).toEqual([[1, stopsOf(chain.id)[0].buyerUserId, 35, true], [2, buyerUserId, 29.5, false]]);
     expect(stopsOf(sibling.id).map((row) => [row.position, row.buyerUserId, Number(row.unitPrice)])).toEqual([[1, stopsOf(sibling.id)[0].buyerUserId, 35], [2, buyerUserId, 29.5]]);
     await until(() => cards(root).length === 2); expect(root.querySelector(".lk-add-form")).toBeNull();
-    // zur anderen Sparte wechseln
-    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".lk-sparten .lk-seg button"))[1], 900); await until(() => new URLSearchParams(window.location.search).get("chain") === String(sibling.id));
+    // zur anderen Sparte wechseln: abwählen – dann steht sie unter den Sparten mit eigener Kette und lässt sich ansehen
+    await click(sparten()[2], 400); await click(root.querySelector(".lk-sparten-apart button"), 900); await until(() => new URLSearchParams(window.location.search).get("chain") === String(sibling.id));
     expect(new URLSearchParams(window.location.search).get("chain")).toBe(String(sibling.id)); expect(cards(root)).toHaveLength(2);
   }, 50000);
 

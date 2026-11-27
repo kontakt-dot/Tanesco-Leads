@@ -8,7 +8,7 @@ import type { AppRouter } from "../../../server/routers";
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarOff, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, CornerDownRight, Gauge, GitBranch, GripVertical, MapPin, MessageSquareWarning, Plus, Send, Trash2, Unplug, UserRoundCog, Users, X } from "lucide-react";
 import { categoryColor } from "@/lib/colors";
 import { categoryEmoji } from "../../../shared/category-emoji";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import { parsePrice, ruleSentence, suggestChainName, supplierText } from "../../../shared/chain-rules";
@@ -35,9 +35,9 @@ const statusLabel: Record<string, string> = { angenommen: "angenommen", reklamie
 
 export default function ChainWorkspace() {
   const [chainId, setChainId] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get("chain")) || null);
-  const [range, setRange] = useState<Range>("maximal");
+  const [range, setRange] = useState<Range>("maximal"); const [alone, setAlone] = useState(false); // gezielt zu einer anderen Sparte gewechselt: Dort gilt zunächst nur sie
   const open = (id: number | null) => { setChainId(id); const params = new URLSearchParams(window.location.search); params.set("page", "Lieferkette"); if (id) params.set("chain", String(id)); else params.delete("chain"); window.history.replaceState(null, "", `/?${params.toString()}`); };
-  if (chainId) return <ChainDetailPage chainId={chainId} range={range} setRange={setRange} onBack={() => open(null)} onOpenChain={open} />;
+  if (chainId) return <ChainDetailPage key={chainId} chainId={chainId} range={range} setRange={setRange} onBack={() => { setAlone(false); open(null); }} alone={alone} onOpenChain={(id) => { setAlone(true); open(id); }} />;
   return <ChainOverviewPage range={range} setRange={setRange} onOpen={open} />;
 }
 
@@ -205,20 +205,32 @@ const areaText = (stop: Pick<Stop, "geoMode" | "geoValues">) => stop.geoMode ===
  * (Gebiet passt nicht, Dublette, Höchstmenge, Ablehnung, Reklamation). In der Kette einer Bestellung ist Station 1 die Bestellung selbst –
  * mit allem, was von dort gilt. Auch eingebettet in den Bestellungen (Schritt „Lieferkette“), dann ohne Rücksprung und mit kompaktem Kopf.
  */
-export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = false, onOpenChain }: { chainId: number; range: Range; setRange: (value: Range) => void; onBack: () => void; embedded?: boolean; /** zur Kette einer anderen Leadsparte derselben Bestellung wechseln */ onOpenChain?: (chainId: number) => void }) {
+export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = false, onOpenChain, alone = false }: { chainId: number; range: Range; setRange: (value: Range) => void; onBack: () => void; embedded?: boolean; /** zur Kette einer anderen Leadsparte derselben Bestellung wechseln */ onOpenChain?: (chainId: number) => void; /** die Kette wurde gezielt geöffnet („ansehen“): Dann gilt zunächst nur diese Sparte – sonst alle Sparten mit derselben Kette */ alone?: boolean }) {
   const utils = trpc.useUtils();
   const detail = trpc.leadops.chainDetail.useQuery({ chainId, range }, { retry: false });
   const refresh = () => { utils.leadops.chainDetail.invalidate(); utils.leadops.chainOverview.invalidate(); utils.leadops.listDeliveryChains.invalidate(); };
   const onError = (error: { message: string }) => toast.error(error.message);
+  // Mehrere Leadsparten (v379): Für welche weiteren Sparten gilt, was hier festgelegt wird? Nach jeder Änderung bekommen sie dieselbe Kette.
+  // null = noch nicht aus den Daten gelesen. Beim Öffnen sind es alle eingeschalteten Sparten mit derselben Kette – gezielt geöffnet nur diese.
+  const [scope, setScope] = useState<number[] | null>(alone ? [] : null); const scopeRef = useRef<number[]>([]); const copyQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const copyChain = trpc.leadops.copyOrderChain.useMutation();
+  useEffect(() => { if (scope === null && detail.data) setScope(detail.data.order ? detail.data.order.chains.filter((item) => item.chainId !== chainId && item.status === "aktiv" && item.same).map((item) => item.chainId) : []); }, [detail.data, scope, chainId]);
+  scopeRef.current = scope ?? [];
+  const droppedNote = (dropped: Array<{ categoryName: string; buyerName: string; field: string }>) => { if (dropped.length) toast.message(`Hinweis: ${dropped.length === 1 ? "Ein Feld-Filter geht" : `${dropped.length} Feld-Filter gehen`} nicht mit – ${dropped.slice(0, 3).map((item) => `„${item.field}“ gibt es in ${item.categoryName} nicht`).join("; ")}${dropped.length > 3 ? " …" : ""}.`); };
+  /** Kette auf andere Sparten übertragen – der Reihe nach, damit ein älterer Stand nie einen neueren überschreibt. */
+  const copyTo = (toChainIds: number[]) => { const run = copyQueue.current.then(() => copyChain.mutateAsync({ fromChainId: chainId, toChainIds })); copyQueue.current = run.catch(() => undefined); return run; };
+  /** Nach jeder Änderung an den Stationen: neu laden – und die angehakten Sparten bekommen dieselbe Kette. */
+  const afterChange = () => { refresh(); const others = scopeRef.current; if (others.length) void copyTo(others).then((result) => { droppedNote(result.dropped); refresh(); }).catch((error: { message?: string }) => { toast.error(`Die anderen Sparten konnten nicht angepasst werden: ${error?.message ?? "unbekannter Fehler"}`); refresh(); }); };
+  const scopeNote = () => (scopeRef.current.length ? ` Gilt für ${scopeRef.current.length + 1} Sparten.` : "");
   const updateChain = trpc.leadops.updateDeliveryChain.useMutation({ onSuccess: () => { refresh(); toast.success("Ketten-Einstellungen gespeichert."); }, onError });
-  const addStop = trpc.leadops.addChainStop.useMutation({ onSuccess: (result) => { refresh(); setAdding(null); toast.success(result.alsoAdded ? `Station hinzugefügt – auch in ${result.alsoAdded === 1 ? "der Kette der anderen Sparte" : `den Ketten der ${result.alsoAdded} anderen Sparten`}.` : "Station hinzugefügt."); }, onError });
-  const updateStop = trpc.leadops.updateChainStop.useMutation({ onSuccess: refresh, onError });
-  const reorder = trpc.leadops.reorderChainStops.useMutation({ onSuccess: refresh, onError });
-  const deleteStop = trpc.leadops.deleteChainStop.useMutation({ onSuccess: () => { refresh(); toast.success("Station gelöscht."); }, onError });
+  const addStop = trpc.leadops.addChainStop.useMutation({ onSuccess: () => { afterChange(); setAdding(null); toast.success(`Station hinzugefügt.${scopeNote()}`); }, onError });
+  const updateStop = trpc.leadops.updateChainStop.useMutation({ onSuccess: afterChange, onError });
+  const reorder = trpc.leadops.reorderChainStops.useMutation({ onSuccess: afterChange, onError });
+  const deleteStop = trpc.leadops.deleteChainStop.useMutation({ onSuccess: () => { afterChange(); toast.success(`Station gelöscht.${scopeNote()}`); }, onError });
   const adopt = trpc.leadops.insertOrderStation.useMutation({ onSuccess: () => { refresh(); toast.success("Übernommen: Station 1 ist jetzt die Bestellung."); }, onError });
   const addReasons = trpc.leadops.addDefaultReasons.useMutation({ onSuccess: (result) => { refresh(); toast.success(result.added ? `${result.added} Gründe angelegt.` : "Die Standard-Gründe sind schon da."); }, onError });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [adding, setAdding] = useState<{ buyerUserId: string; buyerName: string; price: string; siblings: boolean } | null>(null);
+  const [adding, setAdding] = useState<{ buyerUserId: string; buyerName: string; price: string } | null>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [dragId, setDragId] = useState<number | null>(null);
   if (detail.isLoading) return <section className="fx-scope lk-panel"><p className="lk-empty">Kette wird geladen …</p></section>;
@@ -228,7 +240,25 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
   // Station 1 einer Bestellung bleibt vorn: Sie lässt sich nicht verschieben, und nichts kommt vor sie
   const moveStop = (stopId: number, direction: -1 | 1) => { const ids = stops.map((stop) => stop.id); const index = ids.indexOf(stopId); const target = index + direction; if (target < 0 || target >= ids.length || stops[target].orderStop) return; [ids[index], ids[target]] = [ids[target], ids[index]]; reorder.mutate({ chainId, stopIds: ids }); };
   const dropOn = (targetId: number) => { if (dragId === null || dragId === targetId) return; const ids = stops.map((stop) => stop.id); const from = ids.indexOf(dragId); const to = ids.indexOf(targetId); ids.splice(from, 1); ids.splice(to, 0, dragId); setDragId(null); reorder.mutate({ chainId, stopIds: ids }); };
-  const siblings = order ? order.chains.filter((item) => item.chainId !== chain.id && item.status === "aktiv") : [];
+  // Sparten der Bestellung: die angehakten bekommen dieselbe Kette; die anderen haben ihre eigene
+  const scopeIds = scope ?? []; const siblings = order ? order.chains.filter((item) => item.chainId !== chain.id) : []; const selectable = siblings.filter((item) => item.status === "aktiv");
+  const inScope = (item: { chainId: number }) => item.chainId === chain.id || scopeIds.includes(item.chainId); const apart = siblings.filter((item) => !scopeIds.includes(item.chainId));
+  const allOn = selectable.length > 0 && selectable.every(inScope); const joinNames = (names: string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} und ${names[names.length - 1]}`);
+  const ownRoute = stops.filter((stop) => !stop.orderStop).map((stop) => stop.buyerCompany);
+  /** die Sparten, für die diese Kette gilt – die gezeigte zuerst */ const scopeNames = [chain.categoryName, ...siblings.filter((item) => scopeIds.includes(item.chainId)).map((item) => item.categoryName)];
+  /** Sparten dazunehmen: Wer eine andere Kette hat, bekommt nach einer Nachfrage diese hier. */
+  const take = async (items: typeof siblings) => {
+    const differing = items.filter((item) => !item.same);
+    if (differing.length) {
+      const names = joinNames(differing.map((item) => item.categoryName));
+      const losing = differing.filter((item) => item.route.length); // nur wer schon eigene Stationen hat, verliert etwas
+      if (!(await confirmAction(`${names} ${differing.length === 1 ? "bekommt" : "bekommen"} dieselbe Kette wie ${chain.categoryName}${ownRoute.length ? ` (nach Station 1: ${ownRoute.join(" → ")})` : " (keine weitere Station)"}.${losing.length ? ` Die bisherigen Stationen von ${joinNames(losing.map((item) => `${item.categoryName} (${item.route.join(" → ")})`))} werden ersetzt.` : ""} Übernehmen?`, { confirmLabel: "Übernehmen", danger: false }))) return;
+      try { const result = await copyTo(differing.map((item) => item.chainId)); droppedNote(result.dropped); toast.success(`Übernommen: ${names} ${differing.length === 1 ? "hat" : "haben"} jetzt dieselbe Kette wie ${chain.categoryName}.`); refresh(); } catch (error) { toast.error((error as { message?: string })?.message ?? "Die Kette konnte nicht übernommen werden."); refresh(); return; }
+    }
+    setScope(Array.from(new Set([...scopeIds, ...items.map((item) => item.chainId)])));
+  };
+  const toggleScope = (item: (typeof siblings)[number]) => { if (scopeIds.includes(item.chainId)) setScope(scopeIds.filter((id) => id !== item.chainId)); else void take([item]); };
+  const toggleAll = () => { if (allOn) setScope([]); else void take(selectable.filter((item) => !scopeIds.includes(item.chainId))); };
   const freeBuyers = buyers.filter((buyer) => !stops.some((stop) => stop.buyerUserId === buyer.userId));
   const openSettings = () => { setSettingsOpen(true); window.setTimeout(() => document.getElementById(`lk-settings-${chain.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); };
   const status = <span className={`lk-status ${chain.status === "aktiv" ? "is-on" : ""}`}>{chain.status === "aktiv" ? "Aktiv" : "Aus"}</span>;
@@ -237,11 +267,21 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
     {embedded ? <div className="lk-embed-head"><div><h2>{order ? "Lieferkette der Bestellung" : chain.name}</h2><p>{order ? "Station 1 ist diese Bestellung. Darunter legst du fest, wohin ein Lead geht, wenn Station 1 ihn nicht nimmt." : "Die Stationen kommen von oben nach unten dran."}</p></div><div className="lk-head-tools"><RangeSelect range={range} setRange={setRange} />{status}</div></div>
     : <header className="page-intro compact"><div><span className="eyebrow">LIEFERKETTE</span><h1>{chain.name}</h1><p>Feste Reihenfolge: Die Kunden kommen von oben nach unten dran – es wird nicht abgewechselt.</p></div><div className="lk-head-tools"><RangeSelect range={range} setRange={setRange} />{status}</div></header>}
 
-    {order && order.chains.length > 1 && <nav className="lk-sparten" aria-label="Leadsparten der Bestellung"><span>Diese Bestellung hat {order.chains.length} Leadsparten. Jede hat ihre eigene Kette:</span><span className="lk-seg">{order.chains.map((item) => <button key={item.chainId} type="button" aria-pressed={item.chainId === chain.id} disabled={!onOpenChain && item.chainId !== chain.id} onClick={() => { if (item.chainId !== chain.id) onOpenChain?.(item.chainId); }}>{item.categoryName}{item.status !== "aktiv" ? " (aus)" : ""}</button>)}</span></nav>}
+    {/* Seit v379: Die Kette gilt für alle angehakten Sparten – alle gemeinsam oder einzelne. Was hier geändert wird, bekommen sie alle. */}
+    {order && order.chains.length > 1 && <section className="lk-sparten" aria-label="Leadsparten der Bestellung">
+      <div className="lk-sparten-head"><b>Für welche Sparten gilt diese Kette?</b><span>{scopeIds.length ? `Was du unten festlegst, gilt für ${joinNames(scopeNames)}.` : `Was du unten festlegst, gilt nur für ${chain.categoryName}.`}</span></div>
+      <div className="lk-sparten-chips" role="group" aria-label="Sparten dieser Kette">
+        {selectable.length > 0 && <button type="button" className={`lk-sparte is-all ${allOn ? "is-on" : ""}`} aria-pressed={allOn} disabled={copyChain.isPending} title={allOn ? "Nur noch für die gezeigte Sparte festlegen" : "Diese Kette für alle Sparten der Bestellung festlegen"} onClick={toggleAll}>{allOn && <Check aria-hidden="true" />}Alle {selectable.length + 1} Sparten</button>}
+        <button type="button" className="lk-sparte is-on is-own" aria-pressed="true" aria-disabled="true" title="Diese Sparte siehst du gerade – ihre Kette steht unten" onClick={(event) => event.preventDefault()}><Check aria-hidden="true" />{chain.categoryName}</button>
+        {siblings.map((item) => { const on = scopeIds.includes(item.chainId); const off = item.status !== "aktiv";
+          return <button key={item.chainId} type="button" className={`lk-sparte ${on ? "is-on" : ""}`} aria-pressed={on} disabled={off || copyChain.isPending} title={off ? "Diese Kette ist ausgeschaltet" : on ? `${item.categoryName} abwählen – die Sparte behält ihre Kette, folgt aber den Änderungen nicht mehr` : item.same ? `${item.categoryName} dazunehmen – die Kette ist schon dieselbe` : `${item.categoryName} dazunehmen – die Sparte bekommt diese Kette`} onClick={() => toggleScope(item)}>{on && <Check aria-hidden="true" />}{item.categoryName}{off ? " (aus)" : ""}</button>; })}
+      </div>
+      {apart.length > 0 && <ul className="lk-sparten-apart" aria-label="Sparten mit eigener Kette">{apart.map((item) => <li key={item.chainId}><b>{item.categoryName}</b><span>{item.same ? "hat dieselben Stationen, folgt den Änderungen hier aber nicht" : `eigene Kette: ${item.route.length ? `nach Station 1 → ${item.route.join(" → ")}` : "keine weitere Station"}`}</span>{onOpenChain && <button type="button" onClick={() => onOpenChain(item.chainId)}>Kette von {item.categoryName} ansehen</button>}</li>)}</ul>}
+    </section>}
 
     <section className="fx-scope lk-rule" aria-label="Regel dieser Kette">
-      <div className="lk-flow"><span className="lk-from"><small>Kategorie</small><b>{chain.categoryName}</b></span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-from"><small>Von</small><b>{fromText}</b>{chain.country && <i>nur {chain.country}</i>}</span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-to"><small>An</small>{stops.length ? <span className="lk-buyers">{stops.map((stop) => <span key={stop.id} className={`lk-buyer ${stop.active ? "" : "is-off"}`}><em>{stop.position}</em>{stop.buyerCompany}</span>)}</span> : <b className="lk-missing">Noch kein Kunde</b>}</span></div>
-      <p className="lk-sentence"><span>So wird verteilt</span>{ruleSentence([chain.categoryName], fromText, stops.filter((stop) => stop.active).map((stop) => stop.buyerCompany))}</p>
+      <div className="lk-flow"><span className="lk-from"><small>{scopeIds.length ? "Kategorien" : "Kategorie"}</small><b>{scopeNames.join(", ")}</b></span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-from"><small>Von</small><b>{fromText}</b>{chain.country && <i>nur {chain.country}</i>}</span><ArrowRight className="lk-arrow" aria-hidden="true" /><span className="lk-to"><small>An</small>{stops.length ? <span className="lk-buyers">{stops.map((stop) => <span key={stop.id} className={`lk-buyer ${stop.active ? "" : "is-off"}`}><em>{stop.position}</em>{stop.buyerCompany}</span>)}</span> : <b className="lk-missing">Noch kein Kunde</b>}</span></div>
+      <p className="lk-sentence"><span>So wird verteilt</span>{ruleSentence(scopeNames, fromText, stops.filter((stop) => stop.active).map((stop) => stop.buyerCompany))}</p>
     </section>
 
     {order?.buyerMissing ? <section className="lk-adopt" role="status"><AlertTriangle aria-hidden="true" /><div><strong>In der Bestellung ist noch kein Käufer gewählt</strong><p>So lange geht über diese Kette kein Lead raus. Wähle in der Bestellung den Käufer und speichere sie – dann steht er hier als Station 1.</p></div>{!embedded && <a className="lk-adopt-link" href={`/?page=Bestellungen&orderId=${order.orderId}`}>Bestellung öffnen</a>}</section>
@@ -293,17 +333,17 @@ export function ChainDetailPage({ chainId, range, setRange, onBack, embedded = f
           <button type="button" className="lk-stop-toggle" onClick={toggle} aria-expanded={open} aria-label={open ? `Station ${stop.position} zuklappen` : `Station ${stop.position} aufklappen: Reklamationsgründe, Gebiet und Einstellungen`}><ChevronDown aria-hidden="true" /><span>{open ? "Zuklappen" : "Aufklappen"}</span>{!open && <small>Reklamationsgründe, Gebiet und weitere Einstellungen dieser Station</small>}</button>
           {open && <div className="lk-stop-more">
             <p className="lk-handover">Übergabe: {stop.api ? "automatisch über die Schnittstelle des Kunden" : stop.buyerUserId ? "von Hand – für diesen Kunden ist keine Schnittstelle eingerichtet" : "von Hand – der Kunde hat kein Konto"}. Nach {stop.reclamationWindowHours ? `${stop.reclamationWindowHours} Stunden ohne Reklamation gilt der Lead als angenommen` : "der Übergabe gilt der Lead sofort als angenommen"}.{stop.membershipId && <> <a href={`/?page=Benutzer&member=${stop.membershipId}&tab=tools`}>{stop.api ? "Schnittstelle des Kunden ansehen" : "Schnittstelle für den Kunden einrichten"}</a></>}</p>
-            <StationReasons stop={stop} onSaved={refresh} onAddDefaults={() => addReasons.mutate()} addingDefaults={addReasons.isPending} />
-            <StationSettings stop={stop} isOrder={isOrder} suppliers={suppliers} buyers={buyers} onSaved={refresh} />
+            <StationReasons stop={stop} onSaved={afterChange} onAddDefaults={() => addReasons.mutate()} addingDefaults={addReasons.isPending} />
+            <StationSettings stop={stop} isOrder={isOrder} suppliers={suppliers} buyers={buyers} onSaved={afterChange} />
           </div>}
         </li>; })}
-        <li className="lk-add-row">{adding ? <form className="lk-add-form" onSubmit={(event) => { event.preventDefault(); addStop.mutate({ chainId, buyerUserId: adding.buyerUserId ? Number(adding.buyerUserId) : null, buyerName: adding.buyerName.trim() || null, unitPrice: parsePrice(adding.price), alsoSiblings: adding.siblings && siblings.length > 0 }); }}>
+        <li className="lk-add-row">{adding ? <form className="lk-add-form" onSubmit={(event) => { event.preventDefault(); addStop.mutate({ chainId, buyerUserId: adding.buyerUserId ? Number(adding.buyerUserId) : null, buyerName: adding.buyerName.trim() || null, unitPrice: parsePrice(adding.price) }); }}>
           <label>Kunde<select className={field} value={adding.buyerUserId} onChange={(event) => setAdding({ ...adding, buyerUserId: event.target.value })}>{freeBuyers.map((buyer) => <option key={buyer.userId} value={buyer.userId}>{buyer.label}{buyer.api ? " · API" : ""}</option>)}<option value="">Anderer Kunde (nur Name)</option></select></label>
           {!adding.buyerUserId && <label>Name des Kunden<Input value={adding.buyerName} onChange={(event) => setAdding({ ...adding, buyerName: event.target.value })} placeholder="Name" /></label>}
           <label>Preis je Lead<span className="lk-add-price"><Input inputMode="decimal" value={adding.price} placeholder="0,00" onChange={(event) => setAdding({ ...adding, price: event.target.value })} /><span>€</span></span></label>
-          {siblings.length > 0 && <label className="lk-add-all"><input type="checkbox" checked={adding.siblings} onChange={(event) => setAdding({ ...adding, siblings: event.target.checked })} /><span>auch für {siblings.length === 1 ? `die Sparte ${siblings[0].categoryName}` : `die ${siblings.length} anderen Sparten`} dieser Bestellung</span></label>}
+          {scopeIds.length > 0 && <p className="lk-add-all">Die Station kommt in die Ketten von {joinNames(scopeNames)} – wie oben angehakt.</p>}
           <span className="lk-add-actions"><Button type="submit" variant="outline" disabled={addStop.isPending || (!adding.buyerUserId && adding.buyerName.trim().length < 2)}><Check className="h-4 w-4" /> Station hinzufügen</Button><Button type="button" variant="ghost" onClick={() => setAdding(null)}>Abbrechen</Button></span>
-        </form> : <button type="button" className="lk-add-btn" onClick={() => setAdding({ buyerUserId: String(freeBuyers[0]?.userId ?? ""), buyerName: "", price: "", siblings: true })}><Plus aria-hidden="true" /><span><b>{stops.length ? "Nächste Station hinzufügen" : "Erste Station hinzufügen"}</b><small>{stops.length ? "Wohin der Lead geht, wenn ihn vorher niemand nimmt" : "Wer die Leads dieser Kette bekommt"}</small></span></button>}</li>
+        </form> : <button type="button" className="lk-add-btn" onClick={() => setAdding({ buyerUserId: String(freeBuyers[0]?.userId ?? ""), buyerName: "", price: "" })}><Plus aria-hidden="true" /><span><b>{stops.length ? "Nächste Station hinzufügen" : "Erste Station hinzufügen"}</b><small>{stops.length ? "Wohin der Lead geht, wenn ihn vorher niemand nimmt" : "Wer die Leads dieser Kette bekommt"}</small></span></button>}</li>
         {stops.length > 0 && <li className="lk-end"><CornerDownRight aria-hidden="true" /><span>Nimmt keine Station den Lead, {chain.exhaustedAction === "return" ? "geht er zurück an die Quelle" : "ist er frei für deine anderen Ketten und Bestellungen"}.</span><button type="button" onClick={openSettings}>ändern</button></li>}
       </ol>
     </section>

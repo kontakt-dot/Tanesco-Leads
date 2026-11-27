@@ -70,7 +70,7 @@ import { helpAnswer } from "../shared/help-knowledge";
 import { computeGeoFlows } from "../shared/plz-regions";
 import { DEFAULT_TEMPLATES, emailOverview, mailContextFor, processDueEmails, renderTemplate, scheduleOnboardingEmails, sendEvent } from "./email-onboarding";
 import { customerAccess, customerClaims, customerDashboard, customerEndpoints, customerLeads, customerOrders, customerTickets } from "./customer-area";
-import { ORDER_STATION_LOCKED, ensureDefaultReasons, addStop, chainDetail, chainOverview, chainPickers, createFixedChains, deleteChain, deleteStop, reorderChains, reorderStops, saveStopRules, stopDeliveries } from "./chain-admin";
+import { ORDER_STATION_LOCKED, ensureDefaultReasons, addStop, chainDetail, chainOverview, chainPickers, copyOrderChain, createFixedChains, deleteChain, deleteStop, reorderChains, reorderStops, saveStopRules, stopDeliveries } from "./chain-admin";
 import { deliverLeadNow, exportLeadToIntegration, markDeliveryReclaimed, passOnAfterClaim, restoreDeliveryAfterRejectedClaim, runAutomationsForLead, syncOrderChains, triggerLeadAutomations } from "./lead-pipeline";
 import { ORDER_WITHOUT_BUYER, orderCategoryIds, orderSupplierFilter } from "../shared/order-chain";
 import { runScheduledDeliveries } from "./delivery-scheduler";
@@ -1119,6 +1119,8 @@ export const appRouter = router({
       const result = await syncOrderChains(db, tenant.id, chain.orderId, { mode: "explicit" });
       return { success: true, changed: result.changed };
     }),
+    /** Bestellung mit mehreren Leadsparten: die Kette einer Sparte für andere Sparten übernehmen (Stationen nach Station 1, mit Einstellungen und Regeln) */
+    copyOrderChain: leadopsProcedure.input(z.object({ fromChainId: z.number().int().positive(), toChainIds: z.array(z.number().int().positive()).max(60) })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return copyOrderChain(db, tenant.id, input); }),
     saveStopRules: leadopsProcedure.input(z.object({ stopId: z.number().int().positive(), rules: z.array(z.object({ reasonId: z.number().int().positive(), allowed: z.boolean(), passOn: z.boolean() })).max(500) })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return saveStopRules(db, tenant.id, input.stopId, input.rules); }),
     reorderChainStops: leadopsProcedure.input(z.object({ chainId: z.number().int().positive(), stopIds: z.array(z.number().int().positive()).max(100) })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return reorderStops(db, tenant.id, input.chainId, input.stopIds); }),
     deleteChainStop: leadopsProcedure.input(z.object({ stopId: z.number().int().positive() })).mutation(async ({ ctx, input }) => { const tenant = await requireTenant(ctx.user.id); const db = await getDb(); if (!db) throw new Error("Die Datenbank ist nicht verfügbar."); return deleteStop(db, tenant.id, input.stopId); }),

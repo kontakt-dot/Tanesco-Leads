@@ -15,6 +15,7 @@ import { isListTag, LIST_TAG_RESERVED } from "../../../shared/list-tags";
 import { keepHiddenFilter, type DialerLeadFilter } from "../../../shared/dialer-lead-filter";
 import { GERMAN_STATES } from "../../../shared/german-states";
 import { NO_BUYER_REASON, deliversForOrder, describeOrderStation, orderCategoryIds, orderChainName, orderGate, orderHasBuyer, orderSupplierFilter, planOrderChains, type PlanConfig } from "../../../shared/order-chain";
+import { chainSignature, extraStops, planChainCopy, stopBuyerKey, type RouteRule, type RouteStop } from "../../../shared/order-route";
 import { missingDefaultReasons } from "../../../shared/default-reasons";
 /** Derselbe Satz wie ORDER_STATION_LOCKED auf dem Server (server/chain-admin.ts). */
 const ORDER_STATION_LOCKED_TEXT = "Station 1 kommt aus der Bestellung. Käufer und Preis änderst du in der Bestellung – löschen oder verschieben lässt sie sich hier nicht.";
@@ -1582,7 +1583,33 @@ function demoOrderStation(chain: Row) {
   const categoryName = (id: number) => String(T().leadCategories.find((row) => row.id === id)?.name ?? "");
   return { ...describeOrderStation({ order: { id: order.id, orderNumber: String(order.orderNumber), name: (order.name ?? null) as string | null, status: String(order.status), buyerName: String(order.buyerName), unitPrice: order.unitPrice, quantity: (order.quantity ?? null) as number | null, deliveredCount: Number(order.deliveredCount ?? 0) }, config: config as never, mainCategoryId: order.categoryId, supplierName: (id) => String(T().suppliers.find((row) => row.id === id)?.name ?? `Lieferant #${id}`), categoryName }),
     missingStation: !hasStation(chain.id as number),
-    chains: rows.chains.filter((row) => categoryIds.includes(row.categoryId)).sort((a, b) => categoryIds.indexOf(a.categoryId) - categoryIds.indexOf(b.categoryId)).map((row) => ({ chainId: row.id, categoryId: row.categoryId, categoryName: categoryName(row.categoryId) || "–", status: row.status as "aktiv" | "inaktiv", stops: rows.stops.filter((stop) => stop.chainId === row.id).length, missingStation: !hasStation(row.id) })) };
+    chains: rows.chains.filter((row) => categoryIds.includes(row.categoryId)).sort((a, b) => categoryIds.indexOf(a.categoryId) - categoryIds.indexOf(b.categoryId)).map((row) => ({ chainId: row.id, categoryId: row.categoryId, categoryName: categoryName(row.categoryId) || "–", status: row.status as "aktiv" | "inaktiv", stops: rows.stops.filter((stop) => stop.chainId === row.id).length, missingStation: !hasStation(row.id), same: demoSameChain(chain.id as number, row.id), route: extraStops(demoRouteStops(row.id)).map((stop) => String(stop.buyerName)) })) };
+}
+// Mehrere Leadsparten einer Bestellung (v379) – Spiegel von chainDetail/copyOrderChain: gleiche Kette? Kette übernehmen (Rechnung in shared/order-route.ts)
+const demoRouteStops = (chainId: number) => T().deliveryStops.filter((stop) => stop.chainId === chainId) as unknown as RouteStop[];
+const demoFieldKeys = (categoryId: number) => new Set(T().categoryFields.filter((row) => row.categoryId === categoryId).map((row) => String(row.fieldKey)));
+const demoForeignFields = (fromCategoryId: number, toCategoryId: number) => { const target = demoFieldKeys(toCategoryId); return new Set(Array.from(demoFieldKeys(fromCategoryId)).filter((key) => !target.has(key))); };
+function demoSameChain(fromChainId: number, toChainId: number): boolean {
+  if (fromChainId === toChainId) return true; const from = T().deliveryChains.find((row) => row.id === fromChainId); const to = T().deliveryChains.find((row) => row.id === toChainId); if (!from || !to) return false;
+  const reasons = T().reclamationReasons.filter((row) => row.active !== false).map((row) => ({ id: row.id as number, forwardToNextStop: Boolean(row.forwardToNextStop) })); const rules = T().deliveryStopReasons as unknown as RouteRule[];
+  return chainSignature({ stops: demoRouteStops(fromChainId), rules, reasons, foreignFields: demoForeignFields(from.categoryId as number, to.categoryId as number) }) === chainSignature({ stops: demoRouteStops(toChainId), rules, reasons });
+}
+function demoCopyOrderChain(input: { fromChainId: number; toChainIds: number[] }) {
+  const source = T().deliveryChains.find((row) => row.id === input.fromChainId) ?? fail("Lieferkette wurde nicht gefunden."); if (!source.orderId) fail("Diese Kette gehört zu keiner Bestellung.");
+  const wanted = Array.from(new Set(input.toChainIds ?? [])).filter((id) => id !== source.id); const targets = T().deliveryChains.filter((row) => row.orderId === source.orderId && wanted.includes(row.id as number));
+  if (targets.length !== wanted.length) fail("Eine der gewählten Sparten gehört nicht zu dieser Bestellung.");
+  const sourceStops = demoRouteStops(source.id as number); const sourceRules = (T().deliveryStopReasons as unknown as RouteRule[]).filter((rule) => sourceStops.some((stop) => stop.id === rule.stopId)); const dropped: Array<{ categoryName: string; buyerName: string; field: string }> = [];
+  for (const target of targets) {
+    const plan = planChainCopy({ source: sourceStops, sourceRules, target: demoRouteStops(target.id as number), foreignFields: demoForeignFields(source.categoryId as number, target.categoryId as number) });
+    const categoryName = String(T().leadCategories.find((row) => row.id === target.categoryId)?.name ?? "–"); for (const item of plan.dropped) dropped.push({ categoryName, ...item });
+    const setRules = (stopId: number, rules: typeof plan.updates[number]["rules"]) => { remove(store, "deliveryStopReasons", (row) => row.stopId === stopId); for (const rule of rules) insert(store, "deliveryStopReasons", { stopId, ...rule }); };
+    for (const id of plan.removes) { remove(store, "deliveryStopReasons", (row) => row.stopId === id); remove(store, "deliveryStops", (row) => row.id === id); }
+    for (const item of plan.updates) { update(store, "deliveryStops", (row) => row.id === item.id, { ...item.values }); setRules(item.id, item.rules); }
+    let spare = 5000; for (const item of plan.inserts) { const stop = insert(store, "deliveryStops", { chainId: target.id, position: (spare += 1), ...item.values, orderStop: false, createdAt: new Date() }); setRules(stop.id as number, item.rules); }
+    const rank = (stop: Row) => (stop.orderStop ? -1 : plan.order.indexOf(stopBuyerKey(stop as never)));
+    reorderChainStops(target.id as number, T().deliveryStops.filter((row) => row.chainId === target.id).sort((a, b) => rank(a) - rank(b) || a.position - b.position).map((row) => row.id as number));
+  }
+  return { success: true, copied: targets.length, dropped };
 }
 
 const MEMBER_SETTINGS_DEFAULTS = { emailNotifications: true, paymentMode: "standard", deliveryPaused: false, claimRefundMode: "standard", prepaidBalance: "0.00", uiRestricted: false, individualLeadCommission: null, disabledCategoryIds: [], reclamationPeriodHours: 24, autoAcceptApiClaims: false, blockedClaimCategoryIds: [], excludedClaimReasonIds: [], billingInterval: "30_tage", paymentTermsDays: 14, taxRatePercent: null, notifyLeads: true, notifyLeadsEmail: null, notifyInvoices: true, notifyInvoicesEmail: null, notifySystem: true, notifySystemEmail: null, duplicateProtection: true, inboundPrePing: true, visibleAreas: null, visibleCategoryIds: null, webhookUrl: null, supplierActive: false, commissionOnEverySale: false, supplierBalance: "0.00", commissionRates: null, responseMappingEnabled: false };
@@ -2427,6 +2454,7 @@ const procedures: Record<string, Handler> = {
     if (input.alsoSiblings && chain.orderId) for (const sibling of T().deliveryChains.filter((row) => row.orderId === chain.orderId && row.id !== chain.id && row.status === "aktiv")) { const own = T().deliveryStops.filter((row) => row.chainId === sibling.id); if (own.some((row) => (input.buyerUserId && row.buyerUserId ? row.buyerUserId === input.buyerUserId : String(row.buyerName).trim().toLowerCase() === buyerName.toLowerCase()))) continue; insert(store, "deliveryStops", { chainId: sibling.id, buyerName, buyerUserId: input.buyerUserId ?? null, position: own.reduce((highest, row) => Math.max(highest, Number(row.position)), 0) + 1, unitPrice: money(input.unitPrice ?? 0), ...blankStop(), reclamationWindowHours: input.reclamationWindowHours ?? 24, maxLeads: input.maxLeads ?? null }); alsoAdded += 1; }
     return { success: true, stopId: stop.id, position, alsoAdded }; },
   "leadops.updateChainStop": (input) => { const { id, unitPrice, ...rest } = input; const owned = T().deliveryStops.find((row) => row.id === id) ?? fail("Stop wurde nicht gefunden."); if (owned.orderStop && T().deliveryChains.find((row) => row.id === owned.chainId)?.orderId && (rest.buyerName !== undefined || rest.buyerUserId !== undefined || unitPrice !== undefined || rest.position !== undefined || rest.active === false)) fail(ORDER_STATION_LOCKED_TEXT); if (rest.buyerUserId && !rest.buyerName) { const user = T().users.find((row) => row.id === rest.buyerUserId) ?? fail("Käufer-Konto wurde nicht gefunden."); rest.buyerName = String(user.company ?? user.name ?? "Käufer"); } update(store, "deliveryStops", (row) => row.id === id, { ...rest, unitPrice: unitPrice === undefined ? undefined : money(unitPrice) }); return { success: true }; },
+  "leadops.copyOrderChain": (input) => demoCopyOrderChain(input),
   "leadops.saveStopRules": (input) => { T().deliveryStops.find((row) => row.id === input.stopId) ?? fail("Stop wurde nicht gefunden."); remove(store, "deliveryStopReasons", (row) => row.stopId === input.stopId); for (const rule of input.rules) insert(store, "deliveryStopReasons", { stopId: input.stopId, reasonId: rule.reasonId, allowed: rule.allowed, passOn: rule.passOn }); return { success: true }; },
   "leadops.reorderChainStops": (input) => reorderChainStops(input.chainId, input.stopIds),
   // „Aus der Bestellung übernehmen“: Die Ketten dieser Bestellung folgen ihr ab jetzt ganz (wie am Server)
