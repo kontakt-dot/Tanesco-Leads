@@ -2,7 +2,7 @@
  * Reine Template-, Filter- und Mapping-Logik der ausgehenden API-Calls – ohne Node-/Datenbankabhängigkeiten,
  * damit Server und Browser-Demo dieselben Regeln nutzen.
  */
-import { outboundMeta } from "../shared/lead-fields";
+import { leadSalutation, outboundMeta, realText } from "../shared/lead-fields";
 import { isWattfoxTemplate, wattfoxLeadId, wattfoxPayload, wattfoxTemplateOptions } from "../shared/wattfox";
 import { normalizePostcode } from "../shared/postcode";
 import { campaignDeliverySkip, type LeadCampaignRules } from "../shared/dialer-campaign";
@@ -24,7 +24,7 @@ export function leadTemplateValues(lead: TemplateLead, category?: { name: string
   const custom = outboundMeta(lead.metadata); // ohne die Merker der Software (z. B. „API-Fehler abgehakt am …“)
   const street = String(custom.street ?? custom.strasse ?? "");
   const match = /^(.*?)[\s,]*(\d+[a-zA-Z]?(?:[-/]\d+[a-zA-Z]?)?)\s*$/.exec(street);
-  const values: Record<string, unknown> = { lead_id: lead.publicId, lead_number: lead.id, salutation: String(custom.salutation ?? custom.anrede ?? ""), first_name: lead.firstName ?? "", last_name: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street, street_name: match ? match[1].trim() : street, house_number: match ? match[2] : "", postal_code: normalizePostcode(lead.postcode, lead.country) ?? "", city: lead.city ?? "", country_code: lead.country ?? "DE", lead_type: category?.name ?? "", lead_type_shortcode: category?.shortcode ?? "", date: new Date(lead.createdAt).toISOString(), ...extra };
+  const values: Record<string, unknown> = { lead_id: lead.publicId, lead_number: lead.id, salutation: leadSalutation(custom) ?? realText(custom.salutation, 20) ?? realText(custom.anrede, 20) ?? "", /* v386: erkannte Anrede aus „salutation“ ODER „anrede“ – ein leerer Wert im ersten Feld verdeckt die echte Anrede nicht mehr */ first_name: lead.firstName ?? "", last_name: lead.lastName ?? "", email: lead.email ?? "", phone: lead.phone ?? "", street, street_name: match ? match[1].trim() : street, house_number: match ? match[2] : "", postal_code: normalizePostcode(lead.postcode, lead.country) ?? "", city: lead.city ?? "", country_code: lead.country ?? "DE", lead_type: category?.name ?? "", lead_type_shortcode: category?.shortcode ?? "", date: new Date(lead.createdAt).toISOString(), ...extra };
   for (const [key, value] of Object.entries(custom)) values[`custom_data.${key}`] = value;
   return values;
 }

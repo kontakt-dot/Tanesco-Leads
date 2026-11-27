@@ -171,7 +171,7 @@ describe("Seitenleiste", () => {
     const source = (await import("fs")).readFileSync((await import("path")).resolve(process.cwd(), "client/src/components/FluxoraWorkspace.tsx"), "utf8");
     const pages = Array.from(source.matchAll(/\{ page: "([^"]+)", icon:/g)).map((match) => match[1]);
     const groups = source.match(/const navigationGroups[^\n]*/)?.[0] ?? "";
-    const withoutMenu = ["Haustür-Erfassung"]; // seit v377 nicht mehr im Menü – die Seite bleibt über ihre Adresse erreichbar
+    const withoutMenu = ["Haustür-Erfassung", "Lieferkette"]; // seit v377 bzw. v386 nicht mehr im Menü – die Seiten bleiben über ihre Adresse erreichbar
     for (const page of pages) expect(groups.includes(`"${page}"`), `Seite ${page} ${withoutMenu.includes(page) ? "steht noch" : "fehlt"} in navigationGroups`).toBe(!withoutMenu.includes(page));
     for (const page of withoutMenu) expect(pages).toContain(page);
   });

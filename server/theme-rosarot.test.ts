@@ -76,7 +76,7 @@ describe("Helles Design – rosarot wie vor Version 333", () => {
     expect(tight(effective(css("vertraege.css")).get("html:not(.dark) .vt-list"))).toContain("background:none"); // Vertragsliste: dieselbe Lösung
     // Die Liste ist ein ruhiges Protokoll: Zeilen mit feinen Linien, ohne Karten, Schatten oder Hüpfen – beim Überfahren ein Hauch Rosa
     const row = tight(rules(calls).find((rule) => rule.selector === ".gq-call")?.body); expect(row).toContain("border:0;border-top:1pxsolidvar(--gl-line)"); expect(row).toContain("border-radius:0"); expect(row).toContain("background:transparent"); expect(row).not.toContain("box-shadow");
-    expect(tight(rules(calls).find((rule) => rule.selector === ".gq-call:hover")?.body)).toBe("background:var(--gl-row)"); expect(lightTokens).toContain("--gl-row:#fff8f8"); expect(lightTokens).toContain("--gl-row-on:#fff1f2");
+    expect(tight(rules(calls).find((rule) => rule.selector === ".gq-call:hover")?.body)).toBe("background:var(--gl-row)"); expect(lightTokens).toContain("--gl-row:#f7f8fa"); expect(lightTokens).toContain("--gl-row-on:#eff1f4"); /* seit v386 auf Wunsch dezent grau statt rosa */
     expect(calls).not.toMatch(/\.gq-(wave|slot|dur|agent-chip)\b/); // Verlauf, Dauer-Strich und Agenten-Schilder gibt es nicht mehr
   });
 

@@ -156,9 +156,9 @@ export function deliversByItself(rule: { triggerType?: string | null; actionType
  * Der Satz zu einem Hinweis und wohin der Knopf führt. Die Zahl steht vorn, der Grund dahinter.
  * `showLeads` = ein zweiter Knopf zeigt genau diese Leads in der Tabelle (bei einer einzelnen Kategorie auch nach ihr gefiltert).
  */
-export function hintText(hint: OverviewHint): { text: string; action: string; page: "Lieferkette" | "API-Fehler" | "Automatisierung"; showLeads: boolean } {
+export function hintText(hint: OverviewHint): { text: string; action: string; page: "Bestellungen" | "API-Fehler" | "Automatisierung"; showLeads: boolean } {
   const n = hint.leads; const count = `${de(n)} ${n === 1 ? "freigegebener Lead" : "freigegebene Leads"}`;
-  if (hint.kind === "keine_kette") return { text: `${count} ${n === 1 ? "kann" : "können"} nicht raus: Für ${quoted(hint.categories)} ist keine Lieferkette eingeschaltet.`, action: "Lieferkette einrichten", page: "Lieferkette", showLeads: true };
+  if (hint.kind === "keine_kette") return { text: `${count} ${n === 1 ? "kann" : "können"} nicht raus: Für ${quoted(hint.categories)} ist keine Lieferkette eingeschaltet.`, action: "Auslieferung öffnen", page: "Bestellungen", /* v386: Lieferketten entstehen aus den Bestellungen – der Menüpunkt „Lieferkette“ ist weg */ showLeads: true };
   if (hint.kind === "fehler") return { text: `Bei ${de(n)} ${leadWord(n)} hakt die Auslieferung.`, action: "API-Fehler ansehen", page: "API-Fehler", showLeads: false };
   return { text: `${count} ${n === 1 ? "wartet" : "warten"}: Für ${quoted(hint.categories)} liefert keine Automation von selbst aus.`, action: "Automation einrichten", page: "Automatisierung", showLeads: true };
 }

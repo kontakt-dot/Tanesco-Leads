@@ -41,7 +41,7 @@ describe("Version 377", () => {
   it("Menü: „Bestellungen“ heißt „Auslieferung“ (die Adresse bleibt), „Haustür-Erfassung“ steht nicht mehr im Menü – die Seite geht über ihre Adresse weiter auf", async () => {
     const root = await open("page=Bestellungen");
     const items = texts(root, ".flux-sidebar nav .nav-item > span");
-    expect(items).toContain("Auslieferung"); expect(items).not.toContain("Bestellungen"); expect(items).not.toContain("Haustür-Erfassung"); expect(items).toContain("Lieferkette");
+    expect(items).toContain("Auslieferung"); expect(items).not.toContain("Bestellungen"); expect(items).not.toContain("Haustür-Erfassung"); expect(items).not.toContain("Lieferkette"); /* seit v386 nicht mehr im Menü – die Ketten stehen unter „Auslieferung“ */
     expect(root.querySelector(".flux-sidebar nav .nav-item.active span")!.textContent).toBe("Auslieferung");
     expect(root.querySelector(".page-intro h1")!.textContent).toBe("Auslieferung"); expect(root.querySelector(".page-intro p")!.textContent).toContain("Bestellungen und ihre Lieferketten");
     expect(root.querySelector(".order-overview-head h2")!.textContent).toBe("Alle Bestellungen"); expect(button(root, "Bestellung anlegen")).toBeTruthy(); // drinnen heißt es weiter Bestellung

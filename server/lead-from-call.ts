@@ -15,10 +15,10 @@ import { callRecords, categoryFieldMappings, categoryFields, leadCategories, lea
 import { invokeLLM } from "./_core/llm";
 import { fieldNames } from "./llm-shape";
 import type { Db } from "./lead-pipeline";
-import { cleanSpokenContact, salutationFromTranscript, type SpokenContact } from "../shared/dialer-intake";
+import { cleanSpokenContact, salutationFromSummary, salutationFromTranscript, type SpokenContact } from "../shared/dialer-intake";
 import { emailFromFields } from "../shared/dialer-contact";
 import { salutationFromFirstName } from "../shared/first-names";
-import { callAnswerList, cleanFieldValues, dialerFieldMatches, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, isSalutation, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
+import { callAnswerList, cleanFieldValues, dialerFieldMatches, fieldOptions, fieldsFromTranscript, fieldsToRead, isPlaceholder, isSalutation, leadSalutation, realText, tidySalutation, type LeadFieldDef } from "../shared/lead-fields";
 
 type ContactKey = Exclude<keyof SpokenContact, "salutation">;
 const CONTACT_HINT: Record<ContactKey, string> = {
@@ -98,20 +98,22 @@ export async function fillLeadFromCall(db: Db, tenantId: number, leadId: number,
     return { leadId, fields: [], contact: [], cleaned, skipped: "kein Gesprächstext" };
   }
   // Anrede: Fällt im Gespräch „Herr/Frau <Nachname des Kunden>“, steht sie fest (Wattfox verlangt sie bei Photovoltaik)
-  if (!salutation && !tidySalutation(meta.anrede) && !tidySalutation(meta.salutation)) salutation = salutationFromTranscript(transcript, current.lastName);
+  if (!salutation && !leadSalutation(meta)) salutation = salutationFromTranscript(transcript, current.lastName);
   const toRead = fieldsToRead(defs as LeadFieldDef[], meta).slice(0, 45);
   const gaps: ContactKey[] = [];
   if (!current.firstName) gaps.push("firstName"); if (!current.lastName) gaps.push("lastName"); if (!current.email) gaps.push("email"); if (!current.street) gaps.push("street"); if (!current.postcode) gaps.push("postcode"); if (!current.city) gaps.push("city");
   const read = await readLeadFromTranscript({ transcript, category: category[0]?.name ?? null, fields: toRead, contactGaps: gaps });
   // v385: Fällt die Anrede im Gespräch nicht, aus dem Vornamen schließen (Wattfox verlangt sie bei Photovoltaik) – im Lead-Log steht, woher sie kommt
   let guessedFromName: "Herr" | "Frau" | null = null;
-  if (!salutation && !tidySalutation(meta.anrede) && !tidySalutation(meta.salutation)) { guessedFromName = await salutationForFirstName(current.firstName ?? read.contact.firstName ?? null); if (guessedFromName) salutation = guessedFromName; }
+  if (!salutation && !leadSalutation(meta) && call?.id) { const summary = (await db.select({ summary: callRecords.summary }).from(callRecords).where(eq(callRecords.id, call.id)).limit(1))[0]?.summary; salutation = salutationFromSummary(summary); } // v386: Kurzfassung der KI
+  if (!salutation && !leadSalutation(meta)) { guessedFromName = await salutationForFirstName(current.firstName ?? read.contact.firstName ?? null); if (guessedFromName) salutation = guessedFromName; }
   // Frisch lesen: Während die KI gelesen hat, kann sich der Lead geändert haben (Freigabe, Auslieferung, Eingabe von Hand) – es wird nur ergänzt, nie zurückgedreht
   const latest = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0] ?? lead; const latestMeta = metaOf(latest.metadata);
   const has = (value: unknown, max: number) => Boolean(realText(typeof value === "string" || typeof value === "number" ? value : null, max));
   const values = Object.fromEntries(Object.entries({ ...read.values, ...fromDialer }).filter(([key]) => !has(latestMeta[key], 600)));
-  const nextMeta: Record<string, unknown> = { ...withoutSources(latestMeta), ...values, ...(salutation && !realText(latestMeta.anrede, 20) ? { anrede: salutation } : {}), callFieldsAt: now, callFieldsCallId: call!.id };
+  const nextMeta: Record<string, unknown> = { ...withoutSources(latestMeta), ...values, ...(salutation && !leadSalutation(latestMeta) ? { anrede: salutation } : {}), callFieldsAt: now, callFieldsCallId: call!.id };
   delete nextMeta.callFieldsTries;
+  if (salutation && nextMeta.anrede === salutation && "salutation" in nextMeta && !leadSalutation({ salutation: nextMeta.salutation })) delete nextMeta.salutation; // v386: leerer Wert dort verdeckte die Anrede
   const contact: string[] = [];
   // Ein Name aus dem Gespräch gilt nur, wenn noch gar keiner da ist – ein einzelner Vorname zu einem vorhandenen Nachnamen stammt zu oft vom Mitarbeiter
   if (!has(latest.firstName, 120) && !has(latest.lastName, 120)) { if (read.contact.firstName) { patch.firstName = read.contact.firstName; contact.push(CONTACT_LABEL.firstName); } if (read.contact.lastName) { patch.lastName = read.contact.lastName; contact.push(CONTACT_LABEL.lastName); } }
@@ -177,33 +179,65 @@ export async function salutationsFromCalls(db: Db, options: { tenantId?: number;
   return { checked: seen.size, filled };
 }
 /** Anrede aus dem Vornamen: erst die Liste eindeutiger Vornamen, sonst die KI (nur „Herr“, „Frau“ oder nichts). */
+/** Antworten der KI je Vorname – so wird derselbe Name (auch ein unklarer) nicht bei jedem Lauf neu gefragt. */
+const FIRST_NAME_ANSWERS = new Map<string, "Herr" | "Frau" | null>();
 export async function salutationForFirstName(firstName: string | null | undefined): Promise<"Herr" | "Frau" | null> {
   const name = (firstName ?? "").trim(); if (!name || name.length > 60 || isSalutation(name)) return null;
   const listed = salutationFromFirstName(name); if (listed) return listed;
   if (!process.env.ANTHROPIC_API_KEY) return null;
+  const key = name.toLowerCase(); if (FIRST_NAME_ANSWERS.has(key)) return FIRST_NAME_ANSWERS.get(key) ?? null;
+  const answer = await askFirstName(name); if (answer !== undefined) FIRST_NAME_ANSWERS.set(key, answer); return answer ?? null;
+}
+/** undefined = die KI war nicht erreichbar (später noch einmal fragen), null = unklar. */
+async function askFirstName(name: string): Promise<"Herr" | "Frau" | null | undefined> {
   try {
     const schema = { name: "anrede", schema: { type: "object", additionalProperties: false, required: ["anrede"], properties: { anrede: { type: "string", enum: ["Herr", "Frau", "unklar"], description: "Anrede zu diesem Vornamen" } } } };
     const response = await invokeLLM({ model: "fast", maxTokens: 40, messages: [{ role: "system", content: "Du bekommst einen Vornamen einer Person in Deutschland (oft mit türkischer, arabischer, polnischer, russischer, balkanischer oder italienischer Herkunft). Antworte mit „Herr“, wenn der Vorname eindeutig männlich ist, mit „Frau“, wenn er eindeutig weiblich ist – sonst mit „unklar“ (zum Beispiel bei Namen für beide Geschlechter oder wenn es kein Vorname ist)." }, { role: "user", content: `Vorname: ${name}` }], outputSchema: schema, purpose: "anrede_aus_vorname" });
     const parsed = JSON.parse(response.choices[0]?.message.content ?? "{}") as { anrede?: string };
     return parsed.anrede === "Herr" || parsed.anrede === "Frau" ? parsed.anrede : null;
-  } catch (error) { console.error("[Leads] Anrede aus dem Vornamen:", error instanceof Error ? error.message : error); return null; }
+  } catch (error) { console.error("[Leads] Anrede aus dem Vornamen:", error instanceof Error ? error.message : error); return undefined; }
 }
-/** v385: Offene Leads ohne Anrede (auch nach dem Blick ins Gespräch) bekommen sie aus dem Vornamen – nach dem Start und im Lead-Log vermerkt. */
-export async function salutationsFromFirstNames(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ checked: number; filled: number }> {
-  const rows = await db.select({ id: leads.id, tenantId: leads.tenantId, status: leads.status, firstName: leads.firstName }).from(leads)
-    .where(and(eq(leads.kind, "verkauf"), sql`${leads.status} IN ('neu', 'genehmigt', 'hängend')`, sql`${leads.firstName} IS NOT NULL AND ${leads.firstName} <> ''`, sql`JSON_EXTRACT(${leads.metadata}, '$.anrede') IS NULL`, sql`JSON_EXTRACT(${leads.metadata}, '$.salutation') IS NULL`, ...(options.tenantId ? [eq(leads.tenantId, options.tenantId)] : [])))
-    .orderBy(desc(leads.id)).limit(options.max ?? 600);
-  const cache = new Map<string, "Herr" | "Frau" | null>(); let filled = 0;
-  for (const row of rows) {
-    const key = (row.firstName ?? "").trim().toLowerCase(); if (!cache.has(key)) cache.set(key, await salutationForFirstName(row.firstName));
-    const found = cache.get(key); if (!found) continue;
-    const fresh = (await db.select({ metadata: leads.metadata }).from(leads).where(eq(leads.id, row.id)).limit(1))[0]; const meta = metaOf(fresh?.metadata);
-    if (tidySalutation(meta.anrede) || tidySalutation(meta.salutation)) continue;
-    await db.update(leads).set({ metadata: { ...meta, anrede: found } }).where(eq(leads.id, row.id));
-    await db.insert(leadStatusEvents).values({ tenantId: row.tenantId, leadId: row.id, previousStatus: row.status, nextStatus: row.status, actorUserId: null, note: `Anrede aus dem Vornamen geschlossen: ${found} – im Gespräch fiel sie nicht. Stimmt sie nicht: „Korrigieren“.` });
-    filled += 1;
+export type SalutationSource = "Gespräch" | "Kurzfassung des Gesprächs" | "Vorname";
+const SOURCE_NOTE: Record<SalutationSource, string> = { "Gespräch": "aus dem Gespräch übernommen", "Kurzfassung des Gesprächs": "aus der Kurzfassung des Gesprächs übernommen", "Vorname": "aus dem Vornamen geschlossen" };
+/**
+ * v386: Anrede eines Leads sicherstellen – zuerst aus dem Gespräch („Herr/Frau <Nachname>“), dann aus der Kurzfassung der KI,
+ * zuletzt aus dem Vornamen (Liste, sonst KI). Schreibt sie in „anrede“, räumt einen leeren oder falschen Wert in „salutation“ weg
+ * und vermerkt im Lead-Log, woher sie kommt. Gibt den Lead (frisch) zurück – unverändert, wenn er schon eine hat oder nichts passt.
+ * Wird beim Füllen aus dem Gespräch, beim Ausliefern an eine Schnittstelle, die die Anrede braucht, und regelmäßig im Hintergrund genutzt.
+ */
+export async function ensureLeadSalutation(db: Db, lead: typeof leads.$inferSelect, options: { actorUserId?: number | null; nameCache?: Map<string, "Herr" | "Frau" | null> } = {}): Promise<{ lead: typeof leads.$inferSelect; filled: "Herr" | "Frau" | null; source: SalutationSource | null }> {
+  if (leadSalutation(lead.metadata)) return { lead, filled: null, source: null };
+  let found: "Herr" | "Frau" | null = null; let source: SalutationSource | null = null;
+  const calls = await db.select({ transcript: callRecords.transcript, summary: callRecords.summary }).from(callRecords).where(and(eq(callRecords.tenantId, lead.tenantId), eq(callRecords.leadId, lead.id))).orderBy(desc(callRecords.id)).limit(3);
+  for (const call of calls) { const said = salutationFromTranscript(call.transcript, lead.lastName); if (said) { found = said; source = "Gespräch"; break; } }
+  if (!found) for (const call of calls) { const summed = salutationFromSummary(call.summary); if (summed) { found = summed; source = "Kurzfassung des Gesprächs"; break; } }
+  if (!found && lead.firstName) {
+    const key = lead.firstName.trim().toLowerCase();
+    const named = options.nameCache?.has(key) ? options.nameCache.get(key) ?? null : await salutationForFirstName(lead.firstName);
+    options.nameCache?.set(key, named);
+    if (named) { found = named; source = "Vorname"; }
   }
-  return { checked: rows.length, filled };
+  if (!found || !source) return { lead, filled: null, source: null };
+  const fresh = (await db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0] ?? lead; const meta = metaOf(fresh.metadata);
+  if (leadSalutation(meta)) return { lead: fresh, filled: null, source: null };
+  const nextMeta: Record<string, unknown> = { ...meta, anrede: found }; if ("salutation" in nextMeta) delete nextMeta.salutation; // ein leerer oder unbekannter Wert dort verdeckte bis v385 die Anrede
+  await db.update(leads).set({ metadata: nextMeta }).where(eq(leads.id, lead.id));
+  await db.insert(leadStatusEvents).values({ tenantId: lead.tenantId, leadId: lead.id, previousStatus: fresh.status, nextStatus: fresh.status, actorUserId: options.actorUserId ?? null, note: `Anrede ${SOURCE_NOTE[source]}: ${found}.${source === "Vorname" ? " Im Gespräch fiel sie nicht – stimmt sie nicht: „Korrigieren“." : ""}` });
+  return { lead: { ...fresh, metadata: nextMeta }, filled: found, source };
+}
+/**
+ * Offene Leads ohne Anrede bekommen sie (Gespräch → Kurzfassung → Vorname). Nach dem Start und alle 15 Minuten im Hintergrund.
+ * v386: Die Auswahl prüft die Angaben im Programm (leadSalutation) – v385 fragte die Datenbank nach „anrede fehlt“ und übersah Leads,
+ * bei denen dort ein leerer Wert oder ein Platzhalter des Dialers stand. Genau die blieben unter „API-Fehler“ mit „Anrede fehlt“ stehen.
+ */
+export async function salutationsFromFirstNames(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ checked: number; filled: number }> {
+  const rows = await db.select().from(leads)
+    .where(and(eq(leads.kind, "verkauf"), sql`${leads.status} IN ('neu', 'genehmigt', 'hängend')`, ...(options.tenantId ? [eq(leads.tenantId, options.tenantId)] : [])))
+    .orderBy(desc(leads.id)).limit(options.max ?? 3000);
+  const missing = rows.filter((row) => !leadSalutation(row.metadata) && (row.firstName || row.lastName));
+  const nameCache = new Map<string, "Herr" | "Frau" | null>(); let filled = 0;
+  for (const row of missing) { const result = await ensureLeadSalutation(db, row, { nameCache }).catch(() => null); if (result?.filled) filled += 1; }
+  return { checked: missing.length, filled };
 }
 /** Vorhandene Leads ohne E-Mail-Adresse, bei denen sie bei den Angaben steht: einmal durchgehen und umtragen. */
 export async function emailsFromLeadFields(db: Db, options: { tenantId?: number; max?: number } = {}): Promise<{ moved: number }> {

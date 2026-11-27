@@ -32,6 +32,25 @@ export function tidySalutation(value: unknown): "Herr" | "Frau" | null {
   return /^(?:herrn?|hr\.?)$/.test(text) ? "Herr" : /^(?:frau|fr\.?)$/.test(text) ? "Frau" : null;
 }
 /**
+ * v386: Anrede aus einer Angabe des Leads – auch so, wie Dialer und Listen sie schreiben („m“, „w“, „männlich“, „Bay“, „Bayan“, „Mr“).
+ * Leer, Platzhalter („<UNKNOWN>“, „-“) und Unbekanntes ergeben null.
+ */
+export function salutationValue(value: unknown): "Herr" | "Frau" | null {
+  const text = typeof value === "string" ? value.trim().toLowerCase().replace(/\.$/, "") : "";
+  if (!text) return null;
+  if (/^(?:herrn?|hr|mr|männlich|maennlich|mann|m|male|bay)$/.test(text)) return "Herr";
+  if (/^(?:frau|fr|mrs|ms|weiblich|w|female|bayan)$/.test(text)) return "Frau";
+  return null;
+}
+/**
+ * v386: Die Anrede eines Leads – aus „salutation“ oder „anrede“, je nachdem, wo sie wirklich steht. Bis v385 galt nur das erste Feld:
+ * Stand dort ein leerer Wert oder ein Platzhalter des Dialers, fiel die echte Anrede in „anrede“ unter den Tisch („Angaben fehlen – Anrede“).
+ */
+export function leadSalutation(metadata: unknown): "Herr" | "Frau" | null {
+  const meta = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata as Record<string, unknown> : {};
+  return salutationValue(meta.salutation) ?? salutationValue(meta.anrede) ?? salutationValue(meta.Anrede);
+}
+/**
  * Name eines Leads zum Anzeigen: „Vorname Nachname“; ohne Vornamen mit der Anrede davor („Herr Bade“). Platzhalter („<UNKNOWN>“) zählen nicht.
  * Leer, wenn es keinen Namen gibt – der Aufrufer entscheidet, was dann steht.
  */

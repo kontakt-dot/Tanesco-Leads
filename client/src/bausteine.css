@@ -250,11 +250,11 @@ html:not(.dark) .cl-state button:focus-visible{outline-color:#bc001d}
   --lo-bereit:#3987e5;--lo-raus:#199e70;--lo-zurueck:#d95926;--lo-rest:rgba(255,255,255,.2);--lo-warn:#fcd34d;--lo-warn-line:rgba(251,191,36,.4);--lo-warn-bg:rgba(251,191,36,.07);--lo-bar-before:rgba(130,120,255,.4);
 }
 html:not(.dark) .live-leads-workspace,html:not(.dark) .fx-scope{
-  --lt-line:#e7e9ee;--lt-line-2:#d0d5dd;--lt-head:#f7f8fa;--lt-hover:#fff5f6;--lt-on:#ffe8eb;
+  --lt-line:#e7e9ee;--lt-line-2:#d0d5dd;--lt-head:#f7f8fa;--lt-hover:#f7f8fa;--lt-on:#eff1f4; /* v386: hervorgehobene Zeilen dezent grau statt rosa (wie im Lead-Puls) */
   --lt-ink:#17130f;--lt-ink-2:#344054;--lt-muted:#667085;--lt-faint:#98a2b3;--lt-accent:#bc001d;--lt-accent-strong:#bc001d;--lt-accent-ink:#ffffff;
   --lt-caret:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23344054' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --lt-field:#ffffff;--lt-chip:#f2f4f7;--lt-pop:#ffffff;--lt-pop-shadow:0 22px 44px -16px rgba(16,24,40,.3),0 0 0 1px rgba(16,24,40,.04);
-  --lt-good:#067647;--lt-good-line:#75e0a7;--lt-good-bg:#ecfdf3;--lt-bar:#bc001d;--lt-tile:#ffffff;--lt-tile-on:#fff1f2;
+  --lt-good:#067647;--lt-good-line:#75e0a7;--lt-good-bg:#ecfdf3;--lt-bar:#bc001d;--lt-tile:#ffffff;--lt-tile-on:#f2f4f7;
   --lo-bereit:#2a78d6;--lo-raus:#1baf7a;--lo-zurueck:#eb6834;--lo-rest:#d5d9e0;--lo-warn:#b54708;--lo-warn-line:#fedf89;--lo-warn-bg:#fffaeb;--lo-bar-before:#e39aa6;
 }
 
@@ -572,7 +572,7 @@ html:not(.dark) .live-leads-workspace .lt-pagesize .filter-select{border-color:v
 /* ─────────────────────────── Lead-Puls: festes Fenster zum Rollen (v347) ───────────────────────────
    Alle Leads des Zeitraums stehen in der Liste, aber die Seite wird nicht endlos lang: Das Fenster zeigt etwa sechs Zeilen und rollt. */
 .pulse-panel{--pu-line:rgba(255,255,255,.09);--pu-thumb:rgba(255,255,255,.2);--pu-ink:#f1effe;--pu-muted:#9a9cba;--pu-hover:rgba(130,120,255,.1);--pu-accent:#a39bff;--pu-fade:rgba(31,28,51,0)}
-html:not(.dark) .pulse-panel{--pu-line:#e7e9ee;--pu-thumb:#cfd4dc;--pu-ink:#17130f;--pu-muted:#667085;--pu-hover:#fff5f6;--pu-accent:#bc001d}
+html:not(.dark) .pulse-panel{--pu-line:#e7e9ee;--pu-thumb:#cfd4dc;--pu-ink:#17130f;--pu-muted:#667085;--pu-hover:#f7f8fa;--pu-accent:#bc001d}
 .pulse-panel .pulse-head{justify-content:space-between;align-items:flex-start}
 .pulse-open-all{flex:none;white-space:nowrap}
 .pulse-panel .pulse-window{max-height:396px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--pu-thumb) transparent;border-top:1px solid var(--pu-line);padding-right:2px}
@@ -938,7 +938,7 @@ html:not(.dark) .focus-panel .focus-more:focus-visible{outline-color:#bc001d}
 }
 html:not(.dark) .order-overview{
   --ov-line:#e7e9ee;--ov-line-2:#d0d5dd;--ov-ink:#17130f;--ov-ink-2:#344054;--ov-muted:#667085;--ov-faint:#98a2b3;
-  --ov-hover:#fff7f8;--ov-chip:#f2f4f7;--ov-accent:#bc001d;--ov-accent-strong:#bc001d;--ov-kpi-bg:#ffffff;
+  --ov-hover:#f7f8fa;--ov-chip:#f2f4f7;--ov-accent:#bc001d;--ov-accent-strong:#bc001d;--ov-kpi-bg:#ffffff;
   --ov-good:#067647;--ov-good-bg:#ecfdf3;--ov-good-line:#75e0a7;
   --ov-warn:#b54708;--ov-warn-bg:#fffaeb;--ov-warn-line:#fedf89;
   --ov-bar-track:#eef0f4;--ov-bar:linear-gradient(90deg,#bc001d,#e4576b);
@@ -2424,7 +2424,7 @@ html:not(.dark) .live-leads-workspace{--ld-bad:#b42318;--ld-bad-line:#fecdca;--l
    Regel: Je Fenster gibt es genau EINE rote Fläche – den Kopf mit der Überschrift. Rosa Kästen darunter (mit Feldern oder Text)
    sind weiß mit rotem Rand; gewählte Dinge (Menüpunkt, Reiter, Kacheln) bleiben zartrot, das hat sich bewährt.
    Weiß auf diesem Rot: mindestens 5,5 : 1 – der Verlauf bleibt deshalb im dunklen Rot (#a80019 … #cf1028), heller würde kleine Schrift unlesbar. */
-html:not(.dark){--head-red:linear-gradient(120deg,#a80019 0%,#bc001d 46%,#cf1028 100%);--head-ink:#ffffff;--head-ink-2:#ffe9ec;--head-chip:rgba(255,255,255,.16);--head-chip-line:rgba(255,255,255,.4)}
+html:not(.dark){--head-red:linear-gradient(90deg,#bc001d,#fb2c36); /* v386: genau das Rot der Hauptknöpfe (z. B. „Bestellung anlegen“) */--head-ink:#ffffff;--head-ink-2:#ffe9ec;--head-chip:rgba(255,255,255,.16);--head-chip-line:rgba(255,255,255,.4)}
 html:not(.dark) .order-overview-head,
 html:not(.dark) .automation-editor-head,
 html:not(.dark) .category-builder-head,
@@ -2441,8 +2441,13 @@ html:not(.dark) .order-overview-head .eyebrow svg,html:not(.dark) .automation-ed
 html:not(.dark) .category-builder-head [data-slot="button"],html:not(.dark) .automation-editor-head [data-slot="button"],html:not(.dark) .lead-overlay-head [data-slot="button"]{border-color:var(--head-chip-line)!important;background:transparent!important;color:var(--head-ink)!important;box-shadow:none!important}
 html:not(.dark) .category-builder-head [data-slot="button"]:hover,html:not(.dark) .automation-editor-head [data-slot="button"]:hover,html:not(.dark) .lead-overlay-head [data-slot="button"]:hover{background:var(--head-chip)!important}
 html:not(.dark) .category-builder-head [data-slot="button"] svg,html:not(.dark) .automation-editor-head [data-slot="button"] svg,html:not(.dark) .lead-overlay-head [data-slot="button"] svg{color:var(--head-ink)!important}
-/* Die Zahlen im Kopf der Bestellübersicht stehen auf einem weißen Kästchen – das bleibt, mit etwas Schatten gegen das Rot */
-html:not(.dark) .order-overview-head .order-kpis{border-color:transparent!important;box-shadow:0 10px 26px -12px rgba(70,0,10,.55)}
+/* v386: Die Zahlen im Kopf der Bestellübersicht (Aktiv, Geliefert, Noch offen, Wert geliefert) stehen im selben Rot, Schrift weiß.
+   Das Kästchen dunkelt das Rot leicht ab – so bleibt weiße kleine Schrift auch am hellen Ende des Verlaufs gut lesbar. */
+html:not(.dark) .order-overview-head .order-kpis{border-color:rgba(255,255,255,.34)!important;background:rgba(90,0,12,.2)!important;box-shadow:none!important}
+html:not(.dark) .order-overview-head .order-kpis>div+div{box-shadow:inset 1px 0 0 rgba(255,255,255,.26)!important}
+html:not(.dark) .order-overview-head .order-kpis dt{color:#ffffff!important}
+html:not(.dark) .order-overview-head .order-kpis b,html:not(.dark) .order-overview-head .order-kpis .is-active b{color:#ffffff!important}
+html:not(.dark) .order-overview-head .order-kpis small{color:#ffe9ec!important}
 
 /* Rosa Kästen mit Feldern oder Text: weiß, roter Rand links – kein zweites Rot unter dem Kopf */
 html:not(.dark) .automation-flow-node.trigger-node,

@@ -50,6 +50,22 @@ export function salutationFromTranscript(transcript: string | null | undefined, 
   }
   return herr > frau ? "Herr" : frau > herr ? "Frau" : null;
 }
+/**
+ * v386: Anrede aus der Kurzfassung des Gesprächs (die KI schreibt sie: „… ruft Herrn Albers an“, „Die Kundin …“). Im Gesprächstext selbst
+ * ist der Nachname oft anders geschrieben als im Lead – die Kurzfassung nennt den Kunden zuverlässiger. Gezählt werden „Herr/Herrn <Name>“,
+ * „Frau <Name>“ und „Kundin“ bzw. „Kunde“; „seine Frau“, „Ehefrau“ und Ähnliches zählen nicht. Kommt beides vor, gibt es keine Antwort.
+ */
+export function salutationFromSummary(summary: string | null | undefined): "Herr" | "Frau" | null {
+  const text = String(summary ?? ""); if (!text.trim()) return null;
+  let herr = 0; let frau = 0;
+  for (const match of Array.from(text.matchAll(/(\S+\s+)?\b(Herrn?|Frau)\s+(?:Dr\.\s+|Prof\.\s+)?[A-ZÄÖÜ][a-zäöüß]+/g))) {
+    const before = (match[1] ?? "").trim().toLowerCase();
+    if (/^frau$/i.test(match[2])) { if (/^(seine|seiner|seinen|ihre|ihrer|meine|meiner|die|der|mit|und|ehe|seinem)$/.test(before)) continue; frau += 1; } else herr += 1;
+  }
+  if (/\b(die|der|eine|einer)\s+Kundin\b|\bKundin\b/.test(text)) frau += 1;
+  if (/\b(der|dem|den|ein|einem|einen)\s+Kunden?\b/.test(text) && !/\bKundin\b/.test(text)) herr += 1;
+  return herr > 0 && frau === 0 ? "Herr" : frau > 0 && herr === 0 ? "Frau" : null;
+}
 /** Kontakt des Dialers mit dem aus dem Gespräch ergänzen – was der Dialer nennt, gilt. */
 export function withSpokenContact(contact: DialerContact, spoken: SpokenContact): DialerContact {
   const named = Boolean(contact.firstName || contact.lastName);

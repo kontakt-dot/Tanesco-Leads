@@ -145,13 +145,13 @@ describe("Version 349", () => {
     const root = await open("page=Leads"); const list = root.querySelector('.lo-hints[aria-label="Was jetzt zu tun ist"]')!; expect(list).toBeTruthy();
     expect(texts(root, ".lo-hint p")).toEqual(now.hints.slice(0, 2).map((hint) => hintText(hint).text)); // höchstens zwei auf einmal
     expect(texts(root, ".lo-hint p")[0]).toBe(`${blocked.leads} freigegebene Leads können nicht raus: Für „${blocked.categories[0]}“ ist keine Lieferkette eingeschaltet.`); expect(texts(root, ".lo-hint p")[1]).toBe(`Bei ${now.hints[1].leads} Leads hakt die Auslieferung.`);
-    expect(hintItems(root).map((item) => texts(item, ".lo-hint-actions button, .lo-hint-actions a").filter(Boolean))).toEqual([["Diese Leads zeigen", "Lieferkette einrichten"], ["API-Fehler ansehen"]]);
-    expect(hintItems(root).map((item) => item.querySelector(".lo-hint-go")!.getAttribute("href"))).toEqual(["/?page=Lieferkette", "/?page=API-Fehler"]);
+    expect(hintItems(root).map((item) => texts(item, ".lo-hint-actions button, .lo-hint-actions a").filter(Boolean))).toEqual([["Diese Leads zeigen", "Auslieferung öffnen"], ["API-Fehler ansehen"]]);
+    expect(hintItems(root).map((item) => item.querySelector(".lo-hint-go")!.getAttribute("href"))).toEqual(["/?page=Bestellungen", "/?page=API-Fehler"]); // seit v386: Lieferketten entstehen aus den Bestellungen
     // „Diese Leads zeigen“: freigegeben und nur diese Kategorie
     await click(hintItems(root)[0].querySelector(".lo-hint-more"), 900); expect(activeTab(root)).toBe("Freigegeben"); expect(found(root)).toBe(de(blocked.leads));
     expect(Array.from(root.querySelectorAll(".lt-row .lt-cat")).map((cell) => cell.getAttribute("title"))).toEqual(Array.from({ length: blocked.leads }, () => blocked.categories[0])); expect(root.querySelectorAll(".lo-tile.is-active")).toHaveLength(0);
     // der Knopf führt ohne Neuladen auf die Seite, auf der es sich lösen lässt
-    await click(hintItems(root)[0].querySelector(".lo-hint-go"), 1500); expect(new URLSearchParams(window.location.search).get("page")).toBe("Lieferkette"); expect(root.querySelector("h1")!.textContent).toBe("Lieferkette"); expect(root.querySelector(".lo-strip")).toBeNull();
+    await click(hintItems(root)[0].querySelector(".lo-hint-go"), 1500); expect(new URLSearchParams(window.location.search).get("page")).toBe("Bestellungen"); expect(root.querySelector("h1")!.textContent).toBe("Auslieferung"); /* seit v386 */ expect(root.querySelector(".lo-strip")).toBeNull();
     cleanup(); const again = await open("page=Leads");
     await click(hintItems(again)[1].querySelector(".lo-hint-go"), 1500); expect(new URLSearchParams(window.location.search).get("page")).toBe("API-Fehler"); expect(again.querySelector("h1")!.textContent).toBe("API-Fehler");
     // ausblenden: weg für drei Tage – auch nach dem Neuladen; der andere Hinweis bleibt

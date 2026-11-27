@@ -162,7 +162,7 @@ describe("Zahlen über der Leads-Tabelle", () => {
     // der Fall des Bildschirmfotos: 120 freigegeben, 0 ausgeliefert – für Photovoltaik ist keine Kette eingeschaltet
     const blocked = overviewHints({ waiting: [{ categoryId: 1, count: 120 }], categoryName, deliverable: [], automatic: [], problems: 0 });
     expect(blocked).toEqual([{ kind: "keine_kette", leads: 120, categories: ["Photovoltaik"], categoryIds: [1] }]);
-    expect(hintText(blocked[0])).toEqual({ text: "120 freigegebene Leads können nicht raus: Für „Photovoltaik“ ist keine Lieferkette eingeschaltet.", action: "Lieferkette einrichten", page: "Lieferkette", showLeads: true });
+    expect(hintText(blocked[0])).toEqual({ text: "120 freigegebene Leads können nicht raus: Für „Photovoltaik“ ist keine Lieferkette eingeschaltet.", action: "Auslieferung öffnen", page: "Bestellungen", showLeads: true });
     // Kette da, aber keine Automation: Die Leads warten, bis sie jemand von Hand ausliefert (eine Automation ohne Kette hilft nicht – die Kette fehlt zuerst)
     const mixed = overviewHints({ waiting, categoryName, deliverable: [1, 2], automatic: [2, 3], problems: 9 });
     expect(mixed.map((hint) => [hint.kind, hint.leads, hint.categories, hint.categoryIds])).toEqual([["keine_kette", 1, ["Fenster"], [3]], ["fehler", 9, [], []], ["nicht_von_selbst", 120, ["Photovoltaik"], [1]]]); // nach Dringlichkeit

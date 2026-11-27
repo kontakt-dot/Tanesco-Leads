@@ -9,6 +9,8 @@
 import { and, eq } from "drizzle-orm";
 import { deliveryEndpoints, integrationEvents, leadCategories, leads, memberOperationalSettings, memberships, partnerResponseRules, reclamationReasons, supplierReturnWebhooks, type DeliveryEndpoint, type PartnerResponseRule } from "../drizzle/schema";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "./integration-secrets";
+import { leadSalutation } from "../shared/lead-fields";
+import { isWattfoxTemplate } from "../shared/wattfox";
 import type { Db, LeadRow } from "./lead-pipeline";
 
 export { PLACEHOLDERS, leadTemplateValues, renderTemplate, buildEndpointBody, matchesFieldFilters, matchesSourceFilter, selectEndpoints, extractPartnerReference, evaluateResponseRules, type FieldFilter, type ValueMapping, type HeaderPair, type AuthConfig } from "./outbound-templates";
@@ -107,9 +109,18 @@ export type BuyerHandOver = { attempted: boolean; ok: boolean; status: number | 
 export async function handOverToBuyerEndpoints(db: Db, input: { tenantId: number; buyerUserId: number; lead: LeadRow; extraValues?: Record<string, unknown>; skipEmptyFields?: boolean; fetchImpl?: typeof fetch }): Promise<BuyerHandOver> {
   const loaded = await loadBuyerEndpoints(db, input.tenantId, input.buyerUserId, input.lead.categoryId);
   const category = (await db.select({ name: leadCategories.name, shortcode: leadCategories.shortcode }).from(leadCategories).where(eq(leadCategories.id, input.lead.categoryId)).limit(1))[0];
-  const values = leadTemplateValues(input.lead, category, input.extraValues);
+  let values = leadTemplateValues(input.lead, category, input.extraValues);
   const targets = selectEndpoints(loaded.endpoints, input.lead.supplierId, values);
   if (!targets.length) return { attempted: false, ok: false, status: undefined, results: [], partnerReference: null, matchedRule: null, summary: "kein passender Endpoint" };
+  // v386: Braucht eine Schnittstelle die Anrede (Wattfox bei Photovoltaik) und fehlt sie, wird sie vor dem Senden ergänzt –
+  // aus dem Gespräch, der Kurzfassung oder dem Vornamen. So klappt auch „Erneut ausliefern“ unter „API-Fehler“ ohne Korrigieren.
+  if (!leadSalutation(input.lead.metadata) && targets.some((endpoint) => isWattfoxTemplate(endpoint.bodyTemplate))) {
+    try {
+      const { ensureLeadSalutation } = await import("./lead-from-call");
+      const ensured = await ensureLeadSalutation(db, input.lead as Parameters<typeof ensureLeadSalutation>[1]);
+      if (ensured.filled) { input = { ...input, lead: ensured.lead as LeadRow }; values = leadTemplateValues(input.lead, category, input.extraValues); }
+    } catch (error) { console.error("[Schnittstelle] Anrede ergänzen:", error instanceof Error ? error.message : error); }
+  }
   const results: EndpointSendResult[] = [];
   for (const endpoint of targets) {
     const result = await sendToEndpoint(endpoint, values, { fetchImpl: input.fetchImpl, skipEmptyFields: input.skipEmptyFields });

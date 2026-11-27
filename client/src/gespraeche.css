@@ -50,7 +50,7 @@ html:not(.dark) .gq-stage .gq-count{color:var(--gq-ink)!important;font-weight:80
 html:not(.dark) .cq-list-panel,html:not(.dark) .gq-detail,html:not(.dark) .cq-dialog,html:not(.dark) .gq-settings{
   --gl-ink:#17130f;--gl-dim:#5b6472;--gl-faint:#7c8594;--gl-line:#e4e7ec;--gl-edge:#cfd4dc;--gl-soft:#f2f4f7;--gl-softer:#ffffff;--gl-accent:#bc001d;
   --gl-card:#ffffff;--gl-tray:#ffffff;--gl-lift:0 12px 26px -16px rgba(16,24,40,.34);--gl-ring:#e6e9ee;
-  --gl-row:#fff8f8;--gl-row-on:#fff1f2;--gl-pop:#ffffff;--gl-pop-shadow:0 22px 48px -16px rgba(16,24,40,.28),0 2px 6px rgba(16,24,40,.06);
+  --gl-row:#f7f8fa;--gl-row-on:#eff1f4; /* v386: beim Überfahren dezent grau statt rosa */--gl-pop:#ffffff;--gl-pop-shadow:0 22px 48px -16px rgba(16,24,40,.28),0 2px 6px rgba(16,24,40,.06);
   --gl-orange:#a64208;--gl-red:#b42318;--gl-warn:#92400e;
   --gt-green:#15803d;--gt-orange:#c2410c;--gt-red:#b91c1c;--gt-open:#475467;--gt-ink:#ffffff;
 }
@@ -209,7 +209,12 @@ html:not(.dark) .gq-table thead th{color:var(--gl-faint)!important}
 .gq-call.is-gruen{--mood:var(--gq-green)}.gq-call.is-gelb{--mood:var(--gq-orange)}.gq-call.is-rot{--mood:var(--gq-red)}.gq-call.is-offen{--mood:var(--gq-open-edge)}
 .gq-day+.gq-call{border-top-color:var(--gl-edge)} /* unter der Tagesüberschrift: eine etwas kräftigere Linie */
 .gq-call:hover{background:var(--gl-row)}
-.gq-call.is-selected{background:var(--gl-row-on);box-shadow:inset 3px 0 0 var(--gl-accent)}
+.gq-call.is-selected{background:var(--gl-row-on)}
+/* v386: links ein Balken in der Farbe der Ampel (grün, orange, rot) – wie bei den Leads; beim Überfahren und gewählt kräftig */
+.gq-call{position:relative}
+.gq-call::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--mood);opacity:.55;transition:opacity .14s;pointer-events:none}
+.gq-call:hover::before,.gq-call:focus-visible::before,.gq-call.is-selected::before{opacity:1}
+@media (prefers-reduced-motion:reduce){.gq-call::before{transition:none}}
 .gq-call:focus-visible{outline-offset:-2px}
 .gq-call td{display:block;min-width:0;padding:0;border:0;background:none;font-size:13px;line-height:1.3;color:var(--gl-ink)}
 html:not(.dark) .gq-table .gq-call td{color:var(--gl-ink)!important}

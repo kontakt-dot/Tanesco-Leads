@@ -6244,10 +6244,13 @@ describe("Tanesco Leads – Kernablauf gegen das Backend (verdrahtete Pipeline)"
     const incomplete = (await db.select().from(leads).where(eq(leads.publicId, "WF-E2E-002")))[0];
     const quiet = outbound.length;
     const held = await handOverToBuyerEndpoints(db, { tenantId: S.tenantId, buyerUserId: inviteeUserId, lead: incomplete });
-    expect(held.results.find((item) => item.endpointId === endpoint.id)).toMatchObject({ ok: false, status: 422, error: "Für Wattfox fehlt: Anrede (Herr/Frau), E-Mail – nicht gesendet" });
+    // v386: Die fehlende Anrede ergänzt die Software vor dem Senden selbst (hier aus dem Vornamen) – es fehlt nur noch die E-Mail
+    expect(held.results.find((item) => item.endpointId === endpoint.id)).toMatchObject({ ok: false, status: 422, error: "Für Wattfox fehlt: E-Mail – nicht gesendet" });
     expect(outbound.slice(quiet).some((call) => call.url === WATTFOX.leadsUrl)).toBe(false);
     const heldEvents = await db.select().from(integrationEvents).where(and(eq(integrationEvents.endpointId, endpoint.id), eq(integrationEvents.leadId, incomplete.id)));
-    expect(heldEvents).toMatchObject([{ eventType: "abgelehnt", responseStatus: 422, responseBody: "Für Wattfox fehlt: Anrede (Herr/Frau), E-Mail – nicht gesendet" }]);
+    expect(heldEvents).toMatchObject([{ eventType: "abgelehnt", responseStatus: 422, responseBody: "Für Wattfox fehlt: E-Mail – nicht gesendet" }]);
+    expect(((await db.select().from(leads).where(eq(leads.id, incomplete.id)))[0].metadata as Record<string, unknown>).anrede).toBe("Herr");
+    expect((await db.select().from(leadStatusEvents).where(eq(leadStatusEvents.leadId, incomplete.id))).map((event) => event.note)).toContain("Anrede aus dem Vornamen geschlossen: Herr. Im Gespräch fiel sie nicht – stimmt sie nicht: „Korrigieren“.");
     // (e) v371: Was fehlt, steht unter „API-Fehler“, BEVOR der Lead rausgeht – freigegeben, noch kein Versuch: Anrede und E-Mail fehlen für Wattfox
     await db.insert(leads).values({ tenantId: S.tenantId, publicId: "WF-E2E-003", categoryId: S.pv.id, kind: "verkauf", firstName: "Bernd", lastName: "Mustermann", email: null, phone: "+49 761 0000012", postcode: "79100", city: "Freiburg", country: "DE", status: "genehmigt", cost: "0.00", metadata: { street: "Musterweg 5" } });
     const waiting = (await owner.leadops.apiErrorOverview({ days: 30 })).problems.find((problem) => problem.publicId === "WF-E2E-003")!;

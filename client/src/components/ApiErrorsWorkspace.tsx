@@ -128,7 +128,7 @@ function ProblemRow({ problem, selected, onToggle, expanded, onExpand, editing, 
       <div className="af-actions">
         {primary === "korrigieren" && <Button size="sm" className="flux-button" onClick={onEdit}><Pencil className="h-4 w-4" /> {editing ? "Schließen" : "Korrigieren"}</Button>}
         {primary === "schnittstelle" && targetHref && <a className="af-button flux-button" href={targetHref}>Schnittstelle prüfen <ExternalLink aria-hidden="true" /></a>}
-        {primary === "lieferkette" && <a className="af-button flux-button" href="/?page=Lieferkette">Lieferkette öffnen <ExternalLink aria-hidden="true" /></a>}
+        {primary === "lieferkette" && <a className="af-button flux-button" href="/?page=Bestellungen">Auslieferung öffnen <ExternalLink aria-hidden="true" /></a>}
         {primary === "ausliefern" && <Button size="sm" className="flux-button" disabled={busy} onClick={onRetry}><Send className="h-4 w-4" /> Erneut ausliefern</Button>}
         {primary === "erledigt" && <Button size="sm" className="flux-button" disabled={busy} onClick={onDismiss}><Check className="h-4 w-4" /> Als erledigt abhaken</Button>}
         {primary !== "korrigieren" && <Button size="sm" variant="outline" onClick={onEdit}><Pencil className="h-4 w-4" /> {editing ? "Schließen" : "Korrigieren"}</Button>}

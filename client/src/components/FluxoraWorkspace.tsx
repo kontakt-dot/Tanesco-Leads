@@ -49,9 +49,10 @@ const navigation: Array<{ page: Page; icon: typeof LayoutDashboard }> = [{ page:
  */
 export const PAGE_LABELS: Partial<Record<Page, string>> = { Bestellungen: "Auslieferung" };
 export const pageLabel = (page: Page): string => PAGE_LABELS[page] ?? page;
-/** Menüpunkte, die es gibt (Seitenleiste und „Menüpunkte ein- oder ausblenden“). „Haustür-Erfassung“ steht seit v377 nicht mehr im Menü – die Seite und ihre Daten bleiben, alte Links darauf gehen weiter. */
+/** Menüpunkte, die es gibt (Seitenleiste und „Menüpunkte ein- oder ausblenden“). „Haustür-Erfassung“ steht seit v377 nicht mehr im Menü – die Seite und ihre Daten bleiben, alte Links darauf gehen weiter.
+ * „Lieferkette“ steht seit v386 nicht mehr im Menü: Die Ketten entstehen aus den Bestellungen und werden unter „Auslieferung“ bearbeitet. Alte Links öffnen die Seite weiter. */
 const menuPages = (): Page[] => navigationGroups.flatMap((group) => group.pages);
-const navigationGroups: Array<{ label: string; pages: Page[] }> = [{ label: "ANALYSE", pages: ["Dashboard", "Gebietskarte", "API-Fehler"] }, { label: "LEAD-OPERATIONS", pages: ["Leads", "Lead-Kategorien", "Tags", "Bestellungen", "Lieferkette", "Automatisierung", "Reklamationen"] }, { label: "CALLCENTER", pages: ["Rohdaten", "Telefonie", "Gespräche"] }, { label: "VERTRIEB", pages: ["Vertriebspipeline", "E-Mail-Kampagnen", "Verträge"] }, { label: "ORGANISATION", pages: ["Teams", "Benutzer", "Kooperationen"] }, { label: "KOMMUNIKATION", pages: ["E-Mails", "Support"] }, { label: "ABRECHNUNG", pages: ["Rechnungen"] }];
+const navigationGroups: Array<{ label: string; pages: Page[] }> = [{ label: "ANALYSE", pages: ["Dashboard", "Gebietskarte", "API-Fehler"] }, { label: "LEAD-OPERATIONS", pages: ["Leads", "Lead-Kategorien", "Tags", "Bestellungen", "Automatisierung", "Reklamationen"] }, { label: "CALLCENTER", pages: ["Rohdaten", "Telefonie", "Gespräche"] }, { label: "VERTRIEB", pages: ["Vertriebspipeline", "E-Mail-Kampagnen", "Verträge"] }, { label: "ORGANISATION", pages: ["Teams", "Benutzer", "Kooperationen"] }, { label: "KOMMUNIKATION", pages: ["E-Mails", "Support"] }, { label: "ABRECHNUNG", pages: ["Rechnungen"] }];
 
 export default function FluxoraWorkspace() {
   // Den Menüpunkt „Integrationen“ gibt es seit v375 nicht mehr: Leads gehen über die Schnittstelle beim Käufer raus (Benutzer → Käufer → Reiter „Integration“).

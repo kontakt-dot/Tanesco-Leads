@@ -80,7 +80,7 @@ describe("Version 348", () => {
     expect(hansen.querySelector(".af-meta")!.textContent).toBe("Photovoltaik · Freigegeben · von Orbit Media"); expect(hansen.querySelector(".af-when")!.textContent).toContain("2 Versuche");
     expect(hansen.querySelector(".af-data code")!.textContent).toBe("peter.hansen@.de"); expect(hansen.querySelector(".af-data b")!.textContent).toBe("E-Mail-Adresse");
     expect(texts(rowOf(root, "Sophie Arndt")!, ".af-parts li")).toEqual(["Nordlicht EnergieDie PLZ liegt nicht in seinem Gebiet", "Aurora HomeSeine Höchstzahl an Leads ist erreicht"]);
-    expect(rowOf(root, "Monika Seidel")!.querySelector("a.af-button")!.textContent).toContain("Schnittstelle prüfen"); expect(rowOf(root, "Dieter Kraus")!.querySelector("a.af-button")!.textContent).toContain("Lieferkette öffnen"); // der erste Knopf führt dorthin, wo sich das Problem lösen lässt
+    expect(rowOf(root, "Monika Seidel")!.querySelector("a.af-button")!.textContent).toContain("Schnittstelle prüfen"); expect(rowOf(root, "Dieter Kraus")!.querySelector("a.af-button")!.textContent).toContain("Auslieferung öffnen"); /* seit v386: Lieferketten entstehen aus den Bestellungen */ // der erste Knopf führt dorthin, wo sich das Problem lösen lässt
     // Antwort des Empfängers und Verlauf aufklappen
     await click(button(hansen, "Antwort und Verlauf"), 200); expect(hansen.querySelector(".af-detail pre")!.textContent).toBe('{"errors":{"email":["is invalid"]}}'); expect(hansen.querySelectorAll(".af-detail ol > li").length).toBe(3); // zwei Antworten, ein Vermerk „ohne Abnehmer“
     // Kachel filtert, noch ein Klick zeigt wieder alle; die Suche findet Name und Ort
